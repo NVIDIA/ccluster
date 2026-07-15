@@ -1,154 +1,142 @@
-# __NVIDIA_OSS__ Standard Repo Template
+# CCluster
 
-This README file is from the NVIDIA_OSS standard repo template of [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file). It provides a list of files in the PLC-OSS-Template and guidelines on how to use (clone and customize) them.
+**An efficiency-focused, Kubernetes-native platform for managing the end-to-end AI lifecycle across distributed, multi-cloud GPU infrastructure.**
 
-**Upon completing the customization for the project repo, the repo admin should replace this README template with the project specific README file.**
+CCluster aims to give AI teams a single control plane for their GPU fleet — provisioning clusters, deploying and scaling workloads, and running the full model lifecycle (inference, fine-tuning, batch jobs, and training) across clouds and regions, while keeping expensive accelerators as busy and as cost-effective as possible.
 
-- Files (org-wide templates in the NVIDIA .github org repo; per-repo overrides allowed) in [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file)
+> **Project status: early / foundations.** CCluster is at the start of an ambitious roadmap. The repository today contains the first building block — a catalog of Helm charts and typed value schemas for cluster and workload deployment (see [Available today](#available-today)). The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
 
-   - Root 
-     - README.md skeleton (CTA + Quickstart + Support/Security/Governance links) 
-     - LICENSE (Apache 2.0 by default)
-        - For other licenses, see the [Confluence page](https://confluence.nvidia.com/pages/viewpage.action?pageId=788418816) for other licenses
-        - CLA.md file (delete if not using MIT or BSD licenses)
-     - CODE_OF_CONDUCT.md 
-     - SECURITY.md (vuln reporting path) 
-     - CONTRIBUTING.md (base; repo can add specifics)
-     - SUPPORT.md (Support levels/channels)
-     - GOVERNANCE.md (baseline; repo may extend)
-     - CITATION.md (for projects that need citation)
+# Vision
 
-   - .github/ 
-     - ISSUE_TEMPLATE/ (<https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository>)
-       - bug.yml, feature.yml, task.yml, config.yml 
-     - PULL_REQUEST_TEMPLATE.md (<https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/creating-a-pull-request-template-for-your-repository>)
-     - workflows/
-     - Note: workflow-templates/ for starter workflows should live in the org-level .github repo, not per-repo
+GPU capacity is scarce, expensive, and increasingly spread across many clouds, regions, and on-prem sites. Teams end up stitching together bespoke tooling for each environment, and utilization suffers. CCluster's goal is to make a heterogeneous, multi-cloud GPU fleet feel like one efficient, Kubernetes-native platform.
 
-   - Repo-specific (not org-template, maintained by the team)
-     - CODEOWNERS (place at .github/CODEOWNERS or repo root)
-     - CHANGELOG.md (or RELEASE.md) 
-     - ROADMAP.md 
-     - MAINTAINERS.md 
-     - NOTICE or THIRD_PARTY_NOTICES / THIRD_PARTY_LICENSES (dependency specific)
-     - Build/package files (CMake, pyproject, Dockerfile, etc.)
+Guiding principles:
 
-   - Recommended structure and hygiene
-     - docs/
-     - examples/
-     - tests/
-     - scripts/
-     - Container/dev env: Dockerfile, docker/, .devcontainer/ (optional)
-     - Build/package (language-specific):
-       - Python: pyproject.toml, setup.cfg/setup.py, requirements.txt, environment.yml
-       - C++: CMakeLists.txt, cmake/, vcpkg.json
-     - Repo hygiene: .gitignore, .gitattributes, .editorconfig, .pre-commit-config.yaml, .clang-format
+- **Efficiency first.** Maximize accelerator utilization through bin-packing, autoscaling, and workload-aware scheduling — treating idle GPU time as the primary cost to eliminate.
+- **Kubernetes-native.** Everything is expressed as Kubernetes resources and reconciled declaratively (GitOps via Argo CD), so the platform composes with the existing cloud-native ecosystem instead of replacing it.
+- **Multi-cloud by default.** A cluster on AWS, GCP, Azure, Nebius, or on-prem is a first-class citizen; workloads and policy span providers without per-cloud rewrites.
+- **End-to-end lifecycle.** One platform for the whole journey — from provisioning a cluster, to training and fine-tuning, to batch and interactive compute, to production inference and autoscaling.
+- **Typed and validated.** Deployment configuration is modeled as typed schemas that are validated before anything reaches a cluster, so misconfiguration fails fast.
 
+## Where we're headed
 
-## Usage of [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file) for NEW NVIDIA OSS repos
+The platform is being built up in layers. The chart catalog is the foundation; higher layers (a control-plane API, a scheduler/placement layer, and user-facing interfaces) will build on top of it.
 
-1. Clone the [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file)
-2. Find/replace all in the clone of `___PROJECT___` and `__PROJECT_NAME__` with the name of the specific project.
-3. Inspect all files to make sure all replacements work and update text as needed
+| Capability | Description | Status |
+| --- | --- | --- |
+| **Deployment catalog** | Helm charts + typed value schemas for cluster base components and user workloads (inference, compute, jobs). | ✅ Available today |
+| **Cluster provisioning** | Declarative bring-up of GPU clusters and their platform stack across clouds. | 🧱 Foundations in place (`cluster_base`) |
+| **Control-plane API** | Programmatic management of clusters, deployments, and users. | 🗺️ Planned |
+| **Workload scheduling & placement** | Efficiency-aware scheduling and cross-cluster placement of GPU workloads. | 🗺️ Planned |
+| **Multi-cloud fleet management** | Unified view and policy across clusters spanning multiple providers. | 🗺️ Planned |
+| **Lifecycle tooling** | Training, fine-tuning, and batch pipelines alongside inference serving. | 🗺️ Planned |
 
+*Status markers are directional and will evolve as the project matures.*
 
-**What you can reuse immediately**
-- CODE_OF_CONDUCT.md
-- SECURITY.md
-- CONTRIBUTING.md (base)
-- .github/ISSUE_TEMPLATE/.yml (bug/feature/task + config.yml)
-- .github/PULL_REQUEST_TEMPLATE.md
-- Reusable workflows 
+# Available today
 
-**What you must customize per repo**
-- README.md: copy the skeleton and fill in product-specific details (Quickstart, Requirements, Usage, Support level, links)
-- LICENSE: check file is correct, update year, consult Confluence for alternatives https://confluence.nvidia.com/pages/viewpage.action?pageId=788418816, add CLA.md only if your license/process requires it
-- CODEOWNERS: replace <TEAM> with your GitHub team handle(s). Place at .github/CODEOWNERS (or repo root)
-- MAINTAINERS.md: list maintainers names/roles, escalation path
-- CHANGELOG.md (or RELEASE.md): track releases/changes
-- SUPPORT.md: Update for your project
-- ROADMAP.md (optional): upcoming milestones
-- NOTICE / THIRD_PARTY_NOTICES (if you ship third‑party content)
-- Build/package files (CMake/pyproject/Dockerfile/etc.), tests/, docs/, examples/, scripts/ as appropriate
-- Workflows: Edit if you need custom behavior 
+The current codebase ships as a single Python package, `catalog`, that pairs each Helm chart with a [Pydantic](https://docs.pydantic.dev/) model describing its values. Instead of hand-written `values.yaml` files, callers construct a typed model and let the package emit Helm parameters or a `values.yaml` for [Argo CD](https://argo-cd.readthedocs.io/). This is the deployment substrate the rest of the platform will build on:
 
+- **Type-safe Helm values** — chart inputs are validated Pydantic models, so misconfigured deployments fail at construction time rather than at sync time.
+- **Argo CD-friendly rendering** — values are flattened into Argo CD `helm.parameters` (with correct `forceString` handling) or a values object, avoiding drift between Kubernetes and Argo CD (e.g. CPU/memory normalization, annotation-key escaping).
+- **A composable cluster base** — `cluster_base` models a full platform stack (Istio, cert-manager, SPIRE, KEDA, GPU Operator, Prometheus, Longhorn, and more) as per-component overrides emitted into a single Argo CD `ApplicationSet`, ordered by sync waves.
+- **Ready-to-deploy workload charts** — inference, CServe, compute, and job charts for running user workloads.
 
-4. Change git origin to point to new repo and push
-5. Remove the line break below and everything above it
+## What's in the catalog
 
-## Usage for existing NVIDIA OSS repos
-
-1. Follow the steps above, but add the files to your existing repo and merge
-
-<!-- REMOVE THE LINE BELOW AND EVERYTHING ABOVE -->
------------------------------------------
-# [Project Title]
-One-sentence value proposition for users. Who is it for, and why it matters. 
-
-# Overview
-What the project does? Why the project is useful?
-Provide a brief overview, highlighting key features or problem-solving capabilities.
+| Chart | Purpose |
+| --- | --- |
+| `cluster_base` | Cluster-wide platform components (Istio, cert-manager, SPIRE, KEDA, GPU Operator, kube-prometheus-stack, Longhorn, external-dns, Fluent Bit, Argo Rollouts, and more), emitted as one Argo CD `ApplicationSet` per cluster. |
+| `namespace_base` | Per-user namespace configuration: network policies, Istio sidecars, authorization/peer-authentication policies, service monitors, model-cache volumes. |
+| `inference_deployment_v3` | Inference workload deployment using Argo Rollouts, with autoscaling (KEDA), ingress, and mTLS. |
+| `cserve_deployment_v3` | CServe deployment using Argo Rollouts. |
+| `compute_deployment` | Interactive compute deployment (e.g. SSH-accessible dev environments). |
+| `job_deployment` | One-shot / batch job deployment with PVC creation and mounting. |
 
 # Getting Started
-Guide users on how they can get started with the project. This should include basic installation step, quick-start examples 
+
+The catalog is a Python package. Install it into the environment of the service or tooling that builds your Argo CD Applications.
+
 ```bash
-# Option A: Package manager (pip/conda/npm/etc.)
-<copy-paste install>
+# From a checkout of this repository
+pip install ./catalog
 
-# Option B: Container
-docker run <image> <args>
-
-# Verify (hello world)
-<one-liner or ~10-line example>
+# Or, for local development (editable install)
+pip install -e ./catalog
 ```
+
+The package bundles the Helm chart assets (templates, `Chart.yaml`, `.tpl`, `Chart.lock`) alongside the schemas, so charts can be resolved from disk at runtime — no separate chart download step is required.
+
 # Requirements
-Include a list of pre-requisites. 
-- OS/Arch: <summary or link to full matrix>
-- Runtime/Compiler: <versions>
-- GPU/Drivers (if applicable): CUDA <ver>, driver <ver>, etc.
+
+- **Python:** >= 3.10 (uses `StrEnum` and modern typing syntax)
+- **Runtime dependencies:** `pydantic`, `pyyaml` (installed automatically)
+- **Deployment targets (external):** a Kubernetes cluster, [Argo CD](https://argo-cd.readthedocs.io/), and [Helm](https://helm.sh/) to render and reconcile the charts. GPU workloads additionally require the NVIDIA GPU Operator / drivers on the cluster.
 
 # Usage
-```bash
-# Minimal runnable snippet (≤20 lines)
-<code>
+
+Define a typed values model and render it into Argo CD Helm parameters:
+
+```python
+from catalog.components import (
+    DeploymentBaseHelmValues,
+    ResourceLimitsRequests,
+    Resources,
+)
+
+class InferenceValues(DeploymentBaseHelmValues):
+    name: str
+    image_url: str
+
+values = InferenceValues(
+    name="my-model",
+    image_url="registry.example.com/my-model:latest",
+    resources=ResourceLimitsRequests(
+        limits=Resources(cpu="4", memory="16384Mi", accelerator_count=1),
+        requests=Resources(cpu="2", memory="8192Mi", accelerator_count=1),
+    ),
+)
+
+# Flattened Argo CD Helm parameters (with forceString handling)
+params = values.helm_params()
+
+# Or a values.yaml string for an Argo CD Application source
+values_yaml = values.yaml()
 ```
-- More examples/tutorials: <link>
-- API reference: <link>
 
-# Performance (Optional)
-Summary of benchmarks; link to detailed results and hardware used.
+To assemble a cluster's platform stack, build a `ClusterComponents` and serialize it with cluster context:
 
-## Releases & Roadmap 
-- Releases/Changelog: <link>
-- (Optional) Next milestones or link to `ROADMAP.md`.
-  
+```python
+from catalog.cluster_base import ClusterComponents, Shared
+
+components = ClusterComponents()          # sensible per-component defaults
+shared = Shared()                         # cluster identity, cloud provider, etc.
+
+# Emits one ApplicationSet element per enabled component, with
+# cluster-specific defaults injected under each component's `values`.
+appset_elements = components.model_dump(by_alias=True, context={"shared": shared})
+```
+
+- Adding a new chart to the catalog: see [`catalog/README.md`](catalog/README.md).
+
 # Contribution Guidelines
-- Start here: `CONTRIBUTING.md`
-- Code of Conduct: `CODE_OF_CONDUCT.md`
-- Development quickstart (build/test):
+
+CCluster is early and evolving quickly — contributions, ideas, and feedback on the direction are welcome.
+
+- Start here: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Adding or modifying charts and schemas: [`catalog/README.md`](catalog/README.md)
+- Development quickstart (install and test):
+
 ```bash
-<clone> && <deps> && <build/test>
+pip install -e ./catalog
+python -m unittest discover -s catalog -p "test_*.py"
 ```
-## Governance & Maintainers
-- Governance: `GOVERNANCE.md`
-- Maintainers: <team/handles>
-- Labeling/triage policy: <link>
 
 ## Security
-- Vulnerability disclosure: `SECURITY.md`
-- Do not file public issues for security reports.
 
-## Support
-- Level: <Experimental | Maintained | Stable>
-- How to get help: Issues/Discussions/<channel link>
-- Response expectations (if any).
-
-# Community
-Provide the channel for community communications.
-
-# References
-Provide a list of related references
+- Vulnerability disclosure: see [`SECURITY.md`](SECURITY.md).
+- Please do **not** file public GitHub issues for security reports.
 
 # License
-This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
-- License: <link>
+
+This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
