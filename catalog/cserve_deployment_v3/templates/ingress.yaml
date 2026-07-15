@@ -1,0 +1,53 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: acme-ca
+    {{- if .Values.endpoint_certificate_authority }}
+    nginx.ingress.kubernetes.io/auth-tls-secret: user-{{ .Values.user_id }}/{{ .Values.name }}-ca-secret
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    {{- end }}
+    # Use default to HTTP to make it backward compatible with the existing catalog fields
+    nginx.ingress.kubernetes.io/backend-protocol: {{ default "HTTP" .Values.backend_protocol }}
+    # Required for Istio sidecar routing: sets the Host/：authority header to the
+    # internal FQDN so the sidecar can match the VirtualService.  Without this,
+    # nginx forwards the ingress domain as Host and Istio resets the connection —
+    # fatal for gRPC (no :authority match) and a latent risk for HTTP.
+    nginx.ingress.kubernetes.io/upstream-vhost: {{ .Values.name }}.user-{{ .Values.user_id }}.svc.cluster.local
+    # The default read timeout (response silence) is 60 seconds, but this causes issues with 
+    # non-streaming LLM completions that take longer than a minute. Setting to 15 minutes for now.
+    # This also is used for models with long context to start responding.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    # This is used to increase the size of the request body from 1MB to 15MB.
+    # Important on very large context models.
+    nginx.ingress.kubernetes.io/proxy-body-size: "15m"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    {{- if .Values.endpoint_bearer_token }}
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($http_authorization !~* "^Bearer {{ .Values.endpoint_bearer_token }}") {
+        return 401;
+      }
+    {{- end}}
+  generation: 1
+  labels:
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+  name: "{{ .Values.name }}"
+  namespace: user-{{ .Values.user_id }}
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ default (printf "%s.user-%d.%s" .Values.name (.Values.user_id | int) .Values.domain) .Values.deployment_url }}
+      http:
+        paths:
+          - backend:
+              service:
+                # Target the istio-friendly external service so that the sidecars can route properly.
+                name: "{{ .Values.name }}-istio-friendly"
+                port:
+                  number: {{ .Values.container_port }}
+            path: /
+            pathType: ImplementationSpecific
+  tls:
+    - hosts:
+        - {{ default (printf "%s.user-%d.%s" .Values.name (.Values.user_id | int) .Values.domain) .Values.deployment_url }}
+      secretName: {{ .Values.name }}-tls

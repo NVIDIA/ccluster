@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cluster_base_network_operator
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: network-operator
+    version: v24.4.0
+    repository: https://helm.ngc.nvidia.com/nvidia

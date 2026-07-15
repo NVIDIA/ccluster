@@ -1,0 +1,47 @@
+kube-prometheus-stack:
+  # Pin the stack's object names to the IaC convention
+  # (iac/components/platform_k8s/prometheus.py uses Helm release name
+  # "prometheus-op"). The subchart fullname helper truncates to 26 chars, so this
+  # value yields fullname "prometheus-op-kube-prometh" and Prometheus Service
+  # "prometheus-op-kube-prometh-prometheus" — the fixed name the (unmodifiable)
+  # inference_deployment_v3 KEDA ScaledObject and prometheus-adapter expect.
+  # Without this, the cluster-prefixed Argo release name (e.g.
+  # "<cluster>-kube-prometheus-stack") produces "<cluster>-kube-prometheus-stac-prometheus",
+  # which those consumers can't resolve.
+  fullnameOverride: prometheus-op-kube-prometheus-stack
+  defaultRules:
+    rules:
+      kubeHpaMaxedOut: false
+  alertmanager:
+    config:
+      route: {}
+      receivers: []
+  grafana:
+    enabled: false
+  prometheus:
+    serviceAccount:
+      name: prometheus
+    prometheusSpec:
+      externalLabels:
+        cluster_name: ccluster
+      # Configure remoteWrite (e.g. AWS AMP) for production. Empty by
+      # default so a fresh install doesn't try to reach an unconfigured
+      # endpoint.
+      remoteWrite: []
+      # Mirror IaC: select all monitors/rules regardless of the `release:` label,
+      # so the envoy-stats PodMonitor / pod-rules (labelled `release: kube-prometheus-stack`)
+      # are scraped even though the Prometheus release name is cluster-prefixed.
+      # This provides envoy_http_downstream_rq_active, the metric KEDA scales on.
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      additionalScrapeConfigs: []
+
+# In-chart toggles for PrometheusRule + PodMonitor resources rendered
+# from templates/. They depend on monitoring.coreos.com CRDs that this
+# component installs, so they're safe to enable alongside the chart.
+prometheusRules:
+  podAlerts:
+    enabled: true
+  envoyStats:
+    enabled: true

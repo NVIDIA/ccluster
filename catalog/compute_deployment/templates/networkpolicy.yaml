@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: "compute-deployment-{{ .Values.deployment_id }}"
+  namespace: "user-{{ .Values.user_id }}"
+spec:
+  # This policy applies to this specific compute deployment
+  podSelector:
+    matchLabels:
+      platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+
+  policyTypes:
+    - Ingress
+
+  ingress:              
+    # Allow traffic to the container port on the compute pod
+    - from:
+      - ipBlock:
+          cidr: 0.0.0.0/0  # Allows traffic from any IPv4 source
+      - ipBlock:
+          cidr: ::/0       # Allows traffic from any IPv6 sourceAllows traffic from any source
+      ports:
+        - protocol: TCP
+          port: {{ .Values.container_port }}

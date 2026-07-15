@@ -1,0 +1,37 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-metrics-scraper
+  namespace: user-{{ .Values.user_id }}
+  labels:
+    platform.centml.ai/sm: custom-metrics
+spec:
+  ports:
+  - name: metrics 
+    port: 18000
+    targetPort: 18000
+    protocol: TCP
+    appProtocol: http
+  selector:
+    platform.centml.ai/custom_metrics: enabled
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: custom-metrics-sm
+  namespace: user-{{ .Values.user_id }}
+spec:
+  selector:
+    matchLabels:
+      platform.centml.ai/sm: custom-metrics
+  endpoints:
+  - port: metrics
+    interval: 15s
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+      caFile: /etc/istio-output-certs/root-cert.pem
+      certFile: /etc/istio-output-certs/cert-chain.pem
+      keyFile: /etc/istio-output-certs/key.pem
+

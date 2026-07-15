@@ -1,0 +1,12 @@
+{{- /* TODO(#3571): drop b64dec once helm.values replaces --set; content will be plaintext. */}}
+{{- if .Values.config_file }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-config-{{ .Values.deployment_id }}-r{{ .Values.revision_number }}
+  namespace: user-{{ .Values.user_id }}
+data:
+  {{- /* Quoted: a filename like "true"/"123" must stay a string map key. */}}
+  {{ .Values.config_file.filename | quote }}: |-
+    {{- .Values.config_file.content_base64 | b64dec | nindent 4 }}
+{{- end }}

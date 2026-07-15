@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catalog"
+version = "0.1.0"
+description = "Platform Catalog Module"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic",
+    "pyyaml",
+]
+
+# The package sources live directly in this directory (flat layout), so the
+# `catalog` import package is rooted at ".". Sub-packages resolve as
+# ./<name> -> catalog.<name>. Auto-discovery is disabled via the explicit
+# list below because it would otherwise treat each chart dir as its own
+# top-level package.
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "catalog",
+    "catalog.cluster_base",
+    "catalog.cluster_base.components",
+    "catalog.cluster_base.components.argo_rollouts",
+    "catalog.cluster_base.components.cert_manager",
+    "catalog.cluster_base.components.external_dns",
+    "catalog.cluster_base.components.final_stack",
+    "catalog.cluster_base.components.fluent_bit",
+    "catalog.cluster_base.components.gpu_operator",
+    "catalog.cluster_base.components.ingress_nginx",
+    "catalog.cluster_base.components.istio",
+    "catalog.cluster_base.components.keda",
+    "catalog.cluster_base.components.kube_prometheus_stack",
+    "catalog.cluster_base.components.longhorn",
+    "catalog.cluster_base.components.metrics_server",
+    "catalog.cluster_base.components.network_operator",
+    "catalog.cluster_base.components.opentelemetry_collector",
+    "catalog.cluster_base.components.prometheus_adapter",
+    "catalog.cluster_base.components.spire",
+    "catalog.cluster_base.components.spire_crds",
+    "catalog.cluster_base.components.teleport_kube_agent",
+    "catalog.compute_deployment",
+    "catalog.cserve_deployment",
+    "catalog.cserve_deployment_v3",
+    "catalog.inference_deployment",
+    "catalog.inference_deployment_v3",
+    "catalog.job_deployment",
+    "catalog.namespace_base",
+]
+
+[tool.setuptools.package-dir]
+catalog = "."

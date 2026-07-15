@@ -1,0 +1,5 @@
+# Ship Helm chart assets (templates, values, Chart metadata) alongside the
+# Pydantic schemas so charts can be resolved from disk at runtime.
+global-include *.yaml *.yml *.tpl Chart.lock
+global-include .helmignore
+include py.typed

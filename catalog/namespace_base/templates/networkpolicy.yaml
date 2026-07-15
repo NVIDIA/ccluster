@@ -1,0 +1,94 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-default
+  namespace: user-{{ .Values.user_id }}
+spec:
+  # This policy applies to all pods in the namespace
+  podSelector: {}  
+  policyTypes:
+    - Ingress
+    - Egress  
+
+  ingress:
+    # Allow traffic from any pod within the same namespace
+    - from:
+        - podSelector: {}
+
+    # Allow traffic from istiod in the istio namespace pushing down configuration.
+    # 
+    # Note: Allowing traffic from the Istio ingress-gateway isn't necesssary or
+    # desirable since the nginx-ingress controller is handling ingress traffic.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+                        
+    # Allow traffic from the ingress-nginx controller for proxying requests.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+
+    # Allow prometheus to scrape metrics.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prometheus
+
+  egress:
+     # Allows traffic to any pod within the same namespace
+    - to:    
+      - podSelector: {}
+
+    # Allows traffic to kube-dns/coredns
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: coredns
+
+    # Allows traffic to the istio-system namespace for istiod to retrieve information about services and endpoints
+    # within the mesh. 
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+
+    # Allow traffic to the ingress-nginx namespace and controller pods.
+    # This is necessary when trying to call endpoints under the same cluster (hairpin NAT)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+
+    # Allow traffic to the public internet but not private networks (ie other pods outside the namespace).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
