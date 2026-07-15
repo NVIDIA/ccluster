@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging / build artifacts
+build/
+dist/
+sdist/
+wheels/
+*.egg
+*.egg-info/
+.eggs/
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Test / coverage / type-check caches
+.pytest_cache/
+.tox/
+.nox/
+.cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ---------------------------------------------------------------------------
+# Helm
+# ---------------------------------------------------------------------------
+# Chart dependencies are vendored on `helm dep build`; don't commit the tarballs.
+**/charts/*.tgz
+*.tgz
+
+# ---------------------------------------------------------------------------
+# Secrets / local overrides
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml
+
+# ---------------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
