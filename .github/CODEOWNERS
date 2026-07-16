@@ -14,9 +14,8 @@
 /catalog/**/Chart.yaml      @NVIDIA/ccluster-dev
 /catalog/**/values.yaml     @NVIDIA/ccluster-dev
 
-# Repo governance & CI
+# Repo metadata & community-health files
 /.github/                   @NVIDIA/ccluster-dev
 /LICENSE                    @NVIDIA/ccluster-dev
 /SECURITY.md                @NVIDIA/ccluster-dev
-/GOVERNANCE.md              @NVIDIA/ccluster-dev
 /MAINTAINERS.md             @NVIDIA/ccluster-dev

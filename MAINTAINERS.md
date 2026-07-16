@@ -16,17 +16,17 @@ Team handle for review routing: `@NVIDIA/ccluster-dev` (see [`.github/CODEOWNERS
 
 - Review and merge pull requests (all changes require at least one maintainer approval and passing CI).
 - Triage and label incoming issues.
-- Uphold the [Code of Conduct](CODE_OF_CONDUCT.md) and the project [Governance](GOVERNANCE.md) model.
+- Uphold the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Cut releases and maintain the [CHANGELOG](CHANGELOG.md).
 
 ## Escalation
 
 - **General questions / help:** see [SUPPORT.md](SUPPORT.md).
 - **Security vulnerabilities:** do **not** open a public issue — follow [SECURITY.md](SECURITY.md).
-- **Maintainer non-response / disputes:** escalate per the process described in [GOVERNANCE.md](GOVERNANCE.md).
+- **Maintainer non-response / disputes:** contact another maintainer listed above, or the lead maintainer.
 
 ## Becoming a maintainer
 
 Contributors who have a sustained track record of high-quality contributions
-and reviews may be nominated as maintainers by an existing maintainer. See
-[GOVERNANCE.md](GOVERNANCE.md) for the nomination and approval process.
+and reviews may be nominated as maintainers by an existing maintainer.
+Nominations are approved by consensus of the current maintainers.

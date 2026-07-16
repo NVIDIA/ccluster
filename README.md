@@ -137,9 +137,8 @@ pip install -e ./catalog
 python -m unittest discover -s catalog -p "test_*.py"
 ```
 
-## Governance & Maintainers
+## Maintainers
 
-- **Governance:** [`GOVERNANCE.md`](GOVERNANCE.md)
 - **Maintainers:** [`MAINTAINERS.md`](MAINTAINERS.md)
 - **Code of Conduct:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 

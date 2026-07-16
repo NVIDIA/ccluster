@@ -14,8 +14,7 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   kube-prometheus-stack, Longhorn, external-dns, Fluent Bit, Argo Rollouts, and more).
 - Workload charts: `inference_deployment_v3`, `cserve_deployment_v3`,
   `compute_deployment`, `job_deployment`, `namespace_base`.
-- Repository governance and community-health files (Code of Conduct, Contributing,
-  Security, Support, Governance, Maintainers).
+- Community-health files (Code of Conduct, Contributing, Security, Support, Maintainers).
 
 <!--
 Template for future releases:
