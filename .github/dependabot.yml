@@ -1,0 +1,31 @@
+# Dependabot version updates — https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+# (Security *alerts* are configured in repo settings and are already enabled; this
+# file controls scheduled version-bump PRs.)
+version: 2
+updates:
+  # Python dependencies (the catalog package's pyproject.toml lives in /catalog)
+  - package-ecosystem: pip
+    directory: /catalog
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions used in workflows. Inert until .github/workflows/ exists;
+  # kept here so Actions get bumped automatically once CI is added.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci"
