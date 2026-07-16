@@ -1,10 +1,20 @@
-## Description
-<!-- Provide a standalone description of changes in this PR. -->
-<!-- Reference any issues closed by this PR with "closes #1234". -->
-<!-- Note: The pull request title will be included in the CHANGELOG. -->
+<!--
+⚠️  PR TITLE must follow Conventional Commits — it becomes the squashed commit
+    subject on `main` and is enforced by the "Lint PR title" check:
 
-## Checklist
-- [ ] I am familiar with the [Contributing Guidelines](https://github.com/NVIDIA/ccluster/blob/main/CONTRIBUTING.md).
-- [ ] My commits are signed off (DCO): `git commit -s` — see [CONTRIBUTING.md](https://github.com/NVIDIA/ccluster/blob/main/CONTRIBUTING.md).
-- [ ] New or existing tests cover these changes.
-- [ ] The documentation is up to date with these changes.
+        <type>(<optional scope>): <summary>
+
+    types: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert
+    e.g.   feat(catalog): add retry policy to job_deployment
+
+BEFORE OPENING THIS PR:
+  • Sign off every commit (DCO):  git commit -s   (enforced by "Check Signed-off-by")
+  • Add or update tests where it makes sense
+  • Update docs (README / catalog/README.md) if behavior changed
+
+HOW THIS BODY IS USED:
+    Everything inside HTML comments (like this block) is stripped from the commit
+    message. Whatever visible text you write below becomes the BODY of the
+    squashed commit on `main` — so write it for someone reading `git log`.
+    Reference issues you close, e.g. "closes #123".
+-->
