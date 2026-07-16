@@ -1,0 +1,23 @@
+# Normalize line endings to LF on checkin
+* text=auto eol=lf
+
+# Explicitly treat these as text
+*.py      text
+*.yaml    text
+*.yml     text
+*.toml    text
+*.tpl     text
+*.md      text
+*.sh      text eol=lf
+
+# Binary files (do not diff/merge as text)
+*.png     binary
+*.jpg     binary
+*.gif     binary
+*.ico     binary
+*.gz      binary
+*.tgz     binary
+
+# Collapse noisy files in PR diffs on GitHub
+Chart.lock       linguist-generated=true
+*.tgz            linguist-vendored=true

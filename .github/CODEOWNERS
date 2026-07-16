@@ -1,0 +1,22 @@
+# CODEOWNERS — automatic review requests
+# Docs: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Order matters: the last matching pattern wins.
+
+# Default owners for everything in the repo
+*                           @NVIDIA/ccluster-dev
+
+# Python catalog package
+/catalog/                   @NVIDIA/ccluster-dev
+
+# Helm chart assets
+/catalog/**/templates/      @NVIDIA/ccluster-dev
+/catalog/**/Chart.yaml      @NVIDIA/ccluster-dev
+/catalog/**/values.yaml     @NVIDIA/ccluster-dev
+
+# Repo governance & CI
+/.github/                   @NVIDIA/ccluster-dev
+/LICENSE                    @NVIDIA/ccluster-dev
+/SECURITY.md                @NVIDIA/ccluster-dev
+/GOVERNANCE.md              @NVIDIA/ccluster-dev
+/MAINTAINERS.md             @NVIDIA/ccluster-dev

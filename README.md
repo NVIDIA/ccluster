@@ -119,6 +119,11 @@ appset_elements = components.model_dump(by_alias=True, context={"shared": shared
 
 - Adding a new chart to the catalog: see [`catalog/README.md`](catalog/README.md).
 
+## Releases
+
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
+- Broader direction and upcoming capabilities are described in [Where we're headed](#where-were-headed).
+
 # Contribution Guidelines
 
 CCluster is early and evolving quickly — contributions, ideas, and feedback on the direction are welcome.
@@ -132,10 +137,27 @@ pip install -e ./catalog
 python -m unittest discover -s catalog -p "test_*.py"
 ```
 
+## Governance & Maintainers
+
+- **Governance:** [`GOVERNANCE.md`](GOVERNANCE.md)
+- **Maintainers:** [`MAINTAINERS.md`](MAINTAINERS.md)
+- **Code of Conduct:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+
 ## Security
 
 - Vulnerability disclosure: see [`SECURITY.md`](SECURITY.md).
 - Please do **not** file public GitHub issues for security reports.
+
+## Support
+
+- **Level:** Maintained (best-effort; early and evolving quickly).
+- **How to get help:** see [`SUPPORT.md`](SUPPORT.md) — GitHub Issues and Discussions.
+
+# Community
+
+Questions, ideas, and feedback on the direction are welcome via
+[GitHub Issues](../../issues) and [Discussions](../../discussions). See
+[`SUPPORT.md`](SUPPORT.md) for the best channel for your question.
 
 # License
 
