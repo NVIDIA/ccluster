@@ -1,0 +1,72 @@
+# Enforce Conventional Commits format on the PR title.
+# Because merges are squash-only and configured to use PR_TITLE + PR_BODY as the
+# commit message, the PR title becomes the commit subject on main — so we lint it
+# here instead of individual commit messages. Self-contained (no third-party actions).
+name: PR Title
+
+on:
+  pull_request:
+    # `edited` re-checks when the title changes; `synchronize` re-runs on new
+    # commits so the required check reports against the latest head SHA.
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-title:
+    name: Lint PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Conventional Commits format
+        env:
+          # Passed via env (never inlined into the script) to avoid injection.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+          # <type>(<optional scope>)<optional !>: <summary>
+          pattern="^(${types})(\([a-z0-9._/-]+\))?!?: .+"
+
+          echo "PR title: ${PR_TITLE}"
+          echo
+
+          ok=1
+          if [[ ! "${PR_TITLE}" =~ $pattern ]]; then
+            ok=0
+          fi
+
+          # Summary (text after the first ": ") quality checks
+          summary="${PR_TITLE#*: }"
+          if [ "${ok}" -eq 1 ]; then
+            if [ "${#summary}" -lt 10 ]; then
+              echo "::error::The summary after the type is too short — write a meaningful description."
+              ok=0
+            fi
+            case "${summary}" in
+              *.) echo "::error::Don't end the PR title with a period."; ok=0 ;;
+            esac
+            # Reject placeholder summaries
+            shopt -s nocasematch
+            case "${summary}" in
+              wip|tmp|temp|test|update|fix|fixes|changes|stuff|misc)
+                echo "::error::'${summary}' is not a descriptive summary."
+                ok=0 ;;
+            esac
+            shopt -u nocasematch
+          fi
+
+          if [ "${ok}" -ne 1 ]; then
+            echo "::error::PR title must follow Conventional Commits — <type>(<scope>): <summary>"
+            echo "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+            echo "Examples:"
+            echo "  feat(catalog): add retry policy to job_deployment"
+            echo "  fix: correct memory normalization for Gi values"
+            echo "  docs(readme): document Argo CD rendering"
+            echo "This title becomes the squashed commit message on main, so make it count."
+            exit 1
+          fi
+
+          echo "PR title follows Conventional Commits. ✅"
