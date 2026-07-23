@@ -38,6 +38,13 @@ jobs:
             name="$(git show -s --format='%an' "${sha}")"
             email="$(git show -s --format='%ae' "${sha}")"
             body="$(git show -s --format='%B' "${sha}")"
+            # Trusted first-party bots can't add a Signed-off-by trailer. The
+            # maintainer who reviews and merges their PRs takes responsibility.
+            case "${name}" in
+              "dependabot[bot]"|"dependabot-preview[bot]"|"github-actions[bot]")
+                echo "SKIP ${short} ${subject} (trusted bot: ${name})"
+                continue ;;
+            esac
             expected="Signed-off-by: ${name} <${email}>"
             if printf '%s\n' "${body}" | grep -qxF "${expected}"; then
               echo "PASS ${short} ${subject}"
