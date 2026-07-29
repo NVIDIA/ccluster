@@ -1,0 +1,9 @@
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  labels:
+    app.kubernetes.io/name: ccluster
+    app.kubernetes.io/managed-by: kustomize
+  name: cclinfraplane-sample
+spec: {}
+  # TODO(user): Add fields here

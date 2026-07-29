@@ -74,3 +74,28 @@ dmypy.json
 # ---------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Go / kubebuilder
+# ---------------------------------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.dylib
+bin/*
+Dockerfile.cross
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Kubernetes generated files — skip generated files, except vendored ones
+!vendor/**/zz_generated.*
+
+# Kubeconfig might contain secrets
+*.kubeconfig

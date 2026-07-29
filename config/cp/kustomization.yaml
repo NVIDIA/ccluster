@@ -1,0 +1,37 @@
+# Deploy overlay for ccluster-cp-operator, which runs in the control-plane cluster.
+# Built by `make deploy-cp` / `make build-installer-cp`.
+
+# Adds namespace to all resources.
+namespace: ccluster-cp-system
+
+# Value of this field is prepended to the names of all resources.
+# Note that it should also match with the prefix (text before '-') of the
+# namespace field above.
+namePrefix: ccluster-cp-
+
+# The CRDs are installed in the control-plane cluster only; the infra-plane
+# overlay deliberately omits them.
+resources:
+- ../crd
+- ../base
+- rbac
+# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
+# crd/kustomization.yaml
+#- ../webhook
+# [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'. 'WEBHOOK' components are required.
+#- ../certmanager
+# [PROMETHEUS] To enable prometheus monitor, uncomment all sections with 'PROMETHEUS'.
+#- ../prometheus
+# [NETWORK POLICY] Protect the /metrics endpoint and Webhook Server with NetworkPolicy.
+# Only Pod(s) running a namespace labeled with 'metrics: enabled' will be able to gather the metrics.
+# Only CR(s) which requires webhooks and are applied on namespaces labeled with 'webhooks: enabled' will
+# be able to communicate with the Webhook Server.
+#- ../network-policy
+
+# `make deploy-cp IMG_CP=...` rewrites newName/newTag below via `kustomize edit set image`.
+images:
+- name: controller
+  newName: ccluster-cp-operator
+  newTag: dev
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization

@@ -1,0 +1,29 @@
+# Deploy overlay for ccluster-ip-operator, which runs in an infra-plane cluster.
+# Built by `make deploy-ip` / `make build-installer-ip`.
+#
+# The infra-plane cluster gets no CRDs: this operator owns no kinds yet. Add
+# ../crd (or a subset of it) here once it does.
+
+# Adds namespace to all resources.
+namespace: ccluster-ip-system
+
+# Value of this field is prepended to the names of all resources.
+# Note that it should also match with the prefix (text before '-') of the
+# namespace field above.
+namePrefix: ccluster-ip-
+
+resources:
+- ../base
+- rbac
+# [PROMETHEUS] To enable prometheus monitor, uncomment all sections with 'PROMETHEUS'.
+#- ../prometheus
+# [NETWORK POLICY] Protect the /metrics endpoint with NetworkPolicy.
+#- ../network-policy
+
+# `make deploy-ip IMG_IP=...` rewrites newName/newTag below via `kustomize edit set image`.
+images:
+- name: controller
+  newName: ccluster-ip-operator
+  newTag: dev
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
