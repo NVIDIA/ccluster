@@ -319,12 +319,25 @@ helm-adopt-crds-cp: ## Hand CRDs installed by `make install` (or the old kustomi
 		meta.helm.sh/release-name=$(HELM_RELEASE_CP) \
 		meta.helm.sh/release-namespace=$(HELM_NAMESPACE_CP) --overwrite
 
+# `helm dependency build` resolves a dependency's repository through the local repo
+# list, so the repo must be registered first or it fails with "no repository
+# definition" on a clean machine (notably CI). `dependency update` resolves the URL
+# directly and does not need this, but it also rewrites Chart.lock, which would defeat
+# the point of pinning. The alias is namespaced so it cannot clobber an existing
+# `argo` entry in a developer's Helm config; matching is by URL, not by name.
+ARGOCD_REPO_NAME ?= ccluster-argo
+ARGOCD_REPO_URL ?= https://argoproj.github.io/argo-helm
+
+.PHONY: helm-repos-cp
+helm-repos-cp: helm ## Register the chart repositories the cp chart's dependencies come from.
+	"$(HELM)" repo add $(ARGOCD_REPO_NAME) $(ARGOCD_REPO_URL) --force-update
+
 .PHONY: helm-deps-cp
-helm-deps-cp: helm ## Vendor the cp chart's dependencies (Argo CD) from Chart.lock.
+helm-deps-cp: helm-repos-cp ## Vendor the cp chart's dependencies (Argo CD) exactly as pinned in Chart.lock.
 	"$(HELM)" dependency build $(CHART_CP)
 
 .PHONY: helm-deps-update-cp
-helm-deps-update-cp: helm ## Re-resolve the cp chart's dependencies and refresh Chart.lock. Use when bumping the Argo CD version.
+helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and refresh Chart.lock. Use when bumping the Argo CD version.
 	"$(HELM)" dependency update $(CHART_CP)
 
 .PHONY: helm-lint
