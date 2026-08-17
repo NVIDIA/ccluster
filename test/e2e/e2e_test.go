@@ -63,13 +63,15 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
+		// No `make install` here: the chart owns the CRDs, and Helm refuses to adopt
+		// CRDs that already exist without its ownership metadata.
+		//
+		// ARGOCD=false: the cp chart pulls in Argo CD, whose images are not loaded
+		// into this kind cluster. Installing it here would make `helm --wait` block
+		// on several image pulls from the internet, so this suite covers the operator
+		// only. `make test-e2e-argocd` exercises the chart with Argo CD enabled.
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage))
+		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage), "ARGOCD=false")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -85,8 +87,10 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "undeploy-cp")
 		_, _ = utils.Run(cmd)
 
+		// The chart keeps its CRDs on uninstall (helm.sh/resource-policy: keep), so
+		// delete them explicitly to leave the cluster clean for a rerun.
 		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
+		cmd = exec.Command("make", "uninstall", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
 		By("removing manager namespace")

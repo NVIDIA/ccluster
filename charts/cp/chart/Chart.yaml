@@ -1,0 +1,34 @@
+# Chart metadata for ccluster-cp-operator.
+#
+# Everything under templates/ is REGENERATED from `kustomize build config/cp` by
+# `make helm-generate`. This file and values.yaml are not — the helm/v2-alpha
+# plugin preserves both — so they are the only place to hand-edit, and the only
+# place the Argo CD dependency below can safely live.
+apiVersion: v2
+name: ccluster-cp-operator
+description: ccluster control-plane operator and its cluster dependencies
+type: application
+
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - kubernetes
+  - operator
+
+# Argo CD is a prerequisite of the control-plane cluster, installed alongside the
+# operator rather than by it: bootstrapping Argo CD needs the rights to create its
+# CRDs and ClusterRoles, which the operator would then hold forever, and an operator
+# that owns Argo CD cannot be used to repair a broken Argo CD. The operator only ever
+# creates Application/ApplicationSet resources.
+#
+# Only the cp chart carries this. Argo CD is hub-and-spoke: one instance in the
+# control-plane cluster, with infra-plane clusters registered as remote destinations.
+dependencies:
+  - name: argo-cd
+    version: 10.4.0
+    repository: https://argoproj.github.io/argo-helm
+    condition: argo-cd.enabled
+
+annotations:
+  kubebuilder.io/generated-by: kubebuilder

@@ -20,9 +20,10 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `internal/controller/ip/` | Controllers owned by the infra-plane operator. Currently empty (`doc.go` only). |
 | `api/v1alpha1/` | CRD Go types. API group is the bare domain `ccluster.nvidia.com` — there is no group segment. |
 | `config/base/` | Manager Deployment, metrics service, service account, leader-election and metrics RBAC. Consumed by **both** overlays. |
-| `config/cp/`, `config/ip/` | Per-operator deploy overlays. |
+| `config/cp/`, `config/ip/` | Per-operator kustomize overlays. Not a deploy path any more — they are the **input** the Helm charts are generated from. |
 | `config/crd/` | Generated CRDs. Referenced by the cp overlay only. |
-| `catalog/` | Helm charts and typed value schemas. **Not part of the operator build.** See `catalog/README.md`. |
+| `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
+| `catalog/` | Helm charts and typed value schemas for workloads and infra-plane clusters. **Not part of the operator build**, and deliberately unrelated to `charts/`. See `catalog/README.md`. |
 
 The two operators run in **different clusters**, which is why they have separate images,
 separate RBAC, and separate overlays rather than one manager behind a feature flag.
@@ -46,6 +47,96 @@ does not have. After scaffolding you must, by hand:
 
 The `// +kubebuilder:scaffold:*` markers live in `cmd/ccluster-cp-operator/main.go`. Do not
 delete them.
+
+Finish with `make helm-generate`, or the new controller's RBAC will be missing from the
+chart that actually gets deployed.
+
+### The Helm charts are generated from the kustomize overlays
+
+Both operators deploy via Helm. `charts/cp/chart/` and `charts/ip/chart/` are **generated**,
+not hand-written: `kubebuilder edit --plugins=helm/v2-alpha` parses the kustomize output in
+`dist/install-{cp,ip}.yaml` and emits the chart. `config/` therefore remains the single
+source of truth for the manager Deployment, RBAC and CRDs, and controller-gen output cannot
+drift from what is deployed.
+
+```bash
+make helm-generate        # config/ -> dist/install-{cp,ip}.yaml -> charts/{cp,ip}/chart
+```
+
+Run it after touching anything under `config/`, `api/`, or any `+kubebuilder:rbac` marker.
+CI (`.github/workflows/test-chart.yml`) regenerates and fails on any diff, so stale charts
+are caught in review.
+
+The plugin's regeneration contract decides what you may hand-edit:
+
+- **`Chart.yaml` and `values.yaml` are preserved** across regeneration. They are the only
+  files in the charts you may edit, and the only safe home for the Argo CD dependency and
+  the pinned `fullnameOverride`.
+- **Everything under `templates/` is overwritten every run.** Do not put hand-written
+  templates there; they will disappear. Carry additional resources in a separate chart.
+
+Two sharp edges:
+
+- `kubebuilder edit --plugins=helm/v2-alpha` records only **one** chart in `PROJECT` — the
+  last invocation. `make helm-generate` therefore always passes explicit
+  `--manifests` / `--output-dir` for both charts rather than relying on a bare
+  `kubebuilder edit`, and runs cp last so `PROJECT` names the primary chart. A bare
+  `kubebuilder edit` regenerates only cp.
+- The plugin also injects single-operator `helm-deploy` / `helm-uninstall` / `install-helm`
+  targets into the Makefile. Delete them — this repo suffixes every cluster-touching target
+  `-cp` / `-ip`, and `install-helm` pipes a remote script into `bash`.
+
+`fullnameOverride` is pinned to `ccluster-cp` / `ccluster-ip` in each chart's `values.yaml`
+so resource names do not depend on the release name. `test/e2e/e2e_test.go` and the
+`kubectl -n ccluster-cp-system scale deploy/ccluster-cp-controller-manager` recipe below
+hardcode those names.
+
+### Do not `make install` before `make deploy-cp`
+
+The cp chart owns the CRDs, and Helm refuses to adopt resources that already exist without
+its ownership metadata:
+
+```
+Error: CustomResourceDefinition "cclinfraplanes.ccluster.nvidia.com" exists and cannot be
+imported into the current release: invalid ownership metadata; ...
+```
+
+This also hits any cluster that predates the Helm switch, since the old kustomize
+`deploy-cp` applied the CRDs too. Hand them over to Helm — non-destructive, existing CRs are
+untouched:
+
+```bash
+make helm-adopt-crds-cp   # adds the managed-by label and release annotations
+make deploy-cp
+```
+
+Only reach for `make uninstall` instead if the cluster is disposable: deleting a CRD deletes
+every custom resource of that kind.
+
+`make install` is for the `make run-cp` loop, where no chart is installed — it is not a
+prerequisite of `make deploy-cp`, which installs the CRDs itself.
+
+Conversely `undeploy-cp` leaves the CRDs behind, so a `make uninstall` is needed to fully
+reset a cluster. That is what `test/e2e` does.
+
+### Argo CD is a chart dependency, never installed by the operator
+
+The cp chart declares `argo-cd` (from `https://argoproj.github.io/argo-helm`) as a Helm
+dependency, pinned in `charts/cp/chart/Chart.lock`. `make deploy-cp` installs it alongside
+the operator.
+
+The operator must **never** install or upgrade Argo CD. Creating Argo CD's CRDs and
+ClusterRoles requires the operator to already hold those rights — Kubernetes prevents
+privilege escalation — which would mean granting it effective cluster-admin permanently for
+a one-time bootstrap; and an operator that owns Argo CD cannot be used to repair a broken
+Argo CD. The operator's job is to create `Application` / `ApplicationSet` resources.
+
+Argo CD is hub-and-spoke: **control-plane cluster only**. Infra-plane clusters get
+registered there as remote destinations. The ip chart has no dependencies.
+
+`make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for
+hermetic tests that must not pull the Argo CD images. `make helm-deps-update-cp` re-resolves
+the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD version.
 
 ### RBAC is generated per operator
 
@@ -77,15 +168,19 @@ in their single-operator form. Use the suffixed targets and the two image variab
 make build-cp            make build-ip
 make run-cp              make run-ip
 make docker-build-cp     make docker-build-ip      # one Dockerfile, --build-arg CMD=<binary>
-make deploy-cp           make deploy-ip
-make undeploy-cp         make undeploy-ip
+make deploy-cp           make deploy-ip            # helm upgrade --install
+make undeploy-cp         make undeploy-ip          # helm uninstall
 make build-installer-cp  make build-installer-ip   # dist/install-{cp,ip}.yaml
 
 IMG_CP ?= ccluster-cp-operator:dev
 IMG_IP ?= ccluster-ip-operator:dev
 ```
 
-`make install` / `make uninstall` (CRDs only) remain single, and `make test` covers both.
+`make install` / `make uninstall` (CRDs only), `make helm-generate` and `make helm-lint`
+cover both operators at once, and so does `make test`.
+
+`build-installer-*` is no longer a deploy path: `dist/install-{cp,ip}.yaml` exist to feed
+the chart generator. Deploy with `deploy-*`.
 
 ### Leader-election IDs must stay distinct
 
@@ -107,10 +202,14 @@ export KUBECONFIG=~/.kube/ccluster-dev.yaml
 Note `KUBECTL` is quoted in the Makefile, so `KUBECTL="kubectl --context foo"` does **not**
 work — it tries to exec that whole string as one binary. Use `KUBECONFIG`.
 
-### `make undeploy-cp` deletes the CRDs
+### `make undeploy-cp` keeps the CRDs, and takes Argo CD with it
 
-`config/cp` includes `../crd`, so undeploying removes every CRD and therefore every custom
-resource in the cluster. To stop the operator without data loss:
+The chart annotates every CRD `helm.sh/resource-policy: keep` (`crd.keep` in `values.yaml`),
+so `helm uninstall` leaves the CRDs and therefore every custom resource in place. This was
+*not* true of the old kustomize path, which included `../crd` and deleted them.
+
+What `undeploy-cp` does remove is **Argo CD**, since it is part of the same release. To stop
+just the operator, leaving Argo CD and everything it manages running:
 
 ```bash
 kubectl -n ccluster-cp-system scale deploy/ccluster-cp-controller-manager --replicas=0
@@ -127,14 +226,19 @@ leaves the CRD stuck `Terminating`.
 - `config/cp/rbac/role.yaml` — from `+kubebuilder:rbac:` markers, via `make manifests`
 - `**/zz_generated.*.go` — via `make generate`
 - `PROJECT` — from `kubebuilder` CLI commands
+- `charts/{cp,ip}/chart/templates/**` and `.helmignore` — from the kustomize overlays, via
+  `make helm-generate`. Overwritten on every run.
+- `charts/cp/chart/Chart.lock` — via `make helm-deps-update-cp`
 
 **Modified by the build (expect it dirty in `git status`):**
 
-- `config/{cp,ip}/kustomization.yaml` — `make deploy-*` rewrites the image via
-  `kustomize edit set image`
+- `config/{cp,ip}/kustomization.yaml` — `make build-installer-*` (and therefore
+  `helm-generate`) rewrites the image via `kustomize edit set image`
 
 **Hand-written, yours to edit:** everything else, including `config/base/manager.yaml`, all
-other kustomization files, `config/samples/`, and `config/ip/rbac/role.yaml` (for now).
+other kustomization files, `config/samples/`, `config/ip/rbac/role.yaml` (for now), and —
+the two exceptions inside the generated charts — `charts/{cp,ip}/chart/Chart.yaml` and
+`charts/{cp,ip}/chart/values.yaml`.
 
 ## Workflows
 
@@ -142,17 +246,19 @@ other kustomization files, `config/samples/`, and `config/ip/rbac/role.yaml` (fo
 
 ```bash
 make manifests generate   # regenerate CRDs + RBAC + deepcopy
+make helm-generate        # propagate them into charts/{cp,ip}/chart
 make install              # push the new CRD schema to the cluster
 ```
 
-Skipping this is the most common source of "my new field vanishes on apply" — the API server
-prunes fields the installed CRD schema does not know about.
+Skipping the first is the most common source of "my new field vanishes on apply" — the API
+server prunes fields the installed CRD schema does not know about. Skipping the second means
+the change is invisible to `make deploy-cp`, and CI will fail on the chart drift check.
 
 **Inner development loop** (fastest; manager runs on your host):
 
 ```bash
 export KUBECONFIG=~/.kube/ccluster-dev.yaml
-make install
+make install          # CRDs only — do not combine with `make deploy-cp`, see above
 make run-cp
 ```
 
@@ -161,6 +267,8 @@ make run-cp
 ```bash
 make fmt vet lint-fix
 make test
+make helm-generate && git status --short charts/   # must be clean; CI checks this
+make helm-lint
 ```
 
 **In-cluster verification** (the only loop that exercises real RBAC and the real image):
@@ -179,7 +287,9 @@ tag are unchanged, even though the image content changed.
 | Layer | Command | Covers | Does not cover |
 | --- | --- | --- | --- |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
-| e2e | `make test-e2e` | Full deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. | — |
+| e2e | `make test-e2e` | Full Helm deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Runs with `ARGOCD=false`. | The Argo CD dependency |
+| chart e2e | `make test-e2e-argocd` | The cp chart installed **with** Argo CD, asserting the argoproj CRDs appear. | Controller behaviour |
+| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render | Anything runtime |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
 Only `make test-e2e` and a real in-cluster deploy will catch a missing `+kubebuilder:rbac`
