@@ -24,11 +24,11 @@ metadata:
   labels:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
-  name: cclinfraplane-sample-credentials
+  name: ccluster-local-credentials
 type: Opaque
 stringData:
   # No "name" key: the operator sets it from the CCLInfraPlane's name, so this cluster
-  # appears in Argo CD as "cclinfraplane-sample". Anything set here would be overwritten.
+  # appears in Argo CD as "ccluster-local". Anything set here would be overwritten.
   #
   # Must be this exact string to get the credential-free in-cluster treatment.
   server: https://kubernetes.default.svc
@@ -41,7 +41,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
-  name: cclinfraplane-sample
+  name: ccluster-local
 spec:
   clusterCredentialsRef:
-    name: cclinfraplane-sample-credentials
+    name: ccluster-local-credentials
