@@ -99,3 +99,6 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# ctags
+tags
