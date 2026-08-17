@@ -7,13 +7,21 @@ metadata:
   name: cclinfraplane-sample-credentials
 type: Opaque
 stringData:
-  # TODO(user): Replace with the real infra-plane cluster credentials.
+  # This data is cloned verbatim into the Argo CD namespace, so it must be a valid Argo
+  # CD cluster Secret payload:
+  # https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
+  #
+  # TODO(user): Replace with the real infra-plane cluster credentials. caData is the
+  # cluster's CA certificate, base64-encoded.
+  name: infra-example
   server: https://infra.example.com:6443
-  bearer_token: replace-me
-  ca_cert: |
-    -----BEGIN CERTIFICATE-----
-    replace-me
-    -----END CERTIFICATE-----
+  config: |
+    {
+      "bearerToken": "replace-me",
+      "tlsClientConfig": {
+        "caData": "replace-me"
+      }
+    }
 ---
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLInfraPlane

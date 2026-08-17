@@ -228,13 +228,18 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # generated from the kustomize overlays by `make helm-generate` — see the Helm
 # section below.
 
+# The chart's argo-cd dependency installs into the RELEASE namespace, not the
+# `argocd` the operator defaults to, so deploy-cp overrides --argocd-namespace to
+# match. manager.args is restated in full because `--set manager.args[1]=...` builds
+# a sparse list and nulls index 0, silently dropping --leader-elect.
 .PHONY: deploy-cp
 deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the K8s cluster specified in ~/.kube/config.
 	"$(HELM)" upgrade --install $(HELM_RELEASE_CP) $(CHART_CP) \
 		--namespace $(HELM_NAMESPACE_CP) --create-namespace \
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
-		--set argo-cd.enabled=$(ARGOCD) \
+		--set argo-cd.enable=$(ARGOCD) \
+		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)"]' \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp

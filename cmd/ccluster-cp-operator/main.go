@@ -18,6 +18,7 @@ limitations under the License.
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -34,6 +35,11 @@ import (
 
 var scheme = runtime.NewScheme()
 
+// argoCDNamespace is registered on flag.CommandLine in main and read in
+// setupControllers. manager.Run owns flag.Parse, and calls SetupControllers only after
+// it, so the value is settled by the time a controller reads it.
+var argoCDNamespace string
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -42,6 +48,12 @@ func init() {
 }
 
 func main() {
+	// Registered before manager.Run, which parses flag.CommandLine. This flag is
+	// specific to the control-plane operator, so it does not belong in
+	// internal/manager alongside the operator-agnostic ones.
+	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd",
+		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes are written there.")
+
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
 		LeaderElectionID: "cp.ccluster.nvidia.com",
@@ -60,8 +72,9 @@ func main() {
 // which this project does not have.
 func setupControllers(mgr ctrl.Manager) error {
 	if err := (&cp.CCLInfraPlaneReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		ArgoCDNamespace: argoCDNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
