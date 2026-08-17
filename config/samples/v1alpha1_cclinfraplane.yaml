@@ -1,3 +1,22 @@
+# Registers the cluster the control plane itself runs in as an Argo CD cluster, under a
+# name of its own. This exercises the whole CCLInfraPlane path without needing a second
+# cluster to point at.
+#
+# No ServiceAccount, token or CA is involved. Argo CD special-cases the in-cluster API
+# server address: when a cluster Secret's server is exactly
+# https://kubernetes.default.svc, it connects using its own ServiceAccount rather than
+# anything in "config". So the credentials here are empty, and the tlsClientConfig is
+# only present because the field is required.
+#
+# The consequence is that this Secret does not sit *alongside* Argo CD's built-in
+# "in-cluster" entry - it defines it, under the name given below. That is the whole point
+# here: same cluster, different name. A registration that genuinely coexisted with
+# "in-cluster" would need a distinct server URL, and a distinct URL is not the in-cluster
+# address, so it would need real credentials again.
+#
+# A real infra-plane cluster is the opposite case: a remote API server that Argo CD has
+# no ambient access to, whose Secret carries a bearerToken and caData. The operator does
+# not care which of the two this is - it clones whatever the Secret holds.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -7,21 +26,12 @@ metadata:
   name: cclinfraplane-sample-credentials
 type: Opaque
 stringData:
-  # This data is cloned verbatim into the Argo CD namespace, so it must be a valid Argo
-  # CD cluster Secret payload:
-  # https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
-  #
-  # TODO(user): Replace with the real infra-plane cluster credentials. caData is the
-  # cluster's CA certificate, base64-encoded.
-  name: infra-example
-  server: https://infra.example.com:6443
+  # The name this cluster appears under in Argo CD.
+  name: ccluster-local
+  # Must be this exact string to get the credential-free in-cluster treatment.
+  server: https://kubernetes.default.svc
   config: |
-    {
-      "bearerToken": "replace-me",
-      "tlsClientConfig": {
-        "caData": "replace-me"
-      }
-    }
+    {"tlsClientConfig":{"insecure":false}}
 ---
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLInfraPlane

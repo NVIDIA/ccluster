@@ -99,7 +99,8 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	var infraPlane cclusternvidiacomv1alpha1.CCLInfraPlane
 	if err := r.Get(ctx, req.NamespacedName, &infraPlane); err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("Ignored missing CCLInfraPlane", "name", req.Name, "namespace", req.Namespace)
+			// The controller's logger already carries the request's name and namespace.
+			log.Info("Ignored missing CCLInfraPlane")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -135,7 +136,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// No requeue: only an edit elsewhere can resolve a name collision, and the
 			// Secret watch picks that up.
 			log.Info("Refused to overwrite cluster Secret owned by another CCLInfraPlane",
-				"secret", infraPlane.Name, "namespace", r.ArgoCDNamespace)
+				"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
 			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
 				reasonClusterSecretConflict, fmt.Sprintf(
 					"Secret %q in namespace %q belongs to another CCLInfraPlane",
@@ -147,7 +148,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Names and namespaces only: the credentials themselves must never reach the logs.
 	if op != controllerutil.OperationResultNone {
 		log.Info("Mirrored Argo CD cluster Secret", "secret", infraPlane.Name,
-			"namespace", r.ArgoCDNamespace, "operation", op)
+			"secretNamespace", r.ArgoCDNamespace, "operation", op)
 	}
 
 	return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
@@ -229,13 +230,13 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return err
 	case !ownedBy(&mirror, infraPlane):
 		log.Info("Left cluster Secret owned by another CCLInfraPlane in place",
-			"secret", infraPlane.Name, "namespace", r.ArgoCDNamespace)
+			"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
 	default:
 		if err := r.Delete(ctx, &mirror); client.IgnoreNotFound(err) != nil {
 			return err
 		}
 		log.Info("Deleted Argo CD cluster Secret", "secret", infraPlane.Name,
-			"namespace", r.ArgoCDNamespace)
+			"secretNamespace", r.ArgoCDNamespace)
 	}
 
 	controllerutil.RemoveFinalizer(infraPlane, finalizerName)
