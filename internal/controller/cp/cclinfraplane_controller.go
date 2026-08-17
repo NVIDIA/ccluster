@@ -52,6 +52,11 @@ const (
 	argoCDSecretTypeLabel   = "argocd.argoproj.io/secret-type"
 	argoCDSecretTypeCluster = "cluster"
 
+	// argoCDClusterNameKey is the data key Argo CD shows as the cluster's name. The
+	// operator sets it from the CCLInfraPlane, so one cluster cannot be registered
+	// under two different names depending on who wrote the credentials Secret.
+	argoCDClusterNameKey = "name"
+
 	// Back-references to the CCLInfraPlane a mirrored Secret was created for. An
 	// owner reference cannot be used: it may not cross namespaces, and the garbage
 	// collector deletes objects whose owner it cannot find in their own namespace.
@@ -158,6 +163,10 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
 // source. Only source's data and type are copied; its labels and annotations are not.
+//
+// The one key the operator owns is "name", which Argo CD displays as the cluster name:
+// it is always the CCLInfraPlane's name, whatever the source Secret says. Everything
+// else is cloned verbatim.
 func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -189,10 +198,12 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 		mirror.Annotations[annotationInfraPlaneNamespace] = infraPlane.Namespace
 
 		mirror.Type = source.Type
-		mirror.Data = make(map[string][]byte, len(source.Data))
+		mirror.Data = make(map[string][]byte, len(source.Data)+1)
 		for k, v := range source.Data {
 			mirror.Data[k] = append([]byte(nil), v...)
 		}
+		// Written last so it wins over any "name" the source Secret carries.
+		mirror.Data[argoCDClusterNameKey] = []byte(infraPlane.Name)
 		return nil
 	})
 }

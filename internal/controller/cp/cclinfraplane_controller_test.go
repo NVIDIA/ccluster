@@ -44,8 +44,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		)
 
 		// credentials is the opaque payload the controller must clone byte for byte.
+		// "name" deliberately disagrees with the CCLInfraPlane's name: the operator
+		// owns that key and must overwrite it.
 		credentials := map[string]string{
-			"name":   "infra-example",
+			"name":   "a-name-the-operator-should-replace",
 			"server": serverURL,
 			"config": `{"bearerToken":"fake-token"}`,
 		}
@@ -202,8 +204,20 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(k8sClient.Get(ctx, secretNamespacedName, source)).To(Succeed())
 
 			mirror := getMirror()
-			Expect(mirror.Data).To(Equal(source.Data))
 			Expect(mirror.Type).To(Equal(source.Type))
+
+			By("overwriting the Argo CD cluster name with the CCLInfraPlane's name")
+			Expect(mirror.Data).To(HaveKeyWithValue("name", []byte(resourceName)))
+
+			By("cloning every other key verbatim")
+			for key, value := range source.Data {
+				if key == "name" {
+					continue
+				}
+				Expect(mirror.Data).To(HaveKeyWithValue(key, value))
+			}
+			Expect(mirror.Data).To(HaveLen(len(source.Data)))
+
 			Expect(mirror.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
 			Expect(mirror.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(mirror.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
@@ -225,7 +239,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(k8sClient.Get(ctx, secretNamespacedName, source)).To(Succeed())
 
 			restored := getMirror()
-			Expect(restored.Data).To(Equal(source.Data))
+			Expect(restored.Data).To(HaveKeyWithValue("config", source.Data["config"]))
+			Expect(restored.Data).To(HaveKeyWithValue("name", []byte(resourceName)))
 			Expect(restored.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
 		})
 

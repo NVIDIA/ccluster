@@ -9,14 +9,15 @@
 # only present because the field is required.
 #
 # The consequence is that this Secret does not sit *alongside* Argo CD's built-in
-# "in-cluster" entry - it defines it, under the name given below. That is the whole point
-# here: same cluster, different name. A registration that genuinely coexisted with
+# "in-cluster" entry - it defines it, under the CCLInfraPlane's name. That is the whole
+# point here: same cluster, different name. A registration that genuinely coexisted with
 # "in-cluster" would need a distinct server URL, and a distinct URL is not the in-cluster
 # address, so it would need real credentials again.
 #
 # A real infra-plane cluster is the opposite case: a remote API server that Argo CD has
 # no ambient access to, whose Secret carries a bearerToken and caData. The operator does
-# not care which of the two this is - it clones whatever the Secret holds.
+# not care which of the two this is - apart from the "name" key it clones whatever the
+# Secret holds.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -26,8 +27,9 @@ metadata:
   name: cclinfraplane-sample-credentials
 type: Opaque
 stringData:
-  # The name this cluster appears under in Argo CD.
-  name: ccluster-local
+  # No "name" key: the operator sets it from the CCLInfraPlane's name, so this cluster
+  # appears in Argo CD as "cclinfraplane-sample". Anything set here would be overwritten.
+  #
   # Must be this exact string to get the credential-free in-cluster treatment.
   server: https://kubernetes.default.svc
   config: |

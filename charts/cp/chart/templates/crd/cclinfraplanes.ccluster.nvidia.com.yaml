@@ -58,8 +58,11 @@ spec:
                   Its data is copied verbatim into a Secret in the Argo CD namespace, named
                   after this CCLInfraPlane and labelled "argocd.argoproj.io/secret-type:
                   cluster". The operator does not interpret the data, so the referenced Secret
-                  must already carry Argo CD's cluster-secret keys - "name", "server" and
-                  "config". See
+                  must already carry Argo CD's cluster-secret keys - "server" and "config".
+
+                  The exception is "name", which Argo CD displays as the cluster name: the
+                  operator always sets it to this CCLInfraPlane's name, overwriting whatever the
+                  referenced Secret holds. See
                   https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
                 properties:
                   name:
