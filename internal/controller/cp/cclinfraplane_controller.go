@@ -115,10 +115,12 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, r.finalize(ctx, &infraPlane)
 	}
 
+	base := infraPlane.DeepCopy()
 	if controllerutil.AddFinalizer(&infraPlane, finalizerName) {
-		// Return after the update: the write bumps the resource version, and the next
-		// reconcile works from a settled object.
-		return ctrl.Result{}, r.Update(ctx, &infraPlane)
+		// Return after the write: it bumps the resource version, and the next reconcile
+		// works from a settled object.
+		return ctrl.Result{}, client.IgnoreNotFound(
+			r.Patch(ctx, &infraPlane, client.MergeFrom(base)))
 	}
 
 	secretName := infraPlane.Spec.ClusterCredentialsRef.Name
@@ -250,19 +252,30 @@ func (r *CCLInfraPlaneReconciler) finalize(
 			"secretNamespace", r.ArgoCDNamespace)
 	}
 
+	// Patched rather than updated, and NotFound ignored, for the reasons in setAvailable:
+	// the deletion that brought us here may not have reached the cache yet.
+	base := infraPlane.DeepCopy()
 	controllerutil.RemoveFinalizer(infraPlane, finalizerName)
-	return r.Update(ctx, infraPlane)
+	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
 // setAvailable sets the Available condition and the observed generation, then writes the
-// status subresource. A conflict is returned rather than retried in-loop so that the next
-// reconciliation re-reads the object.
+// status subresource.
+//
+// This is a merge patch, not an update, because r.Get reads through the informer cache:
+// on a CCLInfraPlane that was just written the cached copy can carry a stale resource
+// version, and an update would fail the optimistic-concurrency check even though the
+// status it computed is correct. A patch carries no such precondition. A NotFound is
+// ignored - the object was deleted while we were reconciling it, and there is no status
+// left to record.
 func (r *CCLInfraPlaneReconciler) setAvailable(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	status metav1.ConditionStatus,
 	reason, message string,
 ) error {
+	base := infraPlane.DeepCopy()
+
 	apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeAvailable,
 		Status:             status,
@@ -272,7 +285,7 @@ func (r *CCLInfraPlaneReconciler) setAvailable(
 	})
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
 
-	return r.Status().Update(ctx, infraPlane)
+	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
 // infraPlanesForSecret maps a Secret to the CCLInfraPlanes that care about it: either a
