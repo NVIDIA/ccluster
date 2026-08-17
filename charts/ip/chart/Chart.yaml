@@ -1,0 +1,22 @@
+# Chart metadata for ccluster-ip-operator.
+#
+# Everything under templates/ is REGENERATED from `kustomize build config/ip` by
+# `make helm-generate`. This file and values.yaml are not — the helm/v2-alpha
+# plugin preserves both.
+#
+# No dependencies: Argo CD is hub-and-spoke and lives in the control-plane cluster
+# only. Infra-plane clusters are registered there as remote destinations.
+apiVersion: v2
+name: ccluster-ip-operator
+description: ccluster infra-plane operator
+type: application
+
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - kubernetes
+  - operator
+
+annotations:
+  kubebuilder.io/generated-by: kubebuilder

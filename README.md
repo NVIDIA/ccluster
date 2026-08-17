@@ -55,6 +55,35 @@ The current codebase ships as a single Python package, `catalog`, that pairs eac
 
 # Getting Started
 
+## Deploying the operators
+
+Each operator ships as a Helm chart. The control-plane chart also installs Argo CD, which
+the control plane depends on — CCluster reconciles clusters and workloads by creating Argo CD
+`Application` and `ApplicationSet` resources, so Argo CD is a prerequisite rather than
+something the operator installs for itself.
+
+```bash
+# Control-plane cluster: ccluster-cp-operator + Argo CD
+make deploy-cp
+
+# Infra-plane cluster: ccluster-ip-operator
+make deploy-ip
+```
+
+Both targets act on your current kubeconfig context. Pin it first:
+
+```bash
+export KUBECONFIG=~/.kube/my-cluster.yaml
+```
+
+If the cluster already runs Argo CD, install the operator on its own with
+`make deploy-cp ARGOCD=false`. The charts live in `charts/cp/chart` and `charts/ip/chart`
+and can also be installed directly with `helm install`; they are generated from the
+kustomize overlays in `config/`, so regenerate them with `make helm-generate` after changing
+the API or any RBAC marker.
+
+## Using the catalog
+
 The catalog is a Python package. Install it into the environment of the service or tooling that builds your Argo CD Applications.
 
 ```bash
@@ -71,7 +100,7 @@ The package bundles the Helm chart assets (templates, `Chart.yaml`, `.tpl`, `Cha
 
 - **Python:** >= 3.10 (uses `StrEnum` and modern typing syntax)
 - **Runtime dependencies:** `pydantic`, `pyyaml` (installed automatically)
-- **Deployment targets (external):** a Kubernetes cluster, [Argo CD](https://argo-cd.readthedocs.io/), and [Helm](https://helm.sh/) to render and reconcile the charts. GPU workloads additionally require the NVIDIA GPU Operator / drivers on the cluster.
+- **Deployment targets (external):** a Kubernetes cluster and [Helm](https://helm.sh/). [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA GPU Operator / drivers on the cluster.
 
 # Usage
 

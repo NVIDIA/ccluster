@@ -1,0 +1,46 @@
+name: Helm Charts
+
+on:
+  pull_request:
+
+jobs:
+  charts:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # charts/{cp,ip}/chart are generated from the kustomize overlays. Regenerate
+      # them here and fail if the committed copies differ, so config/ and the charts
+      # can never drift.
+      - name: Install kubebuilder
+        run: |
+          curl -fsSL -o kubebuilder \
+            "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.13.0/kubebuilder_linux_$(go env GOARCH)"
+          chmod +x kubebuilder
+          sudo mv kubebuilder /usr/local/bin/
+
+      - name: Verify the committed charts match config/
+        run: |
+          make helm-generate
+          git diff --exit-code -- charts/ PROJECT
+
+      - name: Lint the charts
+        run: make helm-lint
+
+      # Render both charts and confirm the resources the rest of the repo depends on
+      # by name are present. test/e2e and the AGENTS.md recipes hardcode these.
+      - name: Render the charts
+        run: |
+          helm template ccluster-cp charts/cp/chart -n ccluster-cp-system > /tmp/cp.yaml
+          helm template ccluster-ip charts/ip/chart -n ccluster-ip-system > /tmp/ip.yaml
+          grep -q 'name: ccluster-cp-controller-manager$' /tmp/cp.yaml
+          grep -q 'name: ccluster-cp-controller-manager-metrics-service$' /tmp/cp.yaml
+          grep -q 'name: ccluster-ip-controller-manager$' /tmp/ip.yaml
+          grep -q 'kind: CustomResourceDefinition' /tmp/cp.yaml

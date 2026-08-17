@@ -101,6 +101,15 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
+.PHONY: test-e2e-argocd
+test-e2e-argocd: setup-test-e2e docker-build-cp ## Install the cp chart WITH Argo CD into a Kind cluster and verify it comes up. Pulls Argo CD images from the internet.
+	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER)
+	$(MAKE) deploy-cp HELM_TIMEOUT=10m
+	"$(KUBECTL)" get crd applications.argoproj.io applicationsets.argoproj.io
+	"$(KUBECTL)" -n $(HELM_NAMESPACE_CP) rollout status deploy/ccluster-cp-controller-manager --timeout=2m
+	$(MAKE) undeploy-cp
+	$(MAKE) cleanup-test-e2e
+
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
@@ -215,23 +224,112 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
 	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
+# Both operators deploy via Helm. The charts under charts/{cp,ip}/chart are
+# generated from the kustomize overlays by `make helm-generate` — see the Helm
+# section below.
+
 .PHONY: deploy-cp
-deploy-cp: manifests kustomize ## Deploy ccluster-cp-operator to the K8s cluster specified in ~/.kube/config.
-	cd config/cp && "$(KUSTOMIZE)" edit set image controller=${IMG_CP}
-	"$(KUSTOMIZE)" build config/cp | "$(KUBECTL)" apply -f -
+deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the K8s cluster specified in ~/.kube/config.
+	"$(HELM)" upgrade --install $(HELM_RELEASE_CP) $(CHART_CP) \
+		--namespace $(HELM_NAMESPACE_CP) --create-namespace \
+		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
+		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
+		--set argo-cd.enabled=$(ARGOCD) \
+		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp
-undeploy-cp: kustomize ## Undeploy ccluster-cp-operator. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/cp | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy-cp: helm ## Undeploy ccluster-cp-operator. CRDs are retained (helm.sh/resource-policy: keep).
+	"$(HELM)" uninstall $(HELM_RELEASE_CP) --namespace $(HELM_NAMESPACE_CP) --ignore-not-found
 
 .PHONY: deploy-ip
-deploy-ip: manifests kustomize ## Deploy ccluster-ip-operator to the K8s cluster specified in ~/.kube/config.
-	cd config/ip && "$(KUSTOMIZE)" edit set image controller=${IMG_IP}
-	"$(KUSTOMIZE)" build config/ip | "$(KUBECTL)" apply -f -
+deploy-ip: helm ## Deploy ccluster-ip-operator to the K8s cluster specified in ~/.kube/config.
+	"$(HELM)" upgrade --install $(HELM_RELEASE_IP) $(CHART_IP) \
+		--namespace $(HELM_NAMESPACE_IP) --create-namespace \
+		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_IP))) \
+		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_IP))) \
+		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-ip
-undeploy-ip: kustomize ## Undeploy ccluster-ip-operator. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/ip | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy-ip: helm ## Undeploy ccluster-ip-operator.
+	"$(HELM)" uninstall $(HELM_RELEASE_IP) --namespace $(HELM_NAMESPACE_IP) --ignore-not-found
+
+##@ Helm
+
+# The operator charts are GENERATED, not hand-written: `kubebuilder edit
+# --plugins=helm/v2-alpha` parses the kustomize output in dist/install-{cp,ip}.yaml
+# and emits charts/{cp,ip}/chart. config/ therefore stays the single source of truth
+# for the manager Deployment, RBAC and CRDs, and controller-gen output can never
+# drift from what gets deployed.
+#
+# The plugin preserves Chart.yaml and values.yaml and regenerates everything under
+# templates/. Hand-edit only the former two — the Argo CD dependency and the pinned
+# fullnameOverride live there for exactly that reason.
+#
+# Note the plugin records only ONE chart in PROJECT (the last invocation), so both
+# charts are always regenerated here with explicit --manifests/--output-dir flags
+# rather than by a bare `kubebuilder edit`.
+#
+# The generated charts are COMMITTED, so deploying does not require the kubebuilder
+# CLI. Run `make helm-generate` after changing anything under config/, api/, or a
+# +kubebuilder:rbac marker; CI fails if the committed charts are stale.
+
+HELM ?= helm
+HELM_RELEASE_CP ?= ccluster-cp
+HELM_RELEASE_IP ?= ccluster-ip
+HELM_NAMESPACE_CP ?= ccluster-cp-system
+HELM_NAMESPACE_IP ?= ccluster-ip-system
+CHART_CP ?= charts/cp/chart
+CHART_IP ?= charts/ip/chart
+HELM_TIMEOUT ?= 5m
+# Set ARGOCD=false to install the cp operator without Argo CD, e.g. into a cluster
+# that already runs it, or for hermetic tests that must not pull the Argo CD images.
+ARGOCD ?= true
+# Extra flags passed through to `helm upgrade --install`.
+HELM_ARGS ?=
+
+.PHONY: helm
+helm: ## Verify that the helm binary is available.
+	@command -v "$(HELM)" >/dev/null 2>&1 || { \
+		echo "helm not found. Install it from https://helm.sh/docs/intro/install/ or set HELM=<path>." >&2; \
+		exit 1; \
+	}
+
+KUBEBUILDER ?= kubebuilder
+
+.PHONY: kubebuilder
+kubebuilder: ## Verify that the kubebuilder CLI is available.
+	@command -v "$(KUBEBUILDER)" >/dev/null 2>&1 || { \
+		echo "kubebuilder not found. Install it from https://book.kubebuilder.io/quick-start or set KUBEBUILDER=<path>." >&2; \
+		exit 1; \
+	}
+
+.PHONY: helm-generate
+helm-generate: kubebuilder build-installer-cp build-installer-ip ## Regenerate both operator charts from the kustomize overlays.
+	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-ip.yaml --output-dir=charts/ip
+	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-cp.yaml --output-dir=charts/cp
+
+.PHONY: helm-adopt-crds-cp
+helm-adopt-crds-cp: ## Hand CRDs installed by `make install` (or the old kustomize deploy-cp) over to the Helm release. Non-destructive; existing CRs are preserved.
+	@names="$$("$(KUBECTL)" get crd -o name -l 'app.kubernetes.io/managed-by!=Helm' 2>/dev/null \
+		| grep -E 'ccluster\.nvidia\.com$$' || true)"; \
+	if [ -z "$$names" ]; then echo "No unowned ccluster CRDs found; nothing to adopt."; exit 0; fi; \
+	echo "Adopting into release $(HELM_RELEASE_CP)/$(HELM_NAMESPACE_CP):"; echo "$$names"; \
+	"$(KUBECTL)" label $$names app.kubernetes.io/managed-by=Helm --overwrite; \
+	"$(KUBECTL)" annotate $$names \
+		meta.helm.sh/release-name=$(HELM_RELEASE_CP) \
+		meta.helm.sh/release-namespace=$(HELM_NAMESPACE_CP) --overwrite
+
+.PHONY: helm-deps-cp
+helm-deps-cp: helm ## Vendor the cp chart's dependencies (Argo CD) from Chart.lock.
+	"$(HELM)" dependency build $(CHART_CP)
+
+.PHONY: helm-deps-update-cp
+helm-deps-update-cp: helm ## Re-resolve the cp chart's dependencies and refresh Chart.lock. Use when bumping the Argo CD version.
+	"$(HELM)" dependency update $(CHART_CP)
+
+.PHONY: helm-lint
+helm-lint: helm helm-deps-cp ## Lint both operator charts.
+	"$(HELM)" lint $(CHART_CP) $(CHART_IP)
 
 ##@ Dependencies
 
@@ -315,3 +413,4 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+

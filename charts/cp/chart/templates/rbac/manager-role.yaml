@@ -1,0 +1,31 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ccluster.resourceName" (dict "suffix" "manager-role" "context" $) }}
+rules:
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclinfraplanes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclinfraplanes/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclinfraplanes/status
+  verbs:
+  - get
+  - patch
+  - update
