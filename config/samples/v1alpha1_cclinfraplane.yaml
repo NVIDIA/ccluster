@@ -1,3 +1,20 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/name: ccluster
+    app.kubernetes.io/managed-by: kustomize
+  name: cclinfraplane-sample-credentials
+type: Opaque
+stringData:
+  # TODO(user): Replace with the real infra-plane cluster credentials.
+  server: https://infra.example.com:6443
+  bearer_token: replace-me
+  ca_cert: |
+    -----BEGIN CERTIFICATE-----
+    replace-me
+    -----END CERTIFICATE-----
+---
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLInfraPlane
 metadata:
@@ -5,5 +22,6 @@ metadata:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
   name: cclinfraplane-sample
-spec: {}
-  # TODO(user): Add fields here
+spec:
+  clusterCredentialsRef:
+    name: cclinfraplane-sample-credentials

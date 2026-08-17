@@ -14,7 +14,14 @@ spec:
     singular: cclinfraplane
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Available")].status
+      name: Available
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: CCLInfraPlane is the Schema for the cclinfraplanes API
@@ -39,10 +46,23 @@ spec:
           spec:
             description: spec defines the desired state of CCLInfraPlane
             properties:
-              foo:
-                description: foo is an example field of CCLInfraPlane. Edit cclinfraplane_types.go
-                  to remove/update
-                type: string
+              clusterCredentialsRef:
+                description: |-
+                  clusterCredentialsRef references a Secret in the same namespace as this
+                  CCLInfraPlane that holds the credentials for the infra-plane cluster's API
+                  server. The Secret must contain the keys "server", "bearer_token" and
+                  "ca_cert".
+                properties:
+                  name:
+                    description: name is the name of the Secret.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - clusterCredentialsRef
             type: object
           status:
             description: status defines the observed state of CCLInfraPlane
@@ -116,6 +136,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration is the .metadata.generation the conditions
+                  were computed from.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

@@ -20,19 +20,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+
+// Keys expected in the Secret referenced by CCLInfraPlaneSpec.ClusterCredentialsRef.
+const (
+	// CredentialsKeyServer is the API server URL of the infra-plane cluster.
+	CredentialsKeyServer = "server"
+	// CredentialsKeyBearerToken is the bearer token used to authenticate against it.
+	CredentialsKeyBearerToken = "bearer_token"
+	// CredentialsKeyCACert is the PEM-encoded CA certificate that signs its serving cert.
+	CredentialsKeyCACert = "ca_cert"
+)
+
+// LocalSecretReference references a Secret in the same namespace as the referring object.
+type LocalSecretReference struct {
+	// name is the name of the Secret.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+}
 
 // CCLInfraPlaneSpec defines the desired state of CCLInfraPlane
 type CCLInfraPlaneSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of CCLInfraPlane. Edit cclinfraplane_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// clusterCredentialsRef references a Secret in the same namespace as this
+	// CCLInfraPlane that holds the credentials for the infra-plane cluster's API
+	// server. The Secret must contain the keys "server", "bearer_token" and
+	// "ca_cert".
+	// +required
+	ClusterCredentialsRef LocalSecretReference `json:"clusterCredentialsRef"`
 }
 
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.
@@ -56,10 +72,16 @@ type CCLInfraPlaneStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// observedGeneration is the .metadata.generation the conditions were computed from.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API
 type CCLInfraPlane struct {
