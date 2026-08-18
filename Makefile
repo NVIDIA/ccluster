@@ -239,7 +239,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enable=$(ARGOCD) \
-		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)"]' \
+		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp
@@ -289,6 +289,11 @@ HELM_TIMEOUT ?= 5m
 # Set ARGOCD=false to install the cp operator without Argo CD, e.g. into a cluster
 # that already runs it, or for hermetic tests that must not pull the Argo CD images.
 ARGOCD ?= true
+# The chart catalog the operator points its generated ApplicationSets at. Override
+# CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
+# repo-server clones the repository itself, so the revision must be pushed.
+CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
+CATALOG_REVISION ?= main
 # Extra flags passed through to `helm upgrade --install`.
 HELM_ARGS ?=
 

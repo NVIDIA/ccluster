@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
 var _ = Describe("CCLInfraPlane Controller", func() {
@@ -41,6 +42,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			namespace       = "default"
 			argoCDNamespace = "argocd"
 			serverURL       = "https://infra.example.com:6443"
+			repoURL         = "https://github.com/NVIDIA/ccluster"
+			revision        = "test-revision"
 		)
 
 		// credentials is the opaque payload the controller must clone byte for byte.
@@ -63,6 +66,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Namespace: namespace,
 		}
 		mirrorNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: argoCDNamespace,
+		}
+		appSetNamespacedName := types.NamespacedName{
 			Name:      resourceName,
 			Namespace: argoCDNamespace,
 		}
@@ -116,11 +123,22 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			return mirror
 		}
 
+		// getAppSet returns the ApplicationSet created for the CCLInfraPlane.
+		getAppSet := func() *argocdv1alpha1.ApplicationSet {
+			GinkgoHelper()
+
+			appSet := &argocdv1alpha1.ApplicationSet{}
+			Expect(k8sClient.Get(ctx, appSetNamespacedName, appSet)).To(Succeed())
+			return appSet
+		}
+
 		BeforeEach(func() {
 			reconciler = &CCLInfraPlaneReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
 				ArgoCDNamespace: argoCDNamespace,
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
 			}
 
 			By("creating the Argo CD namespace")
@@ -162,6 +180,14 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Eventually(func() bool {
 					return apierrors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, resource))
 				}).Should(BeTrue())
+			} else {
+				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+			}
+
+			By("Cleanup the ApplicationSet")
+			appSet := &argocdv1alpha1.ApplicationSet{}
+			if err := k8sClient.Get(ctx, appSetNamespacedName, appSet); err == nil {
+				Expect(k8sClient.Delete(ctx, appSet)).To(Succeed())
 			} else {
 				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 			}
@@ -270,11 +296,13 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(getMirror().Data).To(HaveKeyWithValue("config", []byte("someone-elses")))
 		})
 
-		It("should delete the mirrored Secret when the CCLInfraPlane is deleted", func() {
+		It("should delete the mirrored Secret and the ApplicationSet when the CCLInfraPlane is deleted", func() {
 			createSecret(credentials)
 
 			infraPlane := settle()
 			Expect(controllerutil.ContainsFinalizer(infraPlane, finalizerName)).To(BeTrue())
+			Expect(k8sClient.Get(ctx, appSetNamespacedName,
+				&argocdv1alpha1.ApplicationSet{})).To(Succeed())
 
 			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -284,8 +312,103 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, appSetNamespacedName,
+				&argocdv1alpha1.ApplicationSet{}))).To(BeTrue())
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, typeNamespacedName, &cclusternvidiacomv1alpha1.CCLInfraPlane{}))).To(BeTrue())
+		})
+
+		It("should create an ApplicationSet that installs argo-rollouts", func() {
+			createSecret(credentials)
+
+			infraPlane := settle()
+
+			condition := apimeta.FindStatusCondition(
+				infraPlane.Status.Conditions, conditionTypeComponentsApplied)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(reasonApplicationSetCreated))
+
+			appSet := getAppSet()
+			Expect(appSet.GetAnnotations()).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
+			Expect(appSet.GetAnnotations()).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
+
+			By("targeting the cluster the mirrored Secret registers")
+			template := appSet.Spec.Template.Spec
+			Expect(template.Destination.Name).To(Equal(resourceName))
+			Expect(getMirror().Data).To(HaveKeyWithValue("name", []byte(resourceName)))
+			Expect(template.Destination.Namespace).To(Equal(argoRolloutsNamespace))
+
+			By("deploying the argo-rollouts chart from the configured catalog repository")
+			Expect(template.Source.RepoURL).To(Equal(repoURL))
+			Expect(template.Source.TargetRevision).To(Equal(revision))
+			Expect(template.Source.Path).To(Equal(argoRolloutsChartPath))
+
+			By("generating one Application from a single-element list generator")
+			Expect(appSet.Spec.GoTemplate).To(BeTrue())
+			Expect(appSet.Spec.Template.Name).To(Equal(resourceName + "-{{.name}}"))
+			Expect(appSet.Spec.Generators).To(HaveLen(1))
+			Expect(appSet.Spec.Generators[0].List).NotTo(BeNil())
+			Expect(appSet.Spec.Generators[0].List.Elements).To(Equal(
+				[]argocdv1alpha1.GeneratorElement{{Name: argoRolloutsName}}))
+
+			By("syncing automatically, creating the destination namespace")
+			Expect(template.SyncPolicy).NotTo(BeNil())
+			Expect(template.SyncPolicy.Automated).To(Equal(
+				&argocdv1alpha1.SyncPolicyAutomated{Prune: true, SelfHeal: true}))
+			Expect(template.SyncPolicy.SyncOptions).To(ConsistOf("CreateNamespace=true"))
+		})
+
+		It("should restore the ApplicationSet spec after it drifts", func() {
+			createSecret(credentials)
+			settle()
+
+			By("repointing the ApplicationSet at another repository")
+			appSet := getAppSet()
+			appSet.Spec.Template.Spec.Source.RepoURL = "https://example.com/tampered"
+			Expect(k8sClient.Update(ctx, appSet)).To(Succeed())
+
+			reconcileAndGet()
+
+			Expect(getAppSet().Spec.Template.Spec.Source.RepoURL).To(Equal(repoURL))
+		})
+
+		It("should refuse to overwrite an ApplicationSet owned by another CCLInfraPlane", func() {
+			createSecret(credentials)
+
+			By("planting an ApplicationSet that belongs to a CCLInfraPlane in another namespace")
+			planted := &argocdv1alpha1.ApplicationSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      appSetNamespacedName.Name,
+					Namespace: argoCDNamespace,
+					Annotations: map[string]string{
+						annotationInfraPlaneName:      resourceName,
+						annotationInfraPlaneNamespace: "other-namespace",
+					},
+				},
+			}
+			planted.Spec.Template.Spec.Source.RepoURL = "https://example.com/someone-elses"
+			Expect(k8sClient.Create(ctx, planted)).To(Succeed())
+
+			infraPlane := settle()
+
+			condition := apimeta.FindStatusCondition(
+				infraPlane.Status.Conditions, conditionTypeComponentsApplied)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(reasonApplicationSetConflict))
+
+			Expect(getAppSet().Spec.Template.Spec.Source.RepoURL).
+				To(Equal("https://example.com/someone-elses"))
+
+			By("leaving it in place when the CCLInfraPlane is deleted")
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, appSetNamespacedName,
+				&argocdv1alpha1.ApplicationSet{})).To(Succeed())
 		})
 	})
 })

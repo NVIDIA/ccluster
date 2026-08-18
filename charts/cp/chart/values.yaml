@@ -23,13 +23,21 @@ manager:
   ## Arguments
   ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
-  ## clones from each CCLInfraPlane's clusterCredentialsRef. The default matches a
+  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the ApplicationSet
+  ## that deploys the cluster_base catalog onto that cluster. The default matches a
   ## stock Argo CD install. Note that the `argo-cd` subchart below installs into this
   ## chart's RELEASE namespace, not `argocd` — so when Argo CD comes from this chart,
   ## override this to the release namespace. `make deploy-cp` does that for you.
+  ##
+  ## --catalog-repo-url and --catalog-revision are the Git repository and revision the
+  ## generated ApplicationSets deploy the catalogs/cluster_base charts from. Argo CD's
+  ## repo-server clones the repository, so the revision has to be pushed — point
+  ## --catalog-revision at a branch to try a catalog change before it merges.
   args:
     - --leader-elect
     - --argocd-namespace=argocd
+    - --catalog-repo-url=https://github.com/NVIDIA/ccluster
+    - --catalog-revision=main
 
   ## Environment variables
   ##
