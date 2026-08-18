@@ -1,19 +1,39 @@
+# Registers the cluster the control plane itself runs in as an Argo CD cluster, under a
+# name of its own. This exercises the whole CCLInfraPlane path without needing a second
+# cluster to point at.
+#
+# No ServiceAccount, token or CA is involved. Argo CD special-cases the in-cluster API
+# server address: when a cluster Secret's server is exactly
+# https://kubernetes.default.svc, it connects using its own ServiceAccount rather than
+# anything in "config". So the credentials here are empty, and the tlsClientConfig is
+# only present because the field is required.
+#
+# The consequence is that this Secret does not sit *alongside* Argo CD's built-in
+# "in-cluster" entry - it defines it, under the CCLInfraPlane's name. That is the whole
+# point here: same cluster, different name. A registration that genuinely coexisted with
+# "in-cluster" would need a distinct server URL, and a distinct URL is not the in-cluster
+# address, so it would need real credentials again.
+#
+# A real infra-plane cluster is the opposite case: a remote API server that Argo CD has
+# no ambient access to, whose Secret carries a bearerToken and caData. The operator does
+# not care which of the two this is - apart from the "name" key it clones whatever the
+# Secret holds.
 apiVersion: v1
 kind: Secret
 metadata:
   labels:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
-  name: cclinfraplane-sample-credentials
+  name: ccluster-local-credentials
 type: Opaque
 stringData:
-  # TODO(user): Replace with the real infra-plane cluster credentials.
-  server: https://infra.example.com:6443
-  bearer_token: replace-me
-  ca_cert: |
-    -----BEGIN CERTIFICATE-----
-    replace-me
-    -----END CERTIFICATE-----
+  # No "name" key: the operator sets it from the CCLInfraPlane's name, so this cluster
+  # appears in Argo CD as "ccluster-local". Anything set here would be overwritten.
+  #
+  # Must be this exact string to get the credential-free in-cluster treatment.
+  server: https://kubernetes.default.svc
+  config: |
+    {"tlsClientConfig":{"insecure":false}}
 ---
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLInfraPlane
@@ -21,7 +41,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
-  name: cclinfraplane-sample
+  name: ccluster-local
 spec:
   clusterCredentialsRef:
-    name: cclinfraplane-sample-credentials
+    name: ccluster-local-credentials

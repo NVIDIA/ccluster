@@ -28,7 +28,7 @@ dependencies:
   - name: argo-cd
     version: 10.4.0
     repository: https://argoproj.github.io/argo-helm
-    condition: argo-cd.enabled
+    condition: argo-cd.enable
 
 annotations:
   kubebuilder.io/generated-by: kubebuilder

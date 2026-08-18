@@ -22,16 +22,6 @@ import (
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// Keys expected in the Secret referenced by CCLInfraPlaneSpec.ClusterCredentialsRef.
-const (
-	// CredentialsKeyServer is the API server URL of the infra-plane cluster.
-	CredentialsKeyServer = "server"
-	// CredentialsKeyBearerToken is the bearer token used to authenticate against it.
-	CredentialsKeyBearerToken = "bearer_token"
-	// CredentialsKeyCACert is the PEM-encoded CA certificate that signs its serving cert.
-	CredentialsKeyCACert = "ca_cert"
-)
-
 // LocalSecretReference references a Secret in the same namespace as the referring object.
 type LocalSecretReference struct {
 	// name is the name of the Secret.
@@ -45,8 +35,17 @@ type LocalSecretReference struct {
 type CCLInfraPlaneSpec struct {
 	// clusterCredentialsRef references a Secret in the same namespace as this
 	// CCLInfraPlane that holds the credentials for the infra-plane cluster's API
-	// server. The Secret must contain the keys "server", "bearer_token" and
-	// "ca_cert".
+	// server.
+	//
+	// Its data is copied verbatim into a Secret in the Argo CD namespace, named
+	// after this CCLInfraPlane and labelled "argocd.argoproj.io/secret-type:
+	// cluster". The operator does not interpret the data, so the referenced Secret
+	// must already carry Argo CD's cluster-secret keys - "server" and "config".
+	//
+	// The exception is "name", which Argo CD displays as the cluster name: the
+	// operator always sets it to this CCLInfraPlane's name, overwriting whatever the
+	// referenced Secret holds. See
+	// https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
 	// +required
 	ClusterCredentialsRef LocalSecretReference `json:"clusterCredentialsRef"`
 }

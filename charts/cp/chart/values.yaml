@@ -22,8 +22,14 @@ manager:
 
   ## Arguments
   ##
+  ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
+  ## clones from each CCLInfraPlane's clusterCredentialsRef. The default matches a
+  ## stock Argo CD install. Note that the `argo-cd` subchart below installs into this
+  ## chart's RELEASE namespace, not `argocd` — so when Argo CD comes from this chart,
+  ## override this to the release namespace. `make deploy-cp` does that for you.
   args:
     - --leader-elect
+    - --argocd-namespace=argocd
 
   ## Environment variables
   ##
@@ -120,5 +126,5 @@ prometheus:
 ## Argo CD, or for hermetic tests that must not pull the Argo CD images
 ## (`make deploy-cp ARGOCD=false`).
 argo-cd:
-  enabled: true
+  enable: true
 
