@@ -1,0 +1,13 @@
+keda:
+  operator:
+    replicaCount: 2
+  metricsServer:
+    replicaCount: 1
+  webhooks:
+    enabled: true
+  # Re-enable once kube-prometheus-stack is deployed (provides the
+  # PodMonitor CRD).
+  prometheus:
+    operator:
+      podMonitor:
+        enabled: false

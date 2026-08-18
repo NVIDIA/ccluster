@@ -1,0 +1,12 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: fluent-bit
+spec:
+  spiffeIDTemplate: "spiffe://{{ .Values.global.cluster.domain }}/ns/fluent-bit/sa/fluentbit"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: fluent-bit

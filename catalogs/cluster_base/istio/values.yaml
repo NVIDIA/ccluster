@@ -1,0 +1,72 @@
+istio-base:
+  defaultRevision: default
+
+istiod:
+  pilot:
+    autoscaleMin: 2
+  cni:
+    enabled: true
+  defaultPodDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+istio-gateway:
+  # Disabled by default to avoid the istiod-webhook race on first
+  # install. Run `helm upgrade ... --set istio-gateway.enabled=true`
+  # in a second pass once istiod is Ready.
+  enabled: false
+  service:
+    annotations: {}
+    externalTrafficPolicy: Cluster
+    ports:
+      - name: status-port
+        port: 15021
+        protocol: TCP
+        targetPort: 15021
+      - name: http2
+        port: 80
+        protocol: TCP
+        targetPort: 8080
+      - name: https
+        port: 443
+        protocol: TCP
+        targetPort: 8443
+  autoscaling:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 8
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+istio-cni:
+  cni:
+    # Defaults below target k3s/k3d. Override per-cluster via
+    # IstioOverrides for other distros:
+    #   GKE (COS):   cniConfDir=/etc/cni/net.d, cniBinDir=/home/kubernetes/bin
+    #   EKS / kind / kubeadm:
+    #                cniConfDir=/etc/cni/net.d, cniBinDir=/opt/cni/bin
+    # On GKE COS specifically, /opt/cni/bin is mounted read-only — using
+    # it there will fail with "read-only file system" during binary copy.
+    cniConfDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+    # k3s embeds its CNI plugins under the k3s data dir; containerd looks
+    # for them there, so istio-cni must install its binary alongside them.
+    # This matches the cniBinDir pinned in the local-v2 Pulumi stacks
+    # (iac/{control-plane/local-v2,infra-planes/local-k8s-v2}). Using /bin
+    # here would install to a path k3s never scans, breaking sidecar
+    # networking on local/k3d clusters (which register with no cloud
+    # provider, so Istio.cluster_defaults() leaves this default in place).
+    cniBinDir: /var/lib/rancher/k3s/data/cni
+    # When a pod (e.g. ingress-nginx) is scheduled onto a node before
+    # istio-cni-node has installed iptables rules, the istio-validation
+    # init container fails and the pod CrashLoopBackOffs forever. Delete
+    # the broken pod so it reschedules onto a node with CNI ready,
+    # instead of trying to repair it in place.
+    repair:
+      repairPods: false
+      deletePods: true
+
+# In-chart DaemonSet patch for the istio-cni-node DaemonSet when Cilium
+# is the cluster CNI. Rendered by templates/cilium-patch.yaml.
+ciliumIstioPatch:
+  enabled: false
