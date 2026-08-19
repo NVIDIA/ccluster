@@ -153,3 +153,18 @@ argo-cd:
       ## argo-cd dependency.
       applicationsetcontroller.enable.progressive.syncs: "true"
 
+      ## Server-side diff, the companion to the ServerSideApply sync option every
+      ## generated Application carries.
+      ##
+      ## ServerSideApply changes how Argo CD *writes* a resource; this changes how it
+      ## *compares* one. Without it the comparison is still a client-side three-way
+      ## merge against the kubectl.kubernetes.io/last-applied-configuration annotation
+      ## — which an object larger than the annotation limit cannot carry, and which
+      ## server-side apply stops maintaining. Large CRDs then report OutOfSync forever
+      ## despite syncing cleanly, and because a RollingSync step advances only on
+      ## Healthy *and* Synced, one such CRD stalls every later wave of a CCLDeployment.
+      ##
+      ## argo-rollouts' rollouts.argoproj.io CRD is ~600KB; several other cluster_base
+      ## charts are comparable.
+      controller.diff.server.side: "true"
+

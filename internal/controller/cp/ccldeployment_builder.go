@@ -170,7 +170,17 @@ func (r *CCLDeploymentReconciler) applicationSetSpec(
 						Prune:    true,
 						SelfHeal: true,
 					},
-					SyncOptions: []string{"CreateNamespace=true"},
+					// ServerSideApply is not optional for this catalog. Argo CD's
+					// default client-side apply records the manifest in the
+					// kubectl.kubernetes.io/last-applied-configuration annotation
+					// and diffs against it, but an annotation cannot hold a large
+					// object - argo-rollouts' rollouts.argoproj.io CRD is ~600KB -
+					// so the copy is truncated and the diff never converges. The
+					// resource then sits OutOfSync forever despite syncing
+					// successfully, which stalls every later RollingSync wave,
+					// since a step advances only on Healthy *and* Synced. Several
+					// cluster_base charts ship CRDs that big.
+					SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
 				},
 			},
 		},

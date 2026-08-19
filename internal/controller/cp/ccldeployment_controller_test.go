@@ -344,7 +344,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 
 			Expect(template.Spec.SyncPolicy.Automated.Prune).To(BeTrue())
 			Expect(template.Spec.SyncPolicy.Automated.SelfHeal).To(BeTrue())
-			Expect(template.Spec.SyncPolicy.SyncOptions).To(ConsistOf("CreateNamespace=true"))
+			// ServerSideApply keeps large CRDs from sitting OutOfSync forever, which
+			// would stall every later RollingSync wave.
+			Expect(template.Spec.SyncPolicy.SyncOptions).To(
+				ConsistOf("CreateNamespace=true", "ServerSideApply=true"))
 		})
 
 		It("should reject duplicate component names", func() {
