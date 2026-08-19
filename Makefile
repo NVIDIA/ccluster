@@ -389,9 +389,7 @@ ARGOCD ?= true
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.
 CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
-# TEMPORARY: catalogs/ does not exist on main yet. Revert to `main` once the branch
-# merges.
-CATALOG_REVISION ?= anandj/catalogs
+CATALOG_REVISION ?= main
 # The kubeconfig context each operator is deployed to. Empty means "whatever the
 # current context is", which is what deploy-cp / deploy-ip on their own have always
 # done. `make deploy` sets them to the two development clusters.
