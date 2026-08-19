@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cluster_base_spire
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: spire
+    version: 0.20.0
+    repository: https://spiffe.github.io/helm-charts-hardened/

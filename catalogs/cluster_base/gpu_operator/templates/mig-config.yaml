@@ -1,0 +1,27 @@
+{{- if (index .Values "gpu-operator" "enabled") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ default "custom-mig-parted-config" (index .Values "gpu-operator" "migManager" "config" "name") }}
+  namespace: gpu-operator
+  labels:
+    {{- include "cluster_base.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    version: v1
+    mig-configs:
+      all-disabled:
+        - devices: all
+          mig-enabled: false
+      # H200 mixed strategy stub. Fill in the actual MIG profile slices
+      # to use when migManager applies labels.
+      h200-mixed:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            "1g.18gb": 0
+            "2g.36gb": 0
+            "3g.71gb": 0
+            "4g.71gb": 0
+            "7g.141gb": 0
+{{- end }}

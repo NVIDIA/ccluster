@@ -28,6 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	// +kubebuilder:scaffold:imports
@@ -40,10 +41,21 @@ var scheme = runtime.NewScheme()
 // it, so the value is settled by the time a controller reads it.
 var argoCDNamespace string
 
+// catalogRepoURL and catalogRevision locate the chart catalog the generated
+// ApplicationSets deploy from. Set by flags, for the same reason as argoCDNamespace.
+var (
+	catalogRepoURL  string
+	catalogRevision string
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(scheme))
+	// Argo CD's ApplicationSet, which the CCLInfraPlane controller creates. Registering
+	// it is safe on a cluster with no Argo CD: the missing CRD surfaces at reconcile
+	// time, from the RESTMapper, rather than at startup.
+	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -53,6 +65,10 @@ func main() {
 	// internal/manager alongside the operator-agnostic ones.
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd",
 		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes are written there.")
+	flag.StringVar(&catalogRepoURL, "catalog-repo-url", "https://github.com/NVIDIA/ccluster",
+		"The Git repository holding the chart catalog. Argo CD's repo-server must be able to clone it.")
+	flag.StringVar(&catalogRevision, "catalog-revision", "main",
+		"The revision of the catalog repository to deploy from: a branch, tag or commit SHA.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -75,6 +91,8 @@ func setupControllers(mgr ctrl.Manager) error {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		ArgoCDNamespace: argoCDNamespace,
+		CatalogRepoURL:  catalogRepoURL,
+		CatalogRevision: catalogRevision,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}

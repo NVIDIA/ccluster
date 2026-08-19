@@ -80,7 +80,11 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= ccluster-test-e2e
+# The cluster the e2e targets create, use and then destroy. Distinct from
+# KIND_CLUSTER_CP / KIND_CLUSTER_IP (below, in the Build section), the development
+# clusters `make init` creates: `make test-e2e` deletes its cluster when it is done,
+# which must never be one you are working in.
+KIND_CLUSTER_E2E ?= ccluster-test-e2e
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -89,21 +93,21 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 		exit 1; \
 	}
 	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
+		*"$(KIND_CLUSTER_E2E)"*) \
+			echo "Kind cluster '$(KIND_CLUSTER_E2E)' already exists. Skipping creation." ;; \
 		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
+			echo "Creating Kind cluster '$(KIND_CLUSTER_E2E)'..."; \
+			$(KIND) create cluster --name $(KIND_CLUSTER_E2E) ;; \
 	esac
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: test-e2e-argocd
 test-e2e-argocd: setup-test-e2e docker-build-cp ## Install the cp chart WITH Argo CD into a Kind cluster and verify it comes up. Pulls Argo CD images from the internet.
-	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER)
+	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER_E2E)
 	$(MAKE) deploy-cp HELM_TIMEOUT=10m
 	"$(KUBECTL)" get crd applications.argoproj.io applicationsets.argoproj.io
 	"$(KUBECTL)" -n $(HELM_NAMESPACE_CP) rollout status deploy/ccluster-cp-controller-manager --timeout=2m
@@ -112,7 +116,7 @@ test-e2e-argocd: setup-test-e2e docker-build-cp ## Install the cp chart WITH Arg
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E)
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -128,8 +132,12 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 ##@ Build
 
+# Everything a deploy consumes, in dependency order: generated code and manifests
+# (pulled in by build-cp/build-ip), both binaries, both images, and both charts. It
+# does not touch a cluster - `kind load docker-image` and `make deploy-{cp,ip}` are
+# still separate, per the rule that every cluster-touching target is suffixed.
 .PHONY: build
-build: build-cp build-ip ## Build both manager binaries.
+build: build-cp build-ip docker-build helm-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images and both charts.
 
 .PHONY: build-cp
 build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
@@ -160,6 +168,27 @@ docker-build-cp: ## Build docker image with the ccluster-cp-operator manager.
 .PHONY: docker-build-ip
 docker-build-ip: ## Build docker image with the ccluster-ip-operator manager.
 	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} .
+
+# A locally built image is invisible to a Kind cluster until it is loaded onto the
+# node - that, not a bad tag, is the usual cause of ErrImagePull on a `:dev` image.
+# Loading does not restart anything: the Deployment spec is unchanged, so finish with
+#   kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
+#
+# The two development clusters, created by `make init`. They are separate because the
+# operators are: cp runs Argo CD and the control plane, ip is a cluster it registers.
+KIND_CLUSTER_CP ?= ccluster-cp
+KIND_CLUSTER_IP ?= ccluster-ip
+
+.PHONY: load
+load: load-cp load-ip ## Load each manager image into its development Kind cluster.
+
+.PHONY: load-cp
+load-cp: docker-build-cp ## Load the ccluster-cp-operator image into KIND_CLUSTER_CP.
+	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER_CP)
+
+.PHONY: load-ip
+load-ip: docker-build-ip ## Load the ccluster-ip-operator image into KIND_CLUSTER_IP.
+	$(KIND) load docker-image $(IMG_IP) --name $(KIND_CLUSTER_IP)
 
 .PHONY: docker-push
 docker-push: docker-push-cp docker-push-ip ## Push both manager images.
@@ -210,6 +239,64 @@ build-installer-ip: manifests generate kustomize ## Generate dist/install-ip.yam
 
 ##@ Deployment
 
+# Bring up the two development clusters. Idempotent: an existing cluster is left alone,
+# so this is safe to re-run.
+#
+# `kind create cluster` switches the current kubeconfig context to whatever it just
+# made, so ip is created first and cp last - the context is left on the cluster most
+# work happens in. Never rely on that: check with `kubectl config current-context`
+# before any target that touches a cluster.
+.PHONY: init
+init: init-ip init-cp ## Create both development Kind clusters. Leaves the kubeconfig context on the cp cluster.
+	@echo "Clusters ready. cp: kind-$(KIND_CLUSTER_CP)  ip: kind-$(KIND_CLUSTER_IP)"
+	@echo "Current kubeconfig context: $$("$(KUBECTL)" config current-context)"
+
+.PHONY: init-cp
+init-cp: require-kind ## Create the control-plane development Kind cluster if it does not exist.
+	$(call kind-create-cluster,$(KIND_CLUSTER_CP))
+
+.PHONY: init-ip
+init-ip: require-kind ## Create the infra-plane development Kind cluster if it does not exist.
+	$(call kind-create-cluster,$(KIND_CLUSTER_IP))
+
+.PHONY: require-kind
+require-kind:
+	@command -v $(KIND) >/dev/null 2>&1 || { \
+		echo "Kind is not installed. Please install Kind manually."; \
+		exit 1; \
+	}
+
+# Destroys both development clusters and everything deployed to them. There is no
+# confirmation, matching cleanup-test-e2e. `make init` builds them back empty.
+.PHONY: clean
+clean: clean-ip clean-cp ## Delete both development Kind clusters. Destructive.
+
+.PHONY: clean-cp
+clean-cp: require-kind ## Delete the control-plane development Kind cluster.
+	$(KIND) delete cluster --name $(KIND_CLUSTER_CP)
+
+.PHONY: clean-ip
+clean-ip: require-kind ## Delete the infra-plane development Kind cluster.
+	$(KIND) delete cluster --name $(KIND_CLUSTER_IP)
+
+# Everything `clean` does, plus every build artifact: the compiled binaries and the
+# downloaded tools in bin/, and the generated installers in dist/. The tools are
+# re-downloaded on the next build, so this costs a slow first run.
+#
+# The locally built container images are left alone - `docker rmi $(IMG_CP) $(IMG_IP)`
+# if you want those gone too.
+.PHONY: clean-all
+clean-all: clean ## Delete the development clusters and all build artifacts (bin/, dist/).
+	rm -rf "$(LOCALBIN)" dist
+
+# kind-create-cluster,<name> - create a Kind cluster unless it is already there.
+define kind-create-cluster
+@case "$$($(KIND) get clusters 2>/dev/null)" in \
+	*"$(1)"*) echo "Kind cluster '$(1)' already exists. Skipping creation." ;; \
+	*) echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1) ;; \
+esac
+endef
+
 ifndef ignore-not-found
   ignore-not-found = false
 endif
@@ -232,23 +319,31 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # `argocd` the operator defaults to, so deploy-cp overrides --argocd-namespace to
 # match. manager.args is restated in full because `--set manager.args[1]=...` builds
 # a sparse list and nulls index 0, silently dropping --leader-elect.
+# The one target that names both clusters: deploy-cp and deploy-ip on their own still
+# act on the current kubeconfig context, so they can be pointed anywhere.
+.PHONY: deploy
+deploy: ## Deploy each operator to its own development Kind cluster.
+	$(MAKE) deploy-cp KUBE_CONTEXT_CP=kind-$(KIND_CLUSTER_CP)
+	$(MAKE) deploy-ip KUBE_CONTEXT_IP=kind-$(KIND_CLUSTER_IP)
+
 .PHONY: deploy-cp
 deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the K8s cluster specified in ~/.kube/config.
-	"$(HELM)" upgrade --install $(HELM_RELEASE_CP) $(CHART_CP) \
+	"$(HELM)" upgrade --install $(HELM_RELEASE_CP) $(CHART_CP) $(HELM_CONTEXT_CP) \
 		--namespace $(HELM_NAMESPACE_CP) --create-namespace \
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enable=$(ARGOCD) \
-		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)"]' \
+		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp
 undeploy-cp: helm ## Undeploy ccluster-cp-operator. CRDs are retained (helm.sh/resource-policy: keep).
-	"$(HELM)" uninstall $(HELM_RELEASE_CP) --namespace $(HELM_NAMESPACE_CP) --ignore-not-found
+	"$(HELM)" uninstall $(HELM_RELEASE_CP) $(HELM_CONTEXT_CP) \
+		--namespace $(HELM_NAMESPACE_CP) --ignore-not-found
 
 .PHONY: deploy-ip
 deploy-ip: helm ## Deploy ccluster-ip-operator to the K8s cluster specified in ~/.kube/config.
-	"$(HELM)" upgrade --install $(HELM_RELEASE_IP) $(CHART_IP) \
+	"$(HELM)" upgrade --install $(HELM_RELEASE_IP) $(CHART_IP) $(HELM_CONTEXT_IP) \
 		--namespace $(HELM_NAMESPACE_IP) --create-namespace \
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_IP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_IP))) \
@@ -256,7 +351,8 @@ deploy-ip: helm ## Deploy ccluster-ip-operator to the K8s cluster specified in ~
 
 .PHONY: undeploy-ip
 undeploy-ip: helm ## Undeploy ccluster-ip-operator.
-	"$(HELM)" uninstall $(HELM_RELEASE_IP) --namespace $(HELM_NAMESPACE_IP) --ignore-not-found
+	"$(HELM)" uninstall $(HELM_RELEASE_IP) $(HELM_CONTEXT_IP) \
+		--namespace $(HELM_NAMESPACE_IP) --ignore-not-found
 
 ##@ Helm
 
@@ -289,6 +385,22 @@ HELM_TIMEOUT ?= 5m
 # Set ARGOCD=false to install the cp operator without Argo CD, e.g. into a cluster
 # that already runs it, or for hermetic tests that must not pull the Argo CD images.
 ARGOCD ?= true
+# The chart catalog the operator points its generated ApplicationSets at. Override
+# CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
+# repo-server clones the repository itself, so the revision must be pushed.
+CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
+CATALOG_REVISION ?= main
+# The kubeconfig context each operator is deployed to. Empty means "whatever the
+# current context is", which is what deploy-cp / deploy-ip on their own have always
+# done. `make deploy` sets them to the two development clusters.
+#
+# This is the supported way to aim a target at a specific cluster: KUBECTL is quoted in
+# the recipes, so KUBECTL="kubectl --context foo" does not work.
+KUBE_CONTEXT_CP ?=
+KUBE_CONTEXT_IP ?=
+HELM_CONTEXT_CP = $(if $(KUBE_CONTEXT_CP),--kube-context $(KUBE_CONTEXT_CP),)
+HELM_CONTEXT_IP = $(if $(KUBE_CONTEXT_IP),--kube-context $(KUBE_CONTEXT_IP),)
+
 # Extra flags passed through to `helm upgrade --install`.
 HELM_ARGS ?=
 

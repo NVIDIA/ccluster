@@ -1,0 +1,27 @@
+external-dns:
+  # Switch `provider.name` to your DNS provider (aws, google, cloudflare, …)
+  # and supply the matching credentials/IRSA via globals + serviceAccount.
+  provider:
+    name: aws
+  policy: sync
+  interval: 1m
+  txtOwnerId: ccluster
+  # Constrain Route53 changes to a specific hosted zone. Add
+  # --zone-id-filter=<HOSTED_ZONE_ID> here once you fill in
+  # global.aws.route53.hostedZoneId.
+  extraArgs: []
+  sources:
+    - ingress
+    - istio-gateway
+    - service
+  serviceAccount:
+    # Create the SA in-chart for standalone testing. Flip to false and
+    # pre-create externally (e.g. via IRSA in Pulumi) for production.
+    create: true
+    name: external-dns
+  rbac:
+    create: true
+  # Re-enable once kube-prometheus-stack is deployed (provides the
+  # ServiceMonitor CRD).
+  serviceMonitor:
+    enabled: false

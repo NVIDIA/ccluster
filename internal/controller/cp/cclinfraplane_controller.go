@@ -38,11 +38,20 @@ import (
 
 // Condition types and reasons reported on CCLInfraPlane.status.
 const (
+	// conditionTypeAvailable reports on the mirrored Argo CD cluster Secret.
 	conditionTypeAvailable = "Available"
+	// conditionTypeComponentsApplied reports on the ApplicationSet that installs the
+	// catalogs/cluster_base components onto the registered cluster.
+	conditionTypeComponentsApplied = "ComponentsApplied"
 
 	reasonClusterSecretCreated  = "ClusterSecretCreated"
 	reasonSecretNotFound        = "SecretNotFound"
 	reasonClusterSecretConflict = "ClusterSecretConflict"
+
+	reasonApplicationSetCreated    = "ApplicationSetCreated"
+	reasonApplicationSetCRDMissing = "ApplicationSetCRDMissing"
+	reasonApplicationSetConflict   = "ApplicationSetConflict"
+	reasonApplicationSetFailed     = "ApplicationSetFailed"
 )
 
 // Metadata written onto the mirrored Secret in the Argo CD namespace.
@@ -80,21 +89,32 @@ type CCLInfraPlaneReconciler struct {
 	Scheme *runtime.Scheme
 
 	// ArgoCDNamespace is the namespace Argo CD runs in, and therefore the namespace
-	// the mirrored cluster Secrets are written to.
+	// the mirrored cluster Secrets and the generated ApplicationSets are written to.
 	ArgoCDNamespace string
+
+	// CatalogRepoURL and CatalogRevision locate the chart catalog the generated
+	// ApplicationSet deploys from: a Git repository Argo CD's repo-server can clone,
+	// and a revision within it. Component paths are relative to the repository root.
+	CatalogRepoURL  string
+	CatalogRevision string
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile clones the Secret named by the CCLInfraPlane's clusterCredentialsRef into
-// the Argo CD namespace, under the CCLInfraPlane's own name and labelled as an Argo CD
-// cluster Secret, and records the outcome as an Available condition.
+// Reconcile registers the infra-plane cluster with Argo CD and then deploys the
+// cluster_base components onto it:
 //
-// The Secret's data is copied verbatim. What it has to contain is Argo CD's business,
-// not this operator's.
+//  1. The Secret named by clusterCredentialsRef is cloned into the Argo CD namespace,
+//     under the CCLInfraPlane's own name and labelled as an Argo CD cluster Secret. Its
+//     data is copied verbatim - what it has to contain is Argo CD's business, not this
+//     operator's. Reported as the Available condition.
+//  2. An ApplicationSet is written to the same namespace, generating one Argo CD
+//     Application per catalogs/cluster_base component, all targeting that cluster.
+//     Reported as the ComponentsApplied condition.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
@@ -158,9 +178,30 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"secretNamespace", r.ArgoCDNamespace, "operation", op)
 	}
 
-	return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
+	if err := r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
 		reasonClusterSecretCreated, fmt.Sprintf("Mirrored Secret %q into namespace %q",
-			infraPlane.Name, r.ArgoCDNamespace))
+			infraPlane.Name, r.ArgoCDNamespace)); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Only now that the cluster Secret exists can Argo CD resolve the ApplicationSet's
+	// destination, which names the cluster rather than addressing its API server.
+	appSetOp, appSetErr := r.reconcileApplicationSet(ctx, &infraPlane)
+	status, reason, message, retryErr := r.applicationSetCondition(&infraPlane, appSetErr)
+	if appSetErr == nil && appSetOp != controllerutil.OperationResultNone {
+		log.Info("Applied Argo CD ApplicationSet", "applicationSet", infraPlane.Name,
+			"namespace", r.ArgoCDNamespace, "operation", appSetOp)
+	}
+	if status != metav1.ConditionTrue {
+		log.Info("Did not apply Argo CD ApplicationSet", "applicationSet", infraPlane.Name,
+			"reason", reason, "message", message)
+	}
+
+	if err := r.setCondition(ctx, &infraPlane, conditionTypeComponentsApplied,
+		status, reason, message); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, retryErr
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
@@ -210,12 +251,13 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	})
 }
 
-// ownedBy reports whether secret is unclaimed or already back-references infraPlane. A
-// Secret created by hand carries no back-reference and is therefore adoptable; one
+// ownedBy reports whether obj is unclaimed or already back-references infraPlane. An
+// object created by hand carries no back-reference and is therefore adoptable; one
 // pointing at a different CCLInfraPlane is not.
-func ownedBy(secret *corev1.Secret, infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) bool {
-	name, hasName := secret.Annotations[annotationInfraPlaneName]
-	namespace, hasNamespace := secret.Annotations[annotationInfraPlaneNamespace]
+func ownedBy(obj client.Object, infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) bool {
+	annotations := obj.GetAnnotations()
+	name, hasName := annotations[annotationInfraPlaneName]
+	namespace, hasNamespace := annotations[annotationInfraPlaneNamespace]
 	if !hasName && !hasNamespace {
 		return true
 	}
@@ -232,6 +274,12 @@ func (r *CCLInfraPlaneReconciler) finalize(
 
 	if !controllerutil.ContainsFinalizer(infraPlane, finalizerName) {
 		return nil
+	}
+
+	// The ApplicationSet goes first: it is what keeps workloads running on the
+	// infra-plane cluster, and Argo CD needs the cluster Secret to remove them.
+	if err := r.deleteApplicationSet(ctx, infraPlane); err != nil {
+		return err
 	}
 
 	var mirror corev1.Secret
@@ -259,8 +307,18 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
-// setAvailable sets the Available condition and the observed generation, then writes the
-// status subresource.
+// setAvailable sets the Available condition, which reports on the mirrored cluster Secret.
+func (r *CCLInfraPlaneReconciler) setAvailable(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	status metav1.ConditionStatus,
+	reason, message string,
+) error {
+	return r.setCondition(ctx, infraPlane, conditionTypeAvailable, status, reason, message)
+}
+
+// setCondition sets one condition and the observed generation, then writes the status
+// subresource.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
 // on a CCLInfraPlane that was just written the cached copy can carry a stale resource
@@ -268,16 +326,17 @@ func (r *CCLInfraPlaneReconciler) finalize(
 // status it computed is correct. A patch carries no such precondition. A NotFound is
 // ignored - the object was deleted while we were reconciling it, and there is no status
 // left to record.
-func (r *CCLInfraPlaneReconciler) setAvailable(
+func (r *CCLInfraPlaneReconciler) setCondition(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	conditionType string,
 	status metav1.ConditionStatus,
 	reason, message string,
 ) error {
 	base := infraPlane.DeepCopy()
 
 	apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-		Type:               conditionTypeAvailable,
+		Type:               conditionType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,

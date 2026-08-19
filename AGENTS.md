@@ -161,8 +161,8 @@ Both roles are named `manager-role`; the overlay `namePrefix` disambiguates them
 
 ### Everything is per-operator: `-cp` / `-ip`
 
-Bare `make deploy`, `make run`, `make build`, and `make docker-build IMG=...` **do not exist**
-in their single-operator form. Use the suffixed targets and the two image variables:
+Bare `make deploy`, `make run`, and `make docker-build IMG=...` **do not exist** in their
+single-operator form. Use the suffixed targets and the two image variables:
 
 ```bash
 make build-cp            make build-ip
@@ -178,6 +178,32 @@ IMG_IP ?= ccluster-ip-operator:dev
 
 `make install` / `make uninstall` (CRDs only), `make helm-generate` and `make helm-lint`
 cover both operators at once, and so does `make test`.
+
+Five unsuffixed targets drive the whole local loop, and each has `-cp` / `-ip` halves:
+
+```bash
+make init     # create both development Kind clusters (idempotent)
+make build    # manifests, CRDs, deepcopy, both binaries, both images, both charts
+make load     # build each image and load it into its own cluster
+make deploy   # helm install cp into the cp cluster, ip into the ip cluster
+make clean    # delete both clusters. Destructive, and does not ask
+```
+
+`make clean-all` goes further: both clusters plus `bin/` and `dist/`. Since `bin/` holds
+the downloaded tools (controller-gen, kustomize, envtest, kubebuilder), the next build
+after it is a slow one.
+
+Three Kind cluster names, and they must not be confused. `KIND_CLUSTER_CP`
+(`ccluster-cp`) and `KIND_CLUSTER_IP` (`ccluster-ip`) are the development clusters
+`make init` creates and `load` / `deploy` act on. `KIND_CLUSTER_E2E`
+(`ccluster-test-e2e`) belongs to the e2e targets, which **delete** it when they finish —
+which is why it can never be one you are working in.
+
+`make deploy` is the only target that names a cluster. `deploy-cp` and `deploy-ip` on
+their own still act on the current kubeconfig context, so they can be aimed at a real
+cluster; to aim them explicitly, set `KUBE_CONTEXT_CP` / `KUBE_CONTEXT_IP`, which become
+`helm --kube-context`. That is the supported mechanism — `KUBECTL` is quoted in the
+recipes, so `KUBECTL="kubectl --context foo"` does not work.
 
 `build-installer-*` is no longer a deploy path: `dist/install-{cp,ip}.yaml` exist to feed
 the chart generator. Deploy with `deploy-*`.
@@ -274,8 +300,7 @@ make helm-lint
 **In-cluster verification** (the only loop that exercises real RBAC and the real image):
 
 ```bash
-make docker-build-cp
-kind load docker-image ccluster-cp-operator:dev --name ccluster-dev
+make load-cp                                   # builds the image, then loads it
 kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
 ```
 

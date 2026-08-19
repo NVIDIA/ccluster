@@ -1,0 +1,52 @@
+ingress-nginx:
+  controller:
+    allowSnippetAnnotations: true
+    service:
+      enabled: false
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - ingress-nginx
+                  - key: app.kubernetes.io/instance
+                    operator: In
+                    values:
+                      - ingress-nginx
+                  - key: app.kubernetes.io/component
+                    operator: In
+                    values:
+                      - controller
+              topologyKey: kubernetes.io/hostname
+    # ServiceMonitor requires the kube-prometheus-stack CRDs in the cluster.
+    # Disable per-cluster if kube_prometheus_stack.enabled=false.
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+    autoscaling:
+      enabled: true
+      minReplicas: 4
+      maxReplicas: 180
+      targetMemoryUtilizationPercentage: 70
+      targetCPUUtilizationPercentage: 50
+    minAvailable: "50%"
+    resources:
+      requests:
+        cpu: 300m
+        memory: 350Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    # The admission-webhook cert-gen runs as a Job. If the namespace
+    # has istio-injection enabled, an istio-proxy sidecar is injected
+    # which never exits, so the Job is stuck Running forever and
+    # eventually times out.  Skip injection on those Job pods.
+    admissionWebhooks:
+      certManager:
+        enabled: true
