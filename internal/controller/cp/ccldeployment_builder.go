@@ -17,11 +17,10 @@ limitations under the License.
 package cp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,308 +34,232 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
-// errApplicationSetConflict reports that the ApplicationSet name is already taken, for
-// the same reason errClusterSecretConflict exists: two resources of the same name in
-// different namespaces map onto one object in the Argo CD namespace.
-var errApplicationSetConflict = errors.New("ApplicationSet belongs to another resource")
+// errApplicationConflict reports that an Argo CD Application name is already taken by another
+// CCLDeployment, for the same reason errClusterSecretConflict exists: two resources of
+// the same name in different namespaces map onto one object name in the Argo CD
+// namespace.
+var errApplicationConflict = errors.New("application belongs to another CCLDeployment")
 
-const (
-	// emptyValues is what a component with no overrides contributes to helm.values.
-	// It cannot simply be omitted: the field is filled by a Go template, and a
-	// template can substitute a key but not decide whether the key exists.
-	emptyValues = "{}"
+// defaultProject is the Argo CD AppProject generated Applications belong to.
+const defaultProject = "default"
 
-	// defaultProject is the Argo CD AppProject generated Applications belong to.
-	defaultProject = "default"
-)
-
-// applicationSetSpec builds the ApplicationSet that deploys deployment's components.
-//
-// Only the first `released` components appear in the generator. That slice is how
-// ordering is enforced: Argo CD generates an Application for a component only once the
-// operator has released it, and releaseCount releases the next one when everything
-// already released is healthy.
-//
-// Argo CD's own RollingSync strategy would be the obvious way to do this, and it is not
-// used deliberately. It gates Applications by setting spec.syncPolicy.automated.enabled
-// to false, and as of Argo CD v3.5.1 it never clears that flag once the rollout reports
-// complete - which leaves automated sync and selfHeal switched off for good. Drift then
-// goes unrepaired and edits to a CCLDeployment never reach the cluster. Gating on which
-// Applications exist keeps their sync policy untouched.
-func (r *CCLDeploymentReconciler) applicationSetSpec(
-	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-	released int,
-) (argocdv1alpha1.ApplicationSetSpec, error) {
-	components := deployment.Spec.Components[:released]
-	elements := make([]argocdv1alpha1.GeneratorElement, 0, len(components))
-
-	for i, component := range components {
-		values, err := componentValues(component)
-		if err != nil {
-			return argocdv1alpha1.ApplicationSetSpec{}, fmt.Errorf(
-				"component %q: %w", component.Name, err)
-		}
-
-		elements = append(elements, argocdv1alpha1.GeneratorElement{
-			Name:       component.Name,
-			Path:       component.Chart,
-			InfraPlane: component.InfraPlaneRef.Name,
-			Namespace:  component.Namespace,
-			// Position in the rollout. Nothing acts on it - it is stamped as a
-			// label so `kubectl get applications -L ccluster.nvidia.com/wave`
-			// shows the order the operator is working through.
-			Wave:   strconv.Itoa(i + 1),
-			Values: values,
-		})
-	}
-
-	return argocdv1alpha1.ApplicationSetSpec{
-		GoTemplate:        true,
-		GoTemplateOptions: []string{"missingkey=error"},
-		Generators: []argocdv1alpha1.ApplicationSetGenerator{{
-			List: &argocdv1alpha1.ListGenerator{Elements: elements},
-		}},
-		Template: argocdv1alpha1.ApplicationSetTemplate{
-			ApplicationSetTemplateMeta: argocdv1alpha1.ApplicationSetTemplateMeta{
-				Name: deployment.Name + "-{{.name}}",
-				// Without this an Application delete is non-cascading, so
-				// dropping a component from the spec - or deleting the whole
-				// CCLDeployment - would remove Argo CD's record of the chart and
-				// leave it installed and unmanaged on the infra-plane cluster.
-				//
-				// Teardown is asynchronous: deleting the ApplicationSet returns
-				// as soon as the API server accepts it, while Argo CD works
-				// through the finalizers afterwards. The CCLDeployment is
-				// therefore gone before the charts are, and an Application whose
-				// cluster is unreachable stays Terminating until it is not.
-				Finalizers: []string{argocdv1alpha1.ResourcesFinalizer},
-				Labels: map[string]string{
-					labelName:      labelNameValue,
-					labelManagedBy: labelManagedByValue,
-					// How a generated Application is traced back to the
-					// CCLDeployment that asked for it. Argo CD copies only
-					// template.metadata onto the Application, so the
-					// back-reference annotations on the ApplicationSet itself do
-					// not reach it.
-					labelDeploymentName:      deployment.Name,
-					labelDeploymentNamespace: deployment.Namespace,
-					labelWave:                "{{.wave}}",
-				},
-			},
-			Spec: argocdv1alpha1.ApplicationSpec{
-				Project: defaultProject,
-				Source: argocdv1alpha1.ApplicationSource{
-					// Repository and revision are operator configuration, so they
-					// are fixed here rather than templated per element.
-					RepoURL:        r.CatalogRepoURL,
-					TargetRevision: r.CatalogRevision,
-					// path, not chart: the catalog is a Git repository, and
-					// source.chart would make Argo CD look for a chart of that
-					// name in a Helm registry instead.
-					Path: "{{.path}}",
-					Helm: &argocdv1alpha1.ApplicationSourceHelm{
-						Values: "{{.values}}",
-					},
-				},
-				Destination: argocdv1alpha1.ApplicationDestination{
-					// By name, not by server: the name is the CCLInfraPlane's,
-					// which its mirrored cluster Secret defines.
-					Name:      "{{.infraPlane}}",
-					Namespace: "{{.namespace}}",
-				},
-				SyncPolicy: &argocdv1alpha1.SyncPolicy{
-					// Left entirely to Argo CD. The operator decides *whether* a
-					// component is deployed, never *how* it syncs - which is what
-					// keeps selfHeal working.
-					Automated: &argocdv1alpha1.SyncPolicyAutomated{
-						Prune:    true,
-						SelfHeal: true,
-					},
-					// ServerSideApply is not optional for this catalog. Argo CD's
-					// default client-side apply records the manifest in the
-					// kubectl.kubernetes.io/last-applied-configuration annotation
-					// and diffs against it, but an annotation cannot hold a large
-					// object - argo-rollouts' rollouts.argoproj.io CRD is ~600KB -
-					// so the copy is truncated and the diff never converges. The
-					// resource then sits OutOfSync forever despite syncing
-					// successfully. Several cluster_base charts ship CRDs that big.
-					SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
-				},
-			},
-		},
-	}, nil
-}
-
-// applicationName is the name Argo CD gives the Application generated for a component.
+// applicationName is the name Argo CD gives the Application for a component.
 func applicationName(deploymentName, componentName string) string {
 	return deploymentName + "-" + componentName
 }
 
 // healthy reports whether an Application has finished converging.
 func healthy(application *argocdv1alpha1.Application) bool {
-	return application.Status.Health.Status == argocdv1alpha1.HealthStatusHealthy &&
-		application.Status.Sync.Status == argocdv1alpha1.SyncStatusSynced
+	return application.HealthStatus() == argocdv1alpha1.HealthStatusHealthy &&
+		application.SyncStatus() == argocdv1alpha1.SyncStatusSynced
 }
 
-// releaseCount decides how many of deployment's components may be deployed right now.
+// applicationSpec builds the Argo CD Application for one component.
 //
-// Releasing is monotonic and derived entirely from which Applications exist, so it needs
-// no state of its own and survives an operator restart. A component that has been
-// released is never withdrawn just because it became unhealthy - that would delete a
-// running Application, and with the cascade finalizer, uninstall its chart.
-func releaseCount(
-	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-	applications map[string]*argocdv1alpha1.Application,
-) int {
-	components := deployment.Spec.Components
-
-	// Already released: the leading run of components that have an Application.
-	released := 0
-	for i := range components {
-		if _, generated := applications[applicationName(deployment.Name, components[i].Name)]; !generated {
-			break
-		}
-		released = i + 1
-	}
-	if released == 0 {
-		// Nothing deployed yet. The first component is always releasable; there is
-		// nothing for it to wait on.
-		return 1
+// The operator writes Applications directly rather than generating them from an
+// ApplicationSet. An ApplicationSet would earn its keep if the set were derived from
+// something - clusters, Git directories - but a CCLDeployment enumerates its components
+// explicitly, so the generator would only add a Go-template layer between the operator
+// and an object it already knows in full. Writing them directly also means values pass
+// through as structured data instead of being marshalled into a templated string.
+func (r *CCLDeploymentReconciler) applicationSpec(
+	component cclusternvidiacomv1alpha1.ComponentSpec,
+) argocdv1alpha1.ApplicationSpec {
+	var helm *argocdv1alpha1.ApplicationSourceHelm
+	if component.Values != nil && len(component.Values.Raw) > 0 {
+		// Copied through untouched: what the chart accepts is its business.
+		helm = &argocdv1alpha1.ApplicationSourceHelm{ValuesObject: component.Values}
 	}
 
-	// Hold if anything released is still converging. Checking all of them rather than
-	// just the most recent means a component that degrades later stops the rollout,
-	// which is what a sequential dependency implies.
-	for i := 0; i < released; i++ {
-		application := applications[applicationName(deployment.Name, components[i].Name)]
-		if !healthy(application) {
-			return released
-		}
+	return argocdv1alpha1.ApplicationSpec{
+		Project: defaultProject,
+		Source: argocdv1alpha1.ApplicationSource{
+			// Repository and revision are operator configuration, not per component.
+			RepoURL:        r.CatalogRepoURL,
+			TargetRevision: r.CatalogRevision,
+			// path, not chart: the catalog is a Git repository, and source.chart
+			// would make Argo CD look for a chart of that name in a Helm registry.
+			Path: component.Chart,
+			Helm: helm,
+		},
+		Destination: argocdv1alpha1.ApplicationDestination{
+			// By name, not by server: the name is the CCLInfraPlane's, which its
+			// mirrored cluster Secret defines.
+			Name:      component.InfraPlaneRef.Name,
+			Namespace: component.Namespace,
+		},
+		SyncPolicy: &argocdv1alpha1.SyncPolicy{
+			// Left entirely to Argo CD. The operator decides *whether* a component
+			// is deployed, never *how* it syncs - which is what keeps selfHeal
+			// working. Argo CD's own RollingSync strategy is deliberately unused
+			// because it gates Applications by switching automated sync off and, as
+			// of v3.5.1, never switches it back on.
+			Automated: &argocdv1alpha1.SyncPolicyAutomated{
+				Prune:    true,
+				SelfHeal: true,
+			},
+			// ServerSideApply is not optional for this catalog. Argo CD's default
+			// client-side apply records the manifest in the
+			// kubectl.kubernetes.io/last-applied-configuration annotation and diffs
+			// against it, but an annotation cannot hold a large object -
+			// argo-rollouts' rollouts.argoproj.io CRD is ~600KB - so the copy is
+			// truncated and the diff never converges. The resource then sits
+			// OutOfSync forever despite syncing successfully, which stalls every
+			// later component. It needs controller.diff.server.side on the
+			// application controller to match; the cp chart sets that.
+			SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
+		},
 	}
-
-	if released < len(components) {
-		released++
-	}
-	return released
 }
 
-// componentValues renders a component's values as the single-line JSON string that goes
-// into helm.values.
-//
-// helm.values takes a YAML document as a string, and JSON is valid YAML, so no
-// conversion is needed. It is compacted onto one line because the alternative - a block
-// scalar - is indentation-sensitive, and a multi-line value templated into one would
-// produce a manifest that no longer parses.
-func componentValues(component cclusternvidiacomv1alpha1.ComponentSpec) (string, error) {
-	if component.Values == nil || len(component.Values.Raw) == 0 {
-		return emptyValues, nil
-	}
-
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, component.Values.Raw); err != nil {
-		return "", fmt.Errorf("values are not valid JSON: %w", err)
-	}
-	return compact.String(), nil
-}
-
-// reconcileApplicationSet creates or updates the ApplicationSet for deployment.
-//
-// It must run only after every component's CCLInfraPlane is Available, for the same
-// reason the CCLInfraPlane controller mirrors the cluster Secret before writing its own
-// ApplicationSet: the destinations here name clusters rather than addressing them.
-func (r *CCLDeploymentReconciler) reconcileApplicationSet(
+// reconcileApplication creates or updates the Application for one component.
+func (r *CCLDeploymentReconciler) reconcileApplication(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-	released int,
+	component cclusternvidiacomv1alpha1.ComponentSpec,
+	wave int,
 ) (controllerutil.OperationResult, error) {
-	spec, err := r.applicationSetSpec(deployment, released)
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	appSet := &argocdv1alpha1.ApplicationSet{
+	application := &argocdv1alpha1.Application{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deployment.Name,
+			Name:      applicationName(deployment.Name, component.Name),
 			Namespace: r.ArgoCDNamespace,
 		},
 	}
 
-	return controllerutil.CreateOrUpdate(ctx, r.Client, appSet, func() error {
-		if !deploymentOwner.ownedBy(appSet, deployment) {
-			return errApplicationSetConflict
+	return controllerutil.CreateOrUpdate(ctx, r.Client, application, func() error {
+		if !deploymentOwner.ownedBy(application, deployment) {
+			return errApplicationConflict
 		}
-		deploymentOwner.stamp(appSet, deployment)
+		deploymentOwner.stamp(application, deployment)
+
+		// The back-reference as labels as well as annotations. stamp writes the
+		// annotations, which is what the ownership check reads; these are what
+		// listApplications selects on, and selecting is how the operator knows which
+		// components it has already released.
+		application.Labels[labelDeploymentName] = deployment.Name
+		application.Labels[labelDeploymentNamespace] = deployment.Namespace
+
+		// Position in the rollout. Nothing acts on it - it is a label so that
+		// `kubectl get applications -L ccluster.nvidia.com/wave` shows the order the
+		// operator is working through.
+		application.Labels[labelWave] = strconv.Itoa(wave)
+
+		// Without this an Application delete is non-cascading: Argo CD's record goes
+		// away and the chart stays installed and unmanaged on the infra-plane cluster.
+		if !controllerutil.ContainsFinalizer(application, argocdv1alpha1.ResourcesFinalizer) {
+			controllerutil.AddFinalizer(application, argocdv1alpha1.ResourcesFinalizer)
+		}
 
 		// Owned outright: rebuilt from scratch every reconcile, so hand edits are
 		// reverted rather than merged.
-		appSet.Spec = spec
+		application.Spec = r.applicationSpec(component)
 		return nil
 	})
 }
 
-// deleteApplicationSet removes the ApplicationSet created for deployment, unless it
-// belongs to something else. Deleting it takes the generated Applications with it, and
-// with them the components on the infra-plane clusters.
-func (r *CCLDeploymentReconciler) deleteApplicationSet(
+// reconcileApplications writes an Application for each of the first `released`
+// components, and removes any Application left over from a component that is no longer in
+// the spec.
+//
+// Pruning is the operator's job now that nothing generates these for it. It is done after
+// the writes so that a component being renamed does not briefly leave the cluster with
+// neither the old nor the new Application.
+func (r *CCLDeploymentReconciler) reconcileApplications(
+	ctx context.Context,
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	released int,
+	existing map[string]*argocdv1alpha1.Application,
+) (changed bool, err error) {
+	for i, component := range deployment.Spec.Components[:released] {
+		op, err := r.reconcileApplication(ctx, deployment, component, i+1)
+		if err != nil {
+			return changed, err
+		}
+		if op != controllerutil.OperationResultNone {
+			changed = true
+		}
+	}
+
+	pruned, err := r.pruneApplications(ctx, deployment, existing)
+	return changed || pruned, err
+}
+
+// pruneApplications deletes Applications whose component has been removed from the spec.
+func (r *CCLDeploymentReconciler) pruneApplications(
+	ctx context.Context,
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	existing map[string]*argocdv1alpha1.Application,
+) (bool, error) {
+	log := logf.FromContext(ctx)
+
+	wanted := make(map[string]struct{}, len(deployment.Spec.Components))
+	for _, component := range deployment.Spec.Components {
+		wanted[applicationName(deployment.Name, component.Name)] = struct{}{}
+	}
+
+	// Sorted so the deletions, and the log lines they produce, are deterministic.
+	names := make([]string, 0, len(existing))
+	for name := range existing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	pruned := false
+	for _, name := range names {
+		if _, keep := wanted[name]; keep {
+			continue
+		}
+		if !deploymentOwner.ownedBy(existing[name], deployment) {
+			continue
+		}
+		if err := r.Delete(ctx, existing[name]); client.IgnoreNotFound(err) != nil {
+			return pruned, err
+		}
+		pruned = true
+		log.Info("Deleted Argo CD Application for a removed component",
+			"application", name, "namespace", r.ArgoCDNamespace)
+	}
+	return pruned, nil
+}
+
+// deleteApplications removes every Application created for deployment. Their finalizers
+// make Argo CD uninstall the charts as they go.
+func (r *CCLDeploymentReconciler) deleteApplications(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
 ) error {
 	log := logf.FromContext(ctx)
 
-	appSet := &argocdv1alpha1.ApplicationSet{}
-	key := client.ObjectKey{Namespace: r.ArgoCDNamespace, Name: deployment.Name}
-	switch err := r.Get(ctx, key, appSet); {
-	case apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err):
-		// Already gone, or Argo CD was never installed. Nothing to clean up.
-		return nil
-	case err != nil:
+	existing, err := r.listApplications(ctx, deployment)
+	if err != nil {
 		return err
-	case !deploymentOwner.ownedBy(appSet, deployment):
-		log.Info("Left ApplicationSet owned by another resource in place",
-			"applicationSet", deployment.Name, "namespace", r.ArgoCDNamespace)
-		return nil
 	}
 
-	if err := r.Delete(ctx, appSet); client.IgnoreNotFound(err) != nil {
-		return err
+	names := make([]string, 0, len(existing))
+	for name := range existing {
+		names = append(names, name)
 	}
-	log.Info("Deleted Argo CD ApplicationSet", "applicationSet", deployment.Name,
-		"namespace", r.ArgoCDNamespace)
+	sort.Strings(names)
+
+	for _, name := range names {
+		if !deploymentOwner.ownedBy(existing[name], deployment) {
+			log.Info("Left Application owned by another CCLDeployment in place",
+				"application", name, "namespace", r.ArgoCDNamespace)
+			continue
+		}
+		if err := r.Delete(ctx, existing[name]); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		log.Info("Deleted Argo CD Application", "application", name,
+			"namespace", r.ArgoCDNamespace)
+	}
 	return nil
 }
 
-// applicationSetCondition turns the outcome of reconcileApplicationSet into the
-// ComponentsApplied condition. A missing CRD and a name collision are reported rather
-// than returned: neither is fixed by retrying, and both are resolved by an event the
-// controller already watches for.
-func (r *CCLDeploymentReconciler) applicationSetCondition(
-	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-	err error,
-) (status metav1.ConditionStatus, reason, message string, retryErr error) {
-	name := deployment.Name
-
-	switch {
-	case err == nil:
-		return metav1.ConditionTrue, reasonApplicationSetCreated, fmt.Sprintf(
-			"Applied ApplicationSet %q in namespace %q", name, r.ArgoCDNamespace), nil
-	case apimeta.IsNoMatchError(err):
-		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
-		// started first.
-		return metav1.ConditionFalse, reasonApplicationSetCRDMissing, fmt.Sprintf(
-			"Argo CD ApplicationSet CRD not installed: %v", err), nil
-	case errors.Is(err, errApplicationSetConflict):
-		return metav1.ConditionFalse, reasonApplicationSetConflict, fmt.Sprintf(
-			"ApplicationSet %q in namespace %q belongs to another resource",
-			name, r.ArgoCDNamespace), nil
-	default:
-		return metav1.ConditionFalse, reasonApplicationSetFailed, err.Error(), err
-	}
-}
-
-// listApplications returns the Applications generated for deployment, keyed by name.
+// listApplications returns the Applications created for deployment, keyed by name.
 //
 // A missing CRD is reported as an empty set rather than an error: Argo CD may not be
-// installed, and reconcileApplicationSet raises that properly a moment later.
+// installed, and reconcileApplications raises that properly a moment later.
 func (r *CCLDeploymentReconciler) listApplications(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
@@ -357,9 +280,87 @@ func (r *CCLDeploymentReconciler) listApplications(
 
 	applications := make(map[string]*argocdv1alpha1.Application, len(list.Items))
 	for i := range list.Items {
+		// An Application that is terminating is not a live release. Its cascade
+		// finalizer keeps the object around while Argo CD uninstalls the chart, and
+		// counting it would let a pruned component hold the rollout open, or make a
+		// re-added one look already deployed.
+		if !list.Items[i].DeletionTimestamp.IsZero() {
+			continue
+		}
 		applications[list.Items[i].Name] = &list.Items[i]
 	}
 	return applications, nil
+}
+
+// releaseCount decides how many of deployment's components may be deployed right now.
+//
+// This is the ordering mechanism: a component's Application is not created until every
+// component before it is Healthy and Synced. Releasing is monotonic and derived entirely
+// from which Applications exist, so it needs no state of its own and survives an operator
+// restart. A component that has been released is never withdrawn just because it became
+// unhealthy - that would delete a running Application and, through the cascade finalizer,
+// uninstall its chart.
+func releaseCount(
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	applications map[string]*argocdv1alpha1.Application,
+) int {
+	components := deployment.Spec.Components
+
+	// Already released: the leading run of components that have an Application.
+	released := 0
+	for i := range components {
+		if _, created := applications[applicationName(deployment.Name, components[i].Name)]; !created {
+			break
+		}
+		released = i + 1
+	}
+	if released == 0 {
+		// Nothing deployed yet. The first component is always releasable; there is
+		// nothing for it to wait on.
+		return 1
+	}
+
+	// Hold if anything released is still converging. Checking all of them rather than
+	// just the most recent means a component that degrades later stops the rollout,
+	// which is what a sequential dependency implies.
+	for i := 0; i < released; i++ {
+		if !healthy(applications[applicationName(deployment.Name, components[i].Name)]) {
+			return released
+		}
+	}
+
+	if released < len(components) {
+		released++
+	}
+	return released
+}
+
+// applicationsCondition turns the outcome of reconcileApplications into the
+// ComponentsApplied condition. A missing CRD and a name collision are reported rather
+// than returned: neither is fixed by retrying, and both are resolved by an event the
+// controller already watches for.
+func (r *CCLDeploymentReconciler) applicationsCondition(
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	released int,
+	err error,
+) (status metav1.ConditionStatus, reason, message string, retryErr error) {
+	switch {
+	case err == nil:
+		return metav1.ConditionTrue, reasonApplicationsCreated, fmt.Sprintf(
+			"Applied %d of %d components in namespace %q",
+			released, len(deployment.Spec.Components), r.ArgoCDNamespace), nil
+	case apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err):
+		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
+		// started first.
+		return metav1.ConditionFalse, reasonApplicationCRDMissing, fmt.Sprintf(
+			"Argo CD Application CRD not installed: %v", err), nil
+	case errors.Is(err, errApplicationConflict):
+		return metav1.ConditionFalse, reasonApplicationConflict, fmt.Sprintf(
+			"An Application in namespace %q belongs to another CCLDeployment",
+			r.ArgoCDNamespace), nil
+	default:
+		return metav1.ConditionFalse, reasonApplicationFailed, err.Error(), err
+	}
 }
 
 // rolloutStatus reports how far through the components the rollout has got.
@@ -385,9 +386,9 @@ func (r *CCLDeploymentReconciler) rolloutStatus(
 		}
 
 		detail := fmt.Sprintf("health %q, sync %q",
-			application.Status.Health.Status, application.Status.Sync.Status)
-		if application.Status.Health.Message != "" {
-			detail += ": " + application.Status.Health.Message
+			application.HealthStatus(), application.SyncStatus())
+		if application.HealthMessage() != "" {
+			detail += ": " + application.HealthMessage()
 		}
 		return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
 			"Wave %d (component %q) has %s", wave, component.Name, detail)

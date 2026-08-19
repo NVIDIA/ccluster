@@ -18,6 +18,7 @@ package cp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -55,10 +56,16 @@ var _ = Describe("CCLDeployment Controller", func() {
 		ctx := context.Background()
 
 		deploymentKey := types.NamespacedName{Name: deploymentName, Namespace: namespace}
-		appSetKey := types.NamespacedName{Name: deploymentName, Namespace: argoCDNamespace}
 
 		// Built in BeforeEach: k8sClient does not exist until BeforeSuite has run.
 		var reconciler *CCLDeploymentReconciler
+
+		appKey := func(component string) types.NamespacedName {
+			return types.NamespacedName{
+				Name:      applicationName(deploymentName, component),
+				Namespace: argoCDNamespace,
+			}
+		}
 
 		// components is the two-component spec most specs use: one plain, one with
 		// values, on two different infra planes.
@@ -76,15 +83,12 @@ var _ = Describe("CCLDeployment Controller", func() {
 					Chart:         "catalogs/cluster_base/keda",
 					Namespace:     "keda",
 					Values: &apiextensionsv1.JSON{
-						// Deliberately pretty-printed: the operator must compact
-						// it, because helm.values is templated into a manifest.
-						Raw: []byte("{\n  \"keda\": {\n    \"replicas\": 2\n  }\n}"),
+						Raw: []byte(`{"keda":{"operator":{"replicaCount":2}}}`),
 					},
 				},
 			}
 		}
 
-		// createInfraPlane creates a CCLInfraPlane and reports it Available or not.
 		createInfraPlane := func(name string, available bool) {
 			GinkgoHelper()
 
@@ -111,7 +115,6 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 		}
 
-		// createDeployment creates the CCLDeployment under test.
 		createDeployment := func(specComponents []cclusternvidiacomv1alpha1.ComponentSpec) {
 			GinkgoHelper()
 
@@ -140,12 +143,48 @@ var _ = Describe("CCLDeployment Controller", func() {
 			return reconcileAndGet()
 		}
 
-		getAppSet := func() *argocdv1alpha1.ApplicationSet {
+		getApplication := func(component string) *argocdv1alpha1.Application {
 			GinkgoHelper()
 
-			appSet := &argocdv1alpha1.ApplicationSet{}
-			Expect(k8sClient.Get(ctx, appSetKey, appSet)).To(Succeed())
-			return appSet
+			application := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, appKey(component), application)).To(Succeed())
+			return application
+		}
+
+		applicationExists := func(component string) bool {
+			GinkgoHelper()
+
+			err := k8sClient.Get(ctx, appKey(component), &argocdv1alpha1.Application{})
+			if apierrors.IsNotFound(err) {
+				return false
+			}
+			Expect(err).NotTo(HaveOccurred())
+			return true
+		}
+
+		// setHealth stands in for Argo CD, which envtest does not run: it reports a
+		// health and sync status on an Application the operator created.
+		setHealth := func(component, health, sync string) {
+			GinkgoHelper()
+
+			application := getApplication(component)
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health: argocdv1alpha1.ApplicationHealthStatus{Status: health},
+				Sync:   argocdv1alpha1.ApplicationSyncStatus{Status: sync},
+			}
+			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
+		}
+
+		// release drives the rollout forward: each component is reported healthy,
+		// which lets the operator create the next one's Application.
+		release := func(componentNames ...string) {
+			GinkgoHelper()
+
+			for _, component := range componentNames {
+				setHealth(component, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+				reconcileAndGet()
+			}
 		}
 
 		conditionOf := func(deployment *cclusternvidiacomv1alpha1.CCLDeployment, name string) *metav1.Condition {
@@ -154,45 +193,6 @@ var _ = Describe("CCLDeployment Controller", func() {
 			condition := apimeta.FindStatusCondition(deployment.Status.Conditions, name)
 			Expect(condition).NotTo(BeNil(), "expected a %q condition", name)
 			return condition
-		}
-
-		// createApplication stands in for Argo CD's applicationset-controller, which
-		// envtest does not run: it creates the Application the ApplicationSet would
-		// have generated for a component, with the labels the template stamps on.
-		createApplication := func(component, health, sync string) {
-			GinkgoHelper()
-
-			application := &argocdv1alpha1.Application{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      deploymentName + "-" + component,
-					Namespace: argoCDNamespace,
-					Labels: map[string]string{
-						labelDeploymentName:      deploymentName,
-						labelDeploymentNamespace: namespace,
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, application)).To(Succeed())
-
-			// status is a subresource, so it does not survive Create.
-			application.Status = argocdv1alpha1.ApplicationStatus{
-				Health: argocdv1alpha1.ApplicationHealthStatus{Status: health},
-				Sync:   argocdv1alpha1.ApplicationSyncStatus{Status: sync},
-			}
-			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
-		}
-
-		// release drives the rollout forward one component at a time, standing in for
-		// Argo CD: the operator only releases the next component once the Applications
-		// already generated report Healthy and Synced.
-		release := func(components ...string) {
-			GinkgoHelper()
-
-			for _, component := range components {
-				createApplication(component, argocdv1alpha1.HealthStatusHealthy,
-					argocdv1alpha1.SyncStatusSynced)
-				reconcileAndGet()
-			}
 		}
 
 		BeforeEach(func() {
@@ -231,33 +231,28 @@ var _ = Describe("CCLDeployment Controller", func() {
 				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 			}
 
-			By("Cleanup the ApplicationSet")
-			appSet := &argocdv1alpha1.ApplicationSet{}
-			if err := k8sClient.Get(ctx, appSetKey, appSet); err == nil {
-				Expect(k8sClient.Delete(ctx, appSet)).To(Succeed())
-			} else {
-				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
-			}
-
-			By("Cleanup the generated Applications")
+			By("Cleanup the Applications")
 			var applications argocdv1alpha1.ApplicationList
 			Expect(k8sClient.List(ctx, &applications, client.InNamespace(argoCDNamespace))).To(Succeed())
 			for i := range applications.Items {
-				Expect(k8sClient.Delete(ctx, &applications.Items[i])).To(Succeed())
+				application := &applications.Items[i]
+				// Nothing runs Argo CD here, so its cascade finalizer would keep
+				// every Application in the cluster forever.
+				if controllerutil.RemoveFinalizer(application, argocdv1alpha1.ResourcesFinalizer) {
+					Expect(k8sClient.Update(ctx, application)).To(Succeed())
+				}
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, application))).To(Succeed())
 			}
 
 			By("Cleanup the CCLInfraPlanes")
 			var infraPlanes cclusternvidiacomv1alpha1.CCLInfraPlaneList
 			Expect(k8sClient.List(ctx, &infraPlanes, client.InNamespace(namespace))).To(Succeed())
 			for i := range infraPlanes.Items {
-				infraPlane := &infraPlanes.Items[i]
-				// The CCLInfraPlane controller never ran here, so nothing would
-				// remove a finalizer if one had been added.
-				Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, &infraPlanes.Items[i])).To(Succeed())
 			}
 		})
 
-		It("should release only the first component until it is healthy", func() {
+		It("should create only the first component's Application until it is healthy", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
@@ -266,43 +261,23 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(conditionOf(deployment, conditionTypeValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 			Expect(conditionOf(deployment, conditionTypeComponentsApplied).Reason).
-				To(Equal(reasonApplicationSetCreated))
+				To(Equal(reasonApplicationsCreated))
 
-			By("generating only the first component")
-			spec := getAppSet().Spec
-			Expect(spec.GoTemplate).To(BeTrue())
-			Expect(spec.GoTemplateOptions).To(ConsistOf("missingkey=error"))
-			Expect(spec.Generators).To(HaveLen(1))
-
-			elements := spec.Generators[0].List.Elements
-			Expect(elements).To(HaveLen(1))
-			Expect(elements[0].Name).To(Equal(firstComponent))
-			Expect(elements[0].Path).To(Equal("catalogs/cluster_base/argo_rollouts"))
-			Expect(elements[0].InfraPlane).To(Equal(planeA))
-			Expect(elements[0].Namespace).To(Equal("argo-rollouts"))
-			Expect(elements[0].Wave).To(Equal("1"))
+			By("creating only the first component")
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+			Expect(applicationExists(secondComponent)).To(BeFalse())
 
 			By("holding while it is still converging")
-			createApplication(firstComponent, argocdv1alpha1.HealthStatusProgressing, "OutOfSync")
+			setHealth(firstComponent, argocdv1alpha1.HealthStatusProgressing, "OutOfSync")
 			reconcileAndGet()
-			Expect(getAppSet().Spec.Generators[0].List.Elements).To(HaveLen(1))
+			Expect(applicationExists(secondComponent)).To(BeFalse())
 
 			By("releasing the second once the first is healthy")
-			application := &argocdv1alpha1.Application{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      deploymentName + "-" + firstComponent,
-				Namespace: argoCDNamespace,
-			}, application)).To(Succeed())
-			application.Status.Health.Status = argocdv1alpha1.HealthStatusHealthy
-			application.Status.Sync.Status = argocdv1alpha1.SyncStatusSynced
-			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
+			release(firstComponent)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
 
-			reconcileAndGet()
-			elements = getAppSet().Spec.Generators[0].List.Elements
-			Expect(elements).To(HaveLen(2))
-			Expect(elements[1].Name).To(Equal(secondComponent))
-			Expect(elements[1].InfraPlane).To(Equal(planeB))
-			Expect(elements[1].Wave).To(Equal("2"))
+			Expect(getApplication(firstComponent).Labels).To(HaveKeyWithValue(labelWave, "1"))
+			Expect(getApplication(secondComponent).Labels).To(HaveKeyWithValue(labelWave, "2"))
 		})
 
 		It("should never withdraw a released component that becomes unhealthy", func() {
@@ -310,92 +285,79 @@ var _ = Describe("CCLDeployment Controller", func() {
 			createInfraPlane(planeB, true)
 			createDeployment(components())
 			settle()
-			release(firstComponent, secondComponent)
-			Expect(getAppSet().Spec.Generators[0].List.Elements).To(HaveLen(2))
+			release(firstComponent)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
 
 			By("degrading the first component")
-			application := &argocdv1alpha1.Application{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      deploymentName + "-" + firstComponent,
-				Namespace: argoCDNamespace,
-			}, application)).To(Succeed())
-			application.Status.Health.Status = argocdv1alpha1.HealthStatusDegraded
-			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
-
+			setHealth(firstComponent, argocdv1alpha1.HealthStatusDegraded, "Synced")
 			reconcileAndGet()
 
 			// Withdrawing it would delete a running Application and, through the
 			// cascade finalizer, uninstall the chart it is serving.
-			Expect(getAppSet().Spec.Generators[0].List.Elements).To(HaveLen(2))
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+			Expect(applicationExists(secondComponent)).To(BeTrue())
 		})
 
-		It("should compact values to single-line JSON, and default to an empty object", func() {
+		It("should pass component values through untouched as structured Helm values", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
 			settle()
-			release(firstComponent, secondComponent)
+			release(firstComponent)
 
-			elements := getAppSet().Spec.Generators[0].List.Elements
+			By("omitting the helm block for a component with no values")
+			Expect(getApplication(firstComponent).Spec.Source.Helm).To(BeNil())
 
-			// A component with no values still gets a key: a Go template can
-			// substitute one, but cannot decide whether it exists.
-			Expect(elements[0].Values).To(Equal("{}"))
+			By("copying values verbatim for a component that has them")
+			helm := getApplication(secondComponent).Spec.Source.Helm
+			Expect(helm).NotTo(BeNil())
+			Expect(helm.ValuesObject).NotTo(BeNil())
 
-			Expect(elements[1].Values).To(Equal(`{"keda":{"replicas":2}}`))
-			Expect(elements[1].Values).NotTo(ContainSubstring("\n"),
-				"a multi-line value would break the manifest it is templated into")
+			var decoded map[string]any
+			Expect(json.Unmarshal(helm.ValuesObject.Raw, &decoded)).To(Succeed())
+			Expect(decoded).To(HaveKey("keda"))
 		})
 
-		It("should not gate ordering with an Argo CD sync strategy", func() {
-			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
-			createDeployment(components())
-			settle()
-
-			// Argo CD's RollingSync gates Applications by setting
-			// syncPolicy.automated.enabled to false and, as of v3.5.1, never clears
-			// it - which disables selfHeal for good. Ordering is done by withholding
-			// generator elements instead, so nothing here may touch the sync policy.
-			automated := getAppSet().Spec.Template.Spec.SyncPolicy.Automated
-			Expect(automated.Prune).To(BeTrue())
-			Expect(automated.SelfHeal).To(BeTrue())
-		})
-
-		It("should template the Application from the operator's catalog flags", func() {
+		It("should leave the sync policy to Argo CD", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
 			settle()
 
-			template := getAppSet().Spec.Template
-			Expect(template.Name).To(Equal(deploymentName + "-{{.name}}"))
-			Expect(template.Labels).To(HaveKeyWithValue(labelWave, "{{.wave}}"))
-			Expect(template.Labels).To(HaveKeyWithValue(labelDeploymentName, deploymentName))
-			Expect(template.Labels).To(HaveKeyWithValue(labelDeploymentNamespace, namespace))
-
-			// Without this, deleting the CCLDeployment - or just dropping a
-			// component - would leave the chart installed but unmanaged.
-			Expect(template.Finalizers).To(ConsistOf(argocdv1alpha1.ResourcesFinalizer))
-
-			source := template.Spec.Source
-			Expect(source.RepoURL).To(Equal(repoURL))
-			Expect(source.TargetRevision).To(Equal(revision))
-			// path, not chart: the catalog is a Git repository.
-			Expect(source.Path).To(Equal("{{.path}}"))
-			Expect(source.Helm).NotTo(BeNil())
-			Expect(source.Helm.Values).To(Equal("{{.values}}"))
-
-			// By name, not by server: the name is the CCLInfraPlane's.
-			Expect(template.Spec.Destination.Name).To(Equal("{{.infraPlane}}"))
-			Expect(template.Spec.Destination.Namespace).To(Equal("{{.namespace}}"))
-
-			Expect(template.Spec.SyncPolicy.Automated.Prune).To(BeTrue())
-			Expect(template.Spec.SyncPolicy.Automated.SelfHeal).To(BeTrue())
-			// ServerSideApply keeps large CRDs from sitting OutOfSync forever, which
-			// would stall every later RollingSync wave.
-			Expect(template.Spec.SyncPolicy.SyncOptions).To(
+			// Argo CD's RollingSync gates Applications by switching automated sync
+			// off and, as of v3.5.1, never switches it back on - which kills selfHeal.
+			// Ordering is done by withholding Applications instead, so nothing here
+			// may disable automated sync.
+			policy := getApplication(firstComponent).Spec.SyncPolicy
+			Expect(policy.Automated).NotTo(BeNil())
+			Expect(policy.Automated.Prune).To(BeTrue())
+			Expect(policy.Automated.SelfHeal).To(BeTrue())
+			Expect(policy.SyncOptions).To(
 				ConsistOf("CreateNamespace=true", "ServerSideApply=true"))
+		})
+
+		It("should target the component's infra plane from the operator's catalog flags", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createDeployment(components())
+			settle()
+
+			application := getApplication(firstComponent)
+			Expect(application.Spec.Source.RepoURL).To(Equal(repoURL))
+			Expect(application.Spec.Source.TargetRevision).To(Equal(revision))
+			// path, not chart: the catalog is a Git repository.
+			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/argo_rollouts"))
+			// By name, not by server: the name is the CCLInfraPlane's.
+			Expect(application.Spec.Destination.Name).To(Equal(planeA))
+			Expect(application.Spec.Destination.Namespace).To(Equal("argo-rollouts"))
+
+			By("carrying the cascade finalizer")
+			Expect(application.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
+
+			By("carrying the back-reference to its CCLDeployment")
+			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentName, deploymentName))
+			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentNamespace, namespace))
+			Expect(application.Labels).To(HaveKeyWithValue(labelDeploymentName, deploymentName))
 		})
 
 		It("should reject duplicate component names", func() {
@@ -411,8 +373,6 @@ var _ = Describe("CCLDeployment Controller", func() {
 		})
 
 		It("should reject a name too long to be a label value", func() {
-			// The name is stamped onto every generated Application as a label, and a
-			// label value cannot exceed 63 characters.
 			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      strings.Repeat("a", 64),
@@ -424,51 +384,48 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("at most 63 characters"))
 		})
 
-		It("should preserve component order across an update", func() {
+		It("should restore an Application spec after it drifts", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
 			settle()
-			release(firstComponent, secondComponent)
 
-			By("reversing the component order")
+			By("repointing the Application at another repository")
+			application := getApplication(firstComponent)
+			application.Spec.Source.RepoURL = "https://example.com/tampered"
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			reconcileAndGet()
+
+			Expect(getApplication(firstComponent).Spec.Source.RepoURL).To(Equal(repoURL))
+		})
+
+		It("should prune the Application of a component removed from the spec", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createDeployment(components())
+			settle()
+			release(firstComponent)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
+
+			By("removing the second component")
 			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
 			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			reversed := components()
-			deployment.Spec.Components = []cclusternvidiacomv1alpha1.ComponentSpec{
-				reversed[1], reversed[0],
-			}
+			deployment.Spec.Components = deployment.Spec.Components[:1]
 			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
 
 			reconcileAndGet()
 
-			// listType=atomic is what makes this hold: an associative list would be
-			// free to reorder, and the order here IS the rollout order.
-			elements := getAppSet().Spec.Generators[0].List.Elements
-			Expect(elements[0].Name).To(Equal(secondComponent))
-			Expect(elements[0].Wave).To(Equal("1"))
-			Expect(elements[1].Name).To(Equal(firstComponent))
-			Expect(elements[1].Wave).To(Equal("2"))
-		})
+			// Argo CD is not running here, so its cascade finalizer holds the object
+			// in the cluster while it would be uninstalling the chart. Deletion
+			// having been requested is what the operator is responsible for.
+			removed := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, appKey(secondComponent), removed)).To(Succeed())
+			Expect(removed.DeletionTimestamp).NotTo(BeNil())
+			Expect(removed.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
 
-		It("should restore the ApplicationSet spec after it drifts", func() {
-			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
-			createDeployment(components())
-			settle()
-			release(firstComponent, secondComponent)
-
-			By("tampering with the ApplicationSet")
-			appSet := getAppSet()
-			appSet.Spec.GoTemplate = false
-			appSet.Spec.Generators[0].List.Elements = nil
-			Expect(k8sClient.Update(ctx, appSet)).To(Succeed())
-
-			reconcileAndGet()
-
-			restored := getAppSet()
-			Expect(restored.Spec.GoTemplate).To(BeTrue())
-			Expect(restored.Spec.Generators[0].List.Elements).To(HaveLen(2))
+			By("leaving the surviving component alone")
+			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 		})
 
 		It("should report InfraPlaneNotFound and apply nothing when a plane is missing", func() {
@@ -483,8 +440,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotFound))
 			Expect(validated.Message).To(ContainSubstring(planeB))
 
-			Expect(apierrors.IsNotFound(
-				k8sClient.Get(ctx, appSetKey, &argocdv1alpha1.ApplicationSet{}))).To(BeTrue())
+			Expect(applicationExists(firstComponent)).To(BeFalse())
 		})
 
 		It("should report InfraPlaneNotReady until the plane becomes Available", func() {
@@ -513,9 +469,33 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(conditionOf(deployment, conditionTypeValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 
-			// Only the first component: nothing is deployed yet, so there is nothing
-			// for the second to follow.
-			Expect(getAppSet().Spec.Generators[0].List.Elements).To(HaveLen(1))
+			// Only the first: nothing is deployed yet, so there is nothing for the
+			// second to follow.
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+			Expect(applicationExists(secondComponent)).To(BeFalse())
+		})
+
+		It("should report which component the rollout is waiting on", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createDeployment(components())
+
+			deployment := settle()
+			progressing := conditionOf(deployment, conditionTypeProgressing)
+			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
+			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+
+			release(firstComponent)
+			deployment = reconcileAndGet()
+			Expect(conditionOf(deployment, conditionTypeProgressing).Message).
+				To(ContainSubstring(secondComponent))
+
+			release(secondComponent)
+			deployment = reconcileAndGet()
+			progressing = conditionOf(deployment, conditionTypeProgressing)
+			Expect(progressing.Status).To(Equal(metav1.ConditionFalse))
+			Expect(progressing.Reason).To(Equal(reasonRolloutComplete))
 		})
 
 		It("should enqueue the CCLDeployments that reference a CCLInfraPlane", func() {
@@ -536,51 +516,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 				})).To(BeEmpty())
 		})
 
-		It("should name the wave the rollout is waiting on", func() {
-			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
-			createDeployment(components())
-			settle()
-
-			By("reporting the first wave while its Application has not appeared")
-			deployment := reconcileAndGet()
-			progressing := conditionOf(deployment, conditionTypeProgressing)
-			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
-			Expect(progressing.Message).To(ContainSubstring("wave 1"))
-			Expect(progressing.Message).To(ContainSubstring(firstComponent))
-
-			By("reporting the second wave once the first is healthy")
-			createApplication(firstComponent, argocdv1alpha1.HealthStatusHealthy,
-				argocdv1alpha1.SyncStatusSynced)
-			createApplication(secondComponent, argocdv1alpha1.HealthStatusProgressing, "OutOfSync")
-
-			deployment = reconcileAndGet()
-			progressing = conditionOf(deployment, conditionTypeProgressing)
-			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Message).To(ContainSubstring("Wave 2"))
-			Expect(progressing.Message).To(ContainSubstring(secondComponent))
-
-			By("completing once every component is healthy and synced")
-			application := &argocdv1alpha1.Application{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      deploymentName + "-" + secondComponent,
-				Namespace: argoCDNamespace,
-			}, application)).To(Succeed())
-			application.Status.Health.Status = argocdv1alpha1.HealthStatusHealthy
-			application.Status.Sync.Status = argocdv1alpha1.SyncStatusSynced
-			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
-
-			deployment = reconcileAndGet()
-			progressing = conditionOf(deployment, conditionTypeProgressing)
-			Expect(progressing.Status).To(Equal(metav1.ConditionFalse))
-			Expect(progressing.Reason).To(Equal(reasonRolloutComplete))
-		})
-
-		It("should map a generated Application back to its CCLDeployment", func() {
+		It("should map an Application back to its CCLDeployment", func() {
 			requests := reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      deploymentName + "-" + firstComponent,
+					Name:      applicationName(deploymentName, firstComponent),
 					Namespace: argoCDNamespace,
 					Labels: map[string]string{
 						labelDeploymentName:      deploymentName,
@@ -590,17 +529,18 @@ var _ = Describe("CCLDeployment Controller", func() {
 			})
 			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: deploymentKey}))
 
-			By("ignoring an Application Argo CD did not generate for us")
+			By("ignoring an Application the operator did not create")
 			Expect(reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: argoCDNamespace},
 			})).To(BeEmpty())
 		})
 
-		It("should delete the ApplicationSet when the CCLDeployment is deleted", func() {
+		It("should delete every Application when the CCLDeployment is deleted", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
 			settle()
+			release(firstComponent)
 
 			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
 			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
@@ -610,47 +550,55 @@ var _ = Describe("CCLDeployment Controller", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(apierrors.IsNotFound(
-				k8sClient.Get(ctx, appSetKey, &argocdv1alpha1.ApplicationSet{}))).To(BeTrue())
+			for _, component := range []string{firstComponent, secondComponent} {
+				application := &argocdv1alpha1.Application{}
+				Expect(k8sClient.Get(ctx, appKey(component), application)).To(Succeed())
+				Expect(application.DeletionTimestamp).NotTo(BeNil(),
+					"expected %q to be deleted", component)
+			}
+
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, deploymentKey, deployment))
 			}).Should(BeTrue())
 		})
 
-		It("should refuse to overwrite an ApplicationSet owned by another resource", func() {
+		It("should refuse to touch an Application owned by another CCLDeployment", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 
-			By("planting an ApplicationSet claimed by a CCLDeployment in another namespace")
-			// The collision the ownership check exists for: two CCLDeployments of the
-			// same name in different namespaces map onto one ApplicationSet name in
-			// the Argo CD namespace.
-			Expect(k8sClient.Create(ctx, &argocdv1alpha1.ApplicationSet{
+			By("planting an Application claimed by a CCLDeployment in another namespace")
+			planted := &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      deploymentName,
+					Name:      applicationName(deploymentName, firstComponent),
 					Namespace: argoCDNamespace,
 					Annotations: map[string]string{
 						annotationDeploymentName:      deploymentName,
 						annotationDeploymentNamespace: "other-namespace",
 					},
 				},
-			})).To(Succeed())
+				Spec: argocdv1alpha1.ApplicationSpec{
+					Project: "default",
+					Source:  argocdv1alpha1.ApplicationSource{RepoURL: "https://example.com/someone-elses"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, planted)).To(Succeed())
 
 			createDeployment(components())
 			deployment := settle()
 
 			applied := conditionOf(deployment, conditionTypeComponentsApplied)
 			Expect(applied.Status).To(Equal(metav1.ConditionFalse))
-			Expect(applied.Reason).To(Equal(reasonApplicationSetConflict))
+			Expect(applied.Reason).To(Equal(reasonApplicationConflict))
 
-			By("leaving the foreign ApplicationSet untouched")
-			Expect(getAppSet().Spec.Generators).To(BeEmpty())
+			By("leaving the foreign Application untouched")
+			Expect(getApplication(firstComponent).Spec.Source.RepoURL).
+				To(Equal("https://example.com/someone-elses"))
 
 			By("leaving it in place on delete, too")
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Get(ctx, appSetKey, &argocdv1alpha1.ApplicationSet{})).To(Succeed())
+			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 		})
 	})
 })

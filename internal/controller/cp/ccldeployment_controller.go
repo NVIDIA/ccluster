@@ -43,8 +43,8 @@ const (
 	// conditionTypeProgressing reports on the RollingSync: false once every component
 	// is healthy and synced.
 	conditionTypeProgressing = "Progressing"
-	// conditionTypeComponentsApplied reports on the ApplicationSet that deploys the
-	// components onto their infra-plane clusters.
+	// conditionTypeComponentsApplied reports on the Argo CD Applications that deploy
+	// the components onto their infra-plane clusters.
 	conditionTypeComponentsApplied = "ComponentsApplied"
 
 	reasonComponentsAccepted = "ComponentsAccepted"
@@ -54,35 +54,34 @@ const (
 	reasonWaveSyncing     = "WaveSyncing"
 	reasonRolloutComplete = "RolloutComplete"
 
-	reasonApplicationSetCreated    = "ApplicationSetCreated"
-	reasonApplicationSetCRDMissing = "ApplicationSetCRDMissing"
-	reasonApplicationSetConflict   = "ApplicationSetConflict"
-	reasonApplicationSetFailed     = "ApplicationSetFailed"
+	reasonApplicationsCreated   = "ApplicationsCreated"
+	reasonApplicationCRDMissing = "ApplicationCRDMissing"
+	reasonApplicationConflict   = "ApplicationConflict"
+	reasonApplicationFailed     = "ApplicationFailed"
 )
 
 // Metadata written onto the ApplicationSet, and onto the Applications it generates.
 const (
-	// Back-references to the CCLDeployment an object was created for, for the reason
-	// given on ownerAnnotations: owner references may not cross namespaces.
+	// Back-references to the CCLDeployment an Application was created for, for the
+	// reason given on ownerAnnotations: owner references may not cross namespaces.
 	annotationDeploymentName      = "ccluster.nvidia.com/deployment-name"
 	annotationDeploymentNamespace = "ccluster.nvidia.com/deployment-namespace"
 
-	// The same back-reference, as labels on the generated Applications. Argo CD copies
-	// only the ApplicationSet's template metadata onto them, so the annotations above
-	// do not reach that far; labels are used rather than annotations because they are
-	// selectable, which is how the rollout report finds the Applications. This is why
-	// a CCLDeployment's name is capped at a label value's 63 characters.
+	// The same back-reference as labels, because a label can be selected on and an
+	// annotation cannot: listing a CCLDeployment's Applications is how the operator
+	// knows what it has already released. This is why a CCLDeployment's name is capped
+	// at a label value's 63 characters.
 	labelDeploymentName      = "ccluster.nvidia.com/deployment-name"
 	labelDeploymentNamespace = "ccluster.nvidia.com/deployment-namespace"
 
-	// labelWave carries a component's position in the rollout. The ApplicationSet's
-	// RollingSync steps select on it.
+	// labelWave carries a component's position in the rollout. Nothing acts on it; it
+	// exists so `kubectl get applications -L ccluster.nvidia.com/wave` shows the order.
 	labelWave = "ccluster.nvidia.com/wave"
 
-	// deploymentFinalizerName guards the ApplicationSet, which nothing else would clean
-	// up. It is distinct from finalizerName so the two controllers never remove each
-	// other's.
-	deploymentFinalizerName = "ccluster.nvidia.com/argocd-applicationset"
+	// deploymentFinalizerName guards the generated Applications, which nothing else
+	// would clean up. It is distinct from finalizerName so the two controllers never
+	// remove each other's.
+	deploymentFinalizerName = "ccluster.nvidia.com/argocd-applications"
 )
 
 // CCLDeploymentReconciler reconciles a CCLDeployment object
@@ -104,8 +103,7 @@ type CCLDeploymentReconciler struct {
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments/finalizers,verbs=update
-// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch
+// +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile projects a CCLDeployment onto a single Argo CD ApplicationSet:
 //
@@ -113,14 +111,15 @@ type CCLDeploymentReconciler struct {
 //     Available, because the generated Applications address their destination cluster by
 //     name, and that name only exists once its cluster Secret has been mirrored.
 //     Reported as the Validated condition.
-//  2. An ApplicationSet is written to the Argo CD namespace, generating one Application
-//     per released component. Reported as the ComponentsApplied condition.
-//  3. The generated Applications are read back, both to decide whether the next
-//     component may be released and to report where the rollout has got to. Reported as
-//     the Progressing condition.
+//  2. One Argo CD Application is written per released component. Reported as the
+//     ComponentsApplied condition.
+//  3. Those Applications are read back, both to decide whether the next component may be
+//     released and to report where the rollout has got to. Reported as the Progressing
+//     condition.
 //
-// Ordering is enforced by which components appear in the ApplicationSet's generator, not
-// by an Argo CD sync strategy - see applicationSetSpec for why.
+// Ordering is enforced by withholding a component's Application until everything before
+// it is healthy - see releaseCount - rather than by an Argo CD sync strategy, which would
+// mean switching off the automated sync these Applications depend on.
 //
 // The operator installs nothing itself; Argo CD does all of the work.
 func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -168,17 +167,16 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	released := releaseCount(&deployment, applications)
 
-	appSetOp, appSetErr := r.reconcileApplicationSet(ctx, &deployment, released)
+	changed, applyErr := r.reconcileApplications(ctx, &deployment, released, applications)
 	appliedStatus, appliedReason, appliedMessage, retryErr :=
-		r.applicationSetCondition(&deployment, appSetErr)
+		r.applicationsCondition(&deployment, released, applyErr)
 
-	if appSetErr == nil && appSetOp != controllerutil.OperationResultNone {
-		log.Info("Applied Argo CD ApplicationSet", "applicationSet", deployment.Name,
-			"namespace", r.ArgoCDNamespace, "operation", appSetOp,
+	if applyErr == nil && changed {
+		log.Info("Applied Argo CD Applications", "namespace", r.ArgoCDNamespace,
 			"released", released, "components", len(deployment.Spec.Components))
 	}
 	if appliedStatus != metav1.ConditionTrue {
-		log.Info("Did not apply Argo CD ApplicationSet", "applicationSet", deployment.Name,
+		log.Info("Did not apply Argo CD Applications", "ccldeployment", deployment.Name,
 			"reason", appliedReason, "message", appliedMessage)
 	}
 
@@ -190,9 +188,14 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		condition(conditionTypeComponentsApplied, appliedStatus, appliedReason, appliedMessage),
 	}
 
-	// Only meaningful once the ApplicationSet exists; before that there is nothing to
-	// read back and the previous Progressing condition, if any, still stands.
+	// Only meaningful once the Applications exist; before that there is nothing to read
+	// back and the previous Progressing condition, if any, still stands. They are
+	// re-listed because reconcileApplications has just created some.
 	if appliedStatus == metav1.ConditionTrue {
+		applications, err = r.listApplications(ctx, &deployment)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		progressStatus, progressReason, progressMessage := r.rolloutStatus(&deployment, applications)
 		conditions = append(conditions, condition(
 			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
@@ -257,7 +260,7 @@ func (r *CCLDeploymentReconciler) finalize(
 		return nil
 	}
 
-	if err := r.deleteApplicationSet(ctx, deployment); err != nil {
+	if err := r.deleteApplications(ctx, deployment); err != nil {
 		return err
 	}
 
@@ -330,9 +333,9 @@ func (r *CCLDeploymentReconciler) deploymentsForInfraPlane(ctx context.Context, 
 	return requests
 }
 
-// deploymentForApplication maps a generated Application back to the CCLDeployment it was
-// generated for, using the labels the ApplicationSet template stamps on it. This is what
-// makes the Progressing condition event-driven rather than polled.
+// deploymentForApplication maps an Application back to the CCLDeployment it was created
+// for, using the labels the operator stamps on it. This is what lets the next component be
+// released the moment the previous one reports healthy, rather than on a poll.
 func (r *CCLDeploymentReconciler) deploymentForApplication(_ context.Context, obj client.Object) []reconcile.Request {
 	labels := obj.GetLabels()
 	name, hasName := labels[labelDeploymentName]

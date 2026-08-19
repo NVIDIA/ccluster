@@ -37,6 +37,16 @@ spec:
             spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+            # status.sync.status is required by the real CRD. Modelled here rather
+            # than left open because the operator must not send an empty status when
+            # creating an Application, and only this catches that without a cluster.
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+              properties:
+                sync:
+                  type: object
+                  required: [status]
+                  properties:
+                    status:
+                      type: string
