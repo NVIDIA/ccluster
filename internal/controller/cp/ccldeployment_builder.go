@@ -27,7 +27,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -47,72 +46,53 @@ const (
 	// template can substitute a key but not decide whether the key exists.
 	emptyValues = "{}"
 
-	// rollingSyncStrategy is the only ApplicationSet strategy the operator writes.
-	rollingSyncStrategy = "RollingSync"
-
 	// defaultProject is the Argo CD AppProject generated Applications belong to.
 	defaultProject = "default"
 )
 
 // applicationSetSpec builds the ApplicationSet that deploys deployment's components.
 //
-// The shape is: one generator element per component, carrying everything that varies
-// between them, and one Application template that references those values by name. The
-// ordering comes from strategy.rollingSync, whose steps select generated Applications by
-// the wave label the template stamps on them.
+// Only the first `released` components appear in the generator. That slice is how
+// ordering is enforced: Argo CD generates an Application for a component only once the
+// operator has released it, and releaseCount releases the next one when everything
+// already released is healthy.
 //
-// Every placeholder is Go template syntax, and goTemplateOptions asks text/template to
-// fail on an unknown key rather than render an empty string - which would otherwise turn
-// a typo here into an Application pointed at the wrong chart.
+// Argo CD's own RollingSync strategy would be the obvious way to do this, and it is not
+// used deliberately. It gates Applications by setting spec.syncPolicy.automated.enabled
+// to false, and as of Argo CD v3.5.1 it never clears that flag once the rollout reports
+// complete - which leaves automated sync and selfHeal switched off for good. Drift then
+// goes unrepaired and edits to a CCLDeployment never reach the cluster. Gating on which
+// Applications exist keeps their sync policy untouched.
 func (r *CCLDeploymentReconciler) applicationSetSpec(
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	released int,
 ) (argocdv1alpha1.ApplicationSetSpec, error) {
-	elements := make([]argocdv1alpha1.GeneratorElement, 0, len(deployment.Spec.Components))
-	steps := make([]argocdv1alpha1.ApplicationSetRolloutStep, 0, len(deployment.Spec.Components))
+	components := deployment.Spec.Components[:released]
+	elements := make([]argocdv1alpha1.GeneratorElement, 0, len(components))
 
-	for i, component := range deployment.Spec.Components {
+	for i, component := range components {
 		values, err := componentValues(component)
 		if err != nil {
 			return argocdv1alpha1.ApplicationSetSpec{}, fmt.Errorf(
 				"component %q: %w", component.Name, err)
 		}
 
-		// One wave per component, numbered from 1: the list order is the rollout
-		// order. Grouping independent components into a shared wave is what a
-		// dependsOn field would later buy.
-		wave := strconv.Itoa(i + 1)
-
 		elements = append(elements, argocdv1alpha1.GeneratorElement{
 			Name:       component.Name,
 			Path:       component.Chart,
 			InfraPlane: component.InfraPlaneRef.Name,
 			Namespace:  component.Namespace,
-			Wave:       wave,
-			Values:     values,
-		})
-
-		// A fresh value per step: these are pointers, and sharing one would make the
-		// generated deepcopy alias every step's maxUpdate onto the same object.
-		maxUpdate := intstr.FromString("100%")
-		steps = append(steps, argocdv1alpha1.ApplicationSetRolloutStep{
-			MatchExpressions: []argocdv1alpha1.ApplicationMatchExpression{{
-				Key:      labelWave,
-				Operator: "In",
-				Values:   []string{wave},
-			}},
-			MaxUpdate: &maxUpdate,
+			// Position in the rollout. Nothing acts on it - it is stamped as a
+			// label so `kubectl get applications -L ccluster.nvidia.com/wave`
+			// shows the order the operator is working through.
+			Wave:   strconv.Itoa(i + 1),
+			Values: values,
 		})
 	}
 
 	return argocdv1alpha1.ApplicationSetSpec{
 		GoTemplate:        true,
 		GoTemplateOptions: []string{"missingkey=error"},
-		Strategy: &argocdv1alpha1.ApplicationSetStrategy{
-			Type: rollingSyncStrategy,
-			RollingSync: &argocdv1alpha1.ApplicationSetRolloutStrategy{
-				Steps: steps,
-			},
-		},
 		Generators: []argocdv1alpha1.ApplicationSetGenerator{{
 			List: &argocdv1alpha1.ListGenerator{Elements: elements},
 		}},
@@ -140,8 +120,7 @@ func (r *CCLDeploymentReconciler) applicationSetSpec(
 					// not reach it.
 					labelDeploymentName:      deployment.Name,
 					labelDeploymentNamespace: deployment.Namespace,
-					// What the RollingSync steps select on.
-					labelWave: "{{.wave}}",
+					labelWave:                "{{.wave}}",
 				},
 			},
 			Spec: argocdv1alpha1.ApplicationSpec{
@@ -166,6 +145,9 @@ func (r *CCLDeploymentReconciler) applicationSetSpec(
 					Namespace: "{{.namespace}}",
 				},
 				SyncPolicy: &argocdv1alpha1.SyncPolicy{
+					// Left entirely to Argo CD. The operator decides *whether* a
+					// component is deployed, never *how* it syncs - which is what
+					// keeps selfHeal working.
 					Automated: &argocdv1alpha1.SyncPolicyAutomated{
 						Prune:    true,
 						SelfHeal: true,
@@ -177,14 +159,65 @@ func (r *CCLDeploymentReconciler) applicationSetSpec(
 					// object - argo-rollouts' rollouts.argoproj.io CRD is ~600KB -
 					// so the copy is truncated and the diff never converges. The
 					// resource then sits OutOfSync forever despite syncing
-					// successfully, which stalls every later RollingSync wave,
-					// since a step advances only on Healthy *and* Synced. Several
-					// cluster_base charts ship CRDs that big.
+					// successfully. Several cluster_base charts ship CRDs that big.
 					SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
 				},
 			},
 		},
 	}, nil
+}
+
+// applicationName is the name Argo CD gives the Application generated for a component.
+func applicationName(deploymentName, componentName string) string {
+	return deploymentName + "-" + componentName
+}
+
+// healthy reports whether an Application has finished converging.
+func healthy(application *argocdv1alpha1.Application) bool {
+	return application.Status.Health.Status == argocdv1alpha1.HealthStatusHealthy &&
+		application.Status.Sync.Status == argocdv1alpha1.SyncStatusSynced
+}
+
+// releaseCount decides how many of deployment's components may be deployed right now.
+//
+// Releasing is monotonic and derived entirely from which Applications exist, so it needs
+// no state of its own and survives an operator restart. A component that has been
+// released is never withdrawn just because it became unhealthy - that would delete a
+// running Application, and with the cascade finalizer, uninstall its chart.
+func releaseCount(
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	applications map[string]*argocdv1alpha1.Application,
+) int {
+	components := deployment.Spec.Components
+
+	// Already released: the leading run of components that have an Application.
+	released := 0
+	for i := range components {
+		if _, generated := applications[applicationName(deployment.Name, components[i].Name)]; !generated {
+			break
+		}
+		released = i + 1
+	}
+	if released == 0 {
+		// Nothing deployed yet. The first component is always releasable; there is
+		// nothing for it to wait on.
+		return 1
+	}
+
+	// Hold if anything released is still converging. Checking all of them rather than
+	// just the most recent means a component that degrades later stops the rollout,
+	// which is what a sequential dependency implies.
+	for i := 0; i < released; i++ {
+		application := applications[applicationName(deployment.Name, components[i].Name)]
+		if !healthy(application) {
+			return released
+		}
+	}
+
+	if released < len(components) {
+		released++
+	}
+	return released
 }
 
 // componentValues renders a component's values as the single-line JSON string that goes
@@ -214,8 +247,9 @@ func componentValues(component cclusternvidiacomv1alpha1.ComponentSpec) (string,
 func (r *CCLDeploymentReconciler) reconcileApplicationSet(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	released int,
 ) (controllerutil.OperationResult, error) {
-	spec, err := r.applicationSetSpec(deployment)
+	spec, err := r.applicationSetSpec(deployment, released)
 	if err != nil {
 		return controllerutil.OperationResultNone, err
 	}
@@ -299,17 +333,14 @@ func (r *CCLDeploymentReconciler) applicationSetCondition(
 	}
 }
 
-// rolloutStatus reports on the RollingSync by reading the generated Applications back.
+// listApplications returns the Applications generated for deployment, keyed by name.
 //
-// This exists because a RollingSync step waits for its Applications to become Healthy
-// and Argo CD applies no timeout to that wait. A component that never reports healthy
-// therefore stalls every later wave silently, and without this the CCLDeployment would
-// look idle rather than stuck. The first component that is missing, unsynced or unhealthy
-// is the one holding the rollout up, so it is the one named.
-func (r *CCLDeploymentReconciler) rolloutStatus(
+// A missing CRD is reported as an empty set rather than an error: Argo CD may not be
+// installed, and reconcileApplicationSet raises that properly a moment later.
+func (r *CCLDeploymentReconciler) listApplications(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-) (status metav1.ConditionStatus, reason, message string) {
+) (map[string]*argocdv1alpha1.Application, error) {
 	var list argocdv1alpha1.ApplicationList
 	err := r.List(ctx, &list,
 		client.InNamespace(r.ArgoCDNamespace),
@@ -317,34 +348,44 @@ func (r *CCLDeploymentReconciler) rolloutStatus(
 			labelDeploymentName:      deployment.Name,
 			labelDeploymentNamespace: deployment.Namespace,
 		})
-	if err != nil {
-		return metav1.ConditionUnknown, reasonRolloutUnknown, fmt.Sprintf(
-			"Could not read generated Applications: %v", err)
+	switch {
+	case apimeta.IsNoMatchError(err):
+		return map[string]*argocdv1alpha1.Application{}, nil
+	case err != nil:
+		return nil, err
 	}
 
 	applications := make(map[string]*argocdv1alpha1.Application, len(list.Items))
 	for i := range list.Items {
 		applications[list.Items[i].Name] = &list.Items[i]
 	}
+	return applications, nil
+}
 
+// rolloutStatus reports how far through the components the rollout has got.
+//
+// The first component that is not yet released, or is released but still converging, is
+// the one holding everything after it up. There is no timeout on that wait, so naming it
+// is the only way a stuck rollout is visible.
+func (r *CCLDeploymentReconciler) rolloutStatus(
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
+	applications map[string]*argocdv1alpha1.Application,
+) (status metav1.ConditionStatus, reason, message string) {
 	for i, component := range deployment.Spec.Components {
 		wave := i + 1
-		name := deployment.Name + "-" + component.Name
+		name := applicationName(deployment.Name, component.Name)
 
-		application, generated := applications[name]
-		if !generated {
+		application, released := applications[name]
+		if !released {
 			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
-				"Waiting for wave %d (component %q): Application %q not generated yet",
-				wave, component.Name, name)
+				"Waiting to deploy wave %d (component %q)", wave, component.Name)
 		}
-
-		health := application.Status.Health.Status
-		sync := application.Status.Sync.Status
-		if health == argocdv1alpha1.HealthStatusHealthy && sync == argocdv1alpha1.SyncStatusSynced {
+		if healthy(application) {
 			continue
 		}
 
-		detail := fmt.Sprintf("health %q, sync %q", health, sync)
+		detail := fmt.Sprintf("health %q, sync %q",
+			application.Status.Health.Status, application.Status.Sync.Status)
 		if application.Status.Health.Message != "" {
 			detail += ": " + application.Status.Health.Message
 		}

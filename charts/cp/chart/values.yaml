@@ -139,20 +139,6 @@ argo-cd:
 
   configs:
     params:
-      ## Progressive Syncs. The CCLDeployment controller writes ApplicationSets with a
-      ## `strategy: RollingSync`, which is what rolls its components out in order —
-      ## `argocd.argoproj.io/sync-wave` cannot do this, as it only orders resources
-      ## within a single Application.
-      ##
-      ## The applicationset-controller ignores `strategy` unless this is set, and it
-      ## ignores it SILENTLY: without this, every component of a CCLDeployment syncs at
-      ## once and the ordering looks like it works until something depends on it. The
-      ## upstream chart leaves the key unset, so it must be set here.
-      ##
-      ## Still an alpha feature — re-check it when `make helm-deps-update-cp` bumps the
-      ## argo-cd dependency.
-      applicationsetcontroller.enable.progressive.syncs: "true"
-
       ## Server-side diff, the companion to the ServerSideApply sync option every
       ## generated Application carries.
       ##

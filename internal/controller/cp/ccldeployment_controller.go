@@ -53,7 +53,6 @@ const (
 
 	reasonWaveSyncing     = "WaveSyncing"
 	reasonRolloutComplete = "RolloutComplete"
-	reasonRolloutUnknown  = "RolloutUnknown"
 
 	reasonApplicationSetCreated    = "ApplicationSetCreated"
 	reasonApplicationSetCRDMissing = "ApplicationSetCRDMissing"
@@ -115,10 +114,13 @@ type CCLDeploymentReconciler struct {
 //     name, and that name only exists once its cluster Secret has been mirrored.
 //     Reported as the Validated condition.
 //  2. An ApplicationSet is written to the Argo CD namespace, generating one Application
-//     per component and ordering them with a RollingSync. Reported as the
-//     ComponentsApplied condition.
-//  3. The generated Applications are read back to report which wave the rollout is on.
-//     Reported as the Progressing condition.
+//     per released component. Reported as the ComponentsApplied condition.
+//  3. The generated Applications are read back, both to decide whether the next
+//     component may be released and to report where the rollout has got to. Reported as
+//     the Progressing condition.
+//
+// Ordering is enforced by which components appear in the ApplicationSet's generator, not
+// by an Argo CD sync strategy - see applicationSetSpec for why.
 //
 // The operator installs nothing itself; Argo CD does all of the work.
 func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -158,14 +160,22 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
 	}
 
-	appSetOp, appSetErr := r.reconcileApplicationSet(ctx, &deployment)
+	// The Applications already generated are both the record of what has been
+	// released and the evidence for whether the next component may follow.
+	applications, err := r.listApplications(ctx, &deployment)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	released := releaseCount(&deployment, applications)
+
+	appSetOp, appSetErr := r.reconcileApplicationSet(ctx, &deployment, released)
 	appliedStatus, appliedReason, appliedMessage, retryErr :=
 		r.applicationSetCondition(&deployment, appSetErr)
 
 	if appSetErr == nil && appSetOp != controllerutil.OperationResultNone {
 		log.Info("Applied Argo CD ApplicationSet", "applicationSet", deployment.Name,
 			"namespace", r.ArgoCDNamespace, "operation", appSetOp,
-			"components", len(deployment.Spec.Components))
+			"released", released, "components", len(deployment.Spec.Components))
 	}
 	if appliedStatus != metav1.ConditionTrue {
 		log.Info("Did not apply Argo CD ApplicationSet", "applicationSet", deployment.Name,
@@ -183,7 +193,7 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Only meaningful once the ApplicationSet exists; before that there is nothing to
 	// read back and the previous Progressing condition, if any, still stands.
 	if appliedStatus == metav1.ConditionTrue {
-		progressStatus, progressReason, progressMessage := r.rolloutStatus(ctx, &deployment)
+		progressStatus, progressReason, progressMessage := r.rolloutStatus(&deployment, applications)
 		conditions = append(conditions, condition(
 			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 	}

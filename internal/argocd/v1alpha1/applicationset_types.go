@@ -18,7 +18,6 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // ResourcesFinalizer makes deleting an Argo CD Application also delete the resources it
@@ -58,10 +57,6 @@ type ApplicationSetSpec struct {
 	// "missingkey=error" so a placeholder with no matching generator key fails the
 	// render instead of silently producing an empty string.
 	GoTemplateOptions []string `json:"goTemplateOptions,omitempty"`
-
-	// strategy orders the rollout of the generated Applications. Nil means Argo CD
-	// syncs them all at once.
-	Strategy *ApplicationSetStrategy `json:"strategy,omitempty"`
 
 	// generators produce the parameter sets template is rendered once per.
 	Generators []ApplicationSetGenerator `json:"generators"`
@@ -113,50 +108,6 @@ type GeneratorElement struct {
 	// Components with no overrides get "{}" rather than an omitted field: a Go
 	// template cannot conditionally drop a key.
 	Values string `json:"values,omitempty"`
-}
-
-// ApplicationSetStrategy orders the rollout of generated Applications.
-//
-// This is what orders one Application against another. The more familiar
-// "argocd.argoproj.io/sync-wave" annotation cannot: it orders resources *within* a
-// single Application.
-//
-// Argo CD gates this behind a flag. The applicationset-controller only honours it when
-// ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS is set, which the ccluster-cp
-// chart does via the argocd-cmd-params-cm key
-// "applicationsetcontroller.enable.progressive.syncs". With the flag off this field is
-// silently ignored and every Application syncs at once.
-type ApplicationSetStrategy struct {
-	// type is the strategy name. Only "RollingSync" is modelled.
-	Type string `json:"type,omitempty"`
-
-	RollingSync *ApplicationSetRolloutStrategy `json:"rollingSync,omitempty"`
-}
-
-// ApplicationSetRolloutStrategy is the ordered list of RollingSync steps.
-type ApplicationSetRolloutStrategy struct {
-	// steps run in order. Argo CD does not begin a step until every Application
-	// selected by the previous one reports Healthy - and it applies no timeout, so a
-	// component that never becomes Healthy stalls the remaining steps indefinitely.
-	Steps []ApplicationSetRolloutStep `json:"steps,omitempty"`
-}
-
-// ApplicationSetRolloutStep is one step of a RollingSync.
-type ApplicationSetRolloutStep struct {
-	// matchExpressions select the generated Applications this step covers, by label.
-	MatchExpressions []ApplicationMatchExpression `json:"matchExpressions,omitempty"`
-
-	// maxUpdate caps how many of them Argo CD syncs concurrently.
-	MaxUpdate *intstr.IntOrString `json:"maxUpdate,omitempty"`
-}
-
-// ApplicationMatchExpression is a label selector requirement over generated
-// Applications. It mirrors metav1.LabelSelectorRequirement, which Argo CD does not reuse
-// here.
-type ApplicationMatchExpression struct {
-	Key      string   `json:"key,omitempty"`
-	Operator string   `json:"operator,omitempty"`
-	Values   []string `json:"values,omitempty"`
 }
 
 // ApplicationSetTemplate is the Application an ApplicationSet generates. Its metadata is
