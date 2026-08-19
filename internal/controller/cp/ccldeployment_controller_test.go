@@ -326,6 +326,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(template.Labels).To(HaveKeyWithValue(labelDeploymentName, deploymentName))
 			Expect(template.Labels).To(HaveKeyWithValue(labelDeploymentNamespace, namespace))
 
+			// Without this, deleting the CCLDeployment - or just dropping a
+			// component - would leave the chart installed but unmanaged.
+			Expect(template.Finalizers).To(ConsistOf(argocdv1alpha1.ResourcesFinalizer))
+
 			source := template.Spec.Source
 			Expect(source.RepoURL).To(Equal(repoURL))
 			Expect(source.TargetRevision).To(Equal(revision))

@@ -114,6 +114,17 @@ func (r *CCLDeploymentReconciler) applicationSetSpec(
 		Template: argocdv1alpha1.ApplicationSetTemplate{
 			ApplicationSetTemplateMeta: argocdv1alpha1.ApplicationSetTemplateMeta{
 				Name: deployment.Name + "-{{.name}}",
+				// Without this an Application delete is non-cascading, so
+				// dropping a component from the spec - or deleting the whole
+				// CCLDeployment - would remove Argo CD's record of the chart and
+				// leave it installed and unmanaged on the infra-plane cluster.
+				//
+				// Teardown is asynchronous: deleting the ApplicationSet returns
+				// as soon as the API server accepts it, while Argo CD works
+				// through the finalizers afterwards. The CCLDeployment is
+				// therefore gone before the charts are, and an Application whose
+				// cluster is unreachable stays Terminating until it is not.
+				Finalizers: []string{argocdv1alpha1.ResourcesFinalizer},
 				Labels: map[string]string{
 					labelName:      labelNameValue,
 					labelManagedBy: labelManagedByValue,

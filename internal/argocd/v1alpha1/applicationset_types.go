@@ -21,6 +21,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// ResourcesFinalizer makes deleting an Argo CD Application also delete the resources it
+// deployed. Argo CD treats an Application without it as a record to drop rather than a
+// deployment to tear down, so removing one silently orphans its workloads on the
+// destination cluster.
+const ResourcesFinalizer = "resources-finalizer.argocd.argoproj.io"
+
 // ApplicationSet generates Argo CD Applications from a set of generators.
 //
 // Only the fields the control-plane operator writes are modelled, so this type is not a
@@ -168,6 +174,12 @@ type ApplicationSetTemplateMeta struct {
 	// labels are stamped onto each generated Application. RollingSync steps select on
 	// them, which is how a component's wave reaches the strategy.
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// finalizers are stamped onto each generated Application. Deleting an Argo CD
+	// Application is non-cascading unless it carries
+	// ResourcesFinalizer: the Application record goes away and everything it
+	// installed keeps running, unmanaged.
+	Finalizers []string `json:"finalizers,omitempty"`
 }
 
 // ApplicationSpec is the desired state of a generated Argo CD Application.
