@@ -19,6 +19,7 @@ package cp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -82,6 +83,12 @@ const (
 	// would clean up. It is distinct from finalizerName so the two controllers never
 	// remove each other's.
 	deploymentFinalizerName = "ccluster.nvidia.com/argocd-applications"
+
+	// teardownRetryInterval backstops the Application watch during teardown. Progress
+	// is event-driven - an Application going away brings the CCLDeployment back - so
+	// this only covers a missed event, and keeps a component whose cluster is
+	// unreachable from wedging the delete silently.
+	teardownRetryInterval = 15 * time.Second
 )
 
 // CCLDeploymentReconciler reconciles a CCLDeployment object
@@ -136,7 +143,7 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !deployment.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, r.finalize(ctx, &deployment)
+		return r.finalize(ctx, &deployment)
 	}
 
 	base := deployment.DeepCopy()
@@ -161,10 +168,11 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// The Applications already generated are both the record of what has been
 	// released and the evidence for whether the next component may follow.
-	applications, err := r.listApplications(ctx, &deployment)
+	all, err := r.listApplications(ctx, &deployment)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	applications := liveApplications(all)
 	released := releaseCount(&deployment, applications)
 
 	changed, applyErr := r.reconcileApplications(ctx, &deployment, released, applications)
@@ -192,10 +200,11 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// back and the previous Progressing condition, if any, still stands. They are
 	// re-listed because reconcileApplications has just created some.
 	if appliedStatus == metav1.ConditionTrue {
-		applications, err = r.listApplications(ctx, &deployment)
+		all, err = r.listApplications(ctx, &deployment)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		applications = liveApplications(all)
 		progressStatus, progressReason, progressMessage := r.rolloutStatus(&deployment, applications)
 		conditions = append(conditions, condition(
 			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
@@ -250,25 +259,37 @@ func (r *CCLDeploymentReconciler) resolveInfraPlanes(
 	return "", "", nil
 }
 
-// finalize deletes the ApplicationSet, if it is still ours, and then drops the finalizer
-// so the CCLDeployment can go away.
+// finalize tears the components down in reverse, then drops the finalizer so the
+// CCLDeployment can go away.
+//
+// It removes one Application per call and returns to be re-invoked, rather than deleting
+// them all in one pass: the components were deployed in order because a later one may
+// depend on an earlier one, so an earlier one must not be removed while a later one is
+// still using it. The CCLDeployment therefore survives until the last chart is gone,
+// which is what makes the ordering observable at all.
 func (r *CCLDeploymentReconciler) finalize(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-) error {
+) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(deployment, deploymentFinalizerName) {
-		return nil
+		return ctrl.Result{}, nil
 	}
 
-	if err := r.deleteApplications(ctx, deployment); err != nil {
-		return err
+	remaining, err := r.teardownNext(ctx, deployment)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if remaining > 0 {
+		// The Application watch brings us back as soon as one is really gone; the
+		// interval is only a backstop.
+		return ctrl.Result{RequeueAfter: teardownRetryInterval}, nil
 	}
 
 	// Patched rather than updated, and NotFound ignored, for the reasons in
 	// setConditions: the deletion that brought us here may not have reached the cache.
 	base := deployment.DeepCopy()
 	controllerutil.RemoveFinalizer(deployment, deploymentFinalizerName)
-	return client.IgnoreNotFound(r.Patch(ctx, deployment, client.MergeFrom(base)))
+	return ctrl.Result{}, client.IgnoreNotFound(r.Patch(ctx, deployment, client.MergeFrom(base)))
 }
 
 // condition builds a metav1.Condition. ObservedGeneration is filled in by setConditions,

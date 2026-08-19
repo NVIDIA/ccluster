@@ -143,6 +143,31 @@ var _ = Describe("CCLDeployment Controller", func() {
 			return reconcileAndGet()
 		}
 
+		// reconcileOnly is reconcileAndGet without the re-fetch, for passes after which
+		// the CCLDeployment may no longer exist.
+		reconcileOnly := func() {
+			GinkgoHelper()
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		// finishTeardown stands in for Argo CD completing an uninstall: it drops the
+		// cascade finalizer so the terminating Application actually goes away.
+		finishTeardown := func(component string) {
+			GinkgoHelper()
+
+			application := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, appKey(component), application)).To(Succeed())
+			Expect(controllerutil.RemoveFinalizer(application,
+				argocdv1alpha1.ResourcesFinalizer)).To(BeTrue())
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(
+					k8sClient.Get(ctx, appKey(component), &argocdv1alpha1.Application{}))
+			}).Should(BeTrue())
+		}
+
 		getApplication := func(component string) *argocdv1alpha1.Application {
 			GinkgoHelper()
 
@@ -220,13 +245,32 @@ var _ = Describe("CCLDeployment Controller", func() {
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 
-				// envtest runs no garbage collector, so the object survives until
-				// the controller drops its finalizer.
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
-				Expect(err).NotTo(HaveOccurred())
+				// Teardown removes one Application per pass and waits for it to go.
+				// Nothing here runs Argo CD or a garbage collector, so the cascade
+				// finalizers have to be cleared as we go, and the CCLDeployment
+				// survives until they are.
 				Eventually(func() bool {
+					var applications argocdv1alpha1.ApplicationList
+					Expect(k8sClient.List(ctx, &applications,
+						client.InNamespace(argoCDNamespace))).To(Succeed())
+					for i := range applications.Items {
+						application := &applications.Items[i]
+						if application.DeletionTimestamp.IsZero() {
+							continue
+						}
+						if controllerutil.RemoveFinalizer(application,
+							argocdv1alpha1.ResourcesFinalizer) {
+							Expect(client.IgnoreNotFound(
+								k8sClient.Update(ctx, application))).To(Succeed())
+						}
+					}
+
+					_, err := reconciler.Reconcile(ctx,
+						reconcile.Request{NamespacedName: deploymentKey})
+					Expect(err).NotTo(HaveOccurred())
+
 					return apierrors.IsNotFound(k8sClient.Get(ctx, deploymentKey, deployment))
-				}).Should(BeTrue())
+				}, "15s", "50ms").Should(BeTrue())
 			} else {
 				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 			}
@@ -535,7 +579,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 			})).To(BeEmpty())
 		})
 
-		It("should delete every Application when the CCLDeployment is deleted", func() {
+		It("should tear the components down in reverse order", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createDeployment(components())
@@ -547,19 +591,55 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(controllerutil.ContainsFinalizer(deployment, deploymentFinalizerName)).To(BeTrue())
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
-			Expect(err).NotTo(HaveOccurred())
+			By("removing the last component first")
+			reconcileOnly()
+			Expect(getApplication(secondComponent).DeletionTimestamp).NotTo(BeNil())
+			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 
-			for _, component := range []string{firstComponent, secondComponent} {
-				application := &argocdv1alpha1.Application{}
-				Expect(k8sClient.Get(ctx, appKey(component), application)).To(Succeed())
-				Expect(application.DeletionTimestamp).NotTo(BeNil(),
-					"expected %q to be deleted", component)
-			}
+			By("waiting for it rather than starting the next")
+			// The point of the exercise: an earlier component must outlive a later
+			// one that may still be using it, so issuing both deletes at once - which
+			// Argo CD would then run concurrently - is not good enough.
+			reconcileOnly()
+			reconcileOnly()
+			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed(),
+				"the CCLDeployment must outlive its components")
 
+			By("moving on once Argo CD has finished with it")
+			finishTeardown(secondComponent)
+			reconcileOnly()
+			Expect(getApplication(firstComponent).DeletionTimestamp).NotTo(BeNil())
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+
+			By("dropping the finalizer only when everything is gone")
+			finishTeardown(firstComponent)
+			reconcileOnly()
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, deploymentKey, deployment))
 			}).Should(BeTrue())
+		})
+
+		It("should requeue while a component is still terminating", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createDeployment(components())
+			settle()
+
+			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			Expect(err).NotTo(HaveOccurred())
+			// A backstop for a missed Application watch event, so a teardown that
+			// stalls does not do so silently.
+			Expect(result.RequeueAfter).To(Equal(teardownRetryInterval))
+
+			finishTeardown(firstComponent)
+			result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
 		})
 
 		It("should refuse to touch an Application owned by another CCLDeployment", func() {
@@ -596,8 +676,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 
 			By("leaving it in place on delete, too")
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
-			Expect(err).NotTo(HaveOccurred())
+			reconcileOnly()
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 		})
 	})

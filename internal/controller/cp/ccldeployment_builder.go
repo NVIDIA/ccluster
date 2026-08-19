@@ -197,15 +197,9 @@ func (r *CCLDeploymentReconciler) pruneApplications(
 		wanted[applicationName(deployment.Name, component.Name)] = struct{}{}
 	}
 
-	// Sorted so the deletions, and the log lines they produce, are deterministic.
-	names := make([]string, 0, len(existing))
-	for name := range existing {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
 	pruned := false
-	for _, name := range names {
+	// Sorted so the deletions, and the log lines they produce, are deterministic.
+	for _, name := range sortedNames(existing) {
 		if _, keep := wanted[name]; keep {
 			continue
 		}
@@ -222,41 +216,96 @@ func (r *CCLDeploymentReconciler) pruneApplications(
 	return pruned, nil
 }
 
-// deleteApplications removes every Application created for deployment. Their finalizers
-// make Argo CD uninstall the charts as they go.
-func (r *CCLDeploymentReconciler) deleteApplications(
+// teardownNext removes one Application, highest wave first, and reports how many of
+// deployment's Applications are still present.
+//
+// Components are deployed in order because a later one may depend on an earlier one, so
+// they have to come down the other way round: a component that owns CRDs must outlive
+// whatever is still holding custom resources of that kind. Issuing the deletes in reverse
+// is not enough on its own - Argo CD uninstalls them concurrently and the order is lost -
+// so this deletes exactly one per call and waits for it to be gone before starting the
+// next.
+//
+// A zero return means everything is gone and the finalizer can be dropped.
+func (r *CCLDeploymentReconciler) teardownNext(
 	ctx context.Context,
 	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
-) error {
+) (remaining int, err error) {
 	log := logf.FromContext(ctx)
 
-	existing, err := r.listApplications(ctx, deployment)
+	all, err := r.listApplications(ctx, deployment)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	names := make([]string, 0, len(existing))
-	for name := range existing {
+	owned := make(map[string]*argocdv1alpha1.Application, len(all))
+	for name, application := range all {
+		if deploymentOwner.ownedBy(application, deployment) {
+			owned[name] = application
+		}
+	}
+
+	if len(owned) == 0 {
+		// Logged here rather than per pass, so a foreign Application does not
+		// produce a line on every requeue while teardown runs.
+		for _, name := range sortedNames(all) {
+			log.Info("Left Application owned by another CCLDeployment in place",
+				"application", name, "namespace", r.ArgoCDNamespace)
+		}
+		return 0, nil
+	}
+
+	// Something is already on its way out. Wait for it: starting the next now would
+	// collapse the ordering back into a concurrent teardown.
+	for _, name := range sortedNames(owned) {
+		if !owned[name].DeletionTimestamp.IsZero() {
+			log.V(1).Info("Waiting for Application to finish terminating",
+				"application", name, "namespace", r.ArgoCDNamespace)
+			return len(owned), nil
+		}
+	}
+
+	// Highest wave first.
+	components := deployment.Spec.Components
+	for i := len(components) - 1; i >= 0; i-- {
+		name := applicationName(deployment.Name, components[i].Name)
+		application, present := owned[name]
+		if !present {
+			continue
+		}
+		if err := r.Delete(ctx, application); client.IgnoreNotFound(err) != nil {
+			return len(owned), err
+		}
+		log.Info("Deleted Argo CD Application", "application", name,
+			"namespace", r.ArgoCDNamespace, "wave", i+1)
+		return len(owned), nil
+	}
+
+	// Owned, but no longer named by any component - the spec was edited while the
+	// CCLDeployment was being deleted. There is no wave to order these by, so they go
+	// in a deterministic order instead.
+	name := sortedNames(owned)[0]
+	if err := r.Delete(ctx, owned[name]); client.IgnoreNotFound(err) != nil {
+		return len(owned), err
+	}
+	log.Info("Deleted Argo CD Application for a component no longer in the spec",
+		"application", name, "namespace", r.ArgoCDNamespace)
+	return len(owned), nil
+}
+
+// sortedNames returns the keys of an Application map in a deterministic order.
+func sortedNames(applications map[string]*argocdv1alpha1.Application) []string {
+	names := make([]string, 0, len(applications))
+	for name := range applications {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-
-	for _, name := range names {
-		if !deploymentOwner.ownedBy(existing[name], deployment) {
-			log.Info("Left Application owned by another CCLDeployment in place",
-				"application", name, "namespace", r.ArgoCDNamespace)
-			continue
-		}
-		if err := r.Delete(ctx, existing[name]); client.IgnoreNotFound(err) != nil {
-			return err
-		}
-		log.Info("Deleted Argo CD Application", "application", name,
-			"namespace", r.ArgoCDNamespace)
-	}
-	return nil
+	return names
 }
 
-// listApplications returns the Applications created for deployment, keyed by name.
+// listApplications returns every Application created for deployment, keyed by name,
+// including ones that are terminating. Callers that reason about what is deployed want
+// liveApplications instead; teardown needs to see the terminating ones.
 //
 // A missing CRD is reported as an empty set rather than an error: Argo CD may not be
 // installed, and reconcileApplications raises that properly a moment later.
@@ -280,16 +329,26 @@ func (r *CCLDeploymentReconciler) listApplications(
 
 	applications := make(map[string]*argocdv1alpha1.Application, len(list.Items))
 	for i := range list.Items {
-		// An Application that is terminating is not a live release. Its cascade
-		// finalizer keeps the object around while Argo CD uninstalls the chart, and
-		// counting it would let a pruned component hold the rollout open, or make a
-		// re-added one look already deployed.
-		if !list.Items[i].DeletionTimestamp.IsZero() {
-			continue
-		}
 		applications[list.Items[i].Name] = &list.Items[i]
 	}
 	return applications, nil
+}
+
+// liveApplications drops the Applications that are terminating.
+//
+// One of those is not a live release: its cascade finalizer keeps the object around while
+// Argo CD uninstalls the chart, and counting it would let a pruned component hold the
+// rollout open, or make a re-added one look already deployed.
+func liveApplications(
+	applications map[string]*argocdv1alpha1.Application,
+) map[string]*argocdv1alpha1.Application {
+	live := make(map[string]*argocdv1alpha1.Application, len(applications))
+	for name, application := range applications {
+		if application.DeletionTimestamp.IsZero() {
+			live[name] = application
+		}
+	}
+	return live
 }
 
 // releaseCount decides how many of deployment's components may be deployed right now.
