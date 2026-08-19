@@ -23,16 +23,17 @@ manager:
   ## Arguments
   ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
-  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the ApplicationSet
-  ## that deploys the cluster_base catalog onto that cluster. The default matches a
-  ## stock Argo CD install. Note that the `argo-cd` subchart below installs into this
-  ## chart's RELEASE namespace, not `argocd` — so when Argo CD comes from this chart,
-  ## override this to the release namespace. `make deploy-cp` does that for you.
+  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the ApplicationSet it
+  ## builds from each CCLDeployment. The default matches a stock Argo CD install. Note
+  ## that the `argo-cd` subchart below installs into this chart's RELEASE namespace,
+  ## not `argocd` — so when Argo CD comes from this chart, override this to the release
+  ## namespace. `make deploy-cp` does that for you.
   ##
-  ## --catalog-repo-url and --catalog-revision are the Git repository and revision the
-  ## generated ApplicationSets deploy the catalogs/cluster_base charts from. Argo CD's
-  ## repo-server clones the repository, so the revision has to be pushed — point
-  ## --catalog-revision at a branch to try a catalog change before it merges.
+  ## --catalog-repo-url and --catalog-revision are the Git repository and revision a
+  ## CCLDeployment's components are resolved against; each component's `chart` is a
+  ## path within that repository. Argo CD's repo-server clones it, so the revision has
+  ## to be pushed — point --catalog-revision at a branch to try a catalog change before
+  ## it merges.
   args:
     - --leader-elect
     - --argocd-namespace=argocd
@@ -135,4 +136,21 @@ prometheus:
 ## (`make deploy-cp ARGOCD=false`).
 argo-cd:
   enable: true
+
+  configs:
+    params:
+      ## Server-side diff, the companion to the ServerSideApply sync option every
+      ## generated Application carries.
+      ##
+      ## ServerSideApply changes how Argo CD *writes* a resource; this changes how it
+      ## *compares* one. Without it the comparison is still a client-side three-way
+      ## merge against the kubectl.kubernetes.io/last-applied-configuration annotation
+      ## — which an object larger than the annotation limit cannot carry, and which
+      ## server-side apply stops maintaining. Large CRDs then report OutOfSync forever
+      ## despite syncing cleanly, and because a RollingSync step advances only on
+      ## Healthy *and* Synced, one such CRD stalls every later wave of a CCLDeployment.
+      ##
+      ## argo-rollouts' rollouts.argoproj.io CRD is ~600KB; several other cluster_base
+      ## charts are comparable.
+      controller.diff.server.side: "true"
 

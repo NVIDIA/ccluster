@@ -59,8 +59,8 @@ The current codebase ships as a single Python package, `catalog`, that pairs eac
 
 Each operator ships as a Helm chart. The control-plane chart also installs Argo CD, which
 the control plane depends on — CCluster reconciles clusters and workloads by creating Argo CD
-`Application` and `ApplicationSet` resources, so Argo CD is a prerequisite rather than
-something the operator installs for itself.
+`Application` resources, so Argo CD is a prerequisite rather than something the operator
+installs for itself.
 
 ```bash
 # Control-plane cluster: ccluster-cp-operator + Argo CD

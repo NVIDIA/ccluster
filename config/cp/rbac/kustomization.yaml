@@ -7,6 +7,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the ccluster operators themselves. You can comment the following
 # lines if you do not want those helpers be installed with your Project.
+- ccldeployment_admin_role.yaml
+- ccldeployment_editor_role.yaml
+- ccldeployment_viewer_role.yaml
 - cclinfraplane_admin_role.yaml
 - cclinfraplane_editor_role.yaml
 - cclinfraplane_viewer_role.yaml

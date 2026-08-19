@@ -40,18 +40,10 @@ import (
 const (
 	// conditionTypeAvailable reports on the mirrored Argo CD cluster Secret.
 	conditionTypeAvailable = "Available"
-	// conditionTypeComponentsApplied reports on the ApplicationSet that installs the
-	// catalogs/cluster_base components onto the registered cluster.
-	conditionTypeComponentsApplied = "ComponentsApplied"
 
 	reasonClusterSecretCreated  = "ClusterSecretCreated"
 	reasonSecretNotFound        = "SecretNotFound"
 	reasonClusterSecretConflict = "ClusterSecretConflict"
-
-	reasonApplicationSetCreated    = "ApplicationSetCreated"
-	reasonApplicationSetCRDMissing = "ApplicationSetCRDMissing"
-	reasonApplicationSetConflict   = "ApplicationSetConflict"
-	reasonApplicationSetFailed     = "ApplicationSetFailed"
 )
 
 // Metadata written onto the mirrored Secret in the Argo CD namespace.
@@ -89,32 +81,24 @@ type CCLInfraPlaneReconciler struct {
 	Scheme *runtime.Scheme
 
 	// ArgoCDNamespace is the namespace Argo CD runs in, and therefore the namespace
-	// the mirrored cluster Secrets and the generated ApplicationSets are written to.
+	// the mirrored cluster Secrets are written to.
 	ArgoCDNamespace string
-
-	// CatalogRepoURL and CatalogRevision locate the chart catalog the generated
-	// ApplicationSet deploys from: a Git repository Argo CD's repo-server can clone,
-	// and a revision within it. Component paths are relative to the repository root.
-	CatalogRepoURL  string
-	CatalogRevision string
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile registers the infra-plane cluster with Argo CD and then deploys the
-// cluster_base components onto it:
+// Reconcile registers the infra-plane cluster with Argo CD, and stops there.
 //
-//  1. The Secret named by clusterCredentialsRef is cloned into the Argo CD namespace,
-//     under the CCLInfraPlane's own name and labelled as an Argo CD cluster Secret. Its
-//     data is copied verbatim - what it has to contain is Argo CD's business, not this
-//     operator's. Reported as the Available condition.
-//  2. An ApplicationSet is written to the same namespace, generating one Argo CD
-//     Application per catalogs/cluster_base component, all targeting that cluster.
-//     Reported as the ComponentsApplied condition.
+// The Secret named by clusterCredentialsRef is cloned into the Argo CD namespace, under
+// the CCLInfraPlane's own name and labelled as an Argo CD cluster Secret. Its data is
+// copied verbatim - what it has to contain is Argo CD's business, not this operator's.
+// Reported as the Available condition.
+//
+// Deciding what runs on the registered cluster is CCLDeployment's job. A CCLInfraPlane
+// makes a cluster addressable by name; it does not put anything on it.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
@@ -178,30 +162,9 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"secretNamespace", r.ArgoCDNamespace, "operation", op)
 	}
 
-	if err := r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
+	return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
 		reasonClusterSecretCreated, fmt.Sprintf("Mirrored Secret %q into namespace %q",
-			infraPlane.Name, r.ArgoCDNamespace)); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Only now that the cluster Secret exists can Argo CD resolve the ApplicationSet's
-	// destination, which names the cluster rather than addressing its API server.
-	appSetOp, appSetErr := r.reconcileApplicationSet(ctx, &infraPlane)
-	status, reason, message, retryErr := r.applicationSetCondition(&infraPlane, appSetErr)
-	if appSetErr == nil && appSetOp != controllerutil.OperationResultNone {
-		log.Info("Applied Argo CD ApplicationSet", "applicationSet", infraPlane.Name,
-			"namespace", r.ArgoCDNamespace, "operation", appSetOp)
-	}
-	if status != metav1.ConditionTrue {
-		log.Info("Did not apply Argo CD ApplicationSet", "applicationSet", infraPlane.Name,
-			"reason", reason, "message", message)
-	}
-
-	if err := r.setCondition(ctx, &infraPlane, conditionTypeComponentsApplied,
-		status, reason, message); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, retryErr
+			infraPlane.Name, r.ArgoCDNamespace))
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
@@ -223,22 +186,14 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	}
 
 	return controllerutil.CreateOrUpdate(ctx, r.Client, mirror, func() error {
-		if !ownedBy(mirror, infraPlane) {
+		if !infraPlaneOwner.ownedBy(mirror, infraPlane) {
 			return errClusterSecretConflict
 		}
+		infraPlaneOwner.stamp(mirror, infraPlane)
 
-		if mirror.Labels == nil {
-			mirror.Labels = map[string]string{}
-		}
+		// The one label stamp does not set: it is what makes Argo CD treat this
+		// Secret as a cluster registration rather than an ordinary Secret.
 		mirror.Labels[argoCDSecretTypeLabel] = argoCDSecretTypeCluster
-		mirror.Labels["app.kubernetes.io/name"] = "ccluster"
-		mirror.Labels["app.kubernetes.io/managed-by"] = "ccluster-cp-operator"
-
-		if mirror.Annotations == nil {
-			mirror.Annotations = map[string]string{}
-		}
-		mirror.Annotations[annotationInfraPlaneName] = infraPlane.Name
-		mirror.Annotations[annotationInfraPlaneNamespace] = infraPlane.Namespace
 
 		mirror.Type = source.Type
 		mirror.Data = make(map[string][]byte, len(source.Data)+1)
@@ -249,19 +204,6 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 		mirror.Data[argoCDClusterNameKey] = []byte(infraPlane.Name)
 		return nil
 	})
-}
-
-// ownedBy reports whether obj is unclaimed or already back-references infraPlane. An
-// object created by hand carries no back-reference and is therefore adoptable; one
-// pointing at a different CCLInfraPlane is not.
-func ownedBy(obj client.Object, infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) bool {
-	annotations := obj.GetAnnotations()
-	name, hasName := annotations[annotationInfraPlaneName]
-	namespace, hasNamespace := annotations[annotationInfraPlaneNamespace]
-	if !hasName && !hasNamespace {
-		return true
-	}
-	return name == infraPlane.Name && namespace == infraPlane.Namespace
 }
 
 // finalize deletes the mirrored Secret, if it is still ours, and then drops the
@@ -276,12 +218,6 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return nil
 	}
 
-	// The ApplicationSet goes first: it is what keeps workloads running on the
-	// infra-plane cluster, and Argo CD needs the cluster Secret to remove them.
-	if err := r.deleteApplicationSet(ctx, infraPlane); err != nil {
-		return err
-	}
-
 	var mirror corev1.Secret
 	key := client.ObjectKey{Namespace: r.ArgoCDNamespace, Name: infraPlane.Name}
 	switch err := r.Get(ctx, key, &mirror); {
@@ -289,7 +225,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		// Already gone; nothing to clean up.
 	case err != nil:
 		return err
-	case !ownedBy(&mirror, infraPlane):
+	case !infraPlaneOwner.ownedBy(&mirror, infraPlane):
 		log.Info("Left cluster Secret owned by another CCLInfraPlane in place",
 			"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
 	default:

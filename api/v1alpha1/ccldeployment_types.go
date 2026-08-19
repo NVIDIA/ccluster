@@ -1,0 +1,159 @@
+/*
+Copyright 2026 NVIDIA CORPORATION & AFFILIATES.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// LocalObjectReference references an object in the same namespace as the referring
+// object. It is the same shape as LocalSecretReference, kept separate so the two can
+// document different targets.
+type LocalObjectReference struct {
+	// name is the name of the referenced object.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+}
+
+// ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
+type ComponentSpec struct {
+	// name identifies the component within this CCLDeployment. It is templated into
+	// the generated Argo CD Application's name, so it has to be DNS-1123.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
+	// in the same namespace as this CCLDeployment, and must already be Available -
+	// that is, its cluster credentials have been mirrored into the Argo CD namespace,
+	// which is what lets the generated Application address the cluster by name.
+	// +required
+	InfraPlaneRef LocalObjectReference `json:"infraPlaneRef"`
+
+	// chart is the chart's directory, relative to the root of the catalog repository.
+	//
+	// The repository and revision are not settable per component: they are how the
+	// operator itself is configured (--catalog-repo-url and --catalog-revision), so
+	// every component of every CCLDeployment deploys from the same catalog.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Chart string `json:"chart"`
+
+	// namespace is where the chart is installed on the target cluster. It is created
+	// if it does not exist.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Namespace string `json:"namespace"`
+
+	// values overrides the chart's defaults. It is passed to Helm verbatim; the
+	// operator does not interpret or validate it against the chart.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Values *apiextensionsv1.JSON `json:"values,omitempty"`
+}
+
+// CCLDeploymentSpec defines the desired state of CCLDeployment
+type CCLDeploymentSpec struct {
+	// components are rolled out in the order given: each becomes one step of an Argo CD
+	// RollingSync, so a component is not synced until the one before it reports
+	// Healthy. There is no timeout on that wait - a component that never becomes
+	// healthy stalls everything after it, which the Progressing condition reports.
+	//
+	// Ordering is positional rather than a dependsOn field because nothing yet needs to
+	// express a graph. When that changes, the list order stays a valid topological
+	// order, so adding dependencies will not invalidate existing objects.
+	//
+	// +required
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:XValidation:rule="self.all(c, self.exists_one(x, x.name == c.name))",message="component names must be unique"
+	Components []ComponentSpec `json:"components"`
+}
+
+// CCLDeploymentStatus defines the observed state of CCLDeployment.
+type CCLDeploymentStatus struct {
+	// conditions represent the current state of the CCLDeployment resource.
+	//
+	// Condition types reported by the control-plane operator:
+	//   - "Validated": every component's infraPlaneRef resolves to an Available
+	//     CCLInfraPlane.
+	//   - "ComponentsApplied": the Argo CD ApplicationSet describing the components has
+	//     been written.
+	//   - "Progressing": whether the RollingSync has finished, and which wave it is on
+	//     if it has not.
+	//
+	// The status of each condition is one of True, False, or Unknown.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// observedGeneration is the .metadata.generation the conditions were computed from.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Applied",type=string,JSONPath=`.status.conditions[?(@.type=="ComponentsApplied")].status`
+// +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.conditions[?(@.type=="Progressing")].reason`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name must be at most 63 characters, because it is used as a label value on the generated Argo CD Applications"
+
+// CCLDeployment is the Schema for the ccldeployments API.
+//
+// It describes a bundle of Helm charts from the ccluster catalog, each with its own
+// values and its own destination cluster, rolled out in a fixed order. The operator does
+// not install anything itself: it projects the bundle onto a single Argo CD
+// ApplicationSet, and Argo CD does the work.
+type CCLDeployment struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// metadata is a standard object metadata
+	// +optional
+	metav1.ObjectMeta `json:"metadata,omitzero"`
+
+	// spec defines the desired state of CCLDeployment
+	// +required
+	Spec CCLDeploymentSpec `json:"spec"`
+
+	// status defines the observed state of CCLDeployment
+	// +optional
+	Status CCLDeploymentStatus `json:"status,omitzero"`
+}
+
+// +kubebuilder:object:root=true
+
+// CCLDeploymentList contains a list of CCLDeployment
+type CCLDeploymentList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitzero"`
+	Items           []CCLDeployment `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&CCLDeployment{}, &CCLDeploymentList{})
+}

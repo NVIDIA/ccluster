@@ -91,10 +91,17 @@ func setupControllers(mgr ctrl.Manager) error {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		ArgoCDNamespace: argoCDNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
+	}
+	if err := (&cp.CCLDeploymentReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		ArgoCDNamespace: argoCDNamespace,
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
+		return fmt.Errorf("unable to create controller CCLDeployment: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
 	return nil
