@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // ApplicationSet generates Argo CD Applications from a set of generators.
@@ -47,6 +48,15 @@ type ApplicationSetSpec struct {
 	// template, over Argo CD's older fasttemplate syntax.
 	GoTemplate bool `json:"goTemplate,omitempty"`
 
+	// goTemplateOptions are passed to text/template. The operator sets
+	// "missingkey=error" so a placeholder with no matching generator key fails the
+	// render instead of silently producing an empty string.
+	GoTemplateOptions []string `json:"goTemplateOptions,omitempty"`
+
+	// strategy orders the rollout of the generated Applications. Nil means Argo CD
+	// syncs them all at once.
+	Strategy *ApplicationSetStrategy `json:"strategy,omitempty"`
+
 	// generators produce the parameter sets template is rendered once per.
 	Generators []ApplicationSetGenerator `json:"generators"`
 
@@ -67,8 +77,80 @@ type ListGenerator struct {
 
 // GeneratorElement is one element of a ListGenerator. Argo CD declares these as
 // arbitrary JSON objects; the operator authors them, so the shape it writes is typed.
+//
+// Every field is a string because these are template inputs: Argo CD renders them into
+// an Application manifest with text/template, and a non-string would have to be
+// stringified there anyway.
 type GeneratorElement struct {
+	// name identifies the component and is templated into the Application's name.
 	Name string `json:"name"`
+
+	// path is the component's chart directory, relative to the catalog repository
+	// root. The repository and revision themselves are operator-level configuration
+	// and live in the template, not here.
+	Path string `json:"path,omitempty"`
+
+	// infraPlane is the CCLInfraPlane name, which is also the Argo CD cluster name the
+	// generated Application is destined for.
+	InfraPlane string `json:"infraPlane,omitempty"`
+
+	// namespace is where the chart is installed on that cluster.
+	Namespace string `json:"namespace,omitempty"`
+
+	// wave is the RollingSync step this component belongs to. It is templated into a
+	// label on the generated Application, which is what the step's matchExpressions
+	// select on.
+	Wave string `json:"wave,omitempty"`
+
+	// values is the component's Helm values, marshalled to single-line JSON. JSON is
+	// valid YAML, so it can be templated straight into helm.values, which is a string.
+	// Components with no overrides get "{}" rather than an omitted field: a Go
+	// template cannot conditionally drop a key.
+	Values string `json:"values,omitempty"`
+}
+
+// ApplicationSetStrategy orders the rollout of generated Applications.
+//
+// This is what orders one Application against another. The more familiar
+// "argocd.argoproj.io/sync-wave" annotation cannot: it orders resources *within* a
+// single Application.
+//
+// Argo CD gates this behind a flag. The applicationset-controller only honours it when
+// ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS is set, which the ccluster-cp
+// chart does via the argocd-cmd-params-cm key
+// "applicationsetcontroller.enable.progressive.syncs". With the flag off this field is
+// silently ignored and every Application syncs at once.
+type ApplicationSetStrategy struct {
+	// type is the strategy name. Only "RollingSync" is modelled.
+	Type string `json:"type,omitempty"`
+
+	RollingSync *ApplicationSetRolloutStrategy `json:"rollingSync,omitempty"`
+}
+
+// ApplicationSetRolloutStrategy is the ordered list of RollingSync steps.
+type ApplicationSetRolloutStrategy struct {
+	// steps run in order. Argo CD does not begin a step until every Application
+	// selected by the previous one reports Healthy - and it applies no timeout, so a
+	// component that never becomes Healthy stalls the remaining steps indefinitely.
+	Steps []ApplicationSetRolloutStep `json:"steps,omitempty"`
+}
+
+// ApplicationSetRolloutStep is one step of a RollingSync.
+type ApplicationSetRolloutStep struct {
+	// matchExpressions select the generated Applications this step covers, by label.
+	MatchExpressions []ApplicationMatchExpression `json:"matchExpressions,omitempty"`
+
+	// maxUpdate caps how many of them Argo CD syncs concurrently.
+	MaxUpdate *intstr.IntOrString `json:"maxUpdate,omitempty"`
+}
+
+// ApplicationMatchExpression is a label selector requirement over generated
+// Applications. It mirrors metav1.LabelSelectorRequirement, which Argo CD does not reuse
+// here.
+type ApplicationMatchExpression struct {
+	Key      string   `json:"key,omitempty"`
+	Operator string   `json:"operator,omitempty"`
+	Values   []string `json:"values,omitempty"`
 }
 
 // ApplicationSetTemplate is the Application an ApplicationSet generates. Its metadata is
@@ -82,6 +164,10 @@ type ApplicationSetTemplate struct {
 // ApplicationSetTemplateMeta is the metadata Argo CD stamps onto a generated Application.
 type ApplicationSetTemplateMeta struct {
 	Name string `json:"name,omitempty"`
+
+	// labels are stamped onto each generated Application. RollingSync steps select on
+	// them, which is how a component's wave reaches the strategy.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ApplicationSpec is the desired state of a generated Argo CD Application.
@@ -109,6 +195,18 @@ type ApplicationSource struct {
 
 	// path is the chart's directory, relative to the repository root.
 	Path string `json:"path,omitempty"`
+
+	// helm carries per-Application chart overrides.
+	Helm *ApplicationSourceHelm `json:"helm,omitempty"`
+}
+
+// ApplicationSourceHelm holds Helm-specific overrides for an Application's source.
+type ApplicationSourceHelm struct {
+	// values is a YAML document of overrides, as a string. Argo CD also offers
+	// valuesObject, which takes structured YAML; a string is used here because the
+	// value is templated in from a generator element, and templating a string is
+	// unambiguous where templating a nested object is not.
+	Values string `json:"values,omitempty"`
 }
 
 // ApplicationDestination is where a generated Application is deployed.

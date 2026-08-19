@@ -110,6 +110,12 @@ test-e2e-argocd: setup-test-e2e docker-build-cp ## Install the cp chart WITH Arg
 	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER_E2E)
 	$(MAKE) deploy-cp HELM_TIMEOUT=10m
 	"$(KUBECTL)" get crd applications.argoproj.io applicationsets.argoproj.io
+# CCLDeployment orders its components with an ApplicationSet RollingSync, which the
+# applicationset-controller ignores — silently — unless this param is set. Without the
+# check, a regression here looks exactly like a working deploy.
+	@test "$$("$(KUBECTL)" -n $(HELM_NAMESPACE_CP) get cm argocd-cmd-params-cm \
+		-o jsonpath='{.data.applicationsetcontroller\.enable\.progressive\.syncs}')" = "true" \
+		|| { echo "progressive syncs are not enabled on the applicationset-controller"; exit 1; }
 	"$(KUBECTL)" -n $(HELM_NAMESPACE_CP) rollout status deploy/ccluster-cp-controller-manager --timeout=2m
 	$(MAKE) undeploy-cp
 	$(MAKE) cleanup-test-e2e

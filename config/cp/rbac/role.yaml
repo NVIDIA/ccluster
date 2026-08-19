@@ -19,6 +19,14 @@ rules:
 - apiGroups:
   - argoproj.io
   resources:
+  - applications
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
   - applicationsets
   verbs:
   - create
@@ -31,6 +39,7 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
+  - ccldeployments
   - cclinfraplanes
   verbs:
   - create
@@ -43,12 +52,14 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
+  - ccldeployments/finalizers
   - cclinfraplanes/finalizers
   verbs:
   - update
 - apiGroups:
   - ccluster.nvidia.com
   resources:
+  - ccldeployments/status
   - cclinfraplanes/status
   verbs:
   - get

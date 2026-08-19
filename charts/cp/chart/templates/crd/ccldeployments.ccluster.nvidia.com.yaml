@@ -1,0 +1,228 @@
+{{- if .Values.crd.enable }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    {{- if .Values.crd.keep }}
+    "helm.sh/resource-policy": keep
+    {{- end }}
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: ccldeployments.ccluster.nvidia.com
+spec:
+  group: ccluster.nvidia.com
+  names:
+    kind: CCLDeployment
+    listKind: CCLDeploymentList
+    plural: ccldeployments
+    singular: ccldeployment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="ComponentsApplied")].status
+      name: Applied
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Progressing")].reason
+      name: Progress
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          CCLDeployment is the Schema for the ccldeployments API.
+
+          It describes a bundle of Helm charts from the ccluster catalog, each with its own
+          values and its own destination cluster, rolled out in a fixed order. The operator does
+          not install anything itself: it projects the bundle onto a single Argo CD
+          ApplicationSet, and Argo CD does the work.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of CCLDeployment
+            properties:
+              components:
+                description: |-
+                  components are rolled out in the order given: each becomes one step of an Argo CD
+                  RollingSync, so a component is not synced until the one before it reports
+                  Healthy. There is no timeout on that wait - a component that never becomes
+                  healthy stalls everything after it, which the Progressing condition reports.
+
+                  Ordering is positional rather than a dependsOn field because nothing yet needs to
+                  express a graph. When that changes, the list order stays a valid topological
+                  order, so adding dependencies will not invalidate existing objects.
+                items:
+                  description: ComponentSpec is one Helm chart deployed onto one infra-plane
+                    cluster.
+                  properties:
+                    chart:
+                      description: |-
+                        chart is the chart's directory, relative to the root of the catalog repository.
+
+                        The repository and revision are not settable per component: they are how the
+                        operator itself is configured (--catalog-repo-url and --catalog-revision), so
+                        every component of every CCLDeployment deploys from the same catalog.
+                      maxLength: 512
+                      minLength: 1
+                      type: string
+                    infraPlaneRef:
+                      description: |-
+                        infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
+                        in the same namespace as this CCLDeployment, and must already be Available -
+                        that is, its cluster credentials have been mirrored into the Argo CD namespace,
+                        which is what lets the generated Application address the cluster by name.
+                      properties:
+                        name:
+                          description: name is the name of the referenced object.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    name:
+                      description: |-
+                        name identifies the component within this CCLDeployment. It is templated into
+                        the generated Argo CD Application's name, so it has to be DNS-1123.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    namespace:
+                      description: |-
+                        namespace is where the chart is installed on the target cluster. It is created
+                        if it does not exist.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    values:
+                      description: |-
+                        values overrides the chart's defaults. It is passed to Helm verbatim; the
+                        operator does not interpret or validate it against the chart.
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - chart
+                  - infraPlaneRef
+                  - name
+                  - namespace
+                  type: object
+                maxItems: 50
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: component names must be unique
+                  rule: self.all(c, self.exists_one(x, x.name == c.name))
+            required:
+            - components
+            type: object
+          status:
+            description: status defines the observed state of CCLDeployment
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the current state of the CCLDeployment resource.
+
+                  Condition types reported by the control-plane operator:
+                    - "Validated": every component's infraPlaneRef resolves to an Available
+                      CCLInfraPlane.
+                    - "ComponentsApplied": the Argo CD ApplicationSet describing the components has
+                      been written.
+                    - "Progressing": whether the RollingSync has finished, and which wave it is on
+                      if it has not.
+
+                  The status of each condition is one of True, False, or Unknown.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration is the .metadata.generation the conditions
+                  were computed from.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 63 characters, because it is used as a label
+            value on the generated Argo CD Applications
+          rule: self.metadata.name.size() <= 63
+    served: true
+    storage: true
+    subresources:
+      status: {}
+{{- end }}

@@ -68,21 +68,10 @@ func (r *CCLInfraPlaneReconciler) reconcileApplicationSet(
 	}
 
 	return controllerutil.CreateOrUpdate(ctx, r.Client, appSet, func() error {
-		if !ownedBy(appSet, infraPlane) {
+		if !infraPlaneOwner.ownedBy(appSet, infraPlane) {
 			return errApplicationSetConflict
 		}
-
-		if appSet.Labels == nil {
-			appSet.Labels = map[string]string{}
-		}
-		appSet.Labels["app.kubernetes.io/name"] = "ccluster"
-		appSet.Labels["app.kubernetes.io/managed-by"] = "ccluster-cp-operator"
-
-		if appSet.Annotations == nil {
-			appSet.Annotations = map[string]string{}
-		}
-		appSet.Annotations[annotationInfraPlaneName] = infraPlane.Name
-		appSet.Annotations[annotationInfraPlaneNamespace] = infraPlane.Namespace
+		infraPlaneOwner.stamp(appSet, infraPlane)
 
 		// The spec is owned outright: it is rebuilt from scratch on every reconcile, so
 		// edits made by hand are reverted.
@@ -155,7 +144,7 @@ func (r *CCLInfraPlaneReconciler) deleteApplicationSet(
 		return nil
 	case err != nil:
 		return err
-	case !ownedBy(appSet, infraPlane):
+	case !infraPlaneOwner.ownedBy(appSet, infraPlane):
 		log.Info("Left ApplicationSet owned by another CCLInfraPlane in place",
 			"applicationSet", infraPlane.Name, "namespace", r.ArgoCDNamespace)
 		return nil

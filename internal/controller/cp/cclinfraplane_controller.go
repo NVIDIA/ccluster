@@ -223,22 +223,14 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	}
 
 	return controllerutil.CreateOrUpdate(ctx, r.Client, mirror, func() error {
-		if !ownedBy(mirror, infraPlane) {
+		if !infraPlaneOwner.ownedBy(mirror, infraPlane) {
 			return errClusterSecretConflict
 		}
+		infraPlaneOwner.stamp(mirror, infraPlane)
 
-		if mirror.Labels == nil {
-			mirror.Labels = map[string]string{}
-		}
+		// The one label stamp does not set: it is what makes Argo CD treat this
+		// Secret as a cluster registration rather than an ordinary Secret.
 		mirror.Labels[argoCDSecretTypeLabel] = argoCDSecretTypeCluster
-		mirror.Labels["app.kubernetes.io/name"] = "ccluster"
-		mirror.Labels["app.kubernetes.io/managed-by"] = "ccluster-cp-operator"
-
-		if mirror.Annotations == nil {
-			mirror.Annotations = map[string]string{}
-		}
-		mirror.Annotations[annotationInfraPlaneName] = infraPlane.Name
-		mirror.Annotations[annotationInfraPlaneNamespace] = infraPlane.Namespace
 
 		mirror.Type = source.Type
 		mirror.Data = make(map[string][]byte, len(source.Data)+1)
@@ -249,19 +241,6 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 		mirror.Data[argoCDClusterNameKey] = []byte(infraPlane.Name)
 		return nil
 	})
-}
-
-// ownedBy reports whether obj is unclaimed or already back-references infraPlane. An
-// object created by hand carries no back-reference and is therefore adoptable; one
-// pointing at a different CCLInfraPlane is not.
-func ownedBy(obj client.Object, infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) bool {
-	annotations := obj.GetAnnotations()
-	name, hasName := annotations[annotationInfraPlaneName]
-	namespace, hasNamespace := annotations[annotationInfraPlaneNamespace]
-	if !hasName && !hasNamespace {
-		return true
-	}
-	return name == infraPlane.Name && namespace == infraPlane.Namespace
 }
 
 // finalize deletes the mirrored Secret, if it is still ours, and then drops the
@@ -289,7 +268,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		// Already gone; nothing to clean up.
 	case err != nil:
 		return err
-	case !ownedBy(&mirror, infraPlane):
+	case !infraPlaneOwner.ownedBy(&mirror, infraPlane):
 		log.Info("Left cluster Secret owned by another CCLInfraPlane in place",
 			"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
 	default:

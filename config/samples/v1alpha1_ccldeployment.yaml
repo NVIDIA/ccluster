@@ -1,0 +1,39 @@
+# Deploys two catalog components onto the cluster registered by
+# v1alpha1_cclinfraplane.yaml, in order. Apply that sample first: this one stays
+# Validated=False until the CCLInfraPlane it names reports Available.
+#
+# The order of components is the rollout order. Argo CD does not sync
+# ccluster-local-base-keda until ccluster-local-base-argo-rollouts reports Healthy,
+# because the operator turns each component into one step of a RollingSync. That only
+# works when the applicationset-controller has progressive syncs enabled, which the
+# ccluster-cp chart sets — see charts/cp/chart/values.yaml.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ccluster
+    app.kubernetes.io/managed-by: kustomize
+  name: ccluster-local-base
+spec:
+  components:
+    # Chart paths are relative to the root of the catalog repository named by the
+    # operator's --catalog-repo-url, at --catalog-revision. Argo CD's repo-server clones
+    # it, so the revision has to have been pushed.
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: ccluster-local
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+
+    # values is handed to Helm untouched. Its shape is the chart's business, not the
+    # operator's — here the keys are nested under the upstream chart's alias because
+    # catalogs/cluster_base/keda wraps it as a dependency.
+    - name: keda
+      infraPlaneRef:
+        name: ccluster-local
+      chart: catalogs/cluster_base/keda
+      namespace: keda
+      values:
+        keda:
+          operator:
+            replicaCount: 1
