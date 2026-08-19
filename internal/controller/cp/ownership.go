@@ -43,11 +43,9 @@ type ownerAnnotations struct {
 	namespaceKey string
 }
 
-// The key pairs in use, and the full set of them. Declaring them together is what lets
-// ownedBy tell "unclaimed" apart from "claimed by a different kind of ccluster
-// resource": a CCLDeployment and a CCLInfraPlane of the same name both project onto an
-// ApplicationSet of that name, so without the distinction each would read the other's
-// object as adoptable and silently overwrite it.
+// The key pairs in use. They apply to disjoint kinds - a CCLInfraPlane only ever stamps
+// the mirrored cluster Secret, and a CCLDeployment only ever stamps its ApplicationSet -
+// so one object never carries both, and ownedBy does not have to tell them apart.
 var (
 	infraPlaneOwner = ownerAnnotations{
 		nameKey:      annotationInfraPlaneName,
@@ -58,8 +56,6 @@ var (
 		nameKey:      annotationDeploymentName,
 		namespaceKey: annotationDeploymentNamespace,
 	}
-
-	allOwners = []ownerAnnotations{infraPlaneOwner, deploymentOwner}
 )
 
 // ownedBy reports whether obj is unclaimed or already back-references owner.
@@ -71,17 +67,6 @@ var (
 // fighting over a single object in the Argo CD namespace.
 func (a ownerAnnotations) ownedBy(obj client.Object, owner client.Object) bool {
 	annotations := obj.GetAnnotations()
-
-	// Claimed by a different kind of ccluster resource: not ours, and not adoptable.
-	for _, other := range allOwners {
-		if other.nameKey == a.nameKey {
-			continue
-		}
-		if _, claimed := annotations[other.nameKey]; claimed {
-			return false
-		}
-	}
-
 	name, hasName := annotations[a.nameKey]
 	namespace, hasNamespace := annotations[a.namespaceKey]
 	if !hasName && !hasNamespace {

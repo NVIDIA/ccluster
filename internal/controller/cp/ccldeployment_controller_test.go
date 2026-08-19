@@ -565,16 +565,17 @@ var _ = Describe("CCLDeployment Controller", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 
-			By("planting an ApplicationSet claimed by a CCLInfraPlane of the same name")
-			// This is the collision the shared ownership check exists for: both kinds
-			// project onto an ApplicationSet named after themselves.
+			By("planting an ApplicationSet claimed by a CCLDeployment in another namespace")
+			// The collision the ownership check exists for: two CCLDeployments of the
+			// same name in different namespaces map onto one ApplicationSet name in
+			// the Argo CD namespace.
 			Expect(k8sClient.Create(ctx, &argocdv1alpha1.ApplicationSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      deploymentName,
 					Namespace: argoCDNamespace,
 					Annotations: map[string]string{
-						annotationInfraPlaneName:      deploymentName,
-						annotationInfraPlaneNamespace: namespace,
+						annotationDeploymentName:      deploymentName,
+						annotationDeploymentNamespace: "other-namespace",
 					},
 				},
 			})).To(Succeed())
