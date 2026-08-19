@@ -36,6 +36,11 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
+// errApplicationSetConflict reports that the ApplicationSet name is already taken, for
+// the same reason errClusterSecretConflict exists: two resources of the same name in
+// different namespaces map onto one object in the Argo CD namespace.
+var errApplicationSetConflict = errors.New("ApplicationSet belongs to another resource")
+
 const (
 	// emptyValues is what a component with no overrides contributes to helm.values.
 	// It cannot simply be omitted: the field is filled by a Go template, and a

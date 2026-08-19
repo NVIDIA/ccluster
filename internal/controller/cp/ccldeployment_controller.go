@@ -43,6 +43,9 @@ const (
 	// conditionTypeProgressing reports on the RollingSync: false once every component
 	// is healthy and synced.
 	conditionTypeProgressing = "Progressing"
+	// conditionTypeComponentsApplied reports on the ApplicationSet that deploys the
+	// components onto their infra-plane clusters.
+	conditionTypeComponentsApplied = "ComponentsApplied"
 
 	reasonComponentsAccepted = "ComponentsAccepted"
 	reasonInfraPlaneNotFound = "InfraPlaneNotFound"
@@ -51,6 +54,11 @@ const (
 	reasonWaveSyncing     = "WaveSyncing"
 	reasonRolloutComplete = "RolloutComplete"
 	reasonRolloutUnknown  = "RolloutUnknown"
+
+	reasonApplicationSetCreated    = "ApplicationSetCreated"
+	reasonApplicationSetCRDMissing = "ApplicationSetCRDMissing"
+	reasonApplicationSetConflict   = "ApplicationSetConflict"
+	reasonApplicationSetFailed     = "ApplicationSetFailed"
 )
 
 // Metadata written onto the ApplicationSet, and onto the Applications it generates.
@@ -97,6 +105,7 @@ type CCLDeploymentReconciler struct {
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments/finalizers,verbs=update
+// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch
 
 // Reconcile projects a CCLDeployment onto a single Argo CD ApplicationSet:
