@@ -20,11 +20,13 @@ limitations under the License.
 package e2e
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -274,15 +276,101 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		// This is the only assertion in the repository that exercises the operator's
+		// real RBAC. envtest runs the reconciler as the test binary's own identity, so
+		// a missing +kubebuilder:rbac marker is invisible there; here the manager runs
+		// under its ServiceAccount, from the built image, with the chart's Role. The
+		// mirroring path was chosen because it touches the widest permission surface:
+		// CCLInfraPlane get/list/watch, its status subresource, and Secret
+		// get/list/watch/create/update.
+		//
+		// Deliberately no CCLDeployment equivalent: this suite runs with ARGOCD=false,
+		// so the Application CRD does not exist and a rollout could never advance. That
+		// belongs in `make test-e2e-argocd`, if anywhere.
+		It("should mirror an infra plane's credentials Secret using the operator's own RBAC", func() {
+			const infraPlaneName = "e2e-infra-plane"
+			const credentialsName = "e2e-infra-plane-credentials"
+
+			// deploy-cp overrides --argocd-namespace to the release namespace, so the
+			// mirror lands alongside the manager rather than in `argocd`.
+			const mirrorNamespace = namespace
+
+			By("creating the cluster credentials Secret the CCLInfraPlane references")
+			cmd := exec.Command("kubectl", "create", "secret", "generic", credentialsName,
+				"--from-literal=name=placeholder",
+				"--from-literal=server=https://infra.example.com:6443",
+				"--from-literal=config={\"bearerToken\":\"fake-token\"}",
+				"-n", "default")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the credentials Secret")
+
+			DeferCleanup(func() {
+				By("cleaning up the credentials Secret")
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			By("creating the CCLInfraPlane")
+			manifest := fmt.Sprintf(`apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  name: %s
+  namespace: default
+spec:
+  clusterCredentialsRef:
+    name: %s
+`, infraPlaneName, credentialsName)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(manifest)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the CCLInfraPlane")
+
+			By("waiting for the operator to mirror the Secret into the Argo CD namespace")
+			verifyMirrored := func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "secret", infraPlaneName,
+					"-n", mirrorNamespace, "-o", "jsonpath={.data.name}"))
+				g.Expect(err).NotTo(HaveOccurred(), "Mirrored Secret not created")
+
+				decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
+				g.Expect(err).NotTo(HaveOccurred())
+				// The operator owns this key and overwrites whatever the source held.
+				g.Expect(string(decoded)).To(Equal(infraPlaneName))
+			}
+			Eventually(verifyMirrored, 2*time.Minute).Should(Succeed())
+
+			By("verifying the operator could patch the CCLInfraPlane status subresource")
+			verifyAvailable := func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					infraPlaneName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}
+			Eventually(verifyAvailable, 2*time.Minute).Should(Succeed())
+
+			// Delete the CCLInfraPlane here, in the spec body, rather than from
+			// DeferCleanup. The CCLInfraPlane carries a finalizer that only the
+			// operator can remove, and AfterAll undeploys the operator and then
+			// deletes the CRDs. A finalized CR outliving its controller wedges the
+			// CRD in Terminating and `make uninstall` blocks forever, so the delete
+			// has to complete while the manager is still running.
+			By("deleting the CCLInfraPlane while the operator can still run its finalizer")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				infraPlaneName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete the CCLInfraPlane")
+
+			By("verifying the operator removed the mirrored Secret and the finalizer")
+			verifyGone := func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					infraPlaneName, "-n", "default"))
+				g.Expect(err).To(HaveOccurred(), "CCLInfraPlane still present")
+
+				_, err = utils.Run(exec.Command("kubectl", "get", "secret",
+					infraPlaneName, "-n", mirrorNamespace))
+				g.Expect(err).To(HaveOccurred(), "Mirrored Secret was not cleaned up")
+			}
+			Eventually(verifyGone, 2*time.Minute).Should(Succeed())
+		})
 	})
 })
 

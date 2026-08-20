@@ -428,6 +428,22 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("at most 63 characters"))
 		})
 
+		// This rule is load-bearing, not cosmetic: releaseCount clamps to the component
+		// count precisely because an empty spec would otherwise slice Components[:1] and
+		// panic. See TestReleaseCountEmptySpecDoesNotPanic. Both guards are kept - the
+		// API rejects the object, and the controller survives it if the marker is ever
+		// relaxed.
+		It("should reject a CCLDeployment with no components", func() {
+			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: deploymentName, Namespace: namespace},
+				Spec: cclusternvidiacomv1alpha1.CCLDeploymentSpec{
+					Components: []cclusternvidiacomv1alpha1.ComponentSpec{},
+				},
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("should have at least 1 items"))
+		})
+
 		It("should restore an Application spec after it drifts", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)

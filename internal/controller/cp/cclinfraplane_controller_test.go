@@ -288,5 +288,43 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				k8sClient.Get(ctx, typeNamespacedName, &cclusternvidiacomv1alpha1.CCLInfraPlane{}))).To(BeTrue())
 		})
 
+		// The Secret watch is what makes the controller react to credentials changing
+		// and to the mirror being tampered with. A bug here is silent: the operator
+		// simply stops reconciling, and nothing else in the suite notices.
+		It("should enqueue the CCLInfraPlane a mirrored Secret was created for", func() {
+			requests := reconciler.infraPlanesForSecret(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: argoCDNamespace,
+					Annotations: map[string]string{
+						annotationInfraPlaneName:      resourceName,
+						annotationInfraPlaneNamespace: namespace,
+					},
+				},
+			})
+			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: typeNamespacedName}))
+		})
+
+		It("should enqueue the CCLInfraPlanes that reference a source Secret", func() {
+			requests := reconciler.infraPlanesForSecret(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			})
+			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: typeNamespacedName}))
+
+			By("ignoring a Secret no CCLInfraPlane references")
+			Expect(reconciler.infraPlanesForSecret(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "unreferenced", Namespace: namespace},
+			})).To(BeEmpty())
+		})
+
+		// The fall-through: an un-annotated Secret in the Argo CD namespace is not a
+		// mirror, so it is looked up by referrer instead. This is the branch a
+		// refactor is most likely to break by returning early.
+		It("should not enqueue anything for an unannotated Secret in the Argo CD namespace", func() {
+			Expect(reconciler.infraPlanesForSecret(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "argocd-server-tls", Namespace: argoCDNamespace},
+			})).To(BeEmpty())
+		})
+
 	})
 })

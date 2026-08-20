@@ -346,6 +346,7 @@ tag are unchanged, even though the image content changed.
 
 | Layer | Command | Covers | Does not cover |
 | --- | --- | --- | --- |
+| unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
 | e2e | `make test-e2e` | Full Helm deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Runs with `ARGOCD=false`. | The Argo CD dependency |
 | chart e2e | `make test-e2e-argocd` | The cp chart installed **with** Argo CD, asserting the argoproj CRDs appear. | Controller behaviour |
@@ -358,16 +359,35 @@ marker. `make cleanup-test-e2e` tears down the e2e cluster if a run dies partway
 Test wiring lives in `internal/controller/cp/suite_test.go` (envtest setup, `k8sClient`).
 Specs use Ginkgo/Gomega.
 
+**Two tiers, deliberately.** Ginkgo/envtest is the primary one and where behaviour belongs.
+Alongside it, `ccldeployment_builder_test.go` and `ownership_test.go` are plain table-driven
+`go test` files in the same package. They run without `KUBEBUILDER_ASSETS` and without etcd —
+`BeforeSuite` only fires under `RunSpecs` — so:
+
+```bash
+go test -run TestReleaseCount ./internal/controller/cp/     # ~0.4s, no setup
+```
+
+They exist for the states envtest cannot cheaply reach, not for coverage: a gap in the middle
+of the wave sequence (Applications for components 1 and 3 but not 2) cannot be staged through
+a reconciler that never creates out of order. Keep them selective. Do **not** add table tests
+for one-line helpers that the existing cases already cover incidentally.
+
 **Current state:** both cp controllers have real envtest suites —
 `cclinfraplane_controller_test.go` and `ccldeployment_controller_test.go` — covering
 mirroring and drift correction, ordered release, reverse teardown, pruning, ownership
-conflicts, and the CEL validation rules. Note two things about how they run:
+conflicts, and the CEL validation rules, and both reconcilers are covered at ~89% of
+statements. The specs are named after behaviour, so treat a failure as a broken contract
+rather than a coverage regression. Note three things about how they run:
 
 - No controller is started in the test manager. Every spec calls `Reconcile` directly, so
   the `Watches` map functions are exercised as plain functions and requeue behaviour is not.
 - envtest runs no Argo CD, so `test/testdata/crd/argoproj.io_applications.yaml` is a
   schema-less stand-in for the `Application` CRD, and the specs write Application status
   themselves to drive a rollout forward.
+- The remaining 0% is `SetupWithManager` on both reconcilers, left there on purpose: it is
+  controller-runtime builder wiring whose real failure mode is a missing
+  `+kubebuilder:rbac` marker, and only `make test-e2e` catches that.
 
 `test/e2e` is still scaffold-level: it deploys the chart and checks the manager comes up, and
 touches neither CRD.
