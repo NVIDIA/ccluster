@@ -39,8 +39,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `ccluster-cp-operator` by `make deploy-cp`. Argo CD is deliberately *not* installed by the
   operator at runtime. Skip it with `make deploy-cp ARGOCD=false`; bump it with
   `make helm-deps-update-cp`.
-- `make test-e2e-argocd`, which installs the control-plane chart with Argo CD enabled into a
-  kind cluster and verifies the argoproj CRDs appear.
 - `make helm-adopt-crds-cp`, a one-time migration for clusters whose CRDs were applied by
   `make install` or the old kustomize-based `make deploy-cp`. Helm refuses to adopt
   resources it does not own; this labels and annotates them into the release without
@@ -57,6 +55,24 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - `make undeploy-cp` no longer deletes the CRDs, and therefore no longer deletes every
   custom resource in the cluster: the chart annotates them `helm.sh/resource-policy: keep`.
   It does now remove Argo CD, which is part of the same release.
+- The control-plane chart's Argo CD dependency is now verified by rendering it with
+  `helm template` in CI (`.github/workflows/test-chart.yml`) rather than by installing it
+  into a kind cluster. The argoproj CRDs and `controller.diff.server.side` are asserted on
+  every pull request instead of in a local-only target; that Argo CD actually *installs* is
+  no longer covered.
+
+### Fixed
+- The CCLDeployment controller no longer refuses to start when Argo CD is absent. Its watch
+  on `Application` is registered only if the CRD is served, because controller-runtime
+  blocks a controller until every watch source syncs and a source for an unserved kind never
+  does. Previously `make deploy-cp ARGOCD=false` — or simply starting the operator before
+  Argo CD — left the controller reconciling nothing while logging "if kind is a CRD, it
+  should be installed before calling Start" every ten seconds, which also made the
+  `ApplicationCRDMissing` status unreachable. Install Argo CD after the operator and the
+  operator must be restarted to pick up the watch.
+- `releaseCount` no longer returns 1 for a CCLDeployment with no components, which made the
+  caller slice an empty component list and panic. The `MinItems=1` CRD marker still rejects
+  such objects; the controller no longer depends on it for memory safety.
 
 <!--
 Template for future releases:

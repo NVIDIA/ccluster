@@ -44,3 +44,20 @@ jobs:
           grep -q 'name: ccluster-cp-controller-manager-metrics-service$' /tmp/cp.yaml
           grep -q 'name: ccluster-ip-controller-manager$' /tmp/ip.yaml
           grep -q 'kind: CustomResourceDefinition' /tmp/cp.yaml
+
+      # The cp chart carries Argo CD as a dependency, vendored as
+      # charts/cp/chart/charts/argo-cd-*.tgz, so these render offline with no
+      # cluster and no image pulls. They used to live in `make test-e2e-argocd`,
+      # which no workflow ran; here they gate every PR.
+      #
+      # Large CRDs sit OutOfSync forever without server-side diff, which stalls a
+      # CCLDeployment rollout. Without this check a regression looks like a
+      # perfectly working deploy.
+      - name: Verify the Argo CD dependency renders as expected
+        run: |
+          grep -q 'controller.diff.server.side: "true"' /tmp/cp.yaml
+          grep -q 'name: argocd-cmd-params-cm$' /tmp/cp.yaml
+          grep -q 'applications.argoproj.io' /tmp/cp.yaml
+          grep -q 'applicationsets.argoproj.io' /tmp/cp.yaml
+          # The ip chart has no dependencies; Argo CD is control-plane only.
+          ! grep -q 'argoproj.io' /tmp/ip.yaml

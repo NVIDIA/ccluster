@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -475,4 +477,66 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplicationCRDInstalled covers the startup decision that guards the Application
+// watch. It matters more than its size suggests: registering that watch when the CRD is
+// absent stops the whole controller from ever starting, because controller-runtime waits
+// for every watch source to sync and a source for an unserved kind never does.
+func TestApplicationCRDInstalled(t *testing.T) {
+	applicationGK := argocdv1alpha1.GroupVersion.WithKind("Application").GroupKind()
+
+	installed := apimeta.NewDefaultRESTMapper([]schema.GroupVersion{argocdv1alpha1.GroupVersion})
+	installed.Add(argocdv1alpha1.GroupVersion.WithKind("Application"), apimeta.RESTScopeNamespace)
+
+	tests := []struct {
+		name   string
+		mapper apimeta.RESTMapper
+		want   bool
+	}{
+		{
+			name:   "registers the watch when the CRD is served",
+			mapper: installed,
+			want:   true,
+		},
+		{
+			// make deploy-cp ARGOCD=false, or the operator started before Argo CD.
+			name:   "skips the watch when the CRD is absent",
+			mapper: apimeta.NewDefaultRESTMapper(nil),
+			want:   false,
+		},
+		{
+			// Discovery failing is not evidence the CRD is missing. Dropping the watch
+			// here would silently disable it for the lifetime of the process, so the
+			// safe answer is to register it and let the manager retry.
+			name:   "registers the watch when discovery fails outright",
+			mapper: errorRESTMapper{err: errors.New("connection refused")},
+			want:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := applicationCRDInstalled(test.mapper, logr.Discard()); got != test.want {
+				t.Errorf("applicationCRDInstalled() = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	// Guard the branch discrimination itself: a NoKindMatchError must not be mistaken
+	// for a transport error, or the absent case silently starts registering the watch.
+	noMatch := &apimeta.NoKindMatchError{GroupKind: applicationGK}
+	if !apimeta.IsNoMatchError(noMatch) {
+		t.Fatal("expected NoKindMatchError to satisfy IsNoMatchError")
+	}
+}
+
+// errorRESTMapper fails every lookup with a non-NoMatch error.
+type errorRESTMapper struct {
+	apimeta.RESTMapper
+	err error
+}
+
+func (m errorRESTMapper) RESTMapping(schema.GroupKind, ...string) (*apimeta.RESTMapping, error) {
+	return nil, m.err
 }

@@ -105,20 +105,6 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
-.PHONY: test-e2e-argocd
-test-e2e-argocd: setup-test-e2e docker-build-cp ## Install the cp chart WITH Argo CD into a Kind cluster and verify it comes up. Pulls Argo CD images from the internet.
-	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER_E2E)
-	$(MAKE) deploy-cp HELM_TIMEOUT=10m
-	"$(KUBECTL)" get crd applications.argoproj.io applicationsets.argoproj.io
-# Large CRDs sit OutOfSync forever without server-side diff, which stalls a
-# CCLDeployment rollout. Without the check, a regression here looks like a working deploy.
-	@test "$$("$(KUBECTL)" -n $(HELM_NAMESPACE_CP) get cm argocd-cmd-params-cm \
-		-o jsonpath='{.data.controller\.diff\.server\.side}')" = "true" \
-		|| { echo "server-side diff is not enabled on the application controller"; exit 1; }
-	"$(KUBECTL)" -n $(HELM_NAMESPACE_CP) rollout status deploy/ccluster-cp-controller-manager --timeout=2m
-	$(MAKE) undeploy-cp
-	$(MAKE) cleanup-test-e2e
-
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E)

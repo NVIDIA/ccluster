@@ -137,7 +137,11 @@ Argo CD is hub-and-spoke: **control-plane cluster only**. Infra-plane clusters g
 registered there as remote destinations. The ip chart has no dependencies.
 
 `make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for
-hermetic tests that must not pull the Argo CD images. `make helm-deps-update-cp` re-resolves
+hermetic tests that must not pull the Argo CD images. `make test-e2e` uses it, which is why
+the CCLDeployment controller has to tolerate the Application CRD being absent; see
+`CCLDeploymentReconciler.SetupWithManager`. There is no longer a target that installs Argo CD
+into a cluster: `make test-e2e-argocd` was removed, and its assertions now run offline
+against `helm template` output in `.github/workflows/test-chart.yml`. `make helm-deps-update-cp` re-resolves
 the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD version.
 
 ### The two controllers, and the invariants they rest on
@@ -349,8 +353,7 @@ tag are unchanged, even though the image content changed.
 | unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
 | e2e | `make test-e2e` | Full Helm deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Runs with `ARGOCD=false`. | The Argo CD dependency |
-| chart e2e | `make test-e2e-argocd` | The cp chart installed **with** Argo CD, asserting the argoproj CRDs appear. | Controller behaviour |
-| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render | Anything runtime |
+| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime — that Argo CD actually *installs* is no longer tested |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
 Only `make test-e2e` and a real in-cluster deploy will catch a missing `+kubebuilder:rbac`

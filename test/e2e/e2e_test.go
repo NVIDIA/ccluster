@@ -371,8 +371,165 @@ spec:
 			}
 			Eventually(verifyGone, 2*time.Minute).Should(Succeed())
 		})
+
+		// The two specs below exist for RBAC coverage of the CCLDeployment controller,
+		// which the mirror spec above does not touch at all: ccldeployments
+		// get/list/watch, ccldeployments/status patch, and ccldeployments/finalizers
+		// update. Neither needs Argo CD, so both run under ARGOCD=false.
+		//
+		// They deliberately assert only the two conditions reachable without the
+		// Application CRD. The rollout itself - wave ordering, drift restore, reverse
+		// teardown - is covered by envtest and the unit tier, which reach far more
+		// states than a 60-second cluster run ever could. Duplicating that here would
+		// buy nothing and cost minutes.
+
+		It("should report InfraPlaneNotFound for a CCLDeployment whose plane is missing", func() {
+			const deploymentName = "e2e-missing-plane"
+
+			By("creating a CCLDeployment referencing a CCLInfraPlane that does not exist")
+			applyCCLDeployment(deploymentName, "no-such-plane")
+
+			By("waiting for the operator to reject it via the status subresource")
+			Eventually(func(g Gomega) {
+				g.Expect(deploymentCondition(deploymentName, conditionValidated, "status")).
+					To(Equal("False"))
+				g.Expect(deploymentCondition(deploymentName, conditionValidated, "reason")).
+					To(Equal("InfraPlaneNotFound"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("verifying the operator could add its finalizer")
+			out, err := utils.Run(exec.Command("kubectl", "get", "ccldeployment",
+				deploymentName, "-n", "default", "-o", "jsonpath={.metadata.finalizers}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("ccluster.nvidia.com/argocd-applications"))
+
+			// Inline, not DeferCleanup: see the note in the next spec. A finalized CR
+			// outliving the operator wedges the CRD and hangs `make uninstall`.
+			By("deleting the CCLDeployment while the operator can still run its finalizer")
+			deleteCCLDeployment(deploymentName)
+		})
+
+		It("should report ApplicationCRDMissing when Argo CD is not installed", func() {
+			const deploymentName = "e2e-no-argocd"
+			const planeName = "e2e-deploy-plane"
+			const credentialsName = "e2e-deploy-plane-credentials"
+
+			By("creating an available CCLInfraPlane for the component to target")
+			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+				credentialsName,
+				"--from-literal=name=placeholder",
+				"--from-literal=server=https://infra.example.com:6443",
+				"--from-literal=config={\"bearerToken\":\"fake-token\"}",
+				"-n", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			applyCCLInfraPlane(planeName, credentialsName)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					planeName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating a CCLDeployment against it")
+			applyCCLDeployment(deploymentName, planeName)
+
+			By("waiting for the operator to report the missing Application CRD")
+			// This is the graceful-degradation path: Argo CD absent is reported on the
+			// status rather than retried, because no amount of retrying installs it.
+			Eventually(func(g Gomega) {
+				g.Expect(deploymentCondition(deploymentName, conditionValidated, "status")).
+					To(Equal("True"))
+				g.Expect(deploymentCondition(deploymentName, conditionComponentsApplied, "reason")).
+					To(Equal("ApplicationCRDMissing"))
+			}, 2*time.Minute).Should(Succeed())
+
+			// Both CRs are deleted here, in the spec body, for the same reason the
+			// mirror spec deletes its CCLInfraPlane inline: each carries a finalizer
+			// only the operator can clear, and AfterAll undeploys the operator before
+			// deleting the CRDs. DeferCleanup runs after AfterAll in an Ordered
+			// container, which is too late - a finalized CR left behind wedges its CRD
+			// in Terminating and `make uninstall` blocks forever.
+			By("deleting both CRs while the operator can still run their finalizers")
+			deleteCCLDeployment(deploymentName)
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 })
+
+// conditionValidated and conditionComponentsApplied are the CCLDeployment condition
+// types the e2e specs assert on.
+const (
+	conditionValidated         = "Validated"
+	conditionComponentsApplied = "ComponentsApplied"
+)
+
+// applyCCLInfraPlane creates a CCLInfraPlane in the default namespace.
+func applyCCLInfraPlane(name, credentialsName string) {
+	GinkgoHelper()
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf(`apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  name: %s
+  namespace: default
+spec:
+  clusterCredentialsRef:
+    name: %s
+`, name, credentialsName))
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create CCLInfraPlane %s", name)
+}
+
+// applyCCLDeployment creates a single-component CCLDeployment targeting planeName.
+func applyCCLDeployment(name, planeName string) {
+	GinkgoHelper()
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf(`apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  name: %s
+  namespace: default
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: %s
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+`, name, planeName))
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create CCLDeployment %s", name)
+}
+
+// deleteCCLDeployment removes a CCLDeployment and waits for its finalizer to clear.
+func deleteCCLDeployment(name string) {
+	GinkgoHelper()
+
+	_, err := utils.Run(exec.Command("kubectl", "delete", "ccldeployment", name,
+		"-n", "default", "--ignore-not-found", "--wait=true", "--timeout=2m"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to delete CCLDeployment %s", name)
+}
+
+// deploymentCondition reads one field of one status condition off a CCLDeployment.
+func deploymentCondition(name, conditionType, field string) string {
+	GinkgoHelper()
+
+	out, err := utils.Run(exec.Command("kubectl", "get", "ccldeployment", name,
+		"-n", "default", "-o", fmt.Sprintf(
+			"jsonpath={.status.conditions[?(@.type=='%s')].%s}", conditionType, field)))
+	Expect(err).NotTo(HaveOccurred())
+	return strings.TrimSpace(out)
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
