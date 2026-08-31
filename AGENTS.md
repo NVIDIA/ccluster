@@ -4,8 +4,8 @@ Guidance for AI agents working in this repository. Read this before making chang
 several conventions here deliberately depart from the stock kubebuilder scaffold, and
 following the generic kubebuilder advice instead will produce broken code.
 
-For the project's goals and roadmap, see [README.md](README.md). This file is about
-mechanics.
+For the project's goals and roadmap, see [README.md](README.md); for how the control plane
+works and why, see [DESIGN.md](DESIGN.md). This file is about mechanics.
 
 ## What this repository contains
 
@@ -23,7 +23,9 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `config/cp/`, `config/ip/` | Per-operator kustomize overlays. Not a deploy path any more — they are the **input** the Helm charts are generated from. |
 | `config/crd/` | Generated CRDs. Referenced by the cp overlay only. |
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
-| `catalog/` | Helm charts and typed value schemas for workloads and infra-plane clusters. **Not part of the operator build**, and deliberately unrelated to `charts/`. See `catalog/README.md`. |
+| `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
+| `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components. **Not part of the operator build**, and deliberately unrelated to `charts/`. |
+| `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
 The two operators run in **different clusters**, which is why they have separate images,
 separate RBAC, and separate overlays rather than one manager behind a feature flag.
@@ -129,7 +131,7 @@ The operator must **never** install or upgrade Argo CD. Creating Argo CD's CRDs 
 ClusterRoles requires the operator to already hold those rights — Kubernetes prevents
 privilege escalation — which would mean granting it effective cluster-admin permanently for
 a one-time bootstrap; and an operator that owns Argo CD cannot be used to repair a broken
-Argo CD. The operator's job is to create `Application` / `ApplicationSet` resources.
+Argo CD. The operator's job is to create `Application` resources.
 
 Argo CD is hub-and-spoke: **control-plane cluster only**. Infra-plane clusters get
 registered there as remote destinations. The ip chart has no dependencies.
@@ -137,6 +139,31 @@ registered there as remote destinations. The ip chart has no dependencies.
 `make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for
 hermetic tests that must not pull the Argo CD images. `make helm-deps-update-cp` re-resolves
 the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD version.
+
+### The two controllers, and the invariants they rest on
+
+Both live in `internal/controller/cp/`. [DESIGN.md](DESIGN.md) explains them properly; these
+are the parts a well-meaning change breaks silently.
+
+`CCLInfraPlaneReconciler` registers a cluster with Argo CD by mirroring the Secret named by
+`spec.clusterCredentialsRef` into `--argocd-namespace`, under the CCLInfraPlane's own name.
+
+`CCLDeploymentReconciler` turns each component of a `CCLDeployment` into one Argo CD
+`Application`, in order.
+
+- **Applications are written directly. There is no ApplicationSet.** Both an ApplicationSet
+  and Argo CD's `RollingSync` were implemented and removed in `2e00925`; the reasoning is in
+  the doc comments on `applicationSpec` in `ccldeployment_builder.go`. Do not reintroduce
+  either.
+- **Release is monotonic.** `releaseCount` withholds a component's Application until every
+  earlier one is `Healthy` *and* `Synced`, but a released component is never withdrawn when
+  it degrades — deleting its Application would uninstall the chart through the cascade
+  finalizer.
+- **Ownership is by annotation, never `ownerReference`.** Both controllers write into the
+  Argo CD namespace, and owner references may not cross namespaces. Use the helpers in
+  `ownership.go`; check `ownedBy` before touching or deleting anything there.
+- **`ccluster.nvidia.com/wave` is a label for humans.** Nothing reads it. Ordering comes
+  from the position of the component in the list.
 
 ### RBAC is generated per operator
 
@@ -149,6 +176,10 @@ the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD vers
 
 A `+kubebuilder:rbac` marker therefore only reaches the operator whose controller package it
 sits in. Putting one in the wrong package silently grants the wrong operator.
+
+The cp role currently covers both CRDs (plus their `status` and `finalizers` subresources),
+core `secrets` — for the mirrored Argo CD cluster Secret — and `argoproj.io/applications`.
+The ip role is empty.
 
 The ip pass is disabled because `controller-gen` writes **no file at all** for a package with
 zero markers, which breaks `kustomize build config/ip`. `config/ip/rbac/role.yaml` is
@@ -280,6 +311,10 @@ Skipping the first is the most common source of "my new field vanishes on apply"
 server prunes fields the installed CRD schema does not know about. Skipping the second means
 the change is invisible to `make deploy-cp`, and CI will fail on the chart drift check.
 
+This applies to **doc comments too**, not just fields: godoc on the API types is copied
+verbatim into the CRD's `description`, so it ships to users through `kubectl explain`. A
+comment edit that is not regenerated fails the CI drift check.
+
 **Inner development loop** (fastest; manager runs on your host):
 
 ```bash
@@ -323,9 +358,19 @@ marker. `make cleanup-test-e2e` tears down the e2e cluster if a run dies partway
 Test wiring lives in `internal/controller/cp/suite_test.go` (envtest setup, `k8sClient`).
 Specs use Ginkgo/Gomega.
 
-**Current state:** `CCLInfraPlaneReconciler.Reconcile` is an empty scaffold stub, and the
-existing spec only asserts that it returns no error. Reported coverage is therefore
-meaningless — do not treat it as evidence of correctness.
+**Current state:** both cp controllers have real envtest suites —
+`cclinfraplane_controller_test.go` and `ccldeployment_controller_test.go` — covering
+mirroring and drift correction, ordered release, reverse teardown, pruning, ownership
+conflicts, and the CEL validation rules. Note two things about how they run:
+
+- No controller is started in the test manager. Every spec calls `Reconcile` directly, so
+  the `Watches` map functions are exercised as plain functions and requeue behaviour is not.
+- envtest runs no Argo CD, so `test/testdata/crd/argoproj.io_applications.yaml` is a
+  schema-less stand-in for the `Application` CRD, and the specs write Application status
+  themselves to drive a rollout forward.
+
+`test/e2e` is still scaffold-level: it deploys the chart and checks the manager comes up, and
+touches neither CRD.
 
 ## Image tags
 
@@ -340,17 +385,23 @@ default in `IMG_CP` / `IMG_IP`.
   guide](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-instrumentation/logging.md#message-style-guidelines):
   capitalized, no trailing period, past tense, object type named, balanced key-value pairs.
   `log.Info("Created Deployment", "name", deploy.Name)`.
-- **Status** uses `metav1.Condition`, not custom string fields. Standard types: `Available`,
-  `Progressing`, `Degraded`.
-- **Reconciliation** must be idempotent. Re-fetch before update to avoid conflicts. Use
-  `SetControllerReference` for garbage collection, and `.Owns()`/`.Watches()` rather than
-  polling with `RequeueAfter`.
+- **Status** uses `metav1.Condition`, not custom string fields. Prefer the standard types
+  (`Available`, `Progressing`, `Degraded`) and add a specific one only where none fits — as
+  `CCLDeployment` does with `Validated` and `ComponentsApplied`. Always set
+  `observedGeneration`, on the condition and on `status.observedGeneration`.
+- **Reconciliation** must be idempotent, and driven by `.Owns()` / `.Watches()` rather than
+  polling with `RequeueAfter`. `SetControllerReference` is the normal way to get garbage
+  collection — but it is unusable for anything the cp operator writes into the Argo CD
+  namespace, since owner references may not cross namespaces. Those objects use the
+  annotation back-references in `ownership.go` and an explicit finalizer instead.
 - **API types** follow [Kubernetes API
   conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md);
   prefer predefined types (`metav1.Time`, not `string`).
 
 ## Reference
 
+- [DESIGN.md](DESIGN.md) — what the control plane does and why: the two CRDs, the ordering
+  algorithm, and the alternatives that were tried and rejected.
 - Kubebuilder book: https://book.kubebuilder.io — the general CLI, markers, and webhook
   documentation lives there and is not duplicated here. Where it conflicts with this file,
   **this file wins**, because the two-binary layout is not what the book assumes.

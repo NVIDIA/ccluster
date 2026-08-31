@@ -23,8 +23,8 @@ manager:
   ## Arguments
   ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
-  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the ApplicationSet it
-  ## builds from each CCLDeployment. The default matches a stock Argo CD install. Note
+  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the Applications it
+  ## builds from each CCLDeployment's components. The default matches a stock Argo CD install. Note
   ## that the `argo-cd` subchart below installs into this chart's RELEASE namespace,
   ## not `argocd` — so when Argo CD comes from this chart, override this to the release
   ## namespace. `make deploy-cp` does that for you.
@@ -147,8 +147,9 @@ argo-cd:
       ## merge against the kubectl.kubernetes.io/last-applied-configuration annotation
       ## — which an object larger than the annotation limit cannot carry, and which
       ## server-side apply stops maintaining. Large CRDs then report OutOfSync forever
-      ## despite syncing cleanly, and because a RollingSync step advances only on
-      ## Healthy *and* Synced, one such CRD stalls every later wave of a CCLDeployment.
+      ## despite syncing cleanly, and because the operator releases the next component
+      ## only on Healthy *and* Synced, one such CRD stalls every later component of a
+      ## CCLDeployment.
       ##
       ## argo-rollouts' rollouts.argoproj.io CRD is ~600KB; several other cluster_base
       ## charts are comparable.

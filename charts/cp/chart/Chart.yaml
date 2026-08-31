@@ -20,7 +20,7 @@ keywords:
 # operator rather than by it: bootstrapping Argo CD needs the rights to create its
 # CRDs and ClusterRoles, which the operator would then hold forever, and an operator
 # that owns Argo CD cannot be used to repair a broken Argo CD. The operator only ever
-# creates Application/ApplicationSet resources.
+# creates Application resources.
 #
 # Only the cp chart carries this. Argo CD is hub-and-spoke: one instance in the
 # control-plane cluster, with infra-plane clusters registered as remote destinations.

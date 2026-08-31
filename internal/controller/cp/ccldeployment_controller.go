@@ -41,8 +41,8 @@ const (
 	// conditionTypeValidated reports whether every component's infraPlaneRef resolves
 	// to a CCLInfraPlane that Argo CD can already reach.
 	conditionTypeValidated = "Validated"
-	// conditionTypeProgressing reports on the RollingSync: false once every component
-	// is healthy and synced.
+	// conditionTypeProgressing reports on the rollout: false once every component is
+	// healthy and synced.
 	conditionTypeProgressing = "Progressing"
 	// conditionTypeComponentsApplied reports on the Argo CD Applications that deploy
 	// the components onto their infra-plane clusters.
@@ -61,7 +61,7 @@ const (
 	reasonApplicationFailed     = "ApplicationFailed"
 )
 
-// Metadata written onto the ApplicationSet, and onto the Applications it generates.
+// Metadata written onto the generated Applications.
 const (
 	// Back-references to the CCLDeployment an Application was created for, for the
 	// reason given on ownerAnnotations: owner references may not cross namespaces.
@@ -97,7 +97,7 @@ type CCLDeploymentReconciler struct {
 	Scheme *runtime.Scheme
 
 	// ArgoCDNamespace is the namespace Argo CD runs in, and therefore the namespace the
-	// generated ApplicationSet is written to.
+	// generated Applications are written to.
 	ArgoCDNamespace string
 
 	// CatalogRepoURL and CatalogRevision locate the chart catalog components are
@@ -112,7 +112,7 @@ type CCLDeploymentReconciler struct {
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=ccldeployments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile projects a CCLDeployment onto a single Argo CD ApplicationSet:
+// Reconcile projects a CCLDeployment onto a set of Argo CD Applications:
 //
 //  1. Every component's infraPlaneRef is resolved. The CCLInfraPlane must exist and be
 //     Available, because the generated Applications address their destination cluster by

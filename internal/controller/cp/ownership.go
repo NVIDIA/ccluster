@@ -44,7 +44,7 @@ type ownerAnnotations struct {
 }
 
 // The key pairs in use. They apply to disjoint kinds - a CCLInfraPlane only ever stamps
-// the mirrored cluster Secret, and a CCLDeployment only ever stamps its ApplicationSet -
+// the mirrored cluster Secret, and a CCLDeployment only ever stamps its Applications -
 // so one object never carries both, and ownedBy does not have to tell them apart.
 var (
 	infraPlaneOwner = ownerAnnotations{

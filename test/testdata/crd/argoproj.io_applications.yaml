@@ -3,12 +3,11 @@
 #
 # The real CRD ships only as a Helm template inside the argo-cd chart
 # (argo-cd/templates/crds/crd-application.yaml in charts/cp/chart/charts/argo-cd-*.tgz),
-# so it cannot simply be copied into CRDDirectoryPaths. The schema is left open for the
-# same reason as the ApplicationSet stand-in beside it.
+# so it cannot simply be copied into CRDDirectoryPaths. The schema is left open on
+# purpose: the tests only need the objects stored and read back, not validated.
 #
-# In a real cluster nothing creates these but Argo CD's applicationset-controller, from
-# the ApplicationSet the operator writes. Tests create them directly to stand in for that
-# controller, which envtest does not run.
+# In a real cluster the operator creates these and Argo CD fills in their status. envtest
+# runs no Argo CD, so the tests write the status themselves to drive the rollout forward.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:

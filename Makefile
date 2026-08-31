@@ -390,7 +390,7 @@ HELM_TIMEOUT ?= 5m
 # Set ARGOCD=false to install the cp operator without Argo CD, e.g. into a cluster
 # that already runs it, or for hermetic tests that must not pull the Argo CD images.
 ARGOCD ?= true
-# The chart catalog the operator points its generated ApplicationSets at. Override
+# The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.
 CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster

@@ -42,7 +42,7 @@ var scheme = runtime.NewScheme()
 var argoCDNamespace string
 
 // catalogRepoURL and catalogRevision locate the chart catalog the generated
-// ApplicationSets deploy from. Set by flags, for the same reason as argoCDNamespace.
+// Applications deploy from. Set by flags, for the same reason as argoCDNamespace.
 var (
 	catalogRepoURL  string
 	catalogRevision string
@@ -52,7 +52,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(scheme))
-	// Argo CD's ApplicationSet, which the CCLInfraPlane controller creates. Registering
+	// Argo CD's Application, which the CCLDeployment controller creates. Registering
 	// it is safe on a cluster with no Argo CD: the missing CRD surfaces at reconcile
 	// time, from the RESTMapper, rather than at startup.
 	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
