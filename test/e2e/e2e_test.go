@@ -68,12 +68,14 @@ var _ = Describe("Manager", Ordered, func() {
 		// No `make install` here: the chart owns the CRDs, and Helm refuses to adopt
 		// CRDs that already exist without its ownership metadata.
 		//
-		// ARGOCD=false: the cp chart pulls in Argo CD, whose images are not loaded
-		// into this kind cluster. Installing it here would make `helm --wait` block
-		// on several image pulls from the internet, so this suite covers the operator
-		// only. `make test-e2e-argocd` exercises the chart with Argo CD enabled.
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage), "ARGOCD=false")
+		// ARGOCD defaults to true: this suite installs the real Argo CD dependency
+		// alongside the operator, which is what lets the specs below exercise an
+		// actual rollout - Application CRUD under the operator's real RBAC, and Argo
+		// CD reconciling one to Healthy/Synced. `helm --wait` therefore blocks on
+		// pulling and starting every Argo CD component's images, so this deploy gets
+		// a longer timeout than the operator alone would need.
+		By("deploying the controller-manager and Argo CD")
+		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage), "HELM_TIMEOUT=10m")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -276,17 +278,14 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// This is the only assertion in the repository that exercises the operator's
-		// real RBAC. envtest runs the reconciler as the test binary's own identity, so
-		// a missing +kubebuilder:rbac marker is invisible there; here the manager runs
-		// under its ServiceAccount, from the built image, with the chart's Role. The
-		// mirroring path was chosen because it touches the widest permission surface:
-		// CCLInfraPlane get/list/watch, its status subresource, and Secret
-		// get/list/watch/create/update.
-		//
-		// Deliberately no CCLDeployment equivalent: this suite runs with ARGOCD=false,
-		// so the Application CRD does not exist and a rollout could never advance. That
-		// belongs in `make test-e2e-argocd`, if anywhere.
+		// envtest runs the reconciler as the test binary's own identity, so a missing
+		// +kubebuilder:rbac marker is invisible there; here the manager runs under
+		// its ServiceAccount, from the built image, with the chart's Role. The
+		// mirroring path was chosen because it touches the widest CCLInfraPlane
+		// permission surface: get/list/watch, its status subresource, and Secret
+		// get/list/watch/create/update. The equivalent CCLDeployment coverage -
+		// including the `argoproj.io/applications` RBAC rule - is the real-rollout
+		// spec further down, which needs Argo CD actually installed.
 		It("should mirror an infra plane's credentials Secret using the operator's own RBAC", func() {
 			const infraPlaneName = "e2e-infra-plane"
 			const credentialsName = "e2e-infra-plane-credentials"
@@ -372,16 +371,15 @@ spec:
 			Eventually(verifyGone, 2*time.Minute).Should(Succeed())
 		})
 
-		// The two specs below exist for RBAC coverage of the CCLDeployment controller,
-		// which the mirror spec above does not touch at all: ccldeployments
-		// get/list/watch, ccldeployments/status patch, and ccldeployments/finalizers
-		// update. Neither needs Argo CD, so both run under ARGOCD=false.
-		//
-		// They deliberately assert only the two conditions reachable without the
-		// Application CRD. The rollout itself - wave ordering, drift restore, reverse
-		// teardown - is covered by envtest and the unit tier, which reach far more
-		// states than a 60-second cluster run ever could. Duplicating that here would
-		// buy nothing and cost minutes.
+		// This spec exists for RBAC coverage of the CCLDeployment controller that the
+		// mirror spec above does not touch: ccldeployments get/list/watch,
+		// ccldeployments/status patch, and ccldeployments/finalizers update. It
+		// deliberately asserts only the one condition reachable without a real
+		// infra-plane target. The rollout itself - wave ordering, drift restore,
+		// reverse teardown - is covered by envtest and the unit tier, which reach far
+		// more states than a cluster run ever could; the real-Argo-CD spec further
+		// down covers just enough of a genuine rollout to prove RBAC and reconciliation
+		// actually work end to end.
 
 		It("should report InfraPlaneNotFound for a CCLDeployment whose plane is missing", func() {
 			const deploymentName = "e2e-missing-plane"
@@ -409,17 +407,29 @@ spec:
 			deleteCCLDeployment(deploymentName)
 		})
 
-		It("should report ApplicationCRDMissing when Argo CD is not installed", func() {
-			const deploymentName = "e2e-no-argocd"
-			const planeName = "e2e-deploy-plane"
-			const credentialsName = "e2e-deploy-plane-credentials"
+		// The specs above never touch a real Application: nothing creates one under
+		// the operator's own RBAC, and nothing exercises the rest of a rollout - Argo
+		// CD actually cloning the catalog, installing the chart, and the operator
+		// reading Application health back. This suite installs real Argo CD (see
+		// BeforeAll), so this spec registers the control-plane cluster with itself -
+		// the same trick config/samples/v1alpha1_cclinfraplane.yaml documents - and
+		// drives one catalog component all the way to Healthy/Synced, which is what
+		// `make test-e2e-argocd` never actually did before it was retired: that
+		// target only asserted the argoproj CRDs existed, not that a rollout worked.
+		It("should roll out a real catalog component under real Argo CD reconciliation", func() {
+			const deploymentName = "e2e-real-rollout"
+			const planeName = "e2e-real-rollout-plane"
+			const credentialsName = "e2e-real-rollout-plane-credentials"
+			applicationName := deploymentName + "-argo-rollouts"
 
-			By("creating an available CCLInfraPlane for the component to target")
+			// server must be exactly this string for Argo CD to connect using its own
+			// ServiceAccount rather than credentials in "config" - see the sample
+			// this mirrors, config/samples/v1alpha1_cclinfraplane.yaml.
+			By("registering the control-plane cluster with itself as an infra plane")
 			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
 				credentialsName,
-				"--from-literal=name=placeholder",
-				"--from-literal=server=https://infra.example.com:6443",
-				"--from-literal=config={\"bearerToken\":\"fake-token\"}",
+				"--from-literal=server=https://kubernetes.default.svc",
+				`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
 				"-n", "default"))
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() {
@@ -439,36 +449,68 @@ spec:
 			By("creating a CCLDeployment against it")
 			applyCCLDeployment(deploymentName, planeName)
 
-			By("waiting for the operator to report the missing Application CRD")
-			// This is the graceful-degradation path: Argo CD absent is reported on the
-			// status rather than retried, because no amount of retrying installs it.
+			By("waiting for the operator to create the Application under its own RBAC")
 			Eventually(func(g Gomega) {
-				g.Expect(deploymentCondition(deploymentName, conditionValidated, "status")).
-					To(Equal("True"))
 				g.Expect(deploymentCondition(deploymentName, conditionComponentsApplied, "reason")).
-					To(Equal("ApplicationCRDMissing"))
+					To(Equal("ApplicationsCreated"))
 			}, 2*time.Minute).Should(Succeed())
 
-			// Both CRs are deleted here, in the spec body, for the same reason the
-			// mirror spec deletes its CCLInfraPlane inline: each carries a finalizer
-			// only the operator can clear, and AfterAll undeploys the operator before
-			// deleting the CRDs. DeferCleanup runs after AfterAll in an Ordered
-			// container, which is too late - a finalized CR left behind wedges its CRD
-			// in Terminating and `make uninstall` blocks forever.
-			By("deleting both CRs while the operator can still run their finalizers")
-			deleteCCLDeployment(deploymentName)
+			By("verifying the Application carries the expected ownership back-reference")
+			out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+				"-n", namespace, "-o",
+				"jsonpath={.metadata.labels['ccluster\\.nvidia\\.com/deployment-name']}"))
+			Expect(err).NotTo(HaveOccurred(), "Application was not created")
+			Expect(strings.TrimSpace(out)).To(Equal(deploymentName))
+
+			By("waiting for Argo CD to actually reconcile it to Healthy and Synced")
+			Eventually(func(g Gomega) {
+				health, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
+
+				sync, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
+			}, 8*time.Minute).Should(Succeed())
+
+			By("verifying the operator's Progressing condition reflects a completed rollout")
+			Eventually(func(g Gomega) {
+				g.Expect(deploymentCondition(deploymentName, conditionProgressing, "status")).
+					To(Equal("False"))
+				g.Expect(deploymentCondition(deploymentName, conditionProgressing, "reason")).
+					To(Equal("RolloutComplete"))
+			}, 2*time.Minute).Should(Succeed())
+
+			// Deleted inline, not via DeferCleanup: each CR's finalizer needs the
+			// operator running to clear it, and DeferCleanup runs after AfterAll has
+			// already undeployed it. Teardown here is a real cascade through Argo CD -
+			// deleting the CCLDeployment deletes the Application, whose
+			// resources-finalizer.argocd.argoproj.io finalizer makes Argo CD
+			// uninstall the chart before the Application itself goes away - so this
+			// gets a longer timeout than the status-only specs above.
+			By("deleting the CCLDeployment and CCLInfraPlane, letting Argo CD uninstall the chart")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "ccldeployment", deploymentName,
+				"-n", "default", "--ignore-not-found", "--wait=true", "--timeout=5m"))
+			Expect(err).NotTo(HaveOccurred())
 			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
 				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
 			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the operator deleted the Application")
+			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+			Expect(err).To(HaveOccurred(), "Application was not cleaned up")
 		})
 	})
 })
 
-// conditionValidated and conditionComponentsApplied are the CCLDeployment condition
-// types the e2e specs assert on.
+// conditionValidated, conditionComponentsApplied and conditionProgressing are the
+// CCLDeployment condition types the e2e specs assert on.
 const (
 	conditionValidated         = "Validated"
 	conditionComponentsApplied = "ComponentsApplied"
+	conditionProgressing       = "Progressing"
 )
 
 // applyCCLInfraPlane creates a CCLInfraPlane in the default namespace.

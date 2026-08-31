@@ -332,5 +332,12 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
-  watches and map functions are exercised only as plain functions. `test/e2e` is
-  scaffold-level and touches neither CRD; only a real deploy exercises RBAC.
+  watches and map functions are exercised only as plain functions. `test/e2e` installs real
+  Argo CD and exercises both CRDs under the operator's real ServiceAccount RBAC, including a
+  spec that registers the control-plane cluster with itself and drives a real catalog
+  component to `Healthy`/`Synced`, so the `argoproj.io/applications` RBAC rule and a genuine
+  rollout are both covered now — something `make test-e2e-argocd` never actually asserted
+  before it was retired; it only checked that the argoproj CRDs existed. What that move traded
+  away is coverage of `ApplicationCRDMissing`, the status path for a cluster where Argo CD
+  genuinely isn't installed: `test-e2e` no longer reaches it, so it is asserted at the unit
+  tier instead (`ccldeployment_builder_test.go`).

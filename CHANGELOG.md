@@ -58,8 +58,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - The control-plane chart's Argo CD dependency is now verified by rendering it with
   `helm template` in CI (`.github/workflows/test-chart.yml`) rather than by installing it
   into a kind cluster. The argoproj CRDs and `controller.diff.server.side` are asserted on
-  every pull request instead of in a local-only target; that Argo CD actually *installs* is
-  no longer covered.
+  every pull request instead of in a local-only target.
+- `make test-e2e` now installs real Argo CD instead of `ARGOCD=false`, and asserts a real
+  catalog component reaches `Healthy`/`Synced` under Argo CD's own reconciliation. This
+  replaces `make test-e2e-argocd`, which never actually checked that a rollout worked — only
+  that the argoproj CRDs existed — and which no CI workflow ran anyway. The tradeoff:
+  `ApplicationCRDMissing`, the status reported when Argo CD genuinely isn't installed, is no
+  longer reachable in `test-e2e`; it is asserted at the unit tier instead
+  (`ccldeployment_builder_test.go`).
 
 ### Fixed
 - The CCLDeployment controller no longer refuses to start when Argo CD is absent. Its watch

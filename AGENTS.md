@@ -136,13 +136,16 @@ Argo CD. The operator's job is to create `Application` resources.
 Argo CD is hub-and-spoke: **control-plane cluster only**. Infra-plane clusters get
 registered there as remote destinations. The ip chart has no dependencies.
 
-`make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for
-hermetic tests that must not pull the Argo CD images. `make test-e2e` uses it, which is why
-the CCLDeployment controller has to tolerate the Application CRD being absent; see
-`CCLDeploymentReconciler.SetupWithManager`. There is no longer a target that installs Argo CD
-into a cluster: `make test-e2e-argocd` was removed, and its assertions now run offline
-against `helm template` output in `.github/workflows/test-chart.yml`. `make helm-deps-update-cp` re-resolves
-the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD version.
+`make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for a
+hermetic run that must not pull the Argo CD images. `make test-e2e` installs Argo CD by
+default (it does not set `ARGOCD=false`), which is what lets it exercise a real rollout; the
+CCLDeployment controller still has to tolerate the Application CRD being absent at startup
+for the `ARGOCD=false` case, though — see `CCLDeploymentReconciler.SetupWithManager`. There
+is no longer a standalone target that only checks the argoproj CRDs render:
+`make test-e2e-argocd` was removed, its render-only assertions moved into `helm template`
+output in `.github/workflows/test-chart.yml`, and the real rollout check moved into
+`make test-e2e` itself. `make helm-deps-update-cp` re-resolves the dependency and refreshes
+`Chart.lock`; that is how you bump the Argo CD version.
 
 ### The two controllers, and the invariants they rest on
 
@@ -352,8 +355,8 @@ tag are unchanged, even though the image content changed.
 | --- | --- | --- | --- |
 | unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
-| e2e | `make test-e2e` | Full Helm deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Runs with `ARGOCD=false`. | The Argo CD dependency |
-| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime — that Argo CD actually *installs* is no longer tested |
+| e2e | `make test-e2e` | Full Helm deploy, with real Argo CD, into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target — including one spec that drives a real catalog component to `Healthy`/`Synced` under Argo CD's own reconciliation. | Multi-component ordering and drift correction against a live cluster — those states are envtest's job |
+| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
 Only `make test-e2e` and a real in-cluster deploy will catch a missing `+kubebuilder:rbac`
@@ -392,8 +395,18 @@ rather than a coverage regression. Note three things about how they run:
   controller-runtime builder wiring whose real failure mode is a missing
   `+kubebuilder:rbac` marker, and only `make test-e2e` catches that.
 
-`test/e2e` is still scaffold-level: it deploys the chart and checks the manager comes up, and
-touches neither CRD.
+`test/e2e` deploys the chart with real Argo CD (see "Argo CD is a chart dependency" above),
+checks the manager comes up, and exercises both CRDs under the operator's real ServiceAccount
+RBAC — Secret mirroring and `CCLInfraPlane` finalizer cleanup, and the `CCLDeployment` status
+path reachable without a real infra-plane target (`InfraPlaneNotFound`). One further spec
+registers the control-plane cluster with itself, the same trick
+`config/samples/v1alpha1_cclinfraplane.yaml` documents, and drives one catalog component all
+the way to `Healthy`/`Synced` under Argo CD's own reconciliation — the first thing in this
+repository that exercises the operator's `argoproj.io/applications` RBAC and a real rollout
+together. `ApplicationCRDMissing` — the graceful-degradation path for a cluster where Argo CD
+genuinely isn't installed yet — is covered at the unit tier instead
+(`ccldeployment_builder_test.go`), since it's no longer reachable once `test-e2e` installs
+Argo CD by default.
 
 ## Image tags
 
