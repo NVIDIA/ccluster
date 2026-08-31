@@ -15,6 +15,23 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - Workload charts: `inference_deployment_v3`, `cserve_deployment_v3`,
   `compute_deployment`, `job_deployment`, `namespace_base`.
 - Community-health files (Code of Conduct, Contributing, Security, Support, Maintainers).
+- `CCLInfraPlane` (`ccluster.nvidia.com/v1alpha1`), which registers an infra-plane cluster
+  with Argo CD by mirroring the Secret named by `spec.clusterCredentialsRef` into the Argo CD
+  namespace as a cluster Secret, under the resource's own name.
+- `CCLDeployment` (`ccluster.nvidia.com/v1alpha1`), which rolls out an ordered bundle of
+  catalog charts onto registered clusters. Each component becomes one Argo CD `Application`;
+  a component's Application is not created until every component before it reports Healthy
+  and Synced, and teardown runs in reverse, one at a time. Progress is reported on
+  `status.conditions` as `Validated`, `ComponentsApplied` and `Progressing`.
+- `catalogs/cluster_base`, a pure-Helm catalog of 18 platform components, which is what
+  `CCLDeployment` component `chart` paths resolve against. The repository and revision are
+  operator configuration (`--catalog-repo-url`, `--catalog-revision`), settable at deploy
+  time with `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
+- `DESIGN.md`, describing the control-plane design and the alternatives rejected along the
+  way — notably Argo CD `ApplicationSet` generators and the `RollingSync` sync strategy.
+- `controller.diff.server.side` enabled on the bundled Argo CD application controller, to
+  match the `ServerSideApply` sync option every generated Application carries. Without both,
+  charts containing very large CRDs report OutOfSync forever and stall a rollout.
 - Helm charts for both operators under `charts/cp/chart` and `charts/ip/chart`, generated
   from the kustomize overlays by the kubebuilder `helm/v2-alpha` plugin. Regenerate with
   `make helm-generate`; CI fails if the committed charts drift from `config/`.
@@ -35,6 +52,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   They require `helm` on `PATH`. Resource names and namespaces are unchanged.
 - `make build-installer-cp` / `build-installer-ip` are no longer a deploy path — the
   `dist/install-{cp,ip}.yaml` they produce are the input the charts are generated from.
+- Documentation now describes the operators first: `README.md` leads with the control-plane
+  API, and `AGENTS.md` covers the controllers, their RBAC, and the real test coverage.
 - `make undeploy-cp` no longer deletes the CRDs, and therefore no longer deletes every
   custom resource in the cluster: the chart annotates them `helm.sh/resource-policy: keep`.
   It does now remove Argo CD, which is part of the same release.

@@ -2,11 +2,10 @@
 # v1alpha1_cclinfraplane.yaml, in order. Apply that sample first: this one stays
 # Validated=False until the CCLInfraPlane it names reports Available.
 #
-# The order of components is the rollout order. Argo CD does not sync
-# ccluster-local-base-keda until ccluster-local-base-argo-rollouts reports Healthy,
-# because the operator turns each component into one step of a RollingSync. That only
-# works when the applicationset-controller has progressive syncs enabled, which the
-# ccluster-cp chart sets — see charts/cp/chart/values.yaml.
+# The order of components is the rollout order. The operator does not create the
+# Application for ccluster-local-base-keda at all until ccluster-local-base-argo-rollouts
+# reports Healthy and Synced, so the two never sync concurrently. There is no timeout on
+# that wait; status.conditions[Progressing] names whichever component is holding things up.
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLDeployment
 metadata:

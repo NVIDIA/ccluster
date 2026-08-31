@@ -76,10 +76,11 @@ type ComponentSpec struct {
 
 // CCLDeploymentSpec defines the desired state of CCLDeployment
 type CCLDeploymentSpec struct {
-	// components are rolled out in the order given: each becomes one step of an Argo CD
-	// RollingSync, so a component is not synced until the one before it reports
-	// Healthy. There is no timeout on that wait - a component that never becomes
-	// healthy stalls everything after it, which the Progressing condition reports.
+	// components are rolled out in the order given: the operator withholds a
+	// component's Argo CD Application until every component before it reports both
+	// Healthy and Synced. There is no timeout on that wait - a component that never
+	// becomes healthy stalls everything after it, which the Progressing condition
+	// reports.
 	//
 	// Ordering is positional rather than a dependsOn field because nothing yet needs to
 	// express a graph. When that changes, the list order stays a valid topological
@@ -100,10 +101,10 @@ type CCLDeploymentStatus struct {
 	// Condition types reported by the control-plane operator:
 	//   - "Validated": every component's infraPlaneRef resolves to an Available
 	//     CCLInfraPlane.
-	//   - "ComponentsApplied": the Argo CD ApplicationSet describing the components has
-	//     been written.
-	//   - "Progressing": whether the RollingSync has finished, and which wave it is on
-	//     if it has not.
+	//   - "ComponentsApplied": the Argo CD Applications for the components released so
+	//     far have been written.
+	//   - "Progressing": whether the rollout has finished, and which component it is
+	//     waiting on if it has not.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -127,8 +128,8 @@ type CCLDeploymentStatus struct {
 //
 // It describes a bundle of Helm charts from the ccluster catalog, each with its own
 // values and its own destination cluster, rolled out in a fixed order. The operator does
-// not install anything itself: it projects the bundle onto a single Argo CD
-// ApplicationSet, and Argo CD does the work.
+// not install anything itself: it creates one Argo CD Application per component, in
+// order, and Argo CD does the work.
 type CCLDeployment struct {
 	metav1.TypeMeta `json:",inline"`
 

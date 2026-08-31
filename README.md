@@ -4,7 +4,7 @@
 
 CCluster aims to give AI teams a single control plane for their GPU fleet — provisioning clusters, deploying and scaling workloads, and running the full model lifecycle (inference, fine-tuning, batch jobs, and training) across clouds and regions, while keeping expensive accelerators as busy and as cost-effective as possible.
 
-> **Project status: early / foundations.** CCluster is at the start of an ambitious roadmap. The repository today contains the first building block — a catalog of Helm charts and typed value schemas for cluster and workload deployment (see [Available today](#available-today)). The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
+> **Project status: early.** CCluster is at the start of an ambitious roadmap. What exists today is the first working slice of the control plane — two `v1alpha1` CRDs that register clusters with Argo CD and roll out ordered bundles of Helm charts onto them (see [Available today](#available-today)) — plus the chart catalog they deploy from. The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
 
 # Vision
 
@@ -16,17 +16,17 @@ Guiding principles:
 - **Kubernetes-native.** Everything is expressed as Kubernetes resources and reconciled declaratively (GitOps via Argo CD), so the platform composes with the existing cloud-native ecosystem instead of replacing it.
 - **Multi-cloud by default.** A cluster on AWS, GCP, Azure, Nebius, or on-prem is a first-class citizen; workloads and policy span providers without per-cloud rewrites.
 - **End-to-end lifecycle.** One platform for the whole journey — from provisioning a cluster, to training and fine-tuning, to batch and interactive compute, to production inference and autoscaling.
-- **Typed and validated.** Deployment configuration is modeled as typed schemas that are validated before anything reaches a cluster, so misconfiguration fails fast.
+- **Typed and validated.** Deployment configuration is modeled as CRD schemas with server-side validation, so misconfiguration is rejected by the API server rather than discovered at sync time.
 
 ## Where we're headed
 
-The platform is being built up in layers. The chart catalog is the foundation; higher layers (a control-plane API, a scheduler/placement layer, and user-facing interfaces) will build on top of it.
+The platform is being built up in layers. The chart catalog and the control-plane API are the foundation; higher layers (a scheduler/placement layer, fleet policy, and user-facing interfaces) will build on top of them.
 
 | Capability | Description | Status |
 | --- | --- | --- |
-| **Deployment catalog** | Helm charts + typed value schemas for cluster base components and user workloads (inference, compute, jobs). | ✅ Available today |
-| **Cluster provisioning** | Declarative bring-up of GPU clusters and their platform stack across clouds. | 🧱 Foundations in place (`cluster_base`) |
-| **Control-plane API** | Programmatic management of clusters, deployments, and users. | 🗺️ Planned |
+| **Deployment catalog** | Helm charts for cluster base components and user workloads (inference, compute, jobs). | ✅ Available today |
+| **Control-plane API** | Kubernetes CRDs for registering clusters and rolling out chart bundles onto them. | ✅ Available today (`v1alpha1`) |
+| **Cluster provisioning** | Declarative bring-up of GPU clusters and their platform stack across clouds. | 🧱 Foundations in place (`cluster_base` + `CCLDeployment`) |
 | **Workload scheduling & placement** | Efficiency-aware scheduling and cross-cluster placement of GPU workloads. | 🗺️ Planned |
 | **Multi-cloud fleet management** | Unified view and policy across clusters spanning multiple providers. | 🗺️ Planned |
 | **Lifecycle tooling** | Training, fine-tuning, and batch pipelines alongside inference serving. | 🗺️ Planned |
@@ -35,23 +35,96 @@ The platform is being built up in layers. The chart catalog is the foundation; h
 
 # Available today
 
-The current codebase ships as a single Python package, `catalog`, that pairs each Helm chart with a [Pydantic](https://docs.pydantic.dev/) model describing its values. Instead of hand-written `values.yaml` files, callers construct a typed model and let the package emit Helm parameters or a `values.yaml` for [Argo CD](https://argo-cd.readthedocs.io/). This is the deployment substrate the rest of the platform will build on:
+CCluster runs as **two Kubernetes operators** and a **catalog of Helm charts**.
 
-- **Type-safe Helm values** — chart inputs are validated Pydantic models, so misconfigured deployments fail at construction time rather than at sync time.
-- **Argo CD-friendly rendering** — values are flattened into Argo CD `helm.parameters` (with correct `forceString` handling) or a values object, avoiding drift between Kubernetes and Argo CD (e.g. CPU/memory normalization, annotation-key escaping).
-- **A composable cluster base** — `cluster_base` models a full platform stack (Istio, cert-manager, SPIRE, KEDA, GPU Operator, Prometheus, Longhorn, and more) as per-component overrides emitted into a single Argo CD `ApplicationSet`, ordered by sync waves.
-- **Ready-to-deploy workload charts** — inference, CServe, compute, and job charts for running user workloads.
+The control-plane operator (`ccluster-cp-operator`) runs in one control-plane cluster
+alongside [Argo CD](https://argo-cd.readthedocs.io/), and manages a fleet of *infra-plane*
+clusters. It installs nothing itself: it translates two custom resources into Argo CD API
+objects and lets Argo CD do the work. The infra-plane operator (`ccluster-ip-operator`) runs
+in each managed cluster and is still a placeholder.
 
-## What's in the catalog
+[DESIGN.md](DESIGN.md) covers how this works and why — the ordering algorithm, the ownership
+model, and the alternatives that were tried and rejected.
+
+## The control-plane API
+
+Two CRDs, both in the group `ccluster.nvidia.com/v1alpha1`.
+
+### `CCLInfraPlane` — register a cluster
+
+Points at a `Secret` holding a cluster's credentials. The operator mirrors it into the
+Argo CD namespace as an Argo CD cluster Secret, under the `CCLInfraPlane`'s own name, so
+deployments can address the cluster by that name.
+
+```yaml
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  name: ccluster-local
+spec:
+  clusterCredentialsRef:
+    name: ccluster-local-credentials
+```
+
+It reports `Available` once the cluster is registered. See
+[`config/samples/v1alpha1_cclinfraplane.yaml`](config/samples/v1alpha1_cclinfraplane.yaml)
+for a complete example, including registering the control-plane cluster with itself.
+
+### `CCLDeployment` — roll out an ordered bundle of charts
+
+A list of components, each one Helm chart from the catalog, on one registered cluster, in
+one namespace, with its own values. **The list order is the rollout order:** the operator
+creates a component's Argo CD `Application` only once every component before it reports
+`Healthy` and `Synced`, and tears them down in reverse.
+
+```yaml
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  name: ccluster-local-base
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef: { name: ccluster-local }
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+    - name: keda
+      infraPlaneRef: { name: ccluster-local }
+      chart: catalogs/cluster_base/keda
+      namespace: keda
+      values:
+        keda:
+          operator:
+            replicaCount: 1
+```
+
+`chart` is a path within the catalog Git repository, which the operator is configured with
+(`--catalog-repo-url`, `--catalog-revision`) — so a chart change has to be *pushed* before
+Argo CD sees it. `values` is forwarded to Helm untouched.
+
+`status.conditions` reports `Validated`, `ComponentsApplied` and `Progressing`, the last of
+which names whichever component the rollout is currently waiting on.
+
+```bash
+kubectl get ccldeployments
+kubectl get applications -n argocd -L ccluster.nvidia.com/wave
+```
+
+## The chart catalog
+
+`catalogs/` holds the Helm charts a `CCLDeployment` component can name.
 
 | Chart | Purpose |
 | --- | --- |
-| `cluster_base` | Cluster-wide platform components (Istio, cert-manager, SPIRE, KEDA, GPU Operator, kube-prometheus-stack, Longhorn, external-dns, Fluent Bit, Argo Rollouts, and more), emitted as one Argo CD `ApplicationSet` per cluster. |
+| `catalogs/cluster_base/*` | Cluster-wide platform components — Istio, cert-manager, SPIRE, KEDA, GPU Operator, kube-prometheus-stack, Longhorn, external-dns, Fluent Bit, Argo Rollouts, OpenTelemetry, Teleport and more. Each wraps an upstream chart with CCluster defaults. |
 | `namespace_base` | Per-user namespace configuration: network policies, Istio sidecars, authorization/peer-authentication policies, service monitors, model-cache volumes. |
 | `inference_deployment_v3` | Inference workload deployment using Argo Rollouts, with autoscaling (KEDA), ingress, and mTLS. |
 | `cserve_deployment_v3` | CServe deployment using Argo Rollouts. |
 | `compute_deployment` | Interactive compute deployment (e.g. SSH-accessible dev environments). |
 | `job_deployment` | One-shot / batch job deployment with PVC creation and mounting. |
+
+The workload charts still live under the older `catalog/` tree and are being migrated into
+`catalogs/`, after which `catalog/` will be removed.
 
 # Getting Started
 
@@ -82,71 +155,36 @@ and can also be installed directly with `helm install`; they are generated from 
 kustomize overlays in `config/`, so regenerate them with `make helm-generate` after changing
 the API or any RBAC marker.
 
-## Using the catalog
+## Trying it out
 
-The catalog is a Python package. Install it into the environment of the service or tooling that builds your Argo CD Applications.
+With the operators deployed and a kubeconfig pinned:
 
 ```bash
-# From a checkout of this repository
-pip install ./catalog
+# Register a cluster (the samples register the control-plane cluster with itself)
+kubectl apply -f config/samples/v1alpha1_cclinfraplane.yaml
 
-# Or, for local development (editable install)
-pip install -e ./catalog
+# Roll out an ordered bundle of catalog charts onto it
+kubectl apply -f config/samples/v1alpha1_ccldeployment.yaml
+
+kubectl get cclinfraplanes
+kubectl get ccldeployments
+kubectl get applications -n argocd -L ccluster.nvidia.com/wave
 ```
 
-The package bundles the Helm chart assets (templates, `Chart.yaml`, `.tpl`, `Chart.lock`) alongside the schemas, so charts can be resolved from disk at runtime — no separate chart download step is required.
+The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revision`
+(`https://github.com/NVIDIA/ccluster` at `main` by default), so it works against a fresh
+clone without any extra setup. Point it at a fork or branch with
+`make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 
 # Requirements
 
-- **Python:** >= 3.10 (uses `StrEnum` and modern typing syntax)
-- **Runtime dependencies:** `pydantic`, `pyyaml` (installed automatically)
-- **Deployment targets (external):** a Kubernetes cluster and [Helm](https://helm.sh/). [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA GPU Operator / drivers on the cluster.
-
-# Usage
-
-Define a typed values model and render it into Argo CD Helm parameters:
-
-```python
-from catalog.components import (
-    DeploymentBaseHelmValues,
-    ResourceLimitsRequests,
-    Resources,
-)
-
-class InferenceValues(DeploymentBaseHelmValues):
-    name: str
-    image_url: str
-
-values = InferenceValues(
-    name="my-model",
-    image_url="registry.example.com/my-model:latest",
-    resources=ResourceLimitsRequests(
-        limits=Resources(cpu="4", memory="16384Mi", accelerator_count=1),
-        requests=Resources(cpu="2", memory="8192Mi", accelerator_count=1),
-    ),
-)
-
-# Flattened Argo CD Helm parameters (with forceString handling)
-params = values.helm_params()
-
-# Or a values.yaml string for an Argo CD Application source
-values_yaml = values.yaml()
-```
-
-To assemble a cluster's platform stack, build a `ClusterComponents` and serialize it with cluster context:
-
-```python
-from catalog.cluster_base import ClusterComponents, Shared
-
-components = ClusterComponents()          # sensible per-component defaults
-shared = Shared()                         # cluster identity, cloud provider, etc.
-
-# Emits one ApplicationSet element per enabled component, with
-# cluster-specific defaults injected under each component's `values`.
-appset_elements = components.model_dump(by_alias=True, context={"shared": shared})
-```
-
-- Adding a new chart to the catalog: see [`catalog/README.md`](catalog/README.md).
+- **Go:** >= 1.25, to build the operators.
+- **Deployment targets (external):** a Kubernetes cluster and [Helm](https://helm.sh/).
+  [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the
+  control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA
+  GPU Operator / drivers on the cluster.
+- **Local development:** [kind](https://kind.sigs.k8s.io/) and Docker. `make init` creates
+  both development clusters; `make build load deploy` builds, loads and installs into them.
 
 ## Releases
 
@@ -158,12 +196,14 @@ appset_elements = components.model_dump(by_alias=True, context={"shared": shared
 CCluster is early and evolving quickly — contributions, ideas, and feedback on the direction are welcome.
 
 - Start here: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- Adding or modifying charts and schemas: [`catalog/README.md`](catalog/README.md)
-- Development quickstart (install and test):
+- Working on the operators: [`AGENTS.md`](AGENTS.md) for the build and generation mechanics,
+  [`DESIGN.md`](DESIGN.md) for how the control plane works.
+- Development quickstart:
 
 ```bash
-pip install -e ./catalog
-python -m unittest discover -s catalog -p "test_*.py"
+make build          # manifests, CRDs, deepcopy, both binaries, both images, both charts
+make test           # envtest suites for both control-plane controllers
+make helm-generate  # regenerate the charts from config/; CI fails on any drift
 ```
 
 ## Maintainers
