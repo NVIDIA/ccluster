@@ -4,7 +4,7 @@
 
 CCluster aims to give AI teams a single control plane for their GPU fleet — provisioning clusters, deploying and scaling workloads, and running the full model lifecycle (inference, fine-tuning, batch jobs, and training) across clouds and regions, while keeping expensive accelerators as busy and as cost-effective as possible.
 
-> **Project status: early.** CCluster is at the start of an ambitious roadmap. What exists today is the first working slice of the control plane — two `v1alpha1` CRDs that register clusters with Argo CD and roll out ordered bundles of Helm charts onto them (see [Available today](#available-today)) — plus the chart catalog they deploy from. The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
+> **Project status: early.** CCluster is at the start of an ambitious roadmap. What exists today is the first working slice of the control plane — two `v1alpha1` CRDs that register clusters with Argo CD and roll out ordered bundles of Helm charts onto them (see [DESIGN.md](DESIGN.md)) — plus the chart catalog they deploy from. The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
 
 # Vision
 
@@ -18,113 +18,8 @@ Guiding principles:
 - **End-to-end lifecycle.** One platform for the whole journey — from provisioning a cluster, to training and fine-tuning, to batch and interactive compute, to production inference and autoscaling.
 - **Typed and validated.** Deployment configuration is modeled as CRD schemas with server-side validation, so misconfiguration is rejected by the API server rather than discovered at sync time.
 
-## Where we're headed
-
-The platform is being built up in layers. The chart catalog and the control-plane API are the foundation; higher layers (a scheduler/placement layer, fleet policy, and user-facing interfaces) will build on top of them.
-
-| Capability | Description | Status |
-| --- | --- | --- |
-| **Deployment catalog** | Helm charts for cluster base components and user workloads (inference, compute, jobs). | ✅ Available today |
-| **Control-plane API** | Kubernetes CRDs for registering clusters and rolling out chart bundles onto them. | ✅ Available today (`v1alpha1`) |
-| **Cluster provisioning** | Declarative bring-up of GPU clusters and their platform stack across clouds. | 🧱 Foundations in place (`cluster_base` + `CCLDeployment`) |
-| **Workload scheduling & placement** | Efficiency-aware scheduling and cross-cluster placement of GPU workloads. | 🗺️ Planned |
-| **Multi-cloud fleet management** | Unified view and policy across clusters spanning multiple providers. | 🗺️ Planned |
-| **Lifecycle tooling** | Training, fine-tuning, and batch pipelines alongside inference serving. | 🗺️ Planned |
-
-*Status markers are directional and will evolve as the project matures.*
-
-# Available today
-
-CCluster runs as **two Kubernetes operators** and a **catalog of Helm charts**.
-
-The control-plane operator (`ccluster-cp-operator`) runs in one control-plane cluster
-alongside [Argo CD](https://argo-cd.readthedocs.io/), and manages a fleet of *infra-plane*
-clusters. It installs nothing itself: it translates two custom resources into Argo CD API
-objects and lets Argo CD do the work. The infra-plane operator (`ccluster-ip-operator`) runs
-in each managed cluster and is still a placeholder.
-
-[DESIGN.md](DESIGN.md) covers how this works and why — the ordering algorithm, the ownership
-model, and the alternatives that were tried and rejected.
-
-## The control-plane API
-
-Two CRDs, both in the group `ccluster.nvidia.com/v1alpha1`.
-
-### `CCLInfraPlane` — register a cluster
-
-Points at a `Secret` holding a cluster's credentials. The operator mirrors it into the
-Argo CD namespace as an Argo CD cluster Secret, under the `CCLInfraPlane`'s own name, so
-deployments can address the cluster by that name.
-
-```yaml
-apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLInfraPlane
-metadata:
-  name: ccluster-local
-spec:
-  clusterCredentialsRef:
-    name: ccluster-local-credentials
-```
-
-It reports `Available` once the cluster is registered. See
-[`config/samples/v1alpha1_cclinfraplane.yaml`](config/samples/v1alpha1_cclinfraplane.yaml)
-for a complete example, including registering the control-plane cluster with itself.
-
-### `CCLDeployment` — roll out an ordered bundle of charts
-
-A list of components, each one Helm chart from the catalog, on one registered cluster, in
-one namespace, with its own values. **The list order is the rollout order:** the operator
-creates a component's Argo CD `Application` only once every component before it reports
-`Healthy` and `Synced`, and tears them down in reverse.
-
-```yaml
-apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
-metadata:
-  name: ccluster-local-base
-spec:
-  components:
-    - name: argo-rollouts
-      infraPlaneRef: { name: ccluster-local }
-      chart: catalogs/cluster_base/argo_rollouts
-      namespace: argo-rollouts
-    - name: keda
-      infraPlaneRef: { name: ccluster-local }
-      chart: catalogs/cluster_base/keda
-      namespace: keda
-      values:
-        keda:
-          operator:
-            replicaCount: 1
-```
-
-`chart` is a path within the catalog Git repository, which the operator is configured with
-(`--catalog-repo-url`, `--catalog-revision`) — so a chart change has to be *pushed* before
-Argo CD sees it. `values` is forwarded to Helm untouched.
-
-`status.conditions` reports `Validated`, `ComponentsApplied` and `Progressing`, the last of
-which names whichever component the rollout is currently waiting on.
-
-```bash
-kubectl get ccldeployments
-kubectl get applications -n argocd -L ccluster.nvidia.com/wave
-```
-
-## The chart catalog
-
-`catalogs/` holds the Helm charts a `CCLDeployment` component can name.
-
-| Chart | Purpose |
-| --- | --- |
-| `catalogs/cluster_base/*` | Cluster-wide platform components — Istio, cert-manager, SPIRE, KEDA, GPU Operator, kube-prometheus-stack, Longhorn, external-dns, Fluent Bit, Argo Rollouts, OpenTelemetry, Teleport and more. Each wraps an upstream chart with CCluster defaults. |
-| `namespace_base` | Per-user namespace configuration: network policies, Istio sidecars, authorization/peer-authentication policies, service monitors, model-cache volumes. |
-| `inference_deployment_v3` | Inference workload deployment using Argo Rollouts, with autoscaling (KEDA), ingress, and mTLS. |
-| `cserve_deployment_v3` | CServe deployment using Argo Rollouts. |
-| `compute_deployment` | Interactive compute deployment (e.g. SSH-accessible dev environments). |
-| `job_deployment` | One-shot / batch job deployment with PVC creation and mounting. |
-
-The workload charts still live under the older `catalog/` tree and are being migrated into
-`catalogs/`, after which `catalog/` will be removed.
+See [DESIGN.md](DESIGN.md) for what's shipped today — the control-plane API, the ordering
+algorithm, and the chart catalog it deploys from — and why it's built the way it is.
 
 # Getting Started
 
@@ -176,6 +71,50 @@ The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revis
 clone without any extra setup. Point it at a fork or branch with
 `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 
+## Local development
+
+CCluster's local loop runs both operators in a pair of [kind](https://kind.sigs.k8s.io/)
+clusters, `ccluster-cp` and `ccluster-ip`, so the control-plane and infra-plane operators
+stay isolated the same way they are in production. Docker must be running first.
+
+```bash
+make init    # create both kind clusters (idempotent)
+make build   # manifests, CRDs, deepcopy, both binaries, both images, both charts
+make load    # build each operator image and load it into its own cluster
+make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
+```
+
+Each of those has `-cp` / `-ip` halves (`make build-cp`, `make deploy-ip`, ...) if you only
+want to touch one operator. `make clean` deletes both clusters; `make clean-all` also wipes
+`bin/` and `dist/`, so the next build re-downloads `controller-gen`, `kustomize`, `envtest`
+and `kubebuilder`.
+
+For the fastest inner loop, run the control-plane manager on your host against the cluster's
+API server instead of building an image each time — this installs the CRDs but not the chart,
+so don't combine it with `make deploy-cp`:
+
+```bash
+export KUBECONFIG=~/.kube/ccluster-dev.yaml   # see the warning below
+make install    # CRDs only
+make run-cp     # runs the manager locally; Ctrl-C to stop
+```
+
+Note this loop runs as your kubeconfig identity, not the operator's ServiceAccount, so it
+does not exercise RBAC — use `make load-cp` and a `rollout restart` for that.
+
+**Every cluster-touching target acts on the current kubeconfig context, with no
+confirmation.** Development machines often carry other contexts (EKS, GKE, teleport) in the
+default kubeconfig, and `kind create cluster` switches the current context out from under
+you. Pin a dedicated kubeconfig before running any of the above:
+
+```bash
+kind get kubeconfig --name ccluster-cp > ~/.kube/ccluster-dev.yaml
+export KUBECONFIG=~/.kube/ccluster-dev.yaml
+```
+
+See [AGENTS.md](AGENTS.md) for the full set of build, test and Helm-generation targets,
+including RBAC, CRD and chart regeneration after an API change.
+
 # Requirements
 
 - **Go:** >= 1.25, to build the operators.
@@ -189,7 +128,7 @@ clone without any extra setup. Point it at a fork or branch with
 ## Releases
 
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
-- Broader direction and upcoming capabilities are described in [Where we're headed](#where-were-headed).
+- Broader direction and upcoming capabilities are described in [DESIGN.md](DESIGN.md).
 
 # Contribution Guidelines
 
