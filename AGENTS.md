@@ -24,7 +24,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `config/crd/` | Generated CRDs. Referenced by the cp overlay only. |
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
 | `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
-| `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components. **Not part of the operator build**, and deliberately unrelated to `charts/`. |
+| `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -173,6 +173,39 @@ are the parts a well-meaning change breaks silently.
   `ownership.go`; check `ownedBy` before touching or deleting anything there.
 - **`ccluster.nvidia.com/wave` is a label for humans.** Nothing reads it. Ordering comes
   from the position of the component in the list.
+
+### The catalog is Helm charts *and* Go packages
+
+`catalogs/` used to be inert as far as Go was concerned. It is not any more: each chart
+directory carries a `component.go` declaring that chart's values as typed structs, plus
+`catalogs/component.go` (the shared `ComponentEntry` and `Component` interface),
+`catalogs/convert.go` and `catalogs/cluster_base/cluster_base.go`. They are ordinary
+packages under `github.com/NVIDIA/ccluster/catalogs/...`, so `go build ./...`,
+`go vet ./...`, `make test` and `golangci-lint` all cover them — and a catalog package
+that fails to compile now breaks `make generate`, which runs `controller-gen` over
+`./...`.
+
+Three conventions that are not obvious from the files:
+
+- **Package names drop the directory's underscores.** `catalogs/cluster_base/gpu_operator`
+  is `package gpuoperator`. The directory name is load-bearing — it *is* the `chart:` path
+  Argo CD resolves — so it stays snake_case, and imports are written explicitly named.
+- **Optional scalars must be pointers** (`*bool`, `*int32`, `*string`) with `omitempty`.
+  `encoding/json` drops a plain `false` under `omitempty`, so a `bool` cannot express
+  "explicitly false" — which `gpu_operator` needs for `driver.enabled` and
+  `toolkit.enabled`, whose correct value differs between k3d and bare metal. Required
+  fields are non-pointer and carry *no* `omitempty`, so an unset one reaches Helm and
+  fails loudly instead of silently inheriting a placeholder.
+- **Nothing enforces these schemas.** The CRD's `values` is still
+  `x-kubernetes-preserve-unknown-fields`, and a hand-written `CCLDeployment` bypasses the
+  typed layer entirely. The only enforcement point is a component's `Validate()` method,
+  called by `catalogs.ToComponentSpec`. `teleport-kube-agent` is the one component with
+  genuinely required values, and the only implementer.
+
+Each chart directory also has a hand-written `.helmignore` excluding `*.go`. Helm never
+reads them — it looks only at `Chart.yaml`, `values.yaml`, `templates/`, `charts/` and
+`crds/` — but they would otherwise be swept into a `helm package` tarball. These are
+unrelated to the *generated* `charts/{cp,ip}/chart/.helmignore`.
 
 ### RBAC is generated per operator
 

@@ -27,6 +27,16 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `CCLDeployment` component `chart` paths resolve against. The repository and revision are
   operator configuration (`--catalog-repo-url`, `--catalog-revision`), settable at deploy
   time with `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
+- Go packages describing each `catalogs/cluster_base` chart's Helm values as typed structs,
+  under `github.com/NVIDIA/ccluster/catalogs/...`. `catalogs.ToComponentSpecs` converts them
+  into a `CCLDeployment`'s components, and `catalogs/cluster_base.Components()` returns all 18
+  in rollout order — reproducing the sync waves of the legacy Python catalog — so that order
+  does not have to be retyped. `Configure` supplies the only values a chart genuinely
+  requires, teleport-kube-agent's four, which ship as placeholders in the chart.
+
+  These are a convenience for callers building a `CCLDeployment` in Go, **not** a validation
+  layer: the CRD's `values` field remains untyped, and a hand-written `CCLDeployment` is still
+  forwarded to Helm verbatim.
 - `DESIGN.md`, describing the control-plane design and the alternatives rejected along the
   way — notably Argo CD `ApplicationSet` generators and the `RollingSync` sync strategy.
 - `controller.diff.server.side` enabled on the bundled Argo CD application controller, to
@@ -45,6 +55,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   deleting anything.
 
 ### Changed
+- `ComponentSpec`'s `chart`, `namespace` and `values` fields are grouped into a
+  `ComponentEntry` struct, embedded inline. **No wire-format change:** the embed is anonymous,
+  so all three remain component-level fields and the generated CRD schema is byte-identical.
 - **Breaking:** `make deploy-cp` / `deploy-ip` / `undeploy-cp` / `undeploy-ip` now use
   `helm upgrade --install` / `helm uninstall` instead of `kustomize build | kubectl apply`.
   They require `helm` on `PATH`. Resource names and namespaces are unchanged.
