@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -373,12 +375,53 @@ func (r *CCLDeploymentReconciler) deploymentForApplication(_ context.Context, ob
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CCLDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLDeployment{}).
 		Watches(&cclusternvidiacomv1alpha1.CCLInfraPlane{},
-			handler.EnqueueRequestsFromMapFunc(r.deploymentsForInfraPlane)).
-		Watches(&argocdv1alpha1.Application{},
-			handler.EnqueueRequestsFromMapFunc(r.deploymentForApplication)).
-		Named("ccldeployment").
-		Complete(r)
+			handler.EnqueueRequestsFromMapFunc(r.deploymentsForInfraPlane))
+
+	// The Application watch is registered only when Argo CD's CRD is already
+	// installed. controller-runtime blocks a controller from starting until every
+	// watch source syncs, and a source for a kind the API server does not serve never
+	// does - so an unconditional watch means that with `make deploy-cp ARGOCD=false`,
+	// or simply with the operator started before Argo CD, the CCLDeployment controller
+	// never runs at all. It logs "if kind is a CRD, it should be installed before
+	// calling Start" every ten seconds and reconciles nothing, which also makes the
+	// reasonApplicationCRDMissing branch below unreachable in a real cluster.
+	//
+	// Skipping the watch keeps the controller alive: it still reconciles on
+	// CCLDeployment and CCLInfraPlane events, listApplications tolerates the missing
+	// kind, and the status reports ApplicationCRDMissing. What is lost is reacting to
+	// Application health changes, so the operator must be restarted after Argo CD is
+	// installed for a rollout to progress past its first wave. That is the same
+	// restart the chart performs when it installs both together.
+	if applicationCRDInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("ccldeployment")) {
+		builder = builder.Watches(&argocdv1alpha1.Application{},
+			handler.EnqueueRequestsFromMapFunc(r.deploymentForApplication))
+	}
+
+	return builder.Named("ccldeployment").Complete(r)
+}
+
+// applicationCRDInstalled reports whether the API server currently serves Argo CD's
+// Application kind. It takes the RESTMapper rather than the manager so the three
+// outcomes below can be tested without standing one up.
+func applicationCRDInstalled(mapper apimeta.RESTMapper, log logr.Logger) bool {
+	gvk := argocdv1alpha1.GroupVersion.WithKind("Application")
+	_, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	switch {
+	case err == nil:
+		return true
+	case apimeta.IsNoMatchError(err):
+		log.Info("Argo CD Application CRD not installed, watching CCLDeployment and "+
+			"CCLInfraPlane only; restart the operator after installing Argo CD",
+			"kind", gvk.String())
+		return false
+	default:
+		// Discovery itself failed. Assume the CRD is present rather than silently
+		// dropping the watch for the lifetime of the process.
+		log.Error(err, "Failed to check for the Argo CD Application CRD, "+
+			"registering the watch anyway", "kind", gvk.String())
+		return true
+	}
 }

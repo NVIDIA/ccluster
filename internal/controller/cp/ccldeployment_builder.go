@@ -375,8 +375,11 @@ func releaseCount(
 	}
 	if released == 0 {
 		// Nothing deployed yet. The first component is always releasable; there is
-		// nothing for it to wait on.
-		return 1
+		// nothing for it to wait on. Clamped because the caller slices
+		// Components[:released]: a spec with no components is rejected by the
+		// MinItems=1 CRD marker, but this function must not depend on the schema
+		// for its own memory safety.
+		return min(1, len(components))
 	}
 
 	// Hold if anything released is still converging. Checking all of them rather than

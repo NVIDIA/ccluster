@@ -332,5 +332,15 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
-  watches and map functions are exercised only as plain functions. `test/e2e` is
-  scaffold-level and touches neither CRD; only a real deploy exercises RBAC.
+  watches and map functions are exercised only as plain functions. `test/e2e` splits into a
+  quick tier (`make test-e2e`, the CI default, `ARGOCD=false`) and a full tier
+  (`make test-e2e-full`, explicit only, real Argo CD). The quick tier covers
+  `ApplicationCRDMissing` and, via a CRD-only render trick, the `argoproj.io/applications` RBAC
+  rule without paying for a real Argo CD install. The full tier goes further: a real catalog
+  component reaching `Healthy`/`Synced` under genuine reconciliation (with an explicit check
+  that the ~600KB `rollouts.argoproj.io` CRD itself reports `Synced`, not just the aggregate
+  Application — the concrete case `ServerSideApply`/`controller.diff.server.side` exist for,
+  §6), a two-component deployment proving both `releaseCount` withholding and `teardownNext`'s
+  reverse teardown against real convergence timing, and a spec confirming Argo CD's `selfHeal`
+  actually reverts drift. `make test-e2e-argocd` never asserted any of this before it was
+  retired — it only checked that the argoproj CRDs existed.

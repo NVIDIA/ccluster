@@ -136,9 +136,18 @@ Argo CD. The operator's job is to create `Application` resources.
 Argo CD is hub-and-spoke: **control-plane cluster only**. Infra-plane clusters get
 registered there as remote destinations. The ip chart has no dependencies.
 
-`make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for
-hermetic tests that must not pull the Argo CD images. `make helm-deps-update-cp` re-resolves
-the dependency and refreshes `Chart.lock`; that is how you bump the Argo CD version.
+`make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for a
+hermetic run that must not pull the Argo CD images. `test/e2e` uses both sides of that flag
+deliberately: the default `make test-e2e` (quick tier) deploys with `ARGOCD=false`, which is
+what makes `ApplicationCRDMissing` reachable and is why the CCLDeployment controller has to
+tolerate the Application CRD being absent at startup — see
+`CCLDeploymentReconciler.SetupWithManager`. `make test-e2e-full` (or `E2E_FULL=true`) deploys
+with real Argo CD instead, to exercise an actual rollout. There is no longer a standalone
+target that only checks the argoproj CRDs render: `make test-e2e-argocd` was removed, its
+render-only assertions moved into `helm template` output in
+`.github/workflows/test-chart.yml`, and the real rollout check moved into `make test-e2e-full`.
+`make helm-deps-update-cp` re-resolves the dependency and refreshes
+`Chart.lock`; that is how you bump the Argo CD version.
 
 ### The two controllers, and the invariants they rest on
 
@@ -346,10 +355,11 @@ tag are unchanged, even though the image content changed.
 
 | Layer | Command | Covers | Does not cover |
 | --- | --- | --- | --- |
+| unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
-| e2e | `make test-e2e` | Full Helm deploy into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Runs with `ARGOCD=false`. | The Argo CD dependency |
-| chart e2e | `make test-e2e-argocd` | The cp chart installed **with** Argo CD, asserting the argoproj CRDs appear. | Controller behaviour |
-| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render | Anything runtime |
+| e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick) and the status paths reachable without Argo CD. | A real rollout — see the full tier |
+| e2e (full) | `make test-e2e-full` | Same cluster, deployed with real Argo CD instead. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, and selfHeal drift correction — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
+| charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
 Only `make test-e2e` and a real in-cluster deploy will catch a missing `+kubebuilder:rbac`
@@ -358,19 +368,63 @@ marker. `make cleanup-test-e2e` tears down the e2e cluster if a run dies partway
 Test wiring lives in `internal/controller/cp/suite_test.go` (envtest setup, `k8sClient`).
 Specs use Ginkgo/Gomega.
 
+**Two tiers, deliberately.** Ginkgo/envtest is the primary one and where behaviour belongs.
+Alongside it, `ccldeployment_builder_test.go` and `ownership_test.go` are plain table-driven
+`go test` files in the same package. They run without `KUBEBUILDER_ASSETS` and without etcd —
+`BeforeSuite` only fires under `RunSpecs` — so:
+
+```bash
+go test -run TestReleaseCount ./internal/controller/cp/     # ~0.4s, no setup
+```
+
+They exist for the states envtest cannot cheaply reach, not for coverage: a gap in the middle
+of the wave sequence (Applications for components 1 and 3 but not 2) cannot be staged through
+a reconciler that never creates out of order. Keep them selective. Do **not** add table tests
+for one-line helpers that the existing cases already cover incidentally.
+
 **Current state:** both cp controllers have real envtest suites —
 `cclinfraplane_controller_test.go` and `ccldeployment_controller_test.go` — covering
 mirroring and drift correction, ordered release, reverse teardown, pruning, ownership
-conflicts, and the CEL validation rules. Note two things about how they run:
+conflicts, and the CEL validation rules, and both reconcilers are covered at ~89% of
+statements. The specs are named after behaviour, so treat a failure as a broken contract
+rather than a coverage regression. Note three things about how they run:
 
 - No controller is started in the test manager. Every spec calls `Reconcile` directly, so
   the `Watches` map functions are exercised as plain functions and requeue behaviour is not.
 - envtest runs no Argo CD, so `test/testdata/crd/argoproj.io_applications.yaml` is a
   schema-less stand-in for the `Application` CRD, and the specs write Application status
   themselves to drive a rollout forward.
+- The remaining 0% is `SetupWithManager` on both reconcilers, left there on purpose: it is
+  controller-runtime builder wiring whose real failure mode is a missing
+  `+kubebuilder:rbac` marker, and only `make test-e2e` catches that.
 
-`test/e2e` is still scaffold-level: it deploys the chart and checks the manager comes up, and
-touches neither CRD.
+`test/e2e` splits into two Ginkgo `Label()` tiers, selected by `-ginkgo.label-filter` from one
+`E2E_FULL` Makefile variable (`test/e2e/e2e_test.go`'s `BeforeAll` reads the same variable to
+decide whether `deploy-cp` gets `ARGOCD=false` or real Argo CD, so the fixture and the spec
+selection never drift apart). A handful of specs carry no label and run in both tiers: the
+manager comes up, both CRDs' RBAC surface not tied to Argo CD's presence (Secret mirroring and
+`CCLInfraPlane` finalizer cleanup, and `CCLDeployment`'s `InfraPlaneNotFound` status path).
+
+The **quick** tier (`make test-e2e`, the default, no `E2E_FULL` needed) deploys with
+`ARGOCD=false` and adds two `Label("quick")` specs that need Argo CD genuinely absent:
+`ApplicationCRDMissing` — the graceful-degradation path for a cluster where Argo CD isn't
+installed yet — and a spec that renders just the Application CRD out of the vendored
+`argo-cd` dependency chart with `helm template --show-only` (a static resource, no images to
+pull), applies it, restarts the manager to pick up the watch, and asserts a real `Application`
+gets created under the operator's own `argoproj.io/applications` RBAC. This is what makes the
+quick tier fast enough to run on every PR while still exercising real RBAC.
+
+The **full** tier (`make test-e2e-full`, or `make test-e2e E2E_FULL=true`) deploys real Argo CD
+instead and adds three `Label("full")` specs: one registers the control-plane cluster with
+itself, the same trick `config/samples/v1alpha1_cclinfraplane.yaml` documents, and drives one
+catalog component all the way to `Healthy`/`Synced` under Argo CD's own reconciliation
+(including an explicit check that argo-rollouts' ~600KB CRD resource itself reports `Synced`,
+not just the aggregate Application — the concrete regression `ServerSideApply` and
+`controller.diff.server.side` exist to prevent, DESIGN.md §6); one deploys two components in
+order and proves both `releaseCount` withholding and `teardownNext`'s reverse, one-at-a-time
+teardown against real convergence timing, not hand-written status; and one mutates a live
+managed resource and confirms Argo CD's `selfHeal` reverts it. This tier is opt-in only — not
+run in CI — because of the real image pulls and multi-minute convergence waits involved.
 
 ## Image tags
 
