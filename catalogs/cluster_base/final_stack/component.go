@@ -59,8 +59,5 @@ func New() *Component {
 	}}
 }
 
-// Entry returns the component's chart metadata.
-func (c *Component) Entry() catalogs.ComponentEntry { return c.ComponentEntry }
-
 // ValuesObject returns the chart's typed values.
 func (c *Component) ValuesObject() any { return c.Values }

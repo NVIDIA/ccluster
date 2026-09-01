@@ -70,9 +70,16 @@ type ComponentEntry struct {
 	Namespace string
 }
 
+// Entry returns the metadata itself, so that a component embedding a ComponentEntry
+// satisfies Component's Entry method by promotion and does not have to write the
+// accessor out. Only ValuesObject is left for a component to implement, since only it
+// knows its own values type.
+func (e ComponentEntry) Entry() ComponentEntry { return e }
+
 // Component is one entry of a catalog: chart metadata, plus that chart's typed values.
 type Component interface {
-	// Entry returns the component's chart metadata.
+	// Entry returns the component's chart metadata. Embedding ComponentEntry
+	// provides it.
 	Entry() ComponentEntry
 
 	// ValuesObject returns the chart's typed values struct. It is named for Argo CD's

@@ -186,8 +186,12 @@ interfaces, and the `ToComponentSpec*` conversions) and
 that fails to compile now breaks `make generate`, which runs `controller-gen` over
 `./...`.
 
-Three conventions that are not obvious from the files:
+Four conventions that are not obvious from the files:
 
+- **A component implements only `ValuesObject()`.** `Component` requires `Entry()` too,
+  but `catalogs.ComponentEntry` carries that method itself, so embedding it — which every
+  component does — satisfies the interface by promotion. Do not hand-write an `Entry()`
+  accessor on a new component; there is nothing for it to do.
 - **Package names drop the directory's underscores.** `catalogs/cluster_base/gpu_operator`
   is `package gpuoperator`. The directory name is load-bearing — it *is* the `chart:` path
   Argo CD resolves — so it stays snake_case, and imports are written explicitly named.
