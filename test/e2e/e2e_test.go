@@ -68,14 +68,24 @@ var _ = Describe("Manager", Ordered, func() {
 		// No `make install` here: the chart owns the CRDs, and Helm refuses to adopt
 		// CRDs that already exist without its ownership metadata.
 		//
-		// ARGOCD defaults to true: this suite installs the real Argo CD dependency
-		// alongside the operator, which is what lets the specs below exercise an
-		// actual rollout - Application CRUD under the operator's real RBAC, and Argo
-		// CD reconciling one to Healthy/Synced. `helm --wait` therefore blocks on
-		// pulling and starting every Argo CD component's images, so this deploy gets
-		// a longer timeout than the operator alone would need.
-		By("deploying the controller-manager and Argo CD")
-		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage), "HELM_TIMEOUT=10m")
+		// E2E_FULL picks which tier of specs this run can support, and therefore
+		// which way `deploy-cp` goes: the full tier needs real Argo CD to exercise an
+		// actual rollout, so `helm --wait` gets a longer timeout to pull and start
+		// every Argo CD component's images. The quick tier deploys with no Argo CD at
+		// all, which is what makes the quick-only ApplicationCRDMissing spec
+		// reachable. Keep this in sync with the -ginkgo.label-filter Makefile passes
+		// alongside it - see the E2E_FULL comment in the Makefile.
+		full := os.Getenv("E2E_FULL") == "true"
+
+		deployArgs := []string{"deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage)}
+		if full {
+			By("deploying the controller-manager and Argo CD (full tier)")
+			deployArgs = append(deployArgs, "HELM_TIMEOUT=10m")
+		} else {
+			By("deploying the controller-manager without Argo CD (quick tier)")
+			deployArgs = append(deployArgs, "ARGOCD=false")
+		}
+		cmd = exec.Command("make", deployArgs...)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
@@ -90,6 +100,37 @@ var _ = Describe("Manager", Ordered, func() {
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy-cp")
 		_, _ = utils.Run(cmd)
+
+		// Safety net, not the normal path: every spec above deletes its own CRs
+		// inline so its finalizer clears while the operator is still running. But a
+		// spec that fails mid-assertion skips that inline delete entirely (Gomega's
+		// Fail unwinds the rest of the It body), which would otherwise leave a
+		// finalized CR behind that `make uninstall` then waits on forever, with no
+		// controller left to ever clear it.
+		//
+		// This has to run after undeploy-cp above, not before: stripping a
+		// finalizer while the operator is still running races its reconcile loop,
+		// which re-adds the finalizer on its next pass as a matter of course
+		// (ensuring it's present is part of normal reconcile, independent of
+		// whether anything is deleting the object yet) - so a strip issued too
+		// early can lose the race and be back in place by the time deletion
+		// actually starts. With the operator gone, nothing can re-add anything.
+		By("force-clearing finalizers from any CRs a failed spec left behind")
+		for _, resource := range []string{"ccldeployments", "cclinfraplanes", "applications.argoproj.io"} {
+			out, err := utils.Run(exec.Command("kubectl", "get", resource, "-A", "-o",
+				"jsonpath={range .items[*]}{.metadata.namespace}{\" \"}{.metadata.name}{\"\\n\"}{end}"))
+			if err != nil {
+				continue // the CRD may not exist at all, e.g. Application in the quick tier
+			}
+			for _, line := range utils.GetNonEmptyLines(out) {
+				fields := strings.Fields(line)
+				if len(fields) != 2 {
+					continue
+				}
+				_, _ = utils.Run(exec.Command("kubectl", "patch", resource, fields[1],
+					"-n", fields[0], "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`))
+			}
+		}
 
 		// The chart keeps its CRDs on uninstall (helm.sh/resource-policy: keep), so
 		// delete them explicitly to leave the cluster clean for a rerun.
@@ -407,16 +448,218 @@ spec:
 			deleteCCLDeployment(deploymentName)
 		})
 
+		// The two specs below only make sense in the quick tier: BeforeAll deploys
+		// with ARGOCD=false there, so the Application CRD genuinely does not exist
+		// yet when the manager starts - the exact precondition each of them needs.
+		// They would either fail (ApplicationCRDMissing is unreachable once Argo CD
+		// is really installed) or be redundant (the CRD already exists) in the full
+		// tier, so both are quick-only.
+
+		It("should report ApplicationCRDMissing when Argo CD is not installed", Label("quick"), func() {
+			const deploymentName = "e2e-no-argocd"
+			const planeName = "e2e-deploy-plane"
+			const credentialsName = "e2e-deploy-plane-credentials"
+
+			By("creating an available CCLInfraPlane for the component to target")
+			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+				credentialsName,
+				"--from-literal=name=placeholder",
+				"--from-literal=server=https://infra.example.com:6443",
+				"--from-literal=config={\"bearerToken\":\"fake-token\"}",
+				"-n", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			applyCCLInfraPlane(planeName, credentialsName)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					planeName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating a CCLDeployment against it")
+			applyCCLDeployment(deploymentName, planeName)
+
+			By("waiting for the operator to report the missing Application CRD")
+			// This is the graceful-degradation path: Argo CD absent is reported on the
+			// status rather than retried, because no amount of retrying installs it.
+			Eventually(func(g Gomega) {
+				g.Expect(deploymentCondition(deploymentName, conditionValidated, "status")).
+					To(Equal("True"))
+				g.Expect(deploymentCondition(deploymentName, conditionComponentsApplied, "reason")).
+					To(Equal("ApplicationCRDMissing"))
+			}, 2*time.Minute).Should(Succeed())
+
+			// Both CRs are deleted here, in the spec body, for the same reason the
+			// mirror spec deletes its CCLInfraPlane inline: each carries a finalizer
+			// only the operator can clear, and AfterAll undeploys the operator before
+			// deleting the CRDs. DeferCleanup runs after AfterAll in an Ordered
+			// container, which is too late - a finalized CR left behind wedges its CRD
+			// in Terminating and `make uninstall` blocks forever.
+			By("deleting both CRs while the operator can still run their finalizers")
+			deleteCCLDeployment(deploymentName)
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// Closes the `argoproj.io/applications` RBAC gap without paying for a full
+		// Argo CD install: the Application CRD is a static resource with no images
+		// to pull, so it can be rendered straight out of the vendored argo-cd
+		// dependency with `helm template --show-only` and applied on its own.
+		// CCLDeploymentReconciler only watches Application if the CRD is already
+		// served at SetupWithManager time, so the manager has to be restarted
+		// afterwards to pick it up - the same operational sequence AGENTS.md
+		// documents for installing Argo CD after the operator. Nothing here
+		// reconciles the Application the way a live Argo CD would, so the rollout
+		// itself stays out of scope - that's the full tier's job.
+		It("should create a real Application once the Application CRD becomes available", Label("quick"), func() {
+			const deploymentName = "e2e-real-application"
+			const planeName = "e2e-real-application-plane"
+			const credentialsName = "e2e-real-application-plane-credentials"
+			applicationName := deploymentName + "-argo-rollouts"
+
+			By("rendering the Argo CD Application CRD from the vendored dependency chart")
+			cmd := exec.Command("helm", "template", "charts/cp/chart",
+				"--set", "argo-cd.enable=true",
+				"--show-only", "charts/argo-cd/templates/crds/crd-application.yaml")
+			applicationCRD, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to render the Application CRD")
+
+			By("installing the Application CRD")
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(applicationCRD)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to install the Application CRD")
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "crd",
+					"applications.argoproj.io", "--ignore-not-found"))
+			})
+
+			By("restarting the controller-manager so it picks up the Application watch")
+			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
+				"deploy/ccluster-cp-controller-manager"))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status",
+				"deploy/ccluster-cp-controller-manager", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("tracking the restarted pod so AfterEach can still fetch its logs on failure")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "pods",
+					"-l", "control-plane=controller-manager", "-n", namespace,
+					"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}"+
+						"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				podNames := utils.GetNonEmptyLines(out)
+				g.Expect(podNames).To(HaveLen(1))
+				controllerPodName = podNames[0]
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating an available CCLInfraPlane for the component to target")
+			_, err = utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+				credentialsName,
+				"--from-literal=name=placeholder",
+				"--from-literal=server=https://infra.example.com:6443",
+				"--from-literal=config={\"bearerToken\":\"fake-token\"}",
+				"-n", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			applyCCLInfraPlane(planeName, credentialsName)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					planeName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating a CCLDeployment against it")
+			applyCCLDeployment(deploymentName, planeName)
+
+			By("waiting for the operator to create the Application under its own RBAC")
+			Eventually(func(g Gomega) {
+				g.Expect(deploymentCondition(deploymentName, conditionComponentsApplied, "reason")).
+					To(Equal("ApplicationsCreated"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("verifying the Application carries the expected ownership back-reference")
+			out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+				"-n", namespace, "-o",
+				"jsonpath={.metadata.labels['ccluster\\.nvidia\\.com/deployment-name']}"))
+			Expect(err).NotTo(HaveOccurred(), "Application was not created")
+			Expect(strings.TrimSpace(out)).To(Equal(deploymentName))
+
+			// Deleted inline, not via DeferCleanup, for the same reason as the specs
+			// above: the finalizer needs the operator running to clear it, and
+			// DeferCleanup runs after AfterAll has already undeployed it.
+			//
+			// Delete without waiting: the operator's finalize() deletes the
+			// Application, which stays Terminating on its own
+			// resources-finalizer.argocd.argoproj.io finalizer - nothing here runs
+			// the Argo CD controller that would normally remove it once the
+			// resources it manages are gone.
+			By("deleting the CCLDeployment while the operator can still run its finalizer")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "ccldeployment", deploymentName,
+				"-n", "default", "--wait=false"))
+			Expect(err).NotTo(HaveOccurred())
+
+			// Strip the Application's finalizer only once it is actually
+			// terminating, not before: stripping it any earlier races the
+			// operator's own reconcile loop, which re-adds the finalizer on every
+			// pass as part of ensuring the Application matches spec, whether or not
+			// anything is deleting it yet - stripping first can lose that race and
+			// leave the finalizer back in place by the time the real delete lands.
+			// Kubernetes refuses to add a finalizer to an object that already has a
+			// deletionTimestamp, so once the Application is terminating this
+			// removal is final.
+			By("stripping the Argo CD cascade finalizer once the Application starts terminating")
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+				if err != nil {
+					return // already gone - nothing left to strip
+				}
+				_, err = utils.Run(exec.Command("kubectl", "patch", "application", applicationName,
+					"-n", namespace, "--type=json",
+					"-p", `[{"op": "remove", "path": "/metadata/finalizers"}]`))
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 2*time.Minute).Should(Succeed())
+
+			By("waiting for the operator to finish deleting the CCLDeployment")
+			_, err = utils.Run(exec.Command("kubectl", "wait", "ccldeployment", deploymentName,
+				"-n", "default", "--for=delete", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("deleting the CCLInfraPlane while the operator can still run its finalizer")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the operator deleted the Application")
+			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+			Expect(err).To(HaveOccurred(), "Application was not cleaned up")
+		})
+
 		// The specs above never touch a real Application: nothing creates one under
 		// the operator's own RBAC, and nothing exercises the rest of a rollout - Argo
 		// CD actually cloning the catalog, installing the chart, and the operator
-		// reading Application health back. This suite installs real Argo CD (see
-		// BeforeAll), so this spec registers the control-plane cluster with itself -
-		// the same trick config/samples/v1alpha1_cclinfraplane.yaml documents - and
-		// drives one catalog component all the way to Healthy/Synced, which is what
-		// `make test-e2e-argocd` never actually did before it was retired: that
-		// target only asserted the argoproj CRDs existed, not that a rollout worked.
-		It("should roll out a real catalog component under real Argo CD reconciliation", func() {
+		// reading Application health back. Only the full tier installs real Argo CD
+		// (see BeforeAll), so this spec registers the control-plane cluster with
+		// itself - the same trick config/samples/v1alpha1_cclinfraplane.yaml
+		// documents - and drives one catalog component all the way to
+		// Healthy/Synced, which is what `make test-e2e-argocd` never actually did
+		// before it was retired: that target only asserted the argoproj CRDs
+		// existed, not that a rollout worked.
+		It("should roll out a real catalog component under real Argo CD reconciliation", Label("full"), func() {
 			const deploymentName = "e2e-real-rollout"
 			const planeName = "e2e-real-rollout-plane"
 			const credentialsName = "e2e-real-rollout-plane-credentials"
@@ -475,6 +718,22 @@ spec:
 				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 			}, 8*time.Minute).Should(Succeed())
 
+			// argo-rollouts' rollouts.argoproj.io CRD is around 600KB (DESIGN.md §6) -
+			// too large for client-side apply's last-applied-configuration
+			// annotation, which is exactly why ServerSideApply=true and
+			// controller.diff.server.side are mandatory. A regression there would
+			// already fail the aggregate Synced check above; this asserts it on the
+			// CRD resource specifically so a future failure here points straight at
+			// the CRD instead of a generic "Application not Synced".
+			By("verifying the large CRD resource itself reports Synced, not just the aggregate status")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+					"-n", namespace, "-o",
+					`jsonpath={.status.resources[?(@.kind=="CustomResourceDefinition")].status}`))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("Synced"))
+			}, 8*time.Minute).Should(Succeed())
+
 			By("verifying the operator's Progressing condition reflects a completed rollout")
 			Eventually(func(g Gomega) {
 				g.Expect(deploymentCondition(deploymentName, conditionProgressing, "status")).
@@ -501,6 +760,203 @@ spec:
 			By("verifying the operator deleted the Application")
 			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
 			Expect(err).To(HaveOccurred(), "Application was not cleaned up")
+		})
+
+		// DESIGN.md §5: `releaseCount` withholds a component's Application until
+		// every earlier one is Healthy and Synced, and `teardownNext` deletes them
+		// in reverse, one at a time, waiting for each to be gone before starting the
+		// next. Both are proven only against hand-written status in envtest today;
+		// this spec drives the same two invariants against a real Argo CD
+		// reconciling two real components (matching
+		// config/samples/v1alpha1_ccldeployment.yaml), combined into one spec so the
+		// suite only pays for one KEDA + argo-rollouts image pull cycle.
+		It("should release components in order and tear them down in reverse", Label("full"), func() {
+			const deploymentName = "e2e-ordered-release"
+			const planeName = "e2e-ordered-release-plane"
+			const credentialsName = "e2e-ordered-release-plane-credentials"
+			rolloutsApp := deploymentName + "-argo-rollouts"
+			kedaApp := deploymentName + "-keda"
+
+			By("registering the control-plane cluster with itself as an infra plane")
+			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+				credentialsName,
+				"--from-literal=server=https://kubernetes.default.svc",
+				`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+				"-n", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			applyCCLInfraPlane(planeName, credentialsName)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					planeName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating a two-component CCLDeployment: argo-rollouts then keda")
+			applyOrderedCCLDeployment(deploymentName, planeName)
+
+			By("waiting for the first component's Application to appear")
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 2*time.Minute).Should(Succeed())
+
+			// A short window, not a long one: if withholding were broken, keda's
+			// Application would appear within the same reconcile that created
+			// argo-rollouts', well under this window. A longer wait would only add
+			// cost, not confidence.
+			By("confirming the second component's Application is withheld until the first converges")
+			Consistently(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				g.Expect(err).To(HaveOccurred(), "keda Application created before argo-rollouts converged")
+			}, 30*time.Second, 5*time.Second).Should(Succeed())
+
+			By("waiting for argo-rollouts to converge")
+			Eventually(func(g Gomega) {
+				health, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp,
+					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
+
+				sync, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp,
+					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
+			}, 8*time.Minute).Should(Succeed())
+
+			By("waiting for keda's Application to appear now that argo-rollouts has converged")
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				g.Expect(err).NotTo(HaveOccurred())
+			}, 2*time.Minute).Should(Succeed())
+
+			By("waiting for keda to also converge")
+			Eventually(func(g Gomega) {
+				health, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp,
+					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
+
+				sync, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp,
+					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
+			}, 8*time.Minute).Should(Succeed())
+
+			By("deleting the CCLDeployment and observing reverse teardown: keda first, then argo-rollouts")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "ccldeployment", deploymentName,
+				"-n", "default", "--wait=false"))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("confirming keda's Application is deleted")
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				g.Expect(err).To(HaveOccurred(), "keda Application should be gone")
+			}, 5*time.Minute).Should(Succeed())
+
+			// Same short-window reasoning as the withholding check above: teardownNext
+			// deletes exactly one Application per reconcile and waits for it to be
+			// gone before starting the next, so argo-rollouts' Application should
+			// still be here immediately after keda's disappears.
+			By("confirming argo-rollouts' Application is still present while keda finishes tearing down")
+			Consistently(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				g.Expect(err).NotTo(HaveOccurred(), "argo-rollouts Application deleted before keda finished tearing down")
+			}, 15*time.Second, 5*time.Second).Should(Succeed())
+
+			By("waiting for argo-rollouts' Application to be deleted too")
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				g.Expect(err).To(HaveOccurred())
+			}, 5*time.Minute).Should(Succeed())
+
+			By("deleting the CCLInfraPlane while the operator can still run its finalizer")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// The generated Application's SyncPolicy always sets Automated{SelfHeal:true}
+		// (ccldeployment_builder.go), but nothing exercises that Argo CD actually
+		// acts on it. This mutates a live resource Argo CD manages and confirms it
+		// gets reverted, using its own single-component fixture (rather than
+		// reusing the rollout or ordered-release specs' resources) so a failure
+		// here is isolated and easy to read.
+		It("should revert drift on a live resource via selfHeal", Label("full"), func() {
+			const deploymentName = "e2e-selfheal"
+			const planeName = "e2e-selfheal-plane"
+			const credentialsName = "e2e-selfheal-plane-credentials"
+			applicationName := deploymentName + "-argo-rollouts"
+
+			By("registering the control-plane cluster with itself as an infra plane")
+			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+				credentialsName,
+				"--from-literal=server=https://kubernetes.default.svc",
+				`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+				"-n", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", "default", "--ignore-not-found"))
+			})
+
+			applyCCLInfraPlane(planeName, credentialsName)
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+					planeName, "-n", "default", "-o",
+					"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("creating a CCLDeployment against it")
+			applyCCLDeployment(deploymentName, planeName)
+
+			By("waiting for Argo CD to reconcile it to Healthy and Synced")
+			Eventually(func(g Gomega) {
+				health, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
+
+				sync, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
+			}, 8*time.Minute).Should(Succeed())
+
+			By("mutating a live resource Argo CD manages")
+			_, err = utils.Run(exec.Command("kubectl", "scale", "deployment",
+				"argo-rollouts", "-n", "argo-rollouts", "--replicas=5"))
+			Expect(err).NotTo(HaveOccurred())
+
+			// selfHeal is driven by the application controller's watch on managed
+			// resources, not the reconciliation poll (unmodified from Argo CD's
+			// stock default here - charts/cp/chart/values.yaml sets no
+			// timeout.reconciliation override), so it normally reverts within
+			// seconds; this budgets past that default poll interval for margin
+			// under CI load rather than cutting it close.
+			By("waiting for Argo CD's selfHeal to revert the drift")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "deployment", "argo-rollouts",
+					"-n", "argo-rollouts", "-o", "jsonpath={.spec.replicas}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("2"))
+			}, 4*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("deleting the CCLDeployment and CCLInfraPlane, letting Argo CD uninstall the chart")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "ccldeployment", deploymentName,
+				"-n", "default", "--ignore-not-found", "--wait=true", "--timeout=5m"))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", "default", "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
@@ -551,6 +1007,38 @@ spec:
 `, name, planeName))
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create CCLDeployment %s", name)
+}
+
+// applyOrderedCCLDeployment creates a two-component CCLDeployment (argo-rollouts then
+// keda) targeting planeName, matching config/samples/v1alpha1_ccldeployment.yaml.
+func applyOrderedCCLDeployment(name, planeName string) {
+	GinkgoHelper()
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf(`apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  name: %s
+  namespace: default
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: %s
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+    - name: keda
+      infraPlaneRef:
+        name: %s
+      chart: catalogs/cluster_base/keda
+      namespace: keda
+      values:
+        keda:
+          operator:
+            replicaCount: 1
+`, name, planeName, planeName))
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create ordered CCLDeployment %s", name)
 }
 
 // deleteCCLDeployment removes a CCLDeployment and waits for its finalizer to clear.

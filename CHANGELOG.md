@@ -59,13 +59,18 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `helm template` in CI (`.github/workflows/test-chart.yml`) rather than by installing it
   into a kind cluster. The argoproj CRDs and `controller.diff.server.side` are asserted on
   every pull request instead of in a local-only target.
-- `make test-e2e` now installs real Argo CD instead of `ARGOCD=false`, and asserts a real
-  catalog component reaches `Healthy`/`Synced` under Argo CD's own reconciliation. This
-  replaces `make test-e2e-argocd`, which never actually checked that a rollout worked — only
-  that the argoproj CRDs existed — and which no CI workflow ran anyway. The tradeoff:
-  `ApplicationCRDMissing`, the status reported when Argo CD genuinely isn't installed, is no
-  longer reachable in `test-e2e`; it is asserted at the unit tier instead
-  (`ccldeployment_builder_test.go`).
+- `test/e2e` now splits into a quick tier and a full tier via Ginkgo `Label()` +
+  `-ginkgo.label-filter`. `make test-e2e` (unchanged as the CI default) deploys with
+  `ARGOCD=false` and stays fast — `ApplicationCRDMissing` is reachable again, and the
+  `argoproj.io/applications` RBAC rule is covered by rendering just the Application CRD out of
+  the vendored dependency chart, no real Argo CD required. `make test-e2e-full` (or
+  `E2E_FULL=true`) deploys real Argo CD instead and asserts a real catalog component reaches
+  `Healthy`/`Synced`, a two-component deployment releases in order and tears down in reverse,
+  and a live resource drifted out from under Argo CD gets reverted by `selfHeal` — all under
+  genuine reconciliation. This replaces `make test-e2e-argocd`, which never actually checked
+  that a rollout worked — only that the argoproj CRDs existed — and which no CI workflow ran
+  anyway. The full tier is opt-in only, same as `test-e2e-argocd` was, but now actually proves
+  the things that target's name implied.
 
 ### Fixed
 - The CCLDeployment controller no longer refuses to start when Argo CD is absent. Its watch
@@ -75,7 +80,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   Argo CD — left the controller reconciling nothing while logging "if kind is a CRD, it
   should be installed before calling Start" every ten seconds, which also made the
   `ApplicationCRDMissing` status unreachable. Install Argo CD after the operator and the
-  operator must be restarted to pick up the watch.
+  operator must be restarted to pick up the watch — the quick e2e tier now exercises exactly
+  this sequence end to end (see above).
 - `releaseCount` no longer returns 1 for a CCLDeployment with no components, which made the
   caller slice an empty component list and panic. The `MinItems=1` CRD marker still rejects
   such objects; the controller no longer depends on it for memory safety.
