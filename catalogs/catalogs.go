@@ -17,19 +17,24 @@ limitations under the License.
 // Package catalogs describes the Helm chart catalog this repository ships, as Go types.
 //
 // Each chart under catalogs/cluster_base/<component> has a Go package alongside it
-// declaring that chart's values schema, so that a caller building a CCLDeployment gets
-// compile-time checking of the values it sets and a place to record which of them the
-// chart cannot be installed without.
+// declaring that chart's values schema and a New function that builds a
+// v1alpha1.ComponentEntry from it, so that a caller assembling a CCLDeployment gets
+// compile-time checking of the values it sets. There is no catalog-side mirror of the
+// API types: New returns the API type itself.
 //
 // # Nothing here is enforced at admission time
 //
 // The CCLDeployment CRD stores values as an untyped JSON blob with
-// x-kubernetes-preserve-unknown-fields, and this change does not alter that. A
-// CCLDeployment written by hand bypasses these types entirely and is forwarded to Helm
-// verbatim, placeholders and all. These packages help the callers that go through them;
-// they are not a guarantee about what is in the cluster.
+// x-kubernetes-preserve-unknown-fields. A CCLDeployment written by hand bypasses these
+// types entirely and is forwarded to Helm verbatim, placeholders and all. These packages
+// help the callers that go through them; they are not a guarantee about what is in the
+// cluster.
 //
 // # Conventions for adding a chart
+//
+// A component package exports a Chart constant, a Values struct and a New function. It
+// does not name itself: the component's name within a CCLDeployment is the caller's, and
+// so is the namespace it installs into.
 //
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
@@ -52,126 +57,43 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 )
 
-// ComponentEntry is the chart metadata every catalog component carries. It is the Go
-// analogue of the ClassVars on the legacy Python catalog's ComponentEntry: facts about
-// the chart rather than values a user supplies.
-type ComponentEntry struct {
-	// Name is the component's name within a CCLDeployment. It is the chart's
-	// kebab-case name, which is also the key its values nest under, and it must be
-	// DNS-1123 because api/v1alpha1.ComponentSpec.Name requires it.
-	Name string
-
-	// Chart is the chart directory relative to the repository root, for example
-	// "catalogs/cluster_base/gpu_operator". Note the snake_case: this is the
-	// directory name, not Name.
-	Chart string
-
-	// Namespace is the destination namespace on the target cluster.
-	Namespace string
-}
-
-// Entry returns the metadata itself, so that a component embedding a ComponentEntry
-// satisfies Component's Entry method by promotion and does not have to write the
-// accessor out. Only ValuesObject is left for a component to implement, since only it
-// knows its own values type.
-func (e ComponentEntry) Entry() ComponentEntry { return e }
-
-// Component is one entry of a catalog: chart metadata, plus that chart's typed values.
-type Component interface {
-	// Entry returns the component's chart metadata. Embedding ComponentEntry
-	// provides it.
-	Entry() ComponentEntry
-
-	// ValuesObject returns the chart's typed values struct. It is named for Argo CD's
-	// helm.valuesObject, which is where the marshalled result ends up, and to leave
-	// the field name Values free on the implementing types.
-	ValuesObject() any
-}
-
-// Validator is implemented by components that have values the chart cannot be installed
-// without. ToComponentSpecs calls Validate on any component that implements it, which is
+// Validator is implemented by a chart's Values when the chart cannot be installed
+// without some of them. Entry calls Validate on any values that implement it, which is
 // the only point at which a missing required value is caught — the API server does not
-// check them.
+// check them, and Helm only fails once the chart is already being installed.
 type Validator interface {
 	Validate() error
 }
 
-// ToComponentEntry converts a catalog component into the CRD's inline chart entry,
-// marshalling its typed values into the untyped JSON the API stores.
+// Entry builds the CRD's chart entry from a chart's typed values. It is what every
+// component package's New delegates to.
 //
-// Values that marshal to null or an empty object are dropped rather than stored. The
-// builder omits the Application's helm block entirely when Values is nil or its Raw is
-// empty (see applicationSpec in internal/controller/cp/ccldeployment_builder.go), and
-// storing an empty object would defeat that and hand Helm a meaningless override.
-func ToComponentEntry(component Component) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
-	entry := component.Entry()
-	out := cclusternvidiacomv1alpha1.ComponentEntry{
-		Chart:     entry.Chart,
-		Namespace: entry.Namespace,
+// Values implementing Validator are validated first. Values that marshal to null or an
+// empty object are dropped rather than stored: the builder omits the Application's helm
+// block entirely when Values is nil or its Raw is empty (see applicationSpec in
+// internal/controller/cp/ccldeployment_builder.go), and storing an empty object would
+// defeat that and hand Helm a meaningless override.
+func Entry(
+	chart, namespace string,
+	values any,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	if validator, ok := values.(Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return cclusternvidiacomv1alpha1.ComponentEntry{}, fmt.Errorf(
+				"chart %q: %w", chart, err)
+		}
 	}
 
-	values := component.ValuesObject()
-	if values == nil {
-		return out, nil
-	}
+	out := cclusternvidiacomv1alpha1.ComponentEntry{Chart: chart, Namespace: namespace}
 
 	raw, err := json.Marshal(values)
 	if err != nil {
 		return cclusternvidiacomv1alpha1.ComponentEntry{}, fmt.Errorf(
-			"marshalling values for component %q: %w", entry.Name, err)
+			"marshalling values for chart %q: %w", chart, err)
 	}
-	if s := string(raw); s == "null" || s == "{}" {
-		return out, nil
+	if s := string(raw); s != "null" && s != "{}" {
+		out.Values = &apiextensionsv1.JSON{Raw: raw}
 	}
 
-	out.Values = &apiextensionsv1.JSON{Raw: raw}
 	return out, nil
-}
-
-// ToComponentSpec converts a catalog component into a CCLDeployment component targeting
-// the named CCLInfraPlane, which must be in the same namespace as the CCLDeployment.
-//
-// A component implementing Validator is validated first: this is where a chart's
-// required values are caught, because nothing rejects them at admission.
-func ToComponentSpec(
-	component Component,
-	infraPlane string,
-) (cclusternvidiacomv1alpha1.ComponentSpec, error) {
-	entry := component.Entry()
-
-	if validator, ok := component.(Validator); ok {
-		if err := validator.Validate(); err != nil {
-			return cclusternvidiacomv1alpha1.ComponentSpec{}, fmt.Errorf(
-				"component %q: %w", entry.Name, err)
-		}
-	}
-
-	componentEntry, err := ToComponentEntry(component)
-	if err != nil {
-		return cclusternvidiacomv1alpha1.ComponentSpec{}, err
-	}
-
-	return cclusternvidiacomv1alpha1.ComponentSpec{
-		Name:           entry.Name,
-		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane},
-		ComponentEntry: componentEntry,
-	}, nil
-}
-
-// ToComponentSpecs converts an ordered catalog - clusterbase.Components(), for instance -
-// into the spec.components of a CCLDeployment, preserving order. The order is the rollout
-// order: the operator releases components one at a time, in the order given.
-func ToComponentSpecs(
-	components []Component,
-	infraPlane string,
-) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {
-	specs := make([]cclusternvidiacomv1alpha1.ComponentSpec, 0, len(components))
-	for _, component := range components {
-		spec, err := ToComponentSpec(component, infraPlane)
-		if err != nil {
-			return nil, err
-		}
-		specs = append(specs, spec)
-	}
-	return specs, nil
 }

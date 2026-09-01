@@ -23,18 +23,12 @@ import (
 	"fmt"
 	"strings"
 
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
 
-const (
-	// Name is the component's name in a CCLDeployment, and the key its values nest
-	// under.
-	Name = "teleport-kube-agent"
-	// Chart is the chart directory, relative to the repository root.
-	Chart = "catalogs/cluster_base/teleport_kube_agent"
-	// Namespace is where the agent is installed.
-	Namespace = "teleport"
-)
+// Chart is the chart directory, relative to the repository root.
+const Chart = "catalogs/cluster_base/teleport_kube_agent"
 
 // ErrMissingValue reports a value the chart cannot be installed without.
 var ErrMissingValue = errors.New("required value not set")
@@ -95,54 +89,21 @@ type HighAvailability struct {
 	RequireAntiAffinity *bool `json:"requireAntiAffinity,omitempty"`
 }
 
-// Config carries the values the chart requires.
-type Config struct {
-	// ProxyAddr is the Teleport proxy's address, as host:port.
-	ProxyAddr string
-	// TeleportClusterName is the Teleport cluster this agent joins.
-	TeleportClusterName string
-	// KubeClusterName is the name this Kubernetes cluster is registered under.
-	KubeClusterName string
-	// TokenName is the name of the join token.
-	TokenName string
+// New returns the teleport-kube-agent chart entry, installed into namespace with
+// values. Unlike every other component in this catalog, some of these values are
+// mandatory: New reports the ones left unset rather than building an entry that
+// installs an agent which cannot connect. See Values.Validate.
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// Component is the catalog entry for teleport-kube-agent.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. Unlike every other component in this
-	// catalog, some of these are mandatory — see ChartValues and Validate.
-	Values Values
-}
-
-// New returns the teleport-kube-agent component configured with the values the chart
-// requires. Since nothing validates a CCLDeployment's values at admission, taking them
-// here is the only way to make them hard to forget; Validate is the check for callers
-// that build a Component as a literal instead.
-func New(config Config) *Component {
-	return &Component{
-		ComponentEntry: catalogs.ComponentEntry{
-			Name:      Name,
-			Chart:     Chart,
-			Namespace: Namespace,
-		},
-		Values: Values{TeleportKubeAgent: &ChartValues{
-			ProxyAddr:           config.ProxyAddr,
-			TeleportClusterName: config.TeleportClusterName,
-			KubeClusterName:     config.KubeClusterName,
-			JoinParams:          JoinParams{TokenName: config.TokenName},
-		}},
-	}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }
 
 // Validate reports the required values that are unset. It implements catalogs.Validator,
-// so catalogs.ToComponentSpec refuses to convert a component that is missing any of them.
-func (c *Component) Validate() error {
-	values := c.Values.TeleportKubeAgent
+// so catalogs.Entry - and therefore New - refuses to build an entry missing any of them.
+func (v Values) Validate() error {
+	values := v.TeleportKubeAgent
 	if values == nil {
 		return fmt.Errorf("%w: %s", ErrMissingValue, strings.Join([]string{
 			"proxyAddr", "teleportClusterName", "kubeClusterName", "joinParams.tokenName",

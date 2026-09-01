@@ -178,8 +178,7 @@ are the parts a well-meaning change breaks silently.
 
 `catalogs/` used to be inert as far as Go was concerned. It is not any more: each chart
 directory carries a `component.go` declaring that chart's values as typed structs, plus
-`catalogs/catalogs.go` (the shared `ComponentEntry`, the `Component` and `Validator`
-interfaces, and the `ToComponentSpec*` conversions) and
+`catalogs/catalogs.go` (the `Validator` interface and the `Entry` helper) and
 `catalogs/cluster_base/cluster_base.go`. They are ordinary packages under
 `github.com/NVIDIA/ccluster/catalogs/...`, so `go build ./...`,
 `go vet ./...`, `make test` and `golangci-lint` all cover them — and a catalog package
@@ -188,10 +187,16 @@ that fails to compile now breaks `make generate`, which runs `controller-gen` ov
 
 Four conventions that are not obvious from the files:
 
-- **A component implements only `ValuesObject()`.** `Component` requires `Entry()` too,
-  but `catalogs.ComponentEntry` carries that method itself, so embedding it — which every
-  component does — satisfies the interface by promotion. Do not hand-write an `Entry()`
-  accessor on a new component; there is nothing for it to do.
+- **There is no catalog-side mirror of the API types.** A component package exports a
+  `Chart` constant, a `Values` struct and
+  `New(namespace string, values Values) (v1alpha1.ComponentEntry, error)` — and nothing
+  else. `New` is one line delegating to `catalogs.Entry`, which runs the `Validator` hook
+  and marshals the values. A component does **not** know its own name or namespace: both
+  are the caller's, because they are deployment choices rather than facts about the
+  chart. `catalogs/cluster_base/cluster_base.go` supplies a **sample** set of both — plus
+  the rollout order, which reproduces the sync waves of the legacy Python catalog — as
+  `Components(infraPlane)`. It is a starting point to copy and edit, not a deployable
+  default: teleport-kube-agent's values there name an example proxy and token.
 - **Package names drop the directory's underscores.** `catalogs/cluster_base/gpu_operator`
   is `package gpuoperator`. The directory name is load-bearing — it *is* the `chart:` path
   Argo CD resolves — so it stays snake_case, and imports are written explicitly named.
@@ -203,9 +208,13 @@ Four conventions that are not obvious from the files:
   fails loudly instead of silently inheriting a placeholder.
 - **Nothing enforces these schemas.** The CRD's `values` is still
   `x-kubernetes-preserve-unknown-fields`, and a hand-written `CCLDeployment` bypasses the
-  typed layer entirely. The only enforcement point is a component's `Validate()` method,
-  called by `catalogs.ToComponentSpec`. `teleport-kube-agent` is the one component with
-  genuinely required values, and the only implementer.
+  typed layer entirely. The only enforcement point is a `Values` type's `Validate()`
+  method, which `catalogs.Entry` calls if present. `teleport-kube-agent` is the one
+  component with genuinely required values, and the only implementer: its four fields
+  ship as the placeholders `<PROXY_ADDR>` and friends, so its `New` fails rather than
+  returning an entry that installs an agent which cannot connect. Its `New` is otherwise
+  byte-identical to the other seventeen — the required values go through the same
+  `values` parameter, not a second one.
 
 Each chart directory also has a hand-written `.helmignore` excluding `*.go`. Helm never
 reads them — it looks only at `Chart.yaml`, `values.yaml`, `templates/`, `charts/` and

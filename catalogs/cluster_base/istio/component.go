@@ -17,15 +17,16 @@ limitations under the License.
 // Package istio describes the values of catalogs/cluster_base/istio.
 package istio
 
-import "github.com/NVIDIA/ccluster/catalogs"
+import (
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
+)
 
 const (
 	// Name is the component's name in a CCLDeployment.
 	Name = "istio"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/istio"
-	// Namespace is where Istio is installed.
-	Namespace = "istio-system"
 )
 
 // Well-known cniBinDir values. The chart's own default targets k3s/k3d; anything else
@@ -117,24 +118,11 @@ type CiliumIstioPatch struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
-// Component is the catalog entry for istio.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. The zero value means "chart defaults",
-	// which target k3s/k3d — see CNI.
-	Values Values
+// New returns the istio chart entry, installed into namespace with values.
+// The zero Values means "chart defaults".
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// New returns the istio component with its chart metadata filled in and no value
-// overrides.
-func New() *Component {
-	return &Component{ComponentEntry: catalogs.ComponentEntry{
-		Name:      Name,
-		Chart:     Chart,
-		Namespace: Namespace,
-	}}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }

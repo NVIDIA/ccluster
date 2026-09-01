@@ -17,15 +17,16 @@ limitations under the License.
 // Package finalstack describes the values of catalogs/cluster_base/final_stack.
 package finalstack
 
-import "github.com/NVIDIA/ccluster/catalogs"
+import (
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
+)
 
 const (
 	// Name is the component's name in a CCLDeployment.
 	Name = "final-stack"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/final_stack"
-	// Namespace is where the final stack is installed.
-	Namespace = "final-stack"
 )
 
 // Values is the top-level values document for catalogs/cluster_base/final_stack.
@@ -42,22 +43,11 @@ const (
 // global.cluster.domain on the CCLDeployment component's values by hand.
 type Values struct{}
 
-// Component is the catalog entry for final-stack.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. This chart has none — see Values.
-	Values Values
+// New returns the final-stack chart entry, installed into namespace with values.
+// The zero Values means "chart defaults".
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// New returns the final-stack component with its chart metadata filled in.
-func New() *Component {
-	return &Component{ComponentEntry: catalogs.ComponentEntry{
-		Name:      Name,
-		Chart:     Chart,
-		Namespace: Namespace,
-	}}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }

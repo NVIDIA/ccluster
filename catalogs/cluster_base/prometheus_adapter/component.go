@@ -17,7 +17,10 @@ limitations under the License.
 // Package prometheusadapter describes the values of catalogs/cluster_base/prometheus_adapter.
 package prometheusadapter
 
-import "github.com/NVIDIA/ccluster/catalogs"
+import (
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
+)
 
 const (
 	// Name is the component's name in a CCLDeployment, and the key its values
@@ -25,8 +28,6 @@ const (
 	Name = "prometheus-adapter"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/prometheus_adapter"
-	// Namespace is where prometheus-adapter is installed.
-	Namespace = "prometheus"
 )
 
 // Values is the top-level values document for catalogs/cluster_base/prometheus_adapter.
@@ -53,24 +54,11 @@ type Rules struct {
 	Custom []map[string]any `json:"custom,omitempty"`
 }
 
-// Component is the catalog entry for prometheus-adapter.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. The zero value means "chart
-	// defaults".
-	Values Values
+// New returns the prometheus-adapter chart entry, installed into namespace with values.
+// The zero Values means "chart defaults".
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// New returns the prometheus-adapter component with its chart metadata filled in and no value
-// overrides.
-func New() *Component {
-	return &Component{ComponentEntry: catalogs.ComponentEntry{
-		Name:      Name,
-		Chart:     Chart,
-		Namespace: Namespace,
-	}}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }

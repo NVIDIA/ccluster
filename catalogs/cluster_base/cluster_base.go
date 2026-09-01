@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package clusterbase assembles the cluster_base catalog: the platform components
-// every infra-plane cluster gets, in the order they have to be installed.
+// Package clusterbase assembles the cluster_base catalog: the platform components every
+// infra-plane cluster gets, in the order they have to be installed.
 package clusterbase
 
 import (
-	"github.com/NVIDIA/ccluster/catalogs"
+	"errors"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
@@ -40,63 +42,133 @@ import (
 	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 )
 
-// Components returns the cluster_base catalog in rollout order.
-//
-// The slice order is the contract. The operator has no concept of waves: it releases
-// components one at a time in the order spec.components lists them, withholding each
-// until the one before it reports Healthy and Synced. This order reproduces the sync
-// waves of the Python catalog it was taken from (catalog/cluster_base/__init__.py),
-// which are noted per line; where several components shared a wave there, they are
-// ordered here as they were declared there. Do not re-sort this alphabetically.
-//
-// Because everything serialises, installing the whole catalog is eighteen sequential
-// convergence waits. Components that could have installed concurrently — the four that
-// shared wave 30, and the two that shared wave 40 — do not.
-//
-// Callers own the returned components and are expected to set values on them before
-// converting. teleport-kube-agent in particular is returned with the values the chart
-// requires left empty, so catalogs.ToComponentSpecs refuses to convert it until they
-// are filled in; see Configure.
-func Components() []catalogs.Component {
-	return []catalogs.Component{
-		spirecrds.New(),           // wave -70
-		spire.New(),               // wave -65
-		kubeprometheusstack.New(), // wave -60
-		istio.New(),               // wave -50
-		certmanager.New(),         // wave -45
-		ingressnginx.New(),        // wave -40
-		externaldns.New(),         // wave  10
-		finalstack.New(),          // wave  20
-		prometheusadapter.New(),   // wave  30
-		keda.New(),                // wave  30
-		fluentbit.New(),           // wave  30
-		argorollouts.New(),        // wave  30
-		networkoperator.New(),     // wave  40
-		otelcollector.New(),       // wave  40
-		gpuoperator.New(),         // wave  45
-		longhorn.New(),            // wave  46
-		metricsserver.New(),       // wave  47
-		teleportkubeagent.New(teleportkubeagent.Config{}), // wave 50
-	}
-}
 
-// Config carries the per-cluster values the catalog cannot be installed without.
-type Config struct {
-	// Teleport configures the teleport-kube-agent component. Its four fields are
-	// the only values in the whole catalog that a chart genuinely requires: they
-	// ship as the placeholders "<PROXY_ADDR>" and friends, and an agent installed
-	// with them cannot connect.
-	Teleport teleportkubeagent.Config
-}
+func Components(
+	infraPlane string,
+) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {
+	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
-// Configure returns the catalog in rollout order with config applied, ready to convert
-// with catalogs.ToComponentSpecs.
-func Configure(config Config) []catalogs.Component {
-	components := Components()
-	for i, component := range components {
-		if _, ok := component.(*teleportkubeagent.Component); ok {
-			components[i] = teleportkubeagent.New(config.Teleport)
-		}
+	// entry adapts a component package's New to a field of the literal below, so that
+	// the catalog reads as the list it is rather than as eighteen error checks. Only
+	// teleport-kube-agent's error can be non-nil, and only when its required values
+	// are unset; catalogs.Entry names the chart it came from.
+	var errs []error
+	entry := func(
+		e cclusternvidiacomv1alpha1.ComponentEntry,
+		err error,
+	) cclusternvidiacomv1alpha1.ComponentEntry {
+		errs = append(errs, err)
+		return e
 	}
-	return components
+
+	components := []cclusternvidiacomv1alpha1.ComponentSpec{
+		{
+			Name:           "spire-crds",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(spirecrds.New("spire-system", spirecrds.Values{})),
+		}, // wave -70
+		{
+			Name:           "spire",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(spire.New("spire-system", spire.Values{})),
+		}, // wave -65
+		{
+			Name:           "kube-prometheus-stack",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{})),
+		}, // wave -60
+		{
+			Name:           "istio",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(istio.New("istio-system", istio.Values{})),
+		}, // wave -50
+		{
+			Name:           "cert-manager",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(certmanager.New("cert-manager", certmanager.Values{})),
+		}, // wave -45
+		{
+			Name:           "ingress-nginx",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(ingressnginx.New("ingress-nginx", ingressnginx.Values{})),
+		}, // wave -40
+		{
+			Name:           "external-dns",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(externaldns.New("external-dns", externaldns.Values{})),
+		}, // wave  10
+		{
+			Name:           "final-stack",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(finalstack.New("final-stack", finalstack.Values{})),
+		}, // wave  20
+		{
+			Name:           "prometheus-adapter",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(prometheusadapter.New("prometheus", prometheusadapter.Values{})),
+		}, // wave  30
+		{
+			Name:           "keda",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(keda.New("keda", keda.Values{})),
+		}, // wave  30
+		{
+			Name:           "fluent-bit",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(fluentbit.New("fluent-bit", fluentbit.Values{})),
+		}, // wave  30
+		{
+			Name:           "argo-rollouts",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(argorollouts.New("argo-rollouts", argorollouts.Values{})),
+		}, // wave  30
+		{
+			Name:           "network-operator",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(networkoperator.New("network-operator", networkoperator.Values{})),
+		}, // wave  40
+		{
+			Name:           "opentelemetry-collector",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(otelcollector.New("opentelemetry", otelcollector.Values{})),
+		}, // wave  40
+		{
+			Name:           "gpu-operator",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(gpuoperator.New("gpu-operator", gpuoperator.Values{})),
+		}, // wave  45
+		{
+			Name:           "longhorn",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(longhorn.New("longhorn-system", longhorn.Values{})),
+		}, // wave  46
+		{
+			Name:           "metrics-server",
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(metricsserver.New("kube-system", metricsserver.Values{})),
+		}, // wave  47
+		{
+			Name:          "teleport-kube-agent",
+			InfraPlaneRef: ref,
+			// The one component with values it cannot be installed without.
+			// They are samples like every name and namespace above, and go
+			// through the same values parameter every other component's do:
+			// teleport-kube-agent's New is not special.
+			ComponentEntry: entry(teleportkubeagent.New("teleport", teleportkubeagent.Values{
+				TeleportKubeAgent: &teleportkubeagent.ChartValues{
+					ProxyAddr:           "teleport.example.com:443",
+					TeleportClusterName: "example",
+					KubeClusterName:     "example-infra-plane",
+					JoinParams: teleportkubeagent.JoinParams{
+						TokenName: "example-kube-token",
+					},
+				},
+			})),
+		}, // wave  50
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return components, nil
 }

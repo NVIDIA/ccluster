@@ -192,17 +192,23 @@ from a typed, per-chart values struct.
 ### The typed catalog, and what it does not guarantee
 
 Each chart under `catalogs/cluster_base/` has a Go package alongside it declaring its values
-as typed structs — `catalogs.Component`, converted by `catalogs.ToComponentEntry`. A caller
-building a `CCLDeployment` in Go gets compile-time checking, and
-`catalogs/cluster_base.Components()` returns all 18 in rollout order, so the order does not
-have to be retyped.
+as typed structs, plus a `New(namespace, values)` that builds a `v1alpha1.ComponentEntry`
+from them — the API type itself, not a catalog-side mirror of it. A caller building a
+`CCLDeployment` in Go gets compile-time checking of the values it sets.
+
+A component knows its chart directory and nothing else: its name, its namespace and its
+position in the rollout are all the caller's, because they are deployment choices rather
+than facts about the chart. `catalogs/cluster_base.Components(infraPlane)` writes down one
+plausible set of all three — sample names and namespaces, chart defaults for every values
+struct but teleport-kube-agent's, and the rollout order carried over from the legacy Python
+catalog's sync waves — so that a caller has something to copy rather than an empty page.
 
 **None of this is enforced at admission.** The CRD's `values` is as untyped as it ever was, so
 a hand-written `CCLDeployment` bypasses the typed layer entirely and is forwarded to Helm
 verbatim. The concrete hazard is `teleport_kube_agent`, whose `values.yaml` ships `proxyAddr:
 "<PROXY_ADDR>"` and three more placeholders: a `CCLDeployment` that omits them is accepted and
-installs an agent that cannot connect. The only check is a component's `Validate()`, called by
-`catalogs.ToComponentSpec` — which a caller only reaches by going through the Go layer.
+installs an agent that cannot connect. The only check is a `Values` type's `Validate()`,
+called by `catalogs.Entry` — which a caller only reaches by going through the Go layer.
 
 The alternative, a discriminated union of 18 chart schemas inside `ComponentSpec`, would have
 bought API-server rejection at the cost of putting every chart's schema into the CRD, where

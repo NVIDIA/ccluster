@@ -28,11 +28,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   operator configuration (`--catalog-repo-url`, `--catalog-revision`), settable at deploy
   time with `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 - Go packages describing each `catalogs/cluster_base` chart's Helm values as typed structs,
-  under `github.com/NVIDIA/ccluster/catalogs/...`. `catalogs.ToComponentSpecs` converts them
-  into a `CCLDeployment`'s components, and `catalogs/cluster_base.Components()` returns all 18
-  in rollout order — reproducing the sync waves of the legacy Python catalog — so that order
-  does not have to be retyped. `Configure` supplies the only values a chart genuinely
-  requires, teleport-kube-agent's four, which ship as placeholders in the chart.
+  under `github.com/NVIDIA/ccluster/catalogs/...`. Each exports
+  `New(namespace, values) (v1alpha1.ComponentEntry, error)`, building the API type directly.
+  A component knows only its chart directory: the name, namespace and rollout position of
+  each component are the caller's. `catalogs/cluster_base.Components(infraPlane)` returns a
+  sample set of all eighteen in rollout order — reproducing the sync waves of the legacy
+  Python catalog — to copy and edit. `teleport_kube_agent` is the one chart with values it
+  cannot be installed without — they ship as placeholders — and its `New` reports them
+  rather than returning an entry that installs an agent which cannot connect.
 
   These are a convenience for callers building a `CCLDeployment` in Go, **not** a validation
   layer: the CRD's `values` field remains untyped, and a hand-written `CCLDeployment` is still

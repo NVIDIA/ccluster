@@ -17,17 +17,13 @@ limitations under the License.
 // Package argorollouts describes the values of catalogs/cluster_base/argo_rollouts.
 package argorollouts
 
-import "github.com/NVIDIA/ccluster/catalogs"
-
-const (
-	// Name is the component's name in a CCLDeployment, and the key its values nest
-	// under.
-	Name = "argo-rollouts"
-	// Chart is the chart directory, relative to the repository root.
-	Chart = "catalogs/cluster_base/argo_rollouts"
-	// Namespace is where argo-rollouts is installed.
-	Namespace = "argo-rollouts"
+import (
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
 )
+
+// Chart is the chart directory, relative to the repository root.
+const Chart = "catalogs/cluster_base/argo_rollouts"
 
 // Values is the top-level values document for catalogs/cluster_base/argo_rollouts.
 // Its single key is the upstream chart's alias, because this chart wraps it as a
@@ -55,23 +51,11 @@ type Dashboard struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
-// Component is the catalog entry for argo-rollouts.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. The zero value means "chart defaults".
-	Values Values
+// New returns the argo-rollouts chart entry, installed into namespace with values.
+// The zero Values means "chart defaults".
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// New returns the argo-rollouts component with its chart metadata filled in and no
-// value overrides.
-func New() *Component {
-	return &Component{ComponentEntry: catalogs.ComponentEntry{
-		Name:      Name,
-		Chart:     Chart,
-		Namespace: Namespace,
-	}}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }

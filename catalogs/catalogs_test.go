@@ -38,31 +38,21 @@ type stubChartValues struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-type stubComponent struct {
-	entry  catalogs.ComponentEntry
-	values any
-	err    error
+// validatingValues implements catalogs.Validator, the way teleport-kube-agent's Values
+// does. It is the only hook by which a chart's required values are ever checked.
+type validatingValues struct {
+	stubValues
+	err error
 }
 
-func (c stubComponent) Entry() catalogs.ComponentEntry { return c.entry }
-func (c stubComponent) ValuesObject() any              { return c.values }
+func (v validatingValues) Validate() error { return v.err }
 
-// validatingComponent implements catalogs.Validator, like teleport-kube-agent does.
-type validatingComponent struct {
-	stubComponent
-}
+const (
+	chart     = "catalogs/cluster_base/stub_chart"
+	namespace = "stub"
+)
 
-func (c validatingComponent) Validate() error { return c.err }
-
-func entry() catalogs.ComponentEntry {
-	return catalogs.ComponentEntry{
-		Name:      "stub-chart",
-		Chart:     "catalogs/cluster_base/stub_chart",
-		Namespace: "stub",
-	}
-}
-
-func TestToComponentEntry(t *testing.T) {
+func TestEntry(t *testing.T) {
 	enabled := true
 	disabled := false
 	replicas := int32(3)
@@ -111,19 +101,16 @@ func TestToComponentEntry(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := catalogs.ToComponentEntry(stubComponent{
-				entry:  entry(),
-				values: test.values,
-			})
+			got, err := catalogs.Entry(chart, namespace, test.values)
 			if err != nil {
-				t.Fatalf("ToComponentEntry() error = %v, want nil", err)
+				t.Fatalf("Entry() error = %v, want nil", err)
 			}
 
-			if got.Chart != entry().Chart {
-				t.Errorf("Chart = %q, want %q", got.Chart, entry().Chart)
+			if got.Chart != chart {
+				t.Errorf("Chart = %q, want %q", got.Chart, chart)
 			}
-			if got.Namespace != entry().Namespace {
-				t.Errorf("Namespace = %q, want %q", got.Namespace, entry().Namespace)
+			if got.Namespace != namespace {
+				t.Errorf("Namespace = %q, want %q", got.Namespace, namespace)
 			}
 
 			if test.want == nil {
@@ -147,58 +134,22 @@ func TestToComponentEntry(t *testing.T) {
 	}
 }
 
-func TestToComponentSpec(t *testing.T) {
-	spec, err := catalogs.ToComponentSpec(stubComponent{entry: entry()}, "plane-a")
-	if err != nil {
-		t.Fatalf("ToComponentSpec() error = %v, want nil", err)
-	}
-	if spec.Name != "stub-chart" {
-		t.Errorf("Name = %q, want %q", spec.Name, "stub-chart")
-	}
-	if spec.InfraPlaneRef.Name != "plane-a" {
-		t.Errorf("InfraPlaneRef.Name = %q, want %q", spec.InfraPlaneRef.Name, "plane-a")
-	}
-	if spec.Chart != entry().Chart {
-		t.Errorf("Chart = %q, want %q", spec.Chart, entry().Chart)
-	}
-}
-
-// TestToComponentSpecRejectsInvalid covers the only point at which a chart's required
-// values are enforced: nothing rejects them at admission.
-func TestToComponentSpecRejectsInvalid(t *testing.T) {
+// TestEntryRejectsInvalidValues covers the only point at which a chart's required values
+// are enforced: nothing rejects them at admission, and Helm only fails once the chart is
+// already being installed.
+func TestEntryRejectsInvalidValues(t *testing.T) {
 	sentinel := errors.New("proxyAddr not set")
-	component := validatingComponent{stubComponent{entry: entry(), err: sentinel}}
 
-	_, err := catalogs.ToComponentSpec(component, "plane-a")
+	_, err := catalogs.Entry(chart, namespace, validatingValues{err: sentinel})
 	if !errors.Is(err, sentinel) {
-		t.Fatalf("ToComponentSpec() error = %v, want one wrapping %v", err, sentinel)
+		t.Fatalf("Entry() error = %v, want one wrapping %v", err, sentinel)
 	}
 }
 
-func TestToComponentSpecsPreservesOrder(t *testing.T) {
-	names := []string{"first", "second", "third"}
-
-	components := make([]catalogs.Component, 0, len(names))
-	for _, name := range names {
-		components = append(components, stubComponent{
-			entry: catalogs.ComponentEntry{
-				Name:      name,
-				Chart:     "catalogs/cluster_base/" + name,
-				Namespace: name,
-			},
-		})
-	}
-
-	specs, err := catalogs.ToComponentSpecs(components, "plane-a")
-	if err != nil {
-		t.Fatalf("ToComponentSpecs() error = %v, want nil", err)
-	}
-	if len(specs) != len(names) {
-		t.Fatalf("len(specs) = %d, want %d", len(specs), len(names))
-	}
-	for i, name := range names {
-		if specs[i].Name != name {
-			t.Errorf("specs[%d].Name = %q, want %q", i, specs[i].Name, name)
-		}
+// TestEntrySkipsValuesWithoutValidator is the other half: the 17 components that have no
+// required values must not be asked for a Validate they do not have.
+func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
+	if _, err := catalogs.Entry(chart, namespace, stubValues{}); err != nil {
+		t.Fatalf("Entry() error = %v, want nil", err)
 	}
 }

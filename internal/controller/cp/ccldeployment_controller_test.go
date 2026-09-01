@@ -34,8 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
-	"github.com/NVIDIA/ccluster/catalogs"
-	clusterbase "github.com/NVIDIA/ccluster/catalogs/cluster_base"
+	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
+	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
@@ -413,35 +413,54 @@ var _ = Describe("CCLDeployment Controller", func() {
 
 		// The catalog packages under catalogs/ are the only place the shape of a
 		// chart's values is written down, and nothing checks them at admission. What
-		// this does check is the other half: that the real cluster_base catalog
-		// produces components the installed CRD schema accepts - the CEL uniqueness
-		// rule, MaxItems, the DNS-1123 patterns on name and namespace, and the 512
-		// character limit on chart. A table test cannot cover that; it needs an API
-		// server.
-		It("should accept the full cluster_base catalog", func() {
-			catalogComponents := clusterbase.Configure(clusterbase.Config{
-				Teleport: teleportkubeagent.Config{
+		// this does check is the other half: that entries built by those packages are
+		// accepted by the installed CRD schema - the DNS-1123 patterns on name and
+		// namespace, the 512 character limit on chart, and that catalogs.Entry's
+		// marshalled values survive a round trip through the API server's
+		// x-kubernetes-preserve-unknown-fields. A table test cannot cover that; it
+		// needs an API server.
+		It("should accept components built by the catalog packages", func() {
+			crds, err := spirecrds.New("spire-system", spirecrds.Values{})
+			Expect(err).NotTo(HaveOccurred())
+
+			server, err := spire.New("spire-system", spire.Values{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// teleport-kube-agent is the one component whose values are
+			// mandatory, so it is also the one that proves New reports them
+			// rather than building an entry full of placeholders.
+			_, err = teleportkubeagent.New("teleport", teleportkubeagent.Values{})
+			Expect(err).To(HaveOccurred())
+
+			agent, err := teleportkubeagent.New("teleport", teleportkubeagent.Values{
+				TeleportKubeAgent: &teleportkubeagent.ChartValues{
 					ProxyAddr:           "teleport.example.com:443",
 					TeleportClusterName: "prod",
 					KubeClusterName:     planeA,
-					TokenName:           "kube-token",
+					JoinParams: teleportkubeagent.JoinParams{
+						TokenName: "kube-token",
+					},
 				},
 			})
-
-			specs, err := catalogs.ToComponentSpecs(catalogComponents, planeA)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(specs).To(HaveLen(len(catalogComponents)))
+
+			ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA}
+			specs := []cclusternvidiacomv1alpha1.ComponentSpec{
+				{Name: "spire-crds", InfraPlaneRef: ref, ComponentEntry: crds},
+				{Name: "spire", InfraPlaneRef: ref, ComponentEntry: server},
+				{Name: "teleport-kube-agent", InfraPlaneRef: ref, ComponentEntry: agent},
+			}
 
 			createInfraPlane(planeA, true)
 			createDeployment(specs)
 
-			By("releasing the first component of the catalog, and only that one")
+			By("releasing the first component, and only that one")
 			settle()
 
-			application := getApplication(specs[0].Name)
+			application := getApplication("spire-crds")
 			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/spire_crds"))
 			Expect(application.Spec.Destination.Namespace).To(Equal("spire-system"))
-			Expect(applicationExists(specs[1].Name)).To(BeFalse())
+			Expect(applicationExists("spire")).To(BeFalse())
 		})
 
 		It("should reject duplicate component names", func() {

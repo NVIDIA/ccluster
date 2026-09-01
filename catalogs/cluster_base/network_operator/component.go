@@ -17,7 +17,10 @@ limitations under the License.
 // Package networkoperator describes the values of catalogs/cluster_base/network_operator.
 package networkoperator
 
-import "github.com/NVIDIA/ccluster/catalogs"
+import (
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
+)
 
 const (
 	// Name is the component's name in a CCLDeployment, and the key its values
@@ -25,8 +28,6 @@ const (
 	Name = "network-operator"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/network_operator"
-	// Namespace is where the NVIDIA network operator is installed.
-	Namespace = "network-operator"
 )
 
 // Values is the top-level values document for catalogs/cluster_base/network_operator.
@@ -41,24 +42,11 @@ type Values struct {
 // first field later is a narrow change.
 type ChartValues struct{}
 
-// Component is the catalog entry for network-operator.
-type Component struct {
-	catalogs.ComponentEntry
-
-	// Values overrides the chart's defaults. The zero value means "chart
-	// defaults".
-	Values Values
+// New returns the network-operator chart entry, installed into namespace with values.
+// The zero Values means "chart defaults".
+func New(
+	namespace string,
+	values Values,
+) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	return catalogs.Entry(Chart, namespace, values)
 }
-
-// New returns the network-operator component with its chart metadata filled in and no value
-// overrides.
-func New() *Component {
-	return &Component{ComponentEntry: catalogs.ComponentEntry{
-		Name:      Name,
-		Chart:     Chart,
-		Namespace: Namespace,
-	}}
-}
-
-// ValuesObject returns the chart's typed values.
-func (c *Component) ValuesObject() any { return c.Values }

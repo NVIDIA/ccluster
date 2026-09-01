@@ -38,8 +38,8 @@ type LocalObjectReference struct {
 // It is embedded into ComponentSpec inline, so chart, namespace and values remain
 // component-level fields on the wire. It exists as a type so that the catalog packages
 // under catalogs/ can build one from a typed, per-chart values struct — see
-// catalogs.ToComponentEntry. Nothing validates a submitted CCLDeployment against those
-// typed schemas: values here is as untyped as it has always been.
+// catalogs.Entry. Nothing validates a submitted CCLDeployment against those typed
+// schemas: values here is as untyped as it has always been.
 type ComponentEntry struct {
 	// chart is the chart's directory, relative to the root of the catalog repository.
 	//
