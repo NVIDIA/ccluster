@@ -43,6 +43,15 @@ limitations under the License.
 // Argo CD resolves — so it stays snake_case, and imports are written explicitly named.
 package catalogs
 
+import (
+	"encoding/json"
+	"fmt"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+)
+
 // ComponentEntry is the chart metadata every catalog component carries. It is the Go
 // analogue of the ClassVars on the legacy Python catalog's ComponentEntry: facts about
 // the chart rather than values a user supplies.
@@ -78,4 +87,84 @@ type Component interface {
 // check them.
 type Validator interface {
 	Validate() error
+}
+
+// ToComponentEntry converts a catalog component into the CRD's inline chart entry,
+// marshalling its typed values into the untyped JSON the API stores.
+//
+// Values that marshal to null or an empty object are dropped rather than stored. The
+// builder omits the Application's helm block entirely when Values is nil or its Raw is
+// empty (see applicationSpec in internal/controller/cp/ccldeployment_builder.go), and
+// storing an empty object would defeat that and hand Helm a meaningless override.
+func ToComponentEntry(component Component) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
+	entry := component.Entry()
+	out := cclusternvidiacomv1alpha1.ComponentEntry{
+		Chart:     entry.Chart,
+		Namespace: entry.Namespace,
+	}
+
+	values := component.ValuesObject()
+	if values == nil {
+		return out, nil
+	}
+
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return cclusternvidiacomv1alpha1.ComponentEntry{}, fmt.Errorf(
+			"marshalling values for component %q: %w", entry.Name, err)
+	}
+	if s := string(raw); s == "null" || s == "{}" {
+		return out, nil
+	}
+
+	out.Values = &apiextensionsv1.JSON{Raw: raw}
+	return out, nil
+}
+
+// ToComponentSpec converts a catalog component into a CCLDeployment component targeting
+// the named CCLInfraPlane, which must be in the same namespace as the CCLDeployment.
+//
+// A component implementing Validator is validated first: this is where a chart's
+// required values are caught, because nothing rejects them at admission.
+func ToComponentSpec(
+	component Component,
+	infraPlane string,
+) (cclusternvidiacomv1alpha1.ComponentSpec, error) {
+	entry := component.Entry()
+
+	if validator, ok := component.(Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return cclusternvidiacomv1alpha1.ComponentSpec{}, fmt.Errorf(
+				"component %q: %w", entry.Name, err)
+		}
+	}
+
+	componentEntry, err := ToComponentEntry(component)
+	if err != nil {
+		return cclusternvidiacomv1alpha1.ComponentSpec{}, err
+	}
+
+	return cclusternvidiacomv1alpha1.ComponentSpec{
+		Name:           entry.Name,
+		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane},
+		ComponentEntry: componentEntry,
+	}, nil
+}
+
+// ToComponentSpecs converts an ordered catalog - clusterbase.Components(), for instance -
+// into the spec.components of a CCLDeployment, preserving order. The order is the rollout
+// order: the operator releases components one at a time, in the order given.
+func ToComponentSpecs(
+	components []Component,
+	infraPlane string,
+) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {
+	specs := make([]cclusternvidiacomv1alpha1.ComponentSpec, 0, len(components))
+	for _, component := range components {
+		spec, err := ToComponentSpec(component, infraPlane)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
 }

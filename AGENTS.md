@@ -178,9 +178,10 @@ are the parts a well-meaning change breaks silently.
 
 `catalogs/` used to be inert as far as Go was concerned. It is not any more: each chart
 directory carries a `component.go` declaring that chart's values as typed structs, plus
-`catalogs/component.go` (the shared `ComponentEntry` and `Component` interface),
-`catalogs/convert.go` and `catalogs/cluster_base/cluster_base.go`. They are ordinary
-packages under `github.com/NVIDIA/ccluster/catalogs/...`, so `go build ./...`,
+`catalogs/catalogs.go` (the shared `ComponentEntry`, the `Component` and `Validator`
+interfaces, and the `ToComponentSpec*` conversions) and
+`catalogs/cluster_base/cluster_base.go`. They are ordinary packages under
+`github.com/NVIDIA/ccluster/catalogs/...`, so `go build ./...`,
 `go vet ./...`, `make test` and `golangci-lint` all cover them — and a catalog package
 that fails to compile now breaks `make generate`, which runs `controller-gen` over
 `./...`.
