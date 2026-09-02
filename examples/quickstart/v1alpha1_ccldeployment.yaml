@@ -1,6 +1,8 @@
 # Deploys two catalog components onto the cluster registered by
-# v1alpha1_cclinfraplane.yaml, in order. Apply that sample first: this one stays
-# Validated=False until the CCLInfraPlane it names reports Available.
+# v1alpha1_cclinfraplane.yaml, in order. Apply that sample first: it creates the
+# ccluster-quickstart namespace this lives in, and this stays Validated=False until the
+# CCLInfraPlane it names reports Available. infraPlaneRef resolves within the same
+# namespace, which is why no namespace is given on it.
 #
 # The order of components is the rollout order. The operator does not create the
 # Application for ccluster-local-base-keda at all until ccluster-local-base-argo-rollouts
@@ -11,8 +13,8 @@ kind: CCLDeployment
 metadata:
   labels:
     app.kubernetes.io/name: ccluster
-    app.kubernetes.io/managed-by: kustomize
   name: ccluster-local-base
+  namespace: ccluster-quickstart
 spec:
   components:
     # Chart paths are relative to the root of the catalog repository named by the

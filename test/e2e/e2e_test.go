@@ -699,7 +699,7 @@ spec:
 		// CD actually cloning the catalog, installing the chart, and the operator
 		// reading Application health back. Only the full tier installs real Argo CD
 		// (see BeforeAll), so this spec registers the control-plane cluster with
-		// itself - the same trick config/samples/v1alpha1_cclinfraplane.yaml
+		// itself - the same trick examples/quickstart/v1alpha1_cclinfraplane.yaml
 		// documents - and drives one catalog component all the way to
 		// Healthy/Synced, which is what `make test-e2e-argocd` never actually did
 		// before it was retired: that target only asserted the argoproj CRDs
@@ -712,7 +712,7 @@ spec:
 
 			// server must be exactly this string for Argo CD to connect using its own
 			// ServiceAccount rather than credentials in "config" - see the sample
-			// this mirrors, config/samples/v1alpha1_cclinfraplane.yaml.
+			// this mirrors, examples/quickstart/v1alpha1_cclinfraplane.yaml.
 			By("registering the control-plane cluster with itself as an infra plane")
 			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
 				credentialsName,
@@ -815,7 +815,7 @@ spec:
 		// next. Both are proven only against hand-written status in envtest today;
 		// this spec drives the same two invariants against a real Argo CD
 		// reconciling two real components (matching
-		// config/samples/v1alpha1_ccldeployment.yaml), combined into one spec so the
+		// examples/quickstart/v1alpha1_ccldeployment.yaml), combined into one spec so the
 		// suite only pays for one KEDA + argo-rollouts image pull cycle.
 		It("should release components in order and tear them down in reverse", Label("full"), func() {
 			const deploymentName = "e2e-ordered-release"
@@ -1065,7 +1065,7 @@ spec:
 }
 
 // applyOrderedCCLDeployment creates a two-component CCLDeployment (argo-rollouts then
-// keda) targeting planeName, matching config/samples/v1alpha1_ccldeployment.yaml.
+// keda) targeting planeName, matching examples/quickstart/v1alpha1_ccldeployment.yaml.
 func applyOrderedCCLDeployment(name, planeName string) {
 	GinkgoHelper()
 

@@ -25,6 +25,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
 | `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` and `AppProject` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
 | `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
+| `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLDeployment that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -52,6 +53,11 @@ delete them.
 
 Finish with `make helm-generate`, or the new controller's RBAC will be missing from the
 chart that actually gets deployed.
+
+`create api` also re-scaffolds `config/samples/` with a sample CR for the new kind. That
+directory no longer exists here — examples live under `examples/` — so move the new file
+into the appropriate `examples/<scenario>/` and delete the resurrected `config/samples/`.
+(`kubebuilder edit`, which `make helm-generate` runs, does not touch samples.)
 
 ### The Helm charts are generated from the kustomize overlays
 
@@ -378,7 +384,7 @@ leaves the CRD stuck `Terminating`.
   `helm-generate`) rewrites the image via `kustomize edit set image`
 
 **Hand-written, yours to edit:** everything else, including `config/base/manager.yaml`, all
-other kustomization files, `config/samples/`, `config/ip/rbac/role.yaml` (for now), and —
+other kustomization files, `examples/`, `config/ip/rbac/role.yaml` (for now), and —
 the two exceptions inside the generated charts — `charts/{cp,ip}/chart/Chart.yaml` and
 `charts/{cp,ip}/chart/values.yaml`.
 
@@ -494,7 +500,7 @@ tier fast enough to run on every PR while still exercising real RBAC.
 
 The **full** tier (`make test-e2e-full`, or `make test-e2e E2E_FULL=true`) deploys real Argo CD
 instead and adds three `Label("full")` specs: one registers the control-plane cluster with
-itself, the same trick `config/samples/v1alpha1_cclinfraplane.yaml` documents, and drives one
+itself, the same trick `examples/quickstart/v1alpha1_cclinfraplane.yaml` documents, and drives one
 catalog component all the way to `Healthy`/`Synced` under Argo CD's own reconciliation
 (including an explicit check that argo-rollouts' ~600KB CRD resource itself reports `Synced`,
 not just the aggregate Application — the concrete regression `ServerSideApply` and

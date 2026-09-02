@@ -56,13 +56,13 @@ With the operators deployed and a kubeconfig pinned:
 
 ```bash
 # Register a cluster (the samples register the control-plane cluster with itself)
-kubectl apply -f config/samples/v1alpha1_cclinfraplane.yaml
+kubectl apply -f examples/quickstart/v1alpha1_cclinfraplane.yaml
 
 # Roll out an ordered bundle of catalog charts onto it
-kubectl apply -f config/samples/v1alpha1_ccldeployment.yaml
+kubectl apply -f examples/quickstart/v1alpha1_ccldeployment.yaml
 
-kubectl get cclinfraplanes
-kubectl get ccldeployments
+kubectl -n ccluster-quickstart get cclinfraplanes
+kubectl -n ccluster-quickstart get ccldeployments
 # The Applications sit next to the CCLDeployment, in its namespace, under an Argo CD
 # AppProject named after that namespace.
 kubectl get applications -L ccluster.nvidia.com/wave
