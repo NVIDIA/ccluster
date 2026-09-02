@@ -23,7 +23,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -43,11 +42,10 @@ import (
 var _ = Describe("CCLDeployment Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
-			deploymentName  = "test-deployment"
-			namespace       = "default"
-			argoCDNamespace = "argocd"
-			repoURL         = "https://github.com/NVIDIA/ccluster"
-			revision        = "test-revision"
+			deploymentName = "test-deployment"
+			namespace      = "default"
+			repoURL        = "https://github.com/NVIDIA/ccluster"
+			revision       = "test-revision"
 
 			planeA = "plane-a"
 			planeB = "plane-b"
@@ -63,10 +61,11 @@ var _ = Describe("CCLDeployment Controller", func() {
 		// Built in BeforeEach: k8sClient does not exist until BeforeSuite has run.
 		var reconciler *CCLDeploymentReconciler
 
+		// Applications live alongside their CCLDeployment, not in the Argo CD namespace.
 		appKey := func(component string) types.NamespacedName {
 			return types.NamespacedName{
 				Name:      applicationName(deploymentName, component),
-				Namespace: argoCDNamespace,
+				Namespace: namespace,
 			}
 		}
 
@@ -231,17 +230,8 @@ var _ = Describe("CCLDeployment Controller", func() {
 			reconciler = &CCLDeploymentReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				ArgoCDNamespace: argoCDNamespace,
 				CatalogRepoURL:  repoURL,
 				CatalogRevision: revision,
-			}
-
-			By("creating the Argo CD namespace")
-			err := k8sClient.Create(ctx, &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{Name: argoCDNamespace},
-			})
-			if !apierrors.IsAlreadyExists(err) {
-				Expect(err).NotTo(HaveOccurred())
 			}
 		})
 
@@ -259,7 +249,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 				Eventually(func() bool {
 					var applications argocdv1alpha1.ApplicationList
 					Expect(k8sClient.List(ctx, &applications,
-						client.InNamespace(argoCDNamespace))).To(Succeed())
+						client.InNamespace(namespace))).To(Succeed())
 					for i := range applications.Items {
 						application := &applications.Items[i]
 						if application.DeletionTimestamp.IsZero() {
@@ -284,7 +274,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 
 			By("Cleanup the Applications")
 			var applications argocdv1alpha1.ApplicationList
-			Expect(k8sClient.List(ctx, &applications, client.InNamespace(argoCDNamespace))).To(Succeed())
+			Expect(k8sClient.List(ctx, &applications, client.InNamespace(namespace))).To(Succeed())
 			for i := range applications.Items {
 				application := &applications.Items[i]
 				// Nothing runs Argo CD here, so its cascade finalizer would keep
@@ -398,9 +388,14 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(application.Spec.Source.TargetRevision).To(Equal(revision))
 			// path, not chart: the catalog is a Git repository.
 			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/argo_rollouts"))
-			// By name, not by server: the name is the CCLInfraPlane's.
-			Expect(application.Spec.Destination.Name).To(Equal(planeA))
+			// By name, not by server: the name is the one the CCLInfraPlane's mirrored
+			// Secret registered, which is prefixed with the namespace.
+			Expect(application.Spec.Destination.Name).To(Equal(namespace + "-" + planeA))
 			Expect(application.Spec.Destination.Namespace).To(Equal("argo-rollouts"))
+
+			By("belonging to the namespace's AppProject, in the namespace itself")
+			Expect(application.Namespace).To(Equal(namespace))
+			Expect(application.Spec.Project).To(Equal(namespace))
 
 			By("carrying the cascade finalizer")
 			Expect(application.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
@@ -639,18 +634,15 @@ var _ = Describe("CCLDeployment Controller", func() {
 			requests := reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      applicationName(deploymentName, firstComponent),
-					Namespace: argoCDNamespace,
-					Labels: map[string]string{
-						labelDeploymentName:      deploymentName,
-						labelDeploymentNamespace: namespace,
-					},
+					Namespace: namespace,
+					Labels:    map[string]string{labelDeploymentName: deploymentName},
 				},
 			})
 			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: deploymentKey}))
 
 			By("ignoring an Application the operator did not create")
 			Expect(reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
-				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: argoCDNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: namespace},
 			})).To(BeEmpty())
 		})
 
@@ -721,11 +713,11 @@ var _ = Describe("CCLDeployment Controller", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 
-			By("planting an Application claimed by a CCLDeployment in another namespace")
+			By("planting an Application whose back-reference points at a CCLDeployment elsewhere")
 			planted := &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      applicationName(deploymentName, firstComponent),
-					Namespace: argoCDNamespace,
+					Namespace: namespace,
 					Annotations: map[string]string{
 						annotationDeploymentName:      deploymentName,
 						annotationDeploymentNamespace: "other-namespace",

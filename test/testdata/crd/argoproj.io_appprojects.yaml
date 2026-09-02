@@ -1,0 +1,35 @@
+# A minimal stand-in for Argo CD's AppProject CRD, so envtest can store the AppProject
+# the control-plane operator creates for each ccluster namespace.
+#
+# Like argoproj.io_applications.yaml, this exists because the real CRD ships only as a
+# Helm template inside the argo-cd chart (argo-cd/templates/crds/crd-appproject.yaml in
+# charts/cp/chart/charts/argo-cd-*.tgz) and cannot be copied into CRDDirectoryPaths. The
+# schema is left open: the tests only need the object stored and read back.
+#
+# No status subresource, matching the real CRD - Argo CD keeps no status on a project.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: appprojects.argoproj.io
+spec:
+  group: argoproj.io
+  names:
+    kind: AppProject
+    listKind: AppProjectList
+    plural: appprojects
+    singular: appproject
+    shortNames:
+      - appproj
+      - appprojs
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

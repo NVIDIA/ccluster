@@ -63,7 +63,9 @@ kubectl apply -f config/samples/v1alpha1_ccldeployment.yaml
 
 kubectl get cclinfraplanes
 kubectl get ccldeployments
-kubectl get applications -n argocd -L ccluster.nvidia.com/wave
+# The Applications sit next to the CCLDeployment, in its namespace, under an Argo CD
+# AppProject named after that namespace.
+kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
 The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revision`

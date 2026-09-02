@@ -130,6 +130,50 @@ func TestOwnedBy(t *testing.T) {
 	}
 }
 
+// TestNamespaceOwner covers the single-key owner the AppProject uses. Its adopt-if-unclaimed
+// rule is what lets the operator take over Argo CD's built-in "default" project.
+func TestNamespaceOwner(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{name: "adopts an unclaimed object", annotations: nil, want: true},
+		{
+			name:        "accepts an object claimed by this namespace",
+			annotations: map[string]string{annotationInfraPlaneNamespace: "default"},
+			want:        true,
+		},
+		{
+			name:        "rejects an object claimed by another namespace",
+			annotations: map[string]string{annotationInfraPlaneNamespace: "other"},
+			want:        false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := projectOwner.ownedBy(secretWith(test.annotations), "default"); got != test.want {
+				t.Errorf("ownedBy() = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	t.Run("makes a stamped object pass its own ownedBy check", func(t *testing.T) {
+		obj := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+		projectOwner.stamp(obj, "default")
+		if !projectOwner.ownedBy(obj, "default") {
+			t.Error("ownedBy() = false after stamp(), want true")
+		}
+		if projectOwner.ownedBy(obj, "other") {
+			t.Error("ownedBy() = true for another namespace, want false")
+		}
+		if obj.Labels[labelManagedBy] != labelManagedByValue {
+			t.Errorf("%s = %q, want %q", labelManagedBy, obj.Labels[labelManagedBy], labelManagedByValue)
+		}
+	})
+}
+
 func TestStamp(t *testing.T) {
 	owner := ownerInfraPlane("plane-a", "default")
 

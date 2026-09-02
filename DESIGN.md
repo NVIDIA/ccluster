@@ -94,17 +94,60 @@ points at a `Secret` in the **same namespace** holding that cluster's Argo CD cr
 the usual `server`, `config`, and optionally `tlsClientConfig` keys.
 
 `CCLInfraPlaneReconciler` (`internal/controller/cp/cclinfraplane_controller.go`) mirrors that
-Secret into the Argo CD namespace (`--argocd-namespace`) under the **CCLInfraPlane's own
-name**, labelled `argocd.argoproj.io/secret-type: cluster`, which is how Argo CD discovers
-clusters. Every key is copied verbatim, except one:
+Secret into the Argo CD namespace (`--argocd-namespace`) under the name
+**`<namespace>-<name>`**, labelled `argocd.argoproj.io/secret-type: cluster`, which is how
+Argo CD discovers clusters. Cluster Secrets are the one thing Argo CD reads only from its own
+namespace — there is no "clusters in any namespace" — so they stay there, and the prefix is
+what keeps two namespaces' same-named planes apart. Every key is copied verbatim, except two:
 
 ```go
-mirror.Data[argoCDClusterNameKey] = []byte(infraPlane.Name)   // "name"
+mirror.Data[argoCDClusterNameKey]    = []byte("<namespace>-<name>")   // "name"
+mirror.Data[argoCDClusterProjectKey] = []byte("<namespace>")          // "project"
 ```
 
 `data["name"]` is always overwritten, because that key *is* the cluster's identity inside
 Argo CD, and it is what `CCLDeployment` components address a destination by. Letting the
-source Secret set it would break the link between the two CRDs.
+source Secret set it would break the link between the two CRDs. `data["project"]` makes the
+cluster **project-scoped**: only Applications in that AppProject may deploy to it.
+
+### One AppProject per namespace
+
+Before it touches the Secret, the same reconciler writes an Argo CD `AppProject` into the
+Argo CD namespace, **named after the CCLInfraPlane's namespace**
+(`cclinfraplane_project.go`). Every CCLInfraPlane and CCLDeployment in a namespace shares it;
+it is the isolation boundary on the Argo CD side:
+
+```go
+SourceRepos:                     [<--catalog-repo-url>],          // the catalog, nothing else
+SourceNamespaces:                [<namespace>],                   // Applications may live here
+Destinations:                    [{Server: "*", Namespace: "*"}],
+PermitOnlyProjectScopedClusters: true,                            // ...but only this namespace's clusters
+ClusterResourceWhitelist:        [{Group: "*", Kind: "*"}],
+```
+
+`sourceNamespaces` is the project-side half of Argo CD's "Applications in any namespace"
+feature; the cp chart supplies the controller-side half by setting
+`application.namespaces: "*"` on `argocd-cmd-params-cm`. It is omitted when the namespace
+*is* the Argo CD namespace, which Argo CD forbids granting and which needs no grant. The
+project is created whenever a CCLInfraPlane exists in the namespace, credentials or not,
+and deleted by the finalizer of the **last** non-terminating CCLInfraPlane in the namespace.
+Terminating planes are not counted, so two deleted together both try the delete rather than
+each deferring to the other.
+
+The project exists before `Available` is ever set to true. That ordering is a contract:
+`CCLDeploymentReconciler` writes Applications into the project without checking for it,
+because an `Available` CCLInfraPlane in the namespace already guarantees it.
+
+Naming the project after the namespace means CCLInfraPlanes in the `default` namespace adopt
+and rewrite Argo CD's built-in `default` project — the same adopt-if-unclaimed rule as every
+other object the operator owns — and the last one out deletes it. That is accepted: the
+built-in project permits everything, which is exactly what a ccluster namespace's project
+must not do.
+
+If Argo CD is not installed, the AppProject CRD is missing along with the Application CRD.
+The reconciler logs and carries on rather than failing: the CCLDeployment controller reports
+`ApplicationCRDMissing` in the same situation, and the restart that follows installing Argo
+CD reconciles every CCLInfraPlane and creates the projects then.
 
 This also covers the control-plane cluster itself: a Secret whose `server` is exactly
 `https://kubernetes.default.svc` makes Argo CD connect using its own ServiceAccount. Such a
@@ -113,32 +156,37 @@ under the CCLInfraPlane's name.
 
 ### Ownership by annotation, not `ownerReference`
 
-The mirrored Secret lives in the Argo CD namespace; the `CCLInfraPlane` may live anywhere.
-Owner references cannot cross namespaces — the garbage collector would look for the owner in
-the Secret's own namespace, fail to find it, and delete the Secret. So ownership is recorded
-as a back-reference annotation pair instead (`internal/controller/cp/ownership.go`):
+The mirrored Secret and the AppProject live in the Argo CD namespace; the `CCLInfraPlane`
+may live anywhere. Owner references cannot cross namespaces — the garbage collector would
+look for the owner in the object's own namespace, fail to find it, and delete the object. So
+ownership is recorded as back-reference annotations instead
+(`internal/controller/cp/ownership.go`). The Secret carries a pair naming its CCLInfraPlane;
+the AppProject, which belongs to the namespace rather than to any one plane, carries only
+the second:
 
 ```
 ccluster.nvidia.com/infraplane-name
 ccluster.nvidia.com/infraplane-namespace
 ```
 
-`ownedBy` treats an object carrying **neither** annotation as adoptable, and one carrying a
+`ownedBy` treats an object carrying **no** back-reference as adoptable, and one carrying a
 *different* back-reference as foreign. The asymmetry is deliberate: adopting an unclaimed
-object lets the operator recover from a partial write, while refusing a claimed one is what
-stops two same-named CCLInfraPlanes in different namespaces from fighting over a single
-Secret. A foreign object produces `Available=False/ClusterSecretConflict` rather than an
-error — retrying would not help.
+object lets the operator recover from a partial write (and take over Argo CD's built-in
+`default` project), while refusing a claimed one is what stops two CCLInfraPlanes whose
+names collide from fighting over a single Secret — `<namespace>-<name>` is not
+collision-free: `a-b`/`c` and `a`/`b-c` both yield `a-b-c`. A foreign object produces
+`Available=False` with `ClusterSecretConflict` or `ProjectConflict` rather than an error —
+retrying would not help.
 
 Because there is no owner reference, there is no garbage collection either, so the finalizer
-`ccluster.nvidia.com/argocd-cluster-secret` deletes the mirror on delete — and only if the
-ownership check still agrees it is ours.
+`ccluster.nvidia.com/argocd-cluster-secret` deletes the mirror, and the project if unused,
+on delete — and only if the ownership check still agrees they are ours.
 
 ### Status
 
 `Available` — `True/ClusterSecretCreated`, or `False` with `SecretNotFound` (the referenced
-Secret does not exist yet) or `ClusterSecretConflict`. Neither failure requeues: the
-controller watches Secrets, so the fix re-triggers it.
+Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No failure
+requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
 
 ## 4. `CCLDeployment` — an ordered bundle of charts
 
@@ -177,7 +225,8 @@ Each component is one Helm chart on one cluster:
   the repository itself.
 - **`infraPlaneRef` is same-namespace**, and the CCLInfraPlane must already be `Available`,
   because the Application addresses its destination **by name** and that name only exists
-  once the cluster Secret has been mirrored.
+  once the cluster Secret has been mirrored — and because `Available` is what guarantees
+  the namespace's AppProject exists for the Application to belong to.
 - **`values` passes through untouched.** It is `apiextensionsv1.JSON` with
   `x-kubernetes-preserve-unknown-fields`, forwarded as Argo CD's `helm.valuesObject` — so it
   travels as structured data rather than a marshalled YAML string. The operator neither
@@ -225,17 +274,24 @@ adding dependencies will not invalidate objects written today.
 
 ### The generated Application
 
-One Argo CD `Application` per released component, named `{deployment}-{component}`, in the
-Argo CD namespace (`ccldeployment_builder.go`):
+One Argo CD `Application` per released component, named `{deployment}-{component}`, **in
+the CCLDeployment's own namespace** — not the Argo CD namespace — under that namespace's
+AppProject (`ccldeployment_builder.go`):
 
 ```go
-Project: "default",
+Project: <deployment.Namespace>,
 Source: { RepoURL: <--catalog-repo-url>, TargetRevision: <--catalog-revision>,
           Path: component.Chart, Helm: {ValuesObject: component.Values} },
-Destination: { Name: component.InfraPlaneRef.Name, Namespace: component.Namespace },
+Destination: { Name: "<deployment.Namespace>-<component.InfraPlaneRef.Name>",
+               Namespace: component.Namespace },
 SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
               SyncOptions: ["CreateNamespace=true", "ServerSideApply=true"] },
 ```
+
+Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
+them because the project's `sourceNamespaces` names the namespace. Since Applications and
+CCLDeployment now share a namespace, two same-named CCLDeployments can no longer collide on
+an Application name; the ownership check remains for a manifest copied in from elsewhere.
 
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
@@ -243,8 +299,11 @@ unmanaged on the infra-plane cluster.
 
 `spec` is rebuilt from scratch on every reconcile, so hand edits are reverted rather than
 merged. Ownership uses the same annotation scheme as above, with
-`ccluster.nvidia.com/deployment-{name,namespace}`; the same pair is also written as *labels*,
+`ccluster.nvidia.com/deployment-{name,namespace}`; the name is also written as a *label*,
 which is what the controller selects on to find the Applications it has already released.
+An owner reference would be legal here, since both objects share a namespace, and is
+deliberately not used: garbage collection would delete every Application at once, and the
+whole point of the teardown finalizer is to remove them one at a time in reverse.
 
 ### Why not an ApplicationSet, and why not RollingSync
 
@@ -319,7 +378,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 
 | CRD | Condition | Meaning |
 | --- | --- | --- |
-| `CCLInfraPlane` | `Available` | The cluster Secret has been mirrored. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`. |
+| `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLDeployment` | `Validated` | Every `infraPlaneRef` resolves to an `Available` CCLInfraPlane. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLDeployment` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLDeployment` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on; `False/RolloutComplete` when every component is healthy and synced. |
@@ -333,19 +392,22 @@ Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that i
 informational — nothing reads it — so that
 
 ```bash
-kubectl get applications -n argocd -L ccluster.nvidia.com/wave
+kubectl get applications -n <deployment namespace> -L ccluster.nvidia.com/wave
 ```
 
 shows the order the operator is working through.
 
 ### Watches
 
-Neither controller uses `Owns()`, because owner references cannot cross namespaces. Both use
+Neither controller uses `Owns()` — owner references cannot cross namespaces, and for the
+same-namespace Applications garbage collection would defeat the ordered teardown. Both use
 `Watches` with map functions instead:
 
 - `CCLInfraPlane` watches `Secret`s. A Secret in the Argo CD namespace carrying the
   back-reference annotations maps straight to its CCLInfraPlane; otherwise the controller
-  lists CCLInfraPlanes in the Secret's namespace and matches `clusterCredentialsRef`.
+  lists CCLInfraPlanes in the Secret's namespace and matches `clusterCredentialsRef`. It
+  also watches `AppProject`s: one in the Argo CD namespace maps to every CCLInfraPlane in
+  the namespace it is named after, so a project deleted or loosened by hand is repaired.
 - `CCLDeployment` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   deployments waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
@@ -377,8 +439,8 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a
   quick tier (`make test-e2e`, the CI default, `ARGOCD=false`) and a full tier
   (`make test-e2e-full`, explicit only, real Argo CD). The quick tier covers
-  `ApplicationCRDMissing` and, via a CRD-only render trick, the `argoproj.io/applications` RBAC
-  rule without paying for a real Argo CD install. The full tier goes further: a real catalog
+  `ApplicationCRDMissing` and, via a CRD-only render trick, the `argoproj.io/applications`
+  and `argoproj.io/appprojects` RBAC rules without paying for a real Argo CD install. The full tier goes further: a real catalog
   component reaching `Healthy`/`Synced` under genuine reconciliation (with an explicit check
   that the ~600KB `rollouts.argoproj.io` CRD itself reports `Synced`, not just the aggregate
   Application — the concrete case `ServerSideApply`/`controller.diff.server.side` exist for,

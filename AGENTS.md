@@ -23,7 +23,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `config/cp/`, `config/ip/` | Per-operator kustomize overlays. Not a deploy path any more — they are the **input** the Helm charts are generated from. |
 | `config/crd/` | Generated CRDs. Referenced by the cp overlay only. |
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
-| `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
+| `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` and `AppProject` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
 | `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
@@ -154,11 +154,27 @@ render-only assertions moved into `helm template` output in
 Both live in `internal/controller/cp/`. [DESIGN.md](DESIGN.md) explains them properly; these
 are the parts a well-meaning change breaks silently.
 
-`CCLInfraPlaneReconciler` registers a cluster with Argo CD by mirroring the Secret named by
-`spec.clusterCredentialsRef` into `--argocd-namespace`, under the CCLInfraPlane's own name.
+`CCLInfraPlaneReconciler` registers a cluster with Argo CD. It writes two things into
+`--argocd-namespace`: an `AppProject` named after the CCLInfraPlane's **namespace**, shared
+by everything in that namespace, and a mirror of the Secret named by
+`spec.clusterCredentialsRef`, named `<namespace>-<name>` and scoped to that project via
+`data.project`.
 
 `CCLDeploymentReconciler` turns each component of a `CCLDeployment` into one Argo CD
-`Application`, in order.
+`Application`, in order — written into the **CCLDeployment's own namespace**, not the Argo
+CD namespace, under that namespace's AppProject. Argo CD sees them because the cp chart sets
+`application.namespaces: "*"`.
+
+- **`Available=True` on a CCLInfraPlane implies its namespace's AppProject exists.** The
+  project is created before the Secret is mirrored and before the condition is set, and the
+  CCLDeployment reconciler relies on that instead of checking the project itself. Do not
+  reorder the CCLInfraPlane reconcile. The project is deleted by the finalizer of the last
+  non-terminating CCLInfraPlane in the namespace.
+- **AppProject `sourceRepos` is the catalog repository only**, never `*`. The project is
+  the tenancy boundary; a wildcard would let anyone who can create an Application in the
+  namespace deploy arbitrary repositories onto its clusters.
+- **Cluster Secrets stay in the Argo CD namespace.** Argo CD reads them from nowhere else;
+  there is no "clusters in any namespace". Isolation for clusters comes from `data.project`.
 
 - **Applications are written directly. There is no ApplicationSet.** Both an ApplicationSet
   and Argo CD's `RollingSync` were implemented and removed in `2e00925`; the reasoning is in
@@ -168,9 +184,12 @@ are the parts a well-meaning change breaks silently.
   earlier one is `Healthy` *and* `Synced`, but a released component is never withdrawn when
   it degrades — deleting its Application would uninstall the chart through the cascade
   finalizer.
-- **Ownership is by annotation, never `ownerReference`.** Both controllers write into the
-  Argo CD namespace, and owner references may not cross namespaces. Use the helpers in
-  `ownership.go`; check `ownedBy` before touching or deleting anything there.
+- **Ownership is by annotation, never `ownerReference`.** The CCLInfraPlane reconciler
+  writes into the Argo CD namespace, and owner references may not cross namespaces.
+  Applications *are* same-namespace now, and still must not get an owner reference:
+  garbage collection would delete them all at once and defeat `teardownNext`'s reverse,
+  one-at-a-time teardown. Use the helpers in `ownership.go`; check `ownedBy` before
+  touching or deleting anything the operator did not just create.
 - **`ccluster.nvidia.com/wave` is a label for humans.** Nothing reads it. Ordering comes
   from the position of the component in the list.
 
@@ -234,7 +253,8 @@ A `+kubebuilder:rbac` marker therefore only reaches the operator whose controlle
 sits in. Putting one in the wrong package silently grants the wrong operator.
 
 The cp role currently covers both CRDs (plus their `status` and `finalizers` subresources),
-core `secrets` — for the mirrored Argo CD cluster Secret — and `argoproj.io/applications`.
+core `secrets` — for the mirrored Argo CD cluster Secret — `argoproj.io/applications` and
+`argoproj.io/appprojects`.
 The ip role is empty.
 
 The ip pass is disabled because `controller-gen` writes **no file at all** for a package with
@@ -438,9 +458,10 @@ rather than a coverage regression. Note three things about how they run:
 
 - No controller is started in the test manager. Every spec calls `Reconcile` directly, so
   the `Watches` map functions are exercised as plain functions and requeue behaviour is not.
-- envtest runs no Argo CD, so `test/testdata/crd/argoproj.io_applications.yaml` is a
-  schema-less stand-in for the `Application` CRD, and the specs write Application status
-  themselves to drive a rollout forward.
+- envtest runs no Argo CD, so `test/testdata/crd/argoproj.io_applications.yaml` and
+  `argoproj.io_appprojects.yaml` are schema-less stand-ins for the `Application` and
+  `AppProject` CRDs, and the specs write Application status themselves to drive a rollout
+  forward.
 - The remaining 0% is `SetupWithManager` on both reconcilers, left there on purpose: it is
   controller-runtime builder wiring whose real failure mode is a missing
   `+kubebuilder:rbac` marker, and only `make test-e2e` catches that.
@@ -455,11 +476,12 @@ manager comes up, both CRDs' RBAC surface not tied to Argo CD's presence (Secret
 The **quick** tier (`make test-e2e`, the default, no `E2E_FULL` needed) deploys with
 `ARGOCD=false` and adds two `Label("quick")` specs that need Argo CD genuinely absent:
 `ApplicationCRDMissing` — the graceful-degradation path for a cluster where Argo CD isn't
-installed yet — and a spec that renders just the Application CRD out of the vendored
-`argo-cd` dependency chart with `helm template --show-only` (a static resource, no images to
-pull), applies it, restarts the manager to pick up the watch, and asserts a real `Application`
-gets created under the operator's own `argoproj.io/applications` RBAC. This is what makes the
-quick tier fast enough to run on every PR while still exercising real RBAC.
+installed yet — and a spec that renders just the Application and AppProject CRDs out of the
+vendored `argo-cd` dependency chart with `helm template --show-only` (static resources, no
+images to pull), applies them, restarts the manager to pick up the watches, and asserts a
+real `AppProject` and `Application` get created under the operator's own
+`argoproj.io/appprojects` and `argoproj.io/applications` RBAC. This is what makes the quick
+tier fast enough to run on every PR while still exercising real RBAC.
 
 The **full** tier (`make test-e2e-full`, or `make test-e2e E2E_FULL=true`) deploys real Argo CD
 instead and adds three `Label("full")` specs: one registers the control-plane cluster with

@@ -38,6 +38,11 @@ import (
 // namespace where the project is deployed in
 const namespace = "ccluster-cp-system"
 
+// crNamespace is where the specs create their CCLInfraPlanes and CCLDeployments. The
+// operator writes each CCLDeployment's Applications into the CCLDeployment's own
+// namespace, so this is also where the Applications are looked up.
+const crNamespace = "default"
+
 // serviceAccountName created for the project
 const serviceAccountName = "ccluster-cp-controller-manager"
 
@@ -116,7 +121,7 @@ var _ = Describe("Manager", Ordered, func() {
 		// early can lose the race and be back in place by the time deletion
 		// actually starts. With the operator gone, nothing can re-add anything.
 		By("force-clearing finalizers from any CRs a failed spec left behind")
-		for _, resource := range []string{"ccldeployments", "cclinfraplanes", "applications.argoproj.io"} {
+		for _, resource := range []string{"ccldeployments", "cclinfraplanes", "applications.argoproj.io", "appprojects.argoproj.io"} {
 			out, err := utils.Run(exec.Command("kubectl", "get", resource, "-A", "-o",
 				"jsonpath={range .items[*]}{.metadata.namespace}{\" \"}{.metadata.name}{\"\\n\"}{end}"))
 			if err != nil {
@@ -365,16 +370,25 @@ spec:
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create the CCLInfraPlane")
 
+			// The mirror is named, and registers the cluster as, <namespace>-<name>.
+			mirrorName := crNamespace + "-" + infraPlaneName
+
 			By("waiting for the operator to mirror the Secret into the Argo CD namespace")
 			verifyMirrored := func(g Gomega) {
-				out, err := utils.Run(exec.Command("kubectl", "get", "secret", infraPlaneName,
-					"-n", mirrorNamespace, "-o", "jsonpath={.data.name}"))
+				out, err := utils.Run(exec.Command("kubectl", "get", "secret", mirrorName,
+					"-n", mirrorNamespace, "-o", "jsonpath={.data.name} {.data.project}"))
 				g.Expect(err).NotTo(HaveOccurred(), "Mirrored Secret not created")
 
-				decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
+				fields := strings.Fields(out)
+				g.Expect(fields).To(HaveLen(2))
+				// The operator owns both keys and overwrites whatever the source held:
+				// the cluster name, and the AppProject the cluster is scoped to.
+				name, err := base64.StdEncoding.DecodeString(fields[0])
 				g.Expect(err).NotTo(HaveOccurred())
-				// The operator owns this key and overwrites whatever the source held.
-				g.Expect(string(decoded)).To(Equal(infraPlaneName))
+				g.Expect(string(name)).To(Equal(mirrorName))
+				project, err := base64.StdEncoding.DecodeString(fields[1])
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(string(project)).To(Equal(crNamespace))
 			}
 			Eventually(verifyMirrored, 2*time.Minute).Should(Succeed())
 
@@ -406,7 +420,7 @@ spec:
 				g.Expect(err).To(HaveOccurred(), "CCLInfraPlane still present")
 
 				_, err = utils.Run(exec.Command("kubectl", "get", "secret",
-					infraPlaneName, "-n", mirrorNamespace))
+					mirrorName, "-n", mirrorNamespace))
 				g.Expect(err).To(HaveOccurred(), "Mirrored Secret was not cleaned up")
 			}
 			Eventually(verifyGone, 2*time.Minute).Should(Succeed())
@@ -508,40 +522,41 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		// Closes the `argoproj.io/applications` RBAC gap without paying for a full
-		// Argo CD install: the Application CRD is a static resource with no images
-		// to pull, so it can be rendered straight out of the vendored argo-cd
-		// dependency with `helm template --show-only` and applied on its own.
-		// CCLDeploymentReconciler only watches Application if the CRD is already
-		// served at SetupWithManager time, so the manager has to be restarted
-		// afterwards to pick it up - the same operational sequence AGENTS.md
-		// documents for installing Argo CD after the operator. Nothing here
+		// Closes the `argoproj.io/applications` and `argoproj.io/appprojects` RBAC
+		// gaps without paying for a full Argo CD install: the CRDs are static
+		// resources with no images to pull, so they can be rendered straight out of
+		// the vendored argo-cd dependency with `helm template --show-only` and
+		// applied on their own. Both reconcilers only watch their Argo CD kind if
+		// the CRD is already served at SetupWithManager time, so the manager has to
+		// be restarted afterwards to pick them up - the same operational sequence
+		// AGENTS.md documents for installing Argo CD after the operator. Nothing here
 		// reconciles the Application the way a live Argo CD would, so the rollout
 		// itself stays out of scope - that's the full tier's job.
-		It("should create a real Application once the Application CRD becomes available", Label("quick"), func() {
+		It("should create a real Application once the Argo CD CRDs become available", Label("quick"), func() {
 			const deploymentName = "e2e-real-application"
 			const planeName = "e2e-real-application-plane"
 			const credentialsName = "e2e-real-application-plane-credentials"
 			applicationName := deploymentName + "-argo-rollouts"
 
-			By("rendering the Argo CD Application CRD from the vendored dependency chart")
+			By("rendering the Argo CD Application and AppProject CRDs from the vendored dependency chart")
 			cmd := exec.Command("helm", "template", "charts/cp/chart",
 				"--set", "argo-cd.enable=true",
-				"--show-only", "charts/argo-cd/templates/crds/crd-application.yaml")
-			applicationCRD, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to render the Application CRD")
+				"--show-only", "charts/argo-cd/templates/crds/crd-application.yaml",
+				"--show-only", "charts/argo-cd/templates/crds/crd-appproject.yaml")
+			argoCDCRDs, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to render the Argo CD CRDs")
 
-			By("installing the Application CRD")
+			By("installing the Argo CD CRDs")
 			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(applicationCRD)
+			cmd.Stdin = strings.NewReader(argoCDCRDs)
 			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to install the Application CRD")
+			Expect(err).NotTo(HaveOccurred(), "Failed to install the Argo CD CRDs")
 			DeferCleanup(func() {
 				_, _ = utils.Run(exec.Command("kubectl", "delete", "crd",
-					"applications.argoproj.io", "--ignore-not-found"))
+					"applications.argoproj.io", "appprojects.argoproj.io", "--ignore-not-found"))
 			})
 
-			By("restarting the controller-manager so it picks up the Application watch")
+			By("restarting the controller-manager so it picks up the Application and AppProject watches")
 			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
 				"deploy/ccluster-cp-controller-manager"))
 			Expect(err).NotTo(HaveOccurred())
@@ -583,6 +598,14 @@ spec:
 				g.Expect(strings.TrimSpace(out)).To(Equal("True"))
 			}, 2*time.Minute).Should(Succeed())
 
+			// The AppProject is the `appprojects` half of the RBAC this spec exists
+			// for. Named after the CRs' namespace, written to the Argo CD namespace.
+			By("verifying the operator created the namespace's AppProject under its own RBAC")
+			out, err := utils.Run(exec.Command("kubectl", "get", "appproject", crNamespace,
+				"-n", namespace, "-o", "jsonpath={.spec.sourceNamespaces[0]}"))
+			Expect(err).NotTo(HaveOccurred(), "AppProject was not created")
+			Expect(strings.TrimSpace(out)).To(Equal(crNamespace))
+
 			By("creating a CCLDeployment against it")
 			applyCCLDeployment(deploymentName, planeName)
 
@@ -593,11 +616,17 @@ spec:
 			}, 2*time.Minute).Should(Succeed())
 
 			By("verifying the Application carries the expected ownership back-reference")
-			out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-				"-n", namespace, "-o",
+			out, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+				"-n", crNamespace, "-o",
 				"jsonpath={.metadata.labels['ccluster\\.nvidia\\.com/deployment-name']}"))
 			Expect(err).NotTo(HaveOccurred(), "Application was not created")
 			Expect(strings.TrimSpace(out)).To(Equal(deploymentName))
+
+			By("verifying the Application is in the namespace's project and targets the prefixed cluster name")
+			out, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+				"-n", crNamespace, "-o", "jsonpath={.spec.project} {.spec.destination.name}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Fields(out)).To(Equal([]string{crNamespace, crNamespace + "-" + planeName}))
 
 			// Deleted inline, not via DeferCleanup, for the same reason as the specs
 			// above: the finalizer needs the operator running to clear it, and
@@ -624,12 +653,12 @@ spec:
 			// removal is final.
 			By("stripping the Argo CD cascade finalizer once the Application starts terminating")
 			Eventually(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", crNamespace))
 				if err != nil {
 					return // already gone - nothing left to strip
 				}
 				_, err = utils.Run(exec.Command("kubectl", "patch", "application", applicationName,
-					"-n", namespace, "--type=json",
+					"-n", crNamespace, "--type=json",
 					"-p", `[{"op": "remove", "path": "/metadata/finalizers"}]`))
 				g.Expect(err).NotTo(HaveOccurred())
 			}, 2*time.Minute).Should(Succeed())
@@ -645,7 +674,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying the operator deleted the Application")
-			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", crNamespace))
 			Expect(err).To(HaveOccurred(), "Application was not cleaned up")
 		})
 
@@ -700,7 +729,7 @@ spec:
 
 			By("verifying the Application carries the expected ownership back-reference")
 			out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-				"-n", namespace, "-o",
+				"-n", crNamespace, "-o",
 				"jsonpath={.metadata.labels['ccluster\\.nvidia\\.com/deployment-name']}"))
 			Expect(err).NotTo(HaveOccurred(), "Application was not created")
 			Expect(strings.TrimSpace(out)).To(Equal(deploymentName))
@@ -708,12 +737,12 @@ spec:
 			By("waiting for Argo CD to actually reconcile it to Healthy and Synced")
 			Eventually(func(g Gomega) {
 				health, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.health.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
 
 				sync, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.sync.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 			}, 8*time.Minute).Should(Succeed())
@@ -728,7 +757,7 @@ spec:
 			By("verifying the large CRD resource itself reports Synced, not just the aggregate status")
 			Eventually(func(g Gomega) {
 				out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", namespace, "-o",
+					"-n", crNamespace, "-o",
 					`jsonpath={.status.resources[?(@.kind=="CustomResourceDefinition")].status}`))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(out)).To(Equal("Synced"))
@@ -758,7 +787,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying the operator deleted the Application")
-			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", namespace))
+			_, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName, "-n", crNamespace))
 			Expect(err).To(HaveOccurred(), "Application was not cleaned up")
 		})
 
@@ -803,7 +832,7 @@ spec:
 
 			By("waiting for the first component's Application to appear")
 			Eventually(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", crNamespace))
 				g.Expect(err).NotTo(HaveOccurred())
 			}, 2*time.Minute).Should(Succeed())
 
@@ -813,38 +842,38 @@ spec:
 			// cost, not confidence.
 			By("confirming the second component's Application is withheld until the first converges")
 			Consistently(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", crNamespace))
 				g.Expect(err).To(HaveOccurred(), "keda Application created before argo-rollouts converged")
 			}, 30*time.Second, 5*time.Second).Should(Succeed())
 
 			By("waiting for argo-rollouts to converge")
 			Eventually(func(g Gomega) {
 				health, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp,
-					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.health.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
 
 				sync, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp,
-					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.sync.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 			}, 8*time.Minute).Should(Succeed())
 
 			By("waiting for keda's Application to appear now that argo-rollouts has converged")
 			Eventually(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", crNamespace))
 				g.Expect(err).NotTo(HaveOccurred())
 			}, 2*time.Minute).Should(Succeed())
 
 			By("waiting for keda to also converge")
 			Eventually(func(g Gomega) {
 				health, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp,
-					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.health.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
 
 				sync, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp,
-					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.sync.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 			}, 8*time.Minute).Should(Succeed())
@@ -856,7 +885,7 @@ spec:
 
 			By("confirming keda's Application is deleted")
 			Eventually(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", crNamespace))
 				g.Expect(err).To(HaveOccurred(), "keda Application should be gone")
 			}, 5*time.Minute).Should(Succeed())
 
@@ -866,13 +895,13 @@ spec:
 			// still be here immediately after keda's disappears.
 			By("confirming argo-rollouts' Application is still present while keda finishes tearing down")
 			Consistently(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", crNamespace))
 				g.Expect(err).NotTo(HaveOccurred(), "argo-rollouts Application deleted before keda finished tearing down")
 			}, 15*time.Second, 5*time.Second).Should(Succeed())
 
 			By("waiting for argo-rollouts' Application to be deleted too")
 			Eventually(func(g Gomega) {
-				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", namespace))
+				_, err := utils.Run(exec.Command("kubectl", "get", "application", rolloutsApp, "-n", crNamespace))
 				g.Expect(err).To(HaveOccurred())
 			}, 5*time.Minute).Should(Succeed())
 
@@ -921,12 +950,12 @@ spec:
 			By("waiting for Argo CD to reconcile it to Healthy and Synced")
 			Eventually(func(g Gomega) {
 				health, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", namespace, "-o", "jsonpath={.status.health.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.health.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(health)).To(Equal("Healthy"))
 
 				sync, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", namespace, "-o", "jsonpath={.status.sync.status}"))
+					"-n", crNamespace, "-o", "jsonpath={.status.sync.status}"))
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 			}, 8*time.Minute).Should(Succeed())

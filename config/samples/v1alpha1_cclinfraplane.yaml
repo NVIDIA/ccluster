@@ -27,8 +27,10 @@ metadata:
   name: ccluster-local-credentials
 type: Opaque
 stringData:
-  # No "name" key: the operator sets it from the CCLInfraPlane's name, so this cluster
-  # appears in Argo CD as "ccluster-local". Anything set here would be overwritten.
+  # No "name" or "project" key: the operator sets both. The name is the CCLInfraPlane's,
+  # prefixed with its namespace, so applied to the default namespace this cluster
+  # appears in Argo CD as "default-ccluster-local"; the project is the namespace's own
+  # AppProject, "default". Anything set here would be overwritten.
   #
   # Must be this exact string to get the credential-free in-cluster treatment.
   server: https://kubernetes.default.svc

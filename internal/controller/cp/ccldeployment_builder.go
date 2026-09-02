@@ -34,14 +34,12 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
-// errApplicationConflict reports that an Argo CD Application name is already taken by another
-// CCLDeployment, for the same reason errClusterSecretConflict exists: two resources of
-// the same name in different namespaces map onto one object name in the Argo CD
-// namespace.
+// errApplicationConflict reports that an Argo CD Application of the wanted name exists
+// but back-references a different CCLDeployment. Applications live in their
+// CCLDeployment's namespace, so the operator's own naming cannot produce this; it means
+// an Application manifest was copied from another namespace, and it is refused rather
+// than overwritten.
 var errApplicationConflict = errors.New("application belongs to another CCLDeployment")
-
-// defaultProject is the Argo CD AppProject generated Applications belong to.
-const defaultProject = "default"
 
 // applicationName is the name Argo CD gives the Application for a component.
 func applicationName(deploymentName, componentName string) string {
@@ -63,6 +61,7 @@ func healthy(application *argocdv1alpha1.Application) bool {
 // and an object it already knows in full. Writing them directly also means values pass
 // through as structured data instead of being marshalled into a templated string.
 func (r *CCLDeploymentReconciler) applicationSpec(
+	deployment *cclusternvidiacomv1alpha1.CCLDeployment,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 ) argocdv1alpha1.ApplicationSpec {
 	var helm *argocdv1alpha1.ApplicationSourceHelm
@@ -72,7 +71,10 @@ func (r *CCLDeploymentReconciler) applicationSpec(
 	}
 
 	return argocdv1alpha1.ApplicationSpec{
-		Project: defaultProject,
+		// The namespace's project, which the CCLInfraPlane controller created before it
+		// reported the plane Available. It is what permits an Application in this
+		// namespace at all, and what confines it to the namespace's own clusters.
+		Project: projectName(deployment.Namespace),
 		Source: argocdv1alpha1.ApplicationSource{
 			// Repository and revision are operator configuration, not per component.
 			RepoURL:        r.CatalogRepoURL,
@@ -83,9 +85,9 @@ func (r *CCLDeploymentReconciler) applicationSpec(
 			Helm: helm,
 		},
 		Destination: argocdv1alpha1.ApplicationDestination{
-			// By name, not by server: the name is the CCLInfraPlane's, which its
-			// mirrored cluster Secret defines.
-			Name:      component.InfraPlaneRef.Name,
+			// By name, not by server: the name is the one the CCLInfraPlane's mirrored
+			// cluster Secret registered, and the ref is same-namespace by definition.
+			Name:      argoCDClusterName(deployment.Namespace, component.InfraPlaneRef.Name),
 			Namespace: component.Namespace,
 		},
 		SyncPolicy: &argocdv1alpha1.SyncPolicy{
@@ -121,8 +123,11 @@ func (r *CCLDeploymentReconciler) reconcileApplication(
 ) (controllerutil.OperationResult, error) {
 	application := &argocdv1alpha1.Application{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      applicationName(deployment.Name, component.Name),
-			Namespace: r.ArgoCDNamespace,
+			Name: applicationName(deployment.Name, component.Name),
+			// Alongside the CCLDeployment, not in the Argo CD namespace: Argo CD
+			// watches every namespace (the cp chart's application.namespaces), and
+			// the namespace's AppProject admits Applications from here.
+			Namespace: deployment.Namespace,
 		},
 	}
 
@@ -132,12 +137,11 @@ func (r *CCLDeploymentReconciler) reconcileApplication(
 		}
 		deploymentOwner.stamp(application, deployment)
 
-		// The back-reference as labels as well as annotations. stamp writes the
-		// annotations, which is what the ownership check reads; these are what
+		// The back-reference as a label as well as annotations. stamp writes the
+		// annotations, which is what the ownership check reads; this is what
 		// listApplications selects on, and selecting is how the operator knows which
 		// components it has already released.
 		application.Labels[labelDeploymentName] = deployment.Name
-		application.Labels[labelDeploymentNamespace] = deployment.Namespace
 
 		// Position in the rollout. Nothing acts on it - it is a label so that
 		// `kubectl get applications -L ccluster.nvidia.com/wave` shows the order the
@@ -152,7 +156,7 @@ func (r *CCLDeploymentReconciler) reconcileApplication(
 
 		// Owned outright: rebuilt from scratch every reconcile, so hand edits are
 		// reverted rather than merged.
-		application.Spec = r.applicationSpec(component)
+		application.Spec = r.applicationSpec(deployment, component)
 		return nil
 	})
 }
@@ -211,7 +215,7 @@ func (r *CCLDeploymentReconciler) pruneApplications(
 		}
 		pruned = true
 		log.Info("Deleted Argo CD Application for a removed component",
-			"application", name, "namespace", r.ArgoCDNamespace)
+			"application", name, "namespace", deployment.Namespace)
 	}
 	return pruned, nil
 }
@@ -250,7 +254,7 @@ func (r *CCLDeploymentReconciler) teardownNext(
 		// produce a line on every requeue while teardown runs.
 		for _, name := range sortedNames(all) {
 			log.Info("Left Application owned by another CCLDeployment in place",
-				"application", name, "namespace", r.ArgoCDNamespace)
+				"application", name, "namespace", deployment.Namespace)
 		}
 		return 0, nil
 	}
@@ -260,7 +264,7 @@ func (r *CCLDeploymentReconciler) teardownNext(
 	for _, name := range sortedNames(owned) {
 		if !owned[name].DeletionTimestamp.IsZero() {
 			log.V(1).Info("Waiting for Application to finish terminating",
-				"application", name, "namespace", r.ArgoCDNamespace)
+				"application", name, "namespace", deployment.Namespace)
 			return len(owned), nil
 		}
 	}
@@ -277,7 +281,7 @@ func (r *CCLDeploymentReconciler) teardownNext(
 			return len(owned), err
 		}
 		log.Info("Deleted Argo CD Application", "application", name,
-			"namespace", r.ArgoCDNamespace, "wave", i+1)
+			"namespace", deployment.Namespace, "wave", i+1)
 		return len(owned), nil
 	}
 
@@ -289,7 +293,7 @@ func (r *CCLDeploymentReconciler) teardownNext(
 		return len(owned), err
 	}
 	log.Info("Deleted Argo CD Application for a component no longer in the spec",
-		"application", name, "namespace", r.ArgoCDNamespace)
+		"application", name, "namespace", deployment.Namespace)
 	return len(owned), nil
 }
 
@@ -315,11 +319,8 @@ func (r *CCLDeploymentReconciler) listApplications(
 ) (map[string]*argocdv1alpha1.Application, error) {
 	var list argocdv1alpha1.ApplicationList
 	err := r.List(ctx, &list,
-		client.InNamespace(r.ArgoCDNamespace),
-		client.MatchingLabels{
-			labelDeploymentName:      deployment.Name,
-			labelDeploymentNamespace: deployment.Namespace,
-		})
+		client.InNamespace(deployment.Namespace),
+		client.MatchingLabels{labelDeploymentName: deployment.Name})
 	switch {
 	case apimeta.IsNoMatchError(err):
 		return map[string]*argocdv1alpha1.Application{}, nil
@@ -410,7 +411,7 @@ func (r *CCLDeploymentReconciler) applicationsCondition(
 	case err == nil:
 		return metav1.ConditionTrue, reasonApplicationsCreated, fmt.Sprintf(
 			"Applied %d of %d components in namespace %q",
-			released, len(deployment.Spec.Components), r.ArgoCDNamespace), nil
+			released, len(deployment.Spec.Components), deployment.Namespace), nil
 	case apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err):
 		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
 		// started first.
@@ -419,7 +420,7 @@ func (r *CCLDeploymentReconciler) applicationsCondition(
 	case errors.Is(err, errApplicationConflict):
 		return metav1.ConditionFalse, reasonApplicationConflict, fmt.Sprintf(
 			"An Application in namespace %q belongs to another CCLDeployment",
-			r.ArgoCDNamespace), nil
+			deployment.Namespace), nil
 	default:
 		return metav1.ConditionFalse, reasonApplicationFailed, err.Error(), err
 	}

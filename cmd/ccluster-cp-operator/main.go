@@ -52,9 +52,9 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(scheme))
-	// Argo CD's Application, which the CCLDeployment controller creates. Registering
-	// it is safe on a cluster with no Argo CD: the missing CRD surfaces at reconcile
-	// time, from the RESTMapper, rather than at startup.
+	// Argo CD's Application and AppProject, which the two controllers create.
+	// Registering them is safe on a cluster with no Argo CD: the missing CRDs surface
+	// at reconcile time, from the RESTMapper, rather than at startup.
 	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -64,7 +64,8 @@ func main() {
 	// specific to the control-plane operator, so it does not belong in
 	// internal/manager alongside the operator-agnostic ones.
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd",
-		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes are written there.")
+		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes, "+
+			"and the AppProject for each of their namespaces, are written there.")
 	flag.StringVar(&catalogRepoURL, "catalog-repo-url", "https://github.com/NVIDIA/ccluster",
 		"The Git repository holding the chart catalog. Argo CD's repo-server must be able to clone it.")
 	flag.StringVar(&catalogRevision, "catalog-revision", "main",
@@ -91,13 +92,13 @@ func setupControllers(mgr ctrl.Manager) error {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		ArgoCDNamespace: argoCDNamespace,
+		CatalogRepoURL:  catalogRepoURL,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
 	if err := (&cp.CCLDeploymentReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
-		ArgoCDNamespace: argoCDNamespace,
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 	}).SetupWithManager(mgr); err != nil {
