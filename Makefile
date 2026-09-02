@@ -405,7 +405,14 @@ CATALOG_REVISION ?= main
 #
 # The token is expanded by the recipe's shell ($$GITHUB_TOKEN, exported below) rather than
 # by make, so that make's echo of the helm command shows the variable name, not the value.
-GITHUB_TOKEN ?=
+#
+# Unset, it defaults to `gh auth token` when the GitHub CLI is installed and logged in, so
+# a local `make deploy-cp` picks up the developer's own credential without being told. The
+# assignment is guarded on `origin` so an explicit GITHUB_TOKEN=... on the command line or
+# in the environment still wins, and simply-expanded so gh runs at most once per make.
+ifeq ($(origin GITHUB_TOKEN),undefined)
+GITHUB_TOKEN := $(shell command -v gh >/dev/null 2>&1 && gh auth token 2>/dev/null)
+endif
 export GITHUB_TOKEN
 CATALOG_CREDENTIALS = $(if $(GITHUB_TOKEN),\
 	--set argo-cd.configs.repositories.catalog.url=$(CATALOG_REPO_URL) \
