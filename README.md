@@ -69,8 +69,9 @@ kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
 The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revision`
-(`https://github.com/NVIDIA/ccluster` at `main` by default), so it works against a fresh
-clone without any extra setup. Point it at a fork or branch with
+(`https://github.com/NVIDIA/ccluster` at `main` by default). Argo CD clones that repository
+itself, so if it is private give it a token with read access:
+`make deploy-cp GITHUB_TOKEN=...`. Point it at a fork or branch with
 `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 
 ## Local development

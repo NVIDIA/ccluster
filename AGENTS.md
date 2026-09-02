@@ -149,6 +149,15 @@ render-only assertions moved into `helm template` output in
 `make helm-deps-update-cp` re-resolves the dependency and refreshes
 `Chart.lock`; that is how you bump the Argo CD version.
 
+Argo CD clones the catalog (`CATALOG_REPO_URL`) itself, anonymously by default. GitHub
+answers a private repository with `authentication required: Repository not found`, which
+surfaces as a `ComparisonError` on every Application. `make deploy-cp GITHUB_TOKEN=...`
+(or the variable in the environment) registers the catalog as an Argo CD repository with
+that token via the argo-cd chart's `configs.repositories`; the full e2e tier needs it too
+unless the repository is public. There is deliberately no local git server: Argo CD only
+clones over http(s)/ssh, so serving a checkout means running a server in or next to the
+cluster, and pushing to GitHub was judged the smaller cost.
+
 ### The two controllers, and the invariants they rest on
 
 Both live in `internal/controller/cp/`. [DESIGN.md](DESIGN.md) explains them properly; these

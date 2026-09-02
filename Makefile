@@ -340,6 +340,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enable=$(ARGOCD) \
 		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
+		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp
@@ -396,6 +397,16 @@ ARGOCD ?= true
 # repo-server clones the repository itself, so the revision must be pushed.
 CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
 CATALOG_REVISION ?= main
+# Argo CD clones the catalog anonymously unless told otherwise, and GitHub answers a
+# private repository with "authentication required: Repository not found". Set
+# GITHUB_TOKEN (a token with read access to CATALOG_REPO_URL; in GitHub Actions the
+# built-in one) and deploy-cp registers the catalog as an Argo CD repository with that
+# credential, through the argo-cd chart's configs.repositories. Empty means anonymous.
+GITHUB_TOKEN ?=
+CATALOG_CREDENTIALS = $(if $(GITHUB_TOKEN),\
+	--set argo-cd.configs.repositories.catalog.url=$(CATALOG_REPO_URL) \
+	--set argo-cd.configs.repositories.catalog.username=git \
+	--set-string argo-cd.configs.repositories.catalog.password=$(GITHUB_TOKEN),)
 # The kubeconfig context each operator is deployed to. Empty means "whatever the
 # current context is", which is what deploy-cp / deploy-ip on their own have always
 # done. `make deploy` sets them to the two development clusters.

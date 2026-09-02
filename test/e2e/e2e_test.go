@@ -84,6 +84,9 @@ var _ = Describe("Manager", Ordered, func() {
 
 		deployArgs := []string{"deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage)}
 		if full {
+			// Argo CD clones the catalog itself. If the catalog repository is
+			// private, GITHUB_TOKEN must be set in the environment: `make deploy-cp`
+			// picks it up and registers the repository credential with Argo CD.
 			By("deploying the controller-manager and Argo CD (full tier)")
 			deployArgs = append(deployArgs, "HELM_TIMEOUT=10m")
 		} else {
