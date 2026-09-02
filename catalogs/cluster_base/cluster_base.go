@@ -42,7 +42,6 @@ import (
 	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 )
 
-
 func Components(
 	infraPlane string,
 ) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {

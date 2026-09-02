@@ -138,7 +138,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
-					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalSecretReference{
+					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: secretName,
 					},
 				},

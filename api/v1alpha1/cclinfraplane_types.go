@@ -22,15 +22,6 @@ import (
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// LocalSecretReference references a Secret in the same namespace as the referring object.
-type LocalSecretReference struct {
-	// name is the name of the Secret.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	Name string `json:"name"`
-}
-
 // CCLInfraPlaneSpec defines the desired state of CCLInfraPlane
 type CCLInfraPlaneSpec struct {
 	// clusterCredentialsRef references a Secret in the same namespace as this
@@ -47,7 +38,7 @@ type CCLInfraPlaneSpec struct {
 	// referenced Secret holds. See
 	// https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
 	// +required
-	ClusterCredentialsRef LocalSecretReference `json:"clusterCredentialsRef"`
+	ClusterCredentialsRef LocalObjectReference `json:"clusterCredentialsRef"`
 }
 
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.

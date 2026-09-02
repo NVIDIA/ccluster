@@ -21,17 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LocalObjectReference references an object in the same namespace as the referring
-// object. It is the same shape as LocalSecretReference, kept separate so the two can
-// document different targets.
-type LocalObjectReference struct {
-	// name is the name of the referenced object.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	Name string `json:"name"`
-}
-
 // ComponentEntry is the chart half of a component: which chart, where it is installed,
 // and the values it is installed with.
 //
