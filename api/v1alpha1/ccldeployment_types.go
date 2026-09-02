@@ -21,34 +21,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// LocalObjectReference references an object in the same namespace as the referring
-// object. It is the same shape as LocalSecretReference, kept separate so the two can
-// document different targets.
-type LocalObjectReference struct {
-	// name is the name of the referenced object.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	Name string `json:"name"`
-}
-
-// ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
-type ComponentSpec struct {
-	// name identifies the component within this CCLDeployment. It is templated into
-	// the generated Argo CD Application's name, so it has to be DNS-1123.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Name string `json:"name"`
-
-	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-	// in the same namespace as this CCLDeployment, and must already be Available -
-	// that is, its cluster credentials have been mirrored into the Argo CD namespace,
-	// which is what lets the generated Application address the cluster by name.
-	// +required
-	InfraPlaneRef LocalObjectReference `json:"infraPlaneRef"`
-
+// ComponentEntry is the chart half of a component: which chart, where it is installed,
+// and the values it is installed with.
+//
+// It is embedded into ComponentSpec inline, so chart, namespace and values remain
+// component-level fields on the wire. It exists as a type so that the catalog packages
+// under catalogs/ can build one from a typed, per-chart values struct — see
+// catalogs.Entry. Nothing validates a submitted CCLDeployment against those typed
+// schemas: values here is as untyped as it has always been.
+type ComponentEntry struct {
 	// chart is the chart's directory, relative to the root of the catalog repository.
 	//
 	// The repository and revision are not settable per component: they are how the
@@ -72,6 +53,29 @@ type ComponentSpec struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Values *apiextensionsv1.JSON `json:"values,omitempty"`
+}
+
+// ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
+type ComponentSpec struct {
+	// name identifies the component within this CCLDeployment. It is templated into
+	// the generated Argo CD Application's name, so it has to be DNS-1123.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
+	// in the same namespace as this CCLDeployment, and must already be Available -
+	// that is, its cluster credentials have been mirrored into the Argo CD namespace,
+	// which is what lets the generated Application address the cluster by name.
+	// +required
+	InfraPlaneRef LocalObjectReference `json:"infraPlaneRef"`
+
+	// ComponentEntry names the chart, the namespace it is installed into, and the
+	// values it is installed with. Embedded anonymously so those three stay
+	// component-level fields in YAML.
+	ComponentEntry `json:",inline"`
 }
 
 // CCLDeploymentSpec defines the desired state of CCLDeployment

@@ -70,7 +70,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. A placeholder: it registers no controllers yet. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components. |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components, each paired with a Go package describing that chart's values (§4). |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -182,6 +182,38 @@ Each component is one Helm chart on one cluster:
   `x-kubernetes-preserve-unknown-fields`, forwarded as Argo CD's `helm.valuesObject` — so it
   travels as structured data rather than a marshalled YAML string. The operator neither
   interprets it nor validates it against the chart.
+
+`chart`, `namespace` and `values` are grouped into a `ComponentEntry` struct, embedded into
+`ComponentSpec` with `json:",inline"`. The embed is anonymous because `encoding/json` inlines
+only anonymous fields, so the three stay component-level fields on the wire and the grouping
+is purely a Go-side one. It exists so the catalog packages can produce a `ComponentEntry`
+from a typed, per-chart values struct.
+
+### The typed catalog, and what it does not guarantee
+
+Each chart under `catalogs/cluster_base/` has a Go package alongside it declaring its values
+as typed structs, plus a `New(namespace, values)` that builds a `v1alpha1.ComponentEntry`
+from them — the API type itself, not a catalog-side mirror of it. A caller building a
+`CCLDeployment` in Go gets compile-time checking of the values it sets.
+
+A component knows its chart directory and nothing else: its name, its namespace and its
+position in the rollout are all the caller's, because they are deployment choices rather
+than facts about the chart. `catalogs/cluster_base.Components(infraPlane)` writes down one
+plausible set of all three — sample names and namespaces, chart defaults for every values
+struct but teleport-kube-agent's, and the rollout order carried over from the legacy Python
+catalog's sync waves — so that a caller has something to copy rather than an empty page.
+
+**None of this is enforced at admission.** The CRD's `values` is as untyped as it ever was, so
+a hand-written `CCLDeployment` bypasses the typed layer entirely and is forwarded to Helm
+verbatim. The concrete hazard is `teleport_kube_agent`, whose `values.yaml` ships `proxyAddr:
+"<PROXY_ADDR>"` and three more placeholders: a `CCLDeployment` that omits them is accepted and
+installs an agent that cannot connect. The only check is a `Values` type's `Validate()`,
+called by `catalogs.Entry` — which a caller only reaches by going through the Go layer.
+
+The alternative, a discriminated union of 18 chart schemas inside `ComponentSpec`, would have
+bought API-server rejection at the cost of putting every chart's schema into the CRD, where
+changing one becomes a schema migration. Given §6's experience with a 600KB CRD, that trade
+was not worth making yet.
 
 CEL validation enforces unique component names, at most 50 components, and
 `metadata.name` ≤ 63 characters — the name is used as a label value on the generated
@@ -323,7 +355,17 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 ## 8. Not built yet
 
 - **`dependsOn`.** Ordering is a straight line; there is no dependency graph and no
-  parallelism between independent components.
+  parallelism between independent components. This has a concrete cost now that
+  `catalogs/cluster_base` ships a full 18-component order: the legacy Python catalog it was
+  taken from gave four components one sync wave and two others another, and those six could
+  have installed concurrently. Here they serialise, so installing the catalog is eighteen
+  sequential convergence waits.
+- **Global values.** The legacy catalog threaded a `Shared` object into every component and
+  deep-merged computed per-cluster defaults under the user's values — SPIFFE helper sidecars,
+  AWS IRSA environment, Istio CNI paths chosen by cloud provider. None of that is ported.
+  `catalogs/cluster_base/final_stack` is the visible casualty: it has no chart-level values
+  and its five templates read `.Values.global.cluster.domain`, so it renders against the
+  chart's placeholder domain until globals land.
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.

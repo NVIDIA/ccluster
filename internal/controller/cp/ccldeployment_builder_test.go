@@ -54,8 +54,10 @@ func deploymentWith(names ...string) *cclusternvidiacomv1alpha1.CCLDeployment {
 			cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          name,
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
-				Chart:         "catalogs/cluster_base/" + name,
-				Namespace:     name,
+				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+					Chart:     "catalogs/cluster_base/" + name,
+					Namespace: name,
+				},
 			})
 	}
 	return deployment
@@ -468,9 +470,11 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 			spec := reconciler.applicationSpec(cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          "a",
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
-				Chart:         "catalogs/cluster_base/a",
-				Namespace:     "a",
-				Values:        test.values,
+				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+					Chart:     "catalogs/cluster_base/a",
+					Namespace: "a",
+					Values:    test.values,
+				},
 			})
 			if spec.Source.Helm != nil {
 				t.Errorf("Source.Helm = %+v, want nil", spec.Source.Helm)

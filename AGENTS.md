@@ -24,7 +24,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `config/crd/` | Generated CRDs. Referenced by the cp overlay only. |
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
 | `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
-| `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components. **Not part of the operator build**, and deliberately unrelated to `charts/`. |
+| `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -173,6 +173,53 @@ are the parts a well-meaning change breaks silently.
   `ownership.go`; check `ownedBy` before touching or deleting anything there.
 - **`ccluster.nvidia.com/wave` is a label for humans.** Nothing reads it. Ordering comes
   from the position of the component in the list.
+
+### The catalog is Helm charts *and* Go packages
+
+`catalogs/` used to be inert as far as Go was concerned. It is not any more: each chart
+directory carries a `component.go` declaring that chart's values as typed structs, plus
+`catalogs/catalogs.go` (the `Validator` interface and the `Entry` helper) and
+`catalogs/cluster_base/cluster_base.go`. They are ordinary packages under
+`github.com/NVIDIA/ccluster/catalogs/...`, so `go build ./...`,
+`go vet ./...`, `make test` and `golangci-lint` all cover them — and a catalog package
+that fails to compile now breaks `make generate`, which runs `controller-gen` over
+`./...`.
+
+Four conventions that are not obvious from the files:
+
+- **There is no catalog-side mirror of the API types.** A component package exports a
+  `Chart` constant, a `Values` struct and
+  `New(namespace string, values Values) (v1alpha1.ComponentEntry, error)` — and nothing
+  else. `New` is one line delegating to `catalogs.Entry`, which runs the `Validator` hook
+  and marshals the values. A component does **not** know its own name or namespace: both
+  are the caller's, because they are deployment choices rather than facts about the
+  chart. `catalogs/cluster_base/cluster_base.go` supplies a **sample** set of both — plus
+  the rollout order, which reproduces the sync waves of the legacy Python catalog — as
+  `Components(infraPlane)`. It is a starting point to copy and edit, not a deployable
+  default: teleport-kube-agent's values there name an example proxy and token.
+- **Package names drop the directory's underscores.** `catalogs/cluster_base/gpu_operator`
+  is `package gpuoperator`. The directory name is load-bearing — it *is* the `chart:` path
+  Argo CD resolves — so it stays snake_case, and imports are written explicitly named.
+- **Optional scalars must be pointers** (`*bool`, `*int32`, `*string`) with `omitempty`.
+  `encoding/json` drops a plain `false` under `omitempty`, so a `bool` cannot express
+  "explicitly false" — which `gpu_operator` needs for `driver.enabled` and
+  `toolkit.enabled`, whose correct value differs between k3d and bare metal. Required
+  fields are non-pointer and carry *no* `omitempty`, so an unset one reaches Helm and
+  fails loudly instead of silently inheriting a placeholder.
+- **Nothing enforces these schemas.** The CRD's `values` is still
+  `x-kubernetes-preserve-unknown-fields`, and a hand-written `CCLDeployment` bypasses the
+  typed layer entirely. The only enforcement point is a `Values` type's `Validate()`
+  method, which `catalogs.Entry` calls if present. `teleport-kube-agent` is the one
+  component with genuinely required values, and the only implementer: its four fields
+  ship as the placeholders `<PROXY_ADDR>` and friends, so its `New` fails rather than
+  returning an entry that installs an agent which cannot connect. Its `New` is otherwise
+  byte-identical to the other seventeen — the required values go through the same
+  `values` parameter, not a second one.
+
+Each chart directory also has a hand-written `.helmignore` excluding `*.go`. Helm never
+reads them — it looks only at `Chart.yaml`, `values.yaml`, `templates/`, `charts/` and
+`crds/` — but they would otherwise be swept into a `helm package` tarball. These are
+unrelated to the *generated* `charts/{cp,ip}/chart/.helmignore`.
 
 ### RBAC is generated per operator
 

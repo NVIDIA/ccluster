@@ -27,6 +27,19 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `CCLDeployment` component `chart` paths resolve against. The repository and revision are
   operator configuration (`--catalog-repo-url`, `--catalog-revision`), settable at deploy
   time with `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
+- Go packages describing each `catalogs/cluster_base` chart's Helm values as typed structs,
+  under `github.com/NVIDIA/ccluster/catalogs/...`. Each exports
+  `New(namespace, values) (v1alpha1.ComponentEntry, error)`, building the API type directly.
+  A component knows only its chart directory: the name, namespace and rollout position of
+  each component are the caller's. `catalogs/cluster_base.Components(infraPlane)` returns a
+  sample set of all eighteen in rollout order — reproducing the sync waves of the legacy
+  Python catalog — to copy and edit. `teleport_kube_agent` is the one chart with values it
+  cannot be installed without — they ship as placeholders — and its `New` reports them
+  rather than returning an entry that installs an agent which cannot connect.
+
+  These are a convenience for callers building a `CCLDeployment` in Go, **not** a validation
+  layer: the CRD's `values` field remains untyped, and a hand-written `CCLDeployment` is still
+  forwarded to Helm verbatim.
 - `DESIGN.md`, describing the control-plane design and the alternatives rejected along the
   way — notably Argo CD `ApplicationSet` generators and the `RollingSync` sync strategy.
 - `controller.diff.server.side` enabled on the bundled Argo CD application controller, to
@@ -45,6 +58,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   deleting anything.
 
 ### Changed
+- `ComponentSpec`'s `chart`, `namespace` and `values` fields are grouped into a
+  `ComponentEntry` struct, embedded inline. **No wire-format change:** the embed is anonymous,
+  so all three remain component-level fields and the generated CRD schema is byte-identical.
 - **Breaking:** `make deploy-cp` / `deploy-ip` / `undeploy-cp` / `undeploy-ip` now use
   `helm upgrade --install` / `helm uninstall` instead of `kustomize build | kubectl apply`.
   They require `helm` on `PATH`. Resource names and namespaces are unchanged.

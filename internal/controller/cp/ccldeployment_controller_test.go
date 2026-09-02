@@ -34,6 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
+	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
+	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
@@ -74,16 +77,20 @@ var _ = Describe("CCLDeployment Controller", func() {
 				{
 					Name:          firstComponent,
 					InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
-					Chart:         "catalogs/cluster_base/argo_rollouts",
-					Namespace:     "argo-rollouts",
+					ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+						Chart:     "catalogs/cluster_base/argo_rollouts",
+						Namespace: "argo-rollouts",
+					},
 				},
 				{
 					Name:          secondComponent,
 					InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeB},
-					Chart:         "catalogs/cluster_base/keda",
-					Namespace:     "keda",
-					Values: &apiextensionsv1.JSON{
-						Raw: []byte(`{"keda":{"operator":{"replicaCount":2}}}`),
+					ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+						Chart:     "catalogs/cluster_base/keda",
+						Namespace: "keda",
+						Values: &apiextensionsv1.JSON{
+							Raw: []byte(`{"keda":{"operator":{"replicaCount":2}}}`),
+						},
 					},
 				},
 			}
@@ -95,7 +102,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 				Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
-					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalSecretReference{
+					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: name + "-credentials",
 					},
 				},
@@ -402,6 +409,58 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentName, deploymentName))
 			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentNamespace, namespace))
 			Expect(application.Labels).To(HaveKeyWithValue(labelDeploymentName, deploymentName))
+		})
+
+		// The catalog packages under catalogs/ are the only place the shape of a
+		// chart's values is written down, and nothing checks them at admission. What
+		// this does check is the other half: that entries built by those packages are
+		// accepted by the installed CRD schema - the DNS-1123 patterns on name and
+		// namespace, the 512 character limit on chart, and that catalogs.Entry's
+		// marshalled values survive a round trip through the API server's
+		// x-kubernetes-preserve-unknown-fields. A table test cannot cover that; it
+		// needs an API server.
+		It("should accept components built by the catalog packages", func() {
+			crds, err := spirecrds.New("spire-system", spirecrds.Values{})
+			Expect(err).NotTo(HaveOccurred())
+
+			server, err := spire.New("spire-system", spire.Values{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// teleport-kube-agent is the one component whose values are
+			// mandatory, so it is also the one that proves New reports them
+			// rather than building an entry full of placeholders.
+			_, err = teleportkubeagent.New("teleport", teleportkubeagent.Values{})
+			Expect(err).To(HaveOccurred())
+
+			agent, err := teleportkubeagent.New("teleport", teleportkubeagent.Values{
+				TeleportKubeAgent: &teleportkubeagent.ChartValues{
+					ProxyAddr:           "teleport.example.com:443",
+					TeleportClusterName: "prod",
+					KubeClusterName:     planeA,
+					JoinParams: teleportkubeagent.JoinParams{
+						TokenName: "kube-token",
+					},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA}
+			specs := []cclusternvidiacomv1alpha1.ComponentSpec{
+				{Name: "spire-crds", InfraPlaneRef: ref, ComponentEntry: crds},
+				{Name: "spire", InfraPlaneRef: ref, ComponentEntry: server},
+				{Name: "teleport-kube-agent", InfraPlaneRef: ref, ComponentEntry: agent},
+			}
+
+			createInfraPlane(planeA, true)
+			createDeployment(specs)
+
+			By("releasing the first component, and only that one")
+			settle()
+
+			application := getApplication("spire-crds")
+			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/spire_crds"))
+			Expect(application.Spec.Destination.Namespace).To(Equal("spire-system"))
+			Expect(applicationExists("spire")).To(BeFalse())
 		})
 
 		It("should reject duplicate component names", func() {
