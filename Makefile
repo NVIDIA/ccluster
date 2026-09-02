@@ -402,11 +402,15 @@ CATALOG_REVISION ?= main
 # GITHUB_TOKEN (a token with read access to CATALOG_REPO_URL; in GitHub Actions the
 # built-in one) and deploy-cp registers the catalog as an Argo CD repository with that
 # credential, through the argo-cd chart's configs.repositories. Empty means anonymous.
+#
+# The token is expanded by the recipe's shell ($$GITHUB_TOKEN, exported below) rather than
+# by make, so that make's echo of the helm command shows the variable name, not the value.
 GITHUB_TOKEN ?=
+export GITHUB_TOKEN
 CATALOG_CREDENTIALS = $(if $(GITHUB_TOKEN),\
 	--set argo-cd.configs.repositories.catalog.url=$(CATALOG_REPO_URL) \
 	--set argo-cd.configs.repositories.catalog.username=git \
-	--set-string argo-cd.configs.repositories.catalog.password=$(GITHUB_TOKEN),)
+	--set-string "argo-cd.configs.repositories.catalog.password=$$GITHUB_TOKEN",)
 # The kubeconfig context each operator is deployed to. Empty means "whatever the
 # current context is", which is what deploy-cp / deploy-ip on their own have always
 # done. `make deploy` sets them to the two development clusters.
