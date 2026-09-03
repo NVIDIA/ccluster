@@ -26,7 +26,9 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` and `AppProject` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
 | `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
-| `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
+| `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster`. **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
+| `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
+| `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
 The two operators run in **different clusters**, which is why they have separate images,
 separate RBAC, and separate overlays rather than one manager behind a feature flag.
@@ -251,6 +253,19 @@ Four conventions that are not obvious from the files:
   byte-identical to the other seventeen — the required values go through the same
   `values` parameter, not a second one.
 
+The Go types are also the source of the **Python package** under `python/`.
+`make python-generate` runs `hack/pyschema` — which lifts JSON Schema out of
+`config/crd/bases/*.yaml` and reflects each component's `Values` with
+`invopop/jsonschema`, Go doc comments included — and then datamodel-code-generator, once
+per schema, to emit Pydantic v2 modules. A new component has to be added to the table in
+`hack/pyschema/main.go` as well as to `cluster_base.go`, or Python never sees it. The
+export deliberately adds three things the CRD does not have — defaults for `apiVersion`
+and `kind`, a small typed `ObjectMeta`, and `values` typed as a dict — and nothing else;
+`python/README.md` documents them. Python optional fields are `None` by default and
+consumers dump with `exclude_none=True`, which is how the pointer convention above
+survives the translation: an explicit `False` is kept, an unset field is not. CI
+regenerates the package and fails on any diff (`.github/workflows/test-python.yml`).
+
 Each chart directory also has a hand-written `.helmignore` excluding `*.go`. Helm never
 reads them — it looks only at `Chart.yaml`, `values.yaml`, `templates/`, `charts/` and
 `crds/` — but they would otherwise be swept into a `helm package` tarball. These are
@@ -378,6 +393,9 @@ leaves the CRD stuck `Terminating`.
 - `charts/{cp,ip}/chart/templates/**` and `.helmignore` — from the kustomize overlays, via
   `make helm-generate`. Overwritten on every run.
 - `charts/cp/chart/Chart.lock` — via `make helm-deps-update-cp`
+- `python/src/ccluster/v1alpha1/**` and `python/src/ccluster/catalogs/cluster_base/**` —
+  from the CRDs and the catalog Go types, via `make python-generate`. Both directories are
+  deleted and rebuilt on every run.
 
 **Modified by the build (expect it dirty in `git status`):**
 
@@ -396,12 +414,15 @@ the two exceptions inside the generated charts — `charts/{cp,ip}/chart/Chart.y
 ```bash
 make manifests generate   # regenerate CRDs + RBAC + deepcopy
 make helm-generate        # propagate them into charts/{cp,ip}/chart
+make python-generate      # propagate them into python/
 make install              # push the new CRD schema to the cluster
 ```
 
 Skipping the first is the most common source of "my new field vanishes on apply" — the API
 server prunes fields the installed CRD schema does not know about. Skipping the second means
-the change is invisible to `make deploy-cp`, and CI will fail on the chart drift check.
+the change is invisible to `make deploy-cp`, and CI will fail on the chart drift check; the
+third has its own drift check. `make python-generate` is also needed after editing any
+`catalogs/cluster_base/*/component.go`, including its comments.
 
 This applies to **doc comments too**, not just fields: godoc on the API types is copied
 verbatim into the CRD's `description`, so it ships to users through `kubectl explain`. A
@@ -422,6 +443,8 @@ make fmt vet lint-fix
 make test
 make helm-generate && git status --short charts/   # must be clean; CI checks this
 make helm-lint
+make python-generate && git status --short python/  # likewise
+make python-test
 ```
 
 **In-cluster verification** (the only loop that exercises real RBAC and the real image):
@@ -443,6 +466,7 @@ tag are unchanged, even though the image content changed.
 | e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick), the status paths reachable without Argo CD, and the watch wiring a running manager alone can prove: source-Secret edits reaching the mirror, drift on the mirror / AppProject / Application being restored, a plane appearing after its CCLComponentSet, and a removed component being pruned. | A real rollout — see the full tier |
 | e2e (full) | `make test-e2e-full` | Everything the quick tier runs, then the same release upgraded to add real Argo CD. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, selfHeal drift correction, a values change rolling forward, and the AppProject refusing a cross-namespace destination — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
 | charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
+| python | `make python-test`, CI drift check | That the committed Python models match the CRDs and the catalog Go types, that the quickstart examples round-trip through them, and that the catalog helpers dump values the way `catalogs.Entry` does. | Anything touching a cluster |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
 Only `make test-e2e` and a real in-cluster deploy will catch a missing `+kubebuilder:rbac`
