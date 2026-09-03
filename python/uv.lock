@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ccluster"
+name = "ccluster-py"
 version = "0.0.0.dev0"
 source = { editable = "." }
 dependencies = [

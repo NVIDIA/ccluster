@@ -62,7 +62,7 @@ helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
 
 Each released chart references `ghcr.io/nvidia/ccluster-{cp,ip}-operator:X.Y.Z` and pins
 `--catalog-revision` to the matching `vX.Y.Z` tag. The Pydantic models for the API and the
-catalog ship as `pip install ccluster`.
+catalog ship as `pip install ccluster-py` (imported as `ccluster`).
 
 The charts themselves live in `charts/cp/chart` and `charts/ip/chart`; they are generated
 from the kustomize overlays in `config/`, so regenerate them with `make helm-generate`
@@ -153,7 +153,7 @@ including RBAC, CRD and chart regeneration after an API change.
 
 A release is a git tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which
 retags the images already built for that commit, packages and pushes both charts to
-`oci://ghcr.io/nvidia/charts`, publishes `ccluster==X.Y.Z` to PyPI, and opens a GitHub
+`oci://ghcr.io/nvidia/charts`, publishes `ccluster-py==X.Y.Z` to PyPI, and opens a GitHub
 Release with generated notes and the artifacts attached. Nothing in the tree is bumped.
 
 ```bash
@@ -166,7 +166,7 @@ git push origin v0.1.0
 | --- | --- |
 | Operator images | `ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z`, `ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z` (also tagged with the commit hash) |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
-| Python package | [`ccluster` on PyPI](https://pypi.org/project/ccluster/) |
+| Python package | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/), imported as `ccluster` |
 | Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
 
 Every commit on `main` also publishes both images tagged with its commit hash, so an

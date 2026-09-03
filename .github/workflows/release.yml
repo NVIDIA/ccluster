@@ -6,7 +6,7 @@
 # Artifacts:
 #   ghcr.io/<owner>/ccluster-{cp,ip}-operator:X.Y.Z        (retag of :<sha>)
 #   oci://ghcr.io/<owner>/charts/ccluster-{cp,ip}           (chart version = appVersion = X.Y.Z)
-#   PyPI ccluster==X.Y.Z                                    (trusted publishing, `pypi` environment)
+#   PyPI ccluster-py==X.Y.Z                                 (trusted publishing, `pypi` environment)
 #   GitHub Release vX.Y.Z with the chart tarballs and Python dists attached
 name: Release
 

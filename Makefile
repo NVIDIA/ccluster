@@ -583,7 +583,7 @@ helm-push-ip: require-version helm ## Push the packaged ip chart to oci://$(REGI
 # locally with `git checkout python/pyproject.toml`. Publishing is left to the release
 # workflow (PyPI trusted publishing), which needs no credentials in the Makefile.
 .PHONY: python-build
-python-build: uv ## Build the ccluster wheel and sdist into $(DIST_PYTHON), stamped with VERSION.
+python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON), stamped with VERSION.
 	rm -rf $(DIST_PYTHON)
 	cd python && "$(UV)" version --no-sync $(PY_VERSION) && "$(UV)" build --out-dir ../$(DIST_PYTHON)
 
