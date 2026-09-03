@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	// Name is the component's name in a CCLDeployment, and the key its values
+	// Name is the component's name in a CCLComponentSet, and the key its values
 	// nest under.
 	Name = "prometheus-adapter"
 	// Chart is the chart directory, relative to the repository root.

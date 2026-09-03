@@ -59,16 +59,16 @@ With the operators deployed and a kubeconfig pinned:
 kubectl apply -f examples/quickstart/v1alpha1_cclinfraplane.yaml
 
 # Roll out an ordered bundle of catalog charts onto it
-kubectl apply -f examples/quickstart/v1alpha1_ccldeployment.yaml
+kubectl apply -f examples/quickstart/v1alpha1_cclcomponentset.yaml
 
 kubectl -n ccluster-quickstart get cclinfraplanes
-kubectl -n ccluster-quickstart get ccldeployments
-# The Applications sit next to the CCLDeployment, in its namespace, under an Argo CD
+kubectl -n ccluster-quickstart get cclcomponentsets
+# The Applications sit next to the CCLComponentSet, in its namespace, under an Argo CD
 # AppProject named after that namespace.
 kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
-The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revision`
+The sample `CCLComponentSet` deploys from `--catalog-repo-url` at `--catalog-revision`
 (`https://github.com/NVIDIA/ccluster` at `main` by default). Argo CD clones that repository
 itself, so if it is private give it a token with read access:
 `make deploy-cp GITHUB_TOKEN=...`. Point it at a fork or branch with

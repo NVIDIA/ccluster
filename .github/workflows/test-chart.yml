@@ -51,13 +51,13 @@ jobs:
       # which no workflow ran; here they gate every PR.
       #
       # Large CRDs sit OutOfSync forever without server-side diff, which stalls a
-      # CCLDeployment rollout. Without this check a regression looks like a
+      # CCLComponentSet rollout. Without this check a regression looks like a
       # perfectly working deploy.
       - name: Verify the Argo CD dependency renders as expected
         run: |
           grep -q 'controller.diff.server.side: "true"' /tmp/cp.yaml
           # Applications in any namespace: without it Argo CD ignores the Applications
-          # the operator writes next to each CCLDeployment.
+          # the operator writes next to each CCLComponentSet.
           grep -q "application.namespaces: '\*'" /tmp/cp.yaml
           grep -q 'name: argocd-cmd-params-cm$' /tmp/cp.yaml
           grep -q 'applications.argoproj.io' /tmp/cp.yaml

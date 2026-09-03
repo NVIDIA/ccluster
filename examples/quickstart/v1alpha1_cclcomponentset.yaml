@@ -9,7 +9,7 @@
 # reports Healthy and Synced, so the two never sync concurrently. There is no timeout on
 # that wait; status.conditions[Progressing] names whichever component is holding things up.
 apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
+kind: CCLComponentSet
 metadata:
   labels:
     app.kubernetes.io/name: ccluster

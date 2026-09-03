@@ -1,6 +1,6 @@
-# A single-component CCLDeployment: argo-rollouts onto one plane.
+# A single-component CCLComponentSet: argo-rollouts onto one plane.
 apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
+kind: CCLComponentSet
 metadata:
   name: {{ .Name }}
   namespace: {{ .Namespace }}

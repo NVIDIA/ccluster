@@ -11,12 +11,12 @@ metadata:
   labels:
     app.kubernetes.io/name: ccluster
     app.kubernetes.io/managed-by: kustomize
-  name: ccldeployment-editor-role
+  name: cclcomponentset-editor-role
 rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments
+  - cclcomponentsets
   verbs:
   - create
   - delete
@@ -28,6 +28,6 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments/status
+  - cclcomponentsets/status
   verbs:
   - get

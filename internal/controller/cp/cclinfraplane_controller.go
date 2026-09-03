@@ -108,16 +108,16 @@ type CCLInfraPlaneReconciler struct {
 // Reconcile registers the infra-plane cluster with Argo CD, and stops there.
 //
 // Two objects are written into the Argo CD namespace. First the AppProject for the
-// CCLInfraPlane's namespace, which every CCLInfraPlane and CCLDeployment in that
+// CCLInfraPlane's namespace, which every CCLInfraPlane and CCLComponentSet in that
 // namespace shares; it exists for as long as any CCLInfraPlane in the namespace does.
 // Then the Secret named by clusterCredentialsRef is cloned, under the name
 // <namespace>-<name>, labelled as an Argo CD cluster Secret and scoped to that project.
 // Its data is otherwise copied verbatim - what it has to contain is Argo CD's business,
 // not this operator's. Both are reported as the Available condition, in that order: when
-// Available is true the project exists, which is what lets the CCLDeployment controller
+// Available is true the project exists, which is what lets the CCLComponentSet controller
 // write Applications into it without checking.
 //
-// Deciding what runs on the registered cluster is CCLDeployment's job. A CCLInfraPlane
+// Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
 //
 // For more details, check Reconcile and its Result here:
@@ -152,7 +152,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	case apimeta.IsNoMatchError(err):
 		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
 		// started first. Not reported on the status: the Application CRD is missing in
-		// the same situations, and the CCLDeployment controller reports that. On the
+		// the same situations, and the CCLComponentSet controller reports that. On the
 		// restart that follows installing Argo CD, every CCLInfraPlane is reconciled
 		// again and the project gets created then.
 		log.Info("Argo CD AppProject CRD not installed, skipped AppProject",
@@ -381,7 +381,7 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // that becomes costly, scope it with cache.ByObject in internal/manager.
 //
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
-// the reason given on CCLDeploymentReconciler.SetupWithManager: a watch on a kind the API
+// the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).

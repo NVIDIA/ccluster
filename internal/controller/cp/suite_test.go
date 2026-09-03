@@ -73,7 +73,7 @@ var _ = BeforeSuite(func() {
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "..", "config", "crd", "bases"),
-			// Argo CD's Application, which the CCLDeployment controller creates and
+			// Argo CD's Application, which the CCLComponentSet controller creates and
 			// reads back.
 			filepath.Join("..", "..", "..", "test", "testdata", "crd"),
 		},

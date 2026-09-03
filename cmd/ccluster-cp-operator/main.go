@@ -96,13 +96,13 @@ func setupControllers(mgr ctrl.Manager) error {
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
-	if err := (&cp.CCLDeploymentReconciler{
+	if err := (&cp.CCLComponentSetReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("unable to create controller CCLDeployment: %w", err)
+		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
 	return nil

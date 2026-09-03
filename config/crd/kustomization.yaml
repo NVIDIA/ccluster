@@ -2,7 +2,7 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/ccluster.nvidia.com_ccldeployments.yaml
+- bases/ccluster.nvidia.com_cclcomponentsets.yaml
 - bases/ccluster.nvidia.com_cclinfraplanes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 

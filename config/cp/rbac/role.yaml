@@ -32,7 +32,7 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments
+  - cclcomponentsets
   - cclinfraplanes
   verbs:
   - create
@@ -45,14 +45,14 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments/finalizers
+  - cclcomponentsets/finalizers
   - cclinfraplanes/finalizers
   verbs:
   - update
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments/status
+  - cclcomponentsets/status
   - cclinfraplanes/status
   verbs:
   - get

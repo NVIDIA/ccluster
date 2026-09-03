@@ -25,7 +25,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `charts/cp/chart/`, `charts/ip/chart/` | Per-operator Helm charts — how the operators are actually deployed. **Generated** from the overlays; see below. |
 | `internal/argocd/v1alpha1/` | A hand-written **partial** mirror of Argo CD's `argoproj.io/v1alpha1` API — only the `Application` and `AppProject` fields the operator sets or reads. Extend it by hand rather than reaching for `unstructured`. |
 | `catalogs/` | The Helm chart catalog the operator deploys from. `catalogs/cluster_base/<component>` holds the 18 platform components, each now paired with a Go package describing its values. The **charts** are still not built by the operator and are deliberately unrelated to `charts/`, but the **Go packages are part of the module** — see below. |
-| `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLDeployment that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
+| `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -145,8 +145,8 @@ registered there as remote destinations. The ip chart has no dependencies.
 `make deploy-cp ARGOCD=false` skips it — for a cluster that already runs Argo CD, or for a
 hermetic run that must not pull the Argo CD images. `test/e2e` uses both sides of that flag
 deliberately: every run deploys with `ARGOCD=false` first, which is what makes
-`ApplicationCRDMissing` reachable and is why the CCLDeployment controller has to tolerate
-the Application CRD being absent at startup — see `CCLDeploymentReconciler.SetupWithManager`.
+`ApplicationCRDMissing` reachable and is why the CCLComponentSet controller has to tolerate
+the Application CRD being absent at startup — see `CCLComponentSetReconciler.SetupWithManager`.
 `make test-e2e-full` (or `E2E_FULL=true`) then upgrades that same release to add real Argo
 CD and runs the rollout specs on top, so the full tier is a superset of the quick one and
 also exercises installing Argo CD after the operator. There is no longer a standalone
@@ -176,14 +176,14 @@ by everything in that namespace, and a mirror of the Secret named by
 `spec.clusterCredentialsRef`, named `<namespace>-<name>` and scoped to that project via
 `data.project`.
 
-`CCLDeploymentReconciler` turns each component of a `CCLDeployment` into one Argo CD
-`Application`, in order — written into the **CCLDeployment's own namespace**, not the Argo
+`CCLComponentSetReconciler` turns each component of a `CCLComponentSet` into one Argo CD
+`Application`, in order — written into the **CCLComponentSet's own namespace**, not the Argo
 CD namespace, under that namespace's AppProject. Argo CD sees them because the cp chart sets
 `application.namespaces: "*"`.
 
 - **`Available=True` on a CCLInfraPlane implies its namespace's AppProject exists.** The
   project is created before the Secret is mirrored and before the condition is set, and the
-  CCLDeployment reconciler relies on that instead of checking the project itself. Do not
+  CCLComponentSet reconciler relies on that instead of checking the project itself. Do not
   reorder the CCLInfraPlane reconcile. The project is deleted by the finalizer of the last
   non-terminating CCLInfraPlane in the namespace.
 - **AppProject `sourceRepos` is the catalog repository only**, never `*`. The project is
@@ -194,7 +194,7 @@ CD namespace, under that namespace's AppProject. Argo CD sees them because the c
 
 - **Applications are written directly. There is no ApplicationSet.** Both an ApplicationSet
   and Argo CD's `RollingSync` were implemented and removed in `2e00925`; the reasoning is in
-  the doc comments on `applicationSpec` in `ccldeployment_builder.go`. Do not reintroduce
+  the doc comments on `applicationSpec` in `cclcomponentset_builder.go`. Do not reintroduce
   either.
 - **Release is monotonic.** `releaseCount` withholds a component's Application until every
   earlier one is `Healthy` *and* `Synced`, but a released component is never withdrawn when
@@ -242,7 +242,7 @@ Four conventions that are not obvious from the files:
   fields are non-pointer and carry *no* `omitempty`, so an unset one reaches Helm and
   fails loudly instead of silently inheriting a placeholder.
 - **Nothing enforces these schemas.** The CRD's `values` is still
-  `x-kubernetes-preserve-unknown-fields`, and a hand-written `CCLDeployment` bypasses the
+  `x-kubernetes-preserve-unknown-fields`, and a hand-written `CCLComponentSet` bypasses the
   typed layer entirely. The only enforcement point is a `Values` type's `Validate()`
   method, which `catalogs.Entry` calls if present. `teleport-kube-agent` is the one
   component with genuinely required values, and the only implementer: its four fields
@@ -440,7 +440,7 @@ tag are unchanged, even though the image content changed.
 | --- | --- | --- | --- |
 | unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
-| e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick), the status paths reachable without Argo CD, and the watch wiring a running manager alone can prove: source-Secret edits reaching the mirror, drift on the mirror / AppProject / Application being restored, a plane appearing after its CCLDeployment, and a removed component being pruned. | A real rollout — see the full tier |
+| e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick), the status paths reachable without Argo CD, and the watch wiring a running manager alone can prove: source-Secret edits reaching the mirror, drift on the mirror / AppProject / Application being restored, a plane appearing after its CCLComponentSet, and a removed component being pruned. | A real rollout — see the full tier |
 | e2e (full) | `make test-e2e-full` | Everything the quick tier runs, then the same release upgraded to add real Argo CD. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, selfHeal drift correction, a values change rolling forward, and the AppProject refusing a cross-namespace destination — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
 | charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
@@ -452,7 +452,7 @@ Test wiring lives in `internal/controller/cp/suite_test.go` (envtest setup, `k8s
 Specs use Ginkgo/Gomega.
 
 **Two tiers, deliberately.** Ginkgo/envtest is the primary one and where behaviour belongs.
-Alongside it, `ccldeployment_builder_test.go` and `ownership_test.go` are plain table-driven
+Alongside it, `cclcomponentset_builder_test.go` and `ownership_test.go` are plain table-driven
 `go test` files in the same package. They run without `KUBEBUILDER_ASSETS` and without etcd —
 `BeforeSuite` only fires under `RunSpecs` — so:
 
@@ -466,7 +466,7 @@ a reconciler that never creates out of order. Keep them selective. Do **not** ad
 for one-line helpers that the existing cases already cover incidentally.
 
 **Current state:** both cp controllers have real envtest suites —
-`cclinfraplane_controller_test.go` and `ccldeployment_controller_test.go` — covering
+`cclinfraplane_controller_test.go` and `cclcomponentset_controller_test.go` — covering
 mirroring and drift correction, ordered release, reverse teardown, pruning, ownership
 conflicts, and the CEL validation rules, and both reconcilers are covered at ~89% of
 statements. The specs are named after behaviour, so treat a failure as a broken contract
@@ -493,9 +493,9 @@ The full tier is therefore a strict superset of the quick one — nothing is ski
 and it doubles as a test of installing Argo CD after the operator. Specs outside the nested
 container fall into two groups. Unlabelled ones: the manager comes up, both CRDs' RBAC
 surface not tied to Argo CD's presence (Secret mirroring and `CCLInfraPlane` finalizer
-cleanup, and `CCLDeployment`'s `InfraPlaneNotFound` status path), and two **watch-wiring**
+cleanup, and `CCLComponentSet`'s `InfraPlaneNotFound` status path), and two **watch-wiring**
 specs: a source Secret edited after the fact reaches the mirror and a
-deleted mirror is re-created, and a `CCLDeployment` created before its plane becomes
+deleted mirror is re-created, and a `CCLComponentSet` created before its plane becomes
 `Validated` once the plane appears, without being touched. Those two exist because envtest
 never starts a controller — the `Watches` map functions are only ever called directly there —
 so a running manager in e2e is the only place a missing or mis-mapped watch can be caught.
@@ -532,7 +532,7 @@ not just the aggregate Application — the concrete regression `ServerSideApply`
 order and proves both `releaseCount` withholding and `teardownNext`'s reverse, one-at-a-time
 teardown against real convergence timing, not hand-written status; one mutates a live
 managed resource and confirms Argo CD's `selfHeal` reverts it; one edits a component's
-`values` on a converged CCLDeployment and asserts first that the Application's `valuesObject`
+`values` on a converged CCLComponentSet and asserts first that the Application's `valuesObject`
 follows (operator side) and then that the managed Deployment follows (Argo CD side); and one
 proves the AppProject is a real tenancy boundary — a hand-written Application in one
 namespace, under that namespace's project, targeting another namespace's project-scoped
@@ -556,7 +556,7 @@ default in `IMG_CP` / `IMG_IP`.
   `log.Info("Created Deployment", "name", deploy.Name)`.
 - **Status** uses `metav1.Condition`, not custom string fields. Prefer the standard types
   (`Available`, `Progressing`, `Degraded`) and add a specific one only where none fits — as
-  `CCLDeployment` does with `Validated` and `ComponentsApplied`. Always set
+  `CCLComponentSet` does with `Validated` and `ComponentsApplied`. Always set
   `observedGeneration`, on the condition and on `status.observedGeneration`.
 - **Reconciliation** must be idempotent, and driven by `.Owns()` / `.Watches()` rather than
   polling with `RequeueAfter`. `SetControllerReference` is the normal way to get garbage

@@ -1,7 +1,7 @@
-# A single-component keda CCLDeployment whose operator replica count is a parameter, so a
+# A single-component keda CCLComponentSet whose operator replica count is a parameter, so a
 # values change can be applied over an existing deployment.
 apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
+kind: CCLComponentSet
 metadata:
   name: {{ .Name }}
   namespace: {{ .Namespace }}

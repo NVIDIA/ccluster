@@ -19,7 +19,7 @@ resources:
     namespaced: true
   controller: true
   domain: ccluster.nvidia.com
-  kind: CCLDeployment
+  kind: CCLComponentSet
   path: github.com/NVIDIA/ccluster/api/v1alpha1
   version: v1alpha1
 - api:

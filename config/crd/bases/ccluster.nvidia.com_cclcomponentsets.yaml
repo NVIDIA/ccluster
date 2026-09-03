@@ -1,20 +1,17 @@
-{{- if .Values.crd.enable }}
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    {{- if .Values.crd.keep }}
-    "helm.sh/resource-policy": keep
-    {{- end }}
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: ccldeployments.ccluster.nvidia.com
+  name: cclcomponentsets.ccluster.nvidia.com
 spec:
   group: ccluster.nvidia.com
   names:
-    kind: CCLDeployment
-    listKind: CCLDeploymentList
-    plural: ccldeployments
-    singular: ccldeployment
+    kind: CCLComponentSet
+    listKind: CCLComponentSetList
+    plural: cclcomponentsets
+    singular: cclcomponentset
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -31,7 +28,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          CCLDeployment is the Schema for the ccldeployments API.
+          CCLComponentSet is the Schema for the cclcomponentsets API.
 
           It describes a bundle of Helm charts from the ccluster catalog, each with its own
           values and its own destination cluster, rolled out in a fixed order. The operator does
@@ -56,7 +53,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of CCLDeployment
+            description: spec defines the desired state of CCLComponentSet
             properties:
               components:
                 description: |-
@@ -79,14 +76,14 @@ spec:
 
                         The repository and revision are not settable per component: they are how the
                         operator itself is configured (--catalog-repo-url and --catalog-revision), so
-                        every component of every CCLDeployment deploys from the same catalog.
+                        every component of every CCLComponentSet deploys from the same catalog.
                       maxLength: 512
                       minLength: 1
                       type: string
                     infraPlaneRef:
                       description: |-
                         infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-                        in the same namespace as this CCLDeployment, and must already be Available -
+                        in the same namespace as this CCLComponentSet, and must already be Available -
                         that is, its cluster credentials have been mirrored into the Argo CD namespace,
                         which is what lets the generated Application address the cluster by name.
                       properties:
@@ -100,7 +97,7 @@ spec:
                       type: object
                     name:
                       description: |-
-                        name identifies the component within this CCLDeployment. It is templated into
+                        name identifies the component within this CCLComponentSet. It is templated into
                         the generated Argo CD Application's name, so it has to be DNS-1123.
                       maxLength: 63
                       minLength: 1
@@ -136,11 +133,11 @@ spec:
             - components
             type: object
           status:
-            description: status defines the observed state of CCLDeployment
+            description: status defines the observed state of CCLComponentSet
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the CCLDeployment resource.
+                  conditions represent the current state of the CCLComponentSet resource.
 
                   Condition types reported by the control-plane operator:
                     - "Validated": every component's infraPlaneRef resolves to an Available
@@ -226,4 +223,3 @@ spec:
     storage: true
     subresources:
       status: {}
-{{- end }}
