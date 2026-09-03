@@ -19,6 +19,8 @@ IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
 IMG_IP    ?= $(REGISTRY)/ccluster-ip-operator:$(IMG_TAG)
 # Platforms docker-buildx-* builds for. Only what is actually run and tested.
 PLATFORMS ?= linux/amd64,linux/arm64
+# Extra flags for docker-buildx-*; CI passes layer-cache flags (--cache-from/--cache-to).
+BUILDX_ARGS ?=
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -234,11 +236,11 @@ docker-buildx: docker-buildx-cp docker-buildx-ip ## Build and push both manager 
 
 .PHONY: docker-buildx-cp
 docker-buildx-cp: ## Build and push the multi-platform ccluster-cp-operator image.
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} $(BUILDX_ARGS) .
 
 .PHONY: docker-buildx-ip
 docker-buildx-ip: ## Build and push the multi-platform ccluster-ip-operator image.
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} $(BUILDX_ARGS) .
 
 # Releasing an image is a retag, not a rebuild. `imagetools create` copies the manifest
 # list already in the registry under a second tag, server-side: nothing is pulled, and the

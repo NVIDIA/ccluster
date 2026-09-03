@@ -24,8 +24,47 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+        id: buildx
+      # The buildx CLI's type=gha cache needs the Actions cache endpoint and token, which the
+      # runner hands only to JavaScript actions. Export them the way
+      # crazy-max/ghaction-github-runtime does; that action is not on the org's allow-list.
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            for (const v of ["ACTIONS_CACHE_URL", "ACTIONS_RESULTS_URL", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_RUNTIME_URL", "ACTIONS_CACHE_SERVICE_V2"]) {
+              if (process.env[v]) core.exportVariable(v, process.env[v]);
+            }
+
+      # Two caches make this step fast. (1) Layer cache in the Actions cache: when
+      # nothing under the Dockerfile's inputs changed (only .go, go.mod, go.sum reach it -
+      # see .dockerignore) the whole build is a cache hit. (2) The Go module and build
+      # caches, which live in BuildKit cache mounts and are not part of the layer cache:
+      # buildkit-cache-dance copies them out to the runner after the build and back in
+      # before it, so a Go change recompiles only what changed rather than all of
+      # controller-runtime for two images times two architectures. No QEMU: the build
+      # stage runs on BUILDPLATFORM and cross-compiles.
+      - uses: actions/cache@v4
+        id: go-cache
+        with:
+          path: |
+            go-build-cache
+            go-mod-cache
+          key: go-buildkit-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-buildkit-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-buildkit-${{ runner.os }}-
+      # Pinned to the SHA the org's Actions allow-list admits (v3.3.0).
+      - uses: reproducible-containers/buildkit-cache-dance@5b81f4d29dc8397a7d341dba3aeecc7ec54d6361
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "go-build-cache": "/root/.cache/go-build",
+              "go-mod-cache": "/go/pkg/mod"
+            }
+          skip-extraction: ${{ steps.go-cache.outputs.cache-hit }}
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -37,6 +76,8 @@ jobs:
       # GHCR namespaces are lowercase while github.repository_owner is "NVIDIA". Passing
       # REGISTRY also makes a fork publish into its own namespace.
       - name: Build and push both images
-        run: make docker-buildx REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+        run: >
+          make docker-buildx REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          BUILDX_ARGS="--cache-from type=gha,scope=images --cache-to type=gha,scope=images,mode=max"
       - name: Package and push both charts
         run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
