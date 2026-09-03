@@ -12,8 +12,8 @@ wheels = [
 ]
 
 [[package]]
-name = "ccluster"
-version = "0.1.0"
+name = "ccluster-py"
+version = "0.0.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

@@ -3,8 +3,11 @@ requires = ["uv_build>=0.11,<0.12"]
 build-backend = "uv_build"
 
 [project]
-name = "ccluster"
-version = "0.1.0"
+# Distribution name only: `ccluster` was already taken on PyPI. The import name is still
+# `ccluster` (src/ccluster).
+name = "ccluster-py"
+# Placeholder: the release version is the git tag, stamped in by `make python-build`.
+version = "0.0.0.dev0"
 description = "Pydantic models for the ccluster.nvidia.com API and its Helm chart catalog"
 readme = "README.md"
 license = "Apache-2.0"
@@ -12,6 +15,24 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.11",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Clustering",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/NVIDIA/ccluster"
+Source = "https://github.com/NVIDIA/ccluster/tree/main/python"
+Changelog = "https://github.com/NVIDIA/ccluster/blob/main/CHANGELOG.md"
+
+# uv_build derives the module name from the distribution name (ccluster_py); point it at the
+# real package instead.
+[tool.uv.build-backend]
+module-name = "ccluster"
 
 [dependency-groups]
 dev = [

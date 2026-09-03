@@ -8,6 +8,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
+- Release pipeline. Every commit on `main` publishes both operator images to GHCR tagged
+  with its commit hash; pushing a `vX.Y.Z` tag retags those images as `X.Y.Z`, pushes both
+  charts to `oci://ghcr.io/nvidia/charts`, publishes the `ccluster-py` Python package to PyPI
+  and creates a GitHub Release. The tag is the only version: nothing in the tree is bumped.
 - Initial public release of the `catalog` package: Helm charts paired with typed
   Pydantic value schemas for cluster base components and user workloads.
 - `cluster_base` platform stack (Istio, cert-manager, SPIRE, KEDA, GPU Operator,

@@ -1,5 +1,10 @@
-# Build the manager binary
-FROM golang:1.25 AS builder
+# Build the manager binary.
+#
+# --platform=$BUILDPLATFORM pins this stage to the machine doing the build, so under
+# `docker buildx build --platform linux/amd64,linux/arm64` Go cross-compiles natively via
+# TARGETOS/TARGETARCH instead of running once per platform under emulation. Plain
+# `docker build` sets BUILDPLATFORM to the host and is unaffected.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 # CMD selects which operator to build: ccluster-cp-operator or ccluster-ip-operator.
@@ -27,6 +32,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+# org.opencontainers.image.source is what links the GHCR package to the repository, so
+# the package inherits the repository's visibility and shows up on its Packages page.
+LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.title="ccluster operator" \
+      org.opencontainers.image.description="ccluster control-plane / infra-plane operator (see --build-arg CMD)" \
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532

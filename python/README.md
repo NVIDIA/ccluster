@@ -5,7 +5,7 @@ every chart in the catalog. The package is **generated**: nothing in `ccluster/v
 or `ccluster/catalogs/cluster_base/` is written by hand.
 
 ```bash
-uv add ccluster --path ../python      # or: pip install ./python
+uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py
 ```
 
 ```python

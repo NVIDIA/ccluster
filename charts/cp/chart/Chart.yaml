@@ -1,16 +1,19 @@
-# Chart metadata for ccluster-cp-operator.
+# Chart metadata for ccluster-cp, the control-plane chart. The operator is one of its
+# components; the chart is the whole plane.
 #
 # Everything under templates/ is REGENERATED from `kustomize build config/cp` by
 # `make helm-generate`. This file and values.yaml are not — the helm/v2-alpha
 # plugin preserves both — so they are the only place to hand-edit, and the only
 # place the Argo CD dependency below can safely live.
 apiVersion: v2
-name: ccluster-cp-operator
-description: ccluster control-plane operator and its cluster dependencies
+name: ccluster-cp
+description: ccluster control plane - the cp operator and its cluster dependencies
 type: application
 
-version: 0.1.0
-appVersion: "0.1.0"
+# Placeholders. The release version is the git tag, and `make helm-package` stamps it
+# into both fields (`helm package --version --app-version`) on a copy under dist/.
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
 
 keywords:
   - kubernetes
