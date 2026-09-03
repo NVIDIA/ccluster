@@ -2,6 +2,19 @@ name: Python
 
 on:
   pull_request:
+    # Only when python/ or one of its generator inputs changes: the CRD types, the
+    # catalog Values types and hack/pyschema all feed make python-generate. Docs, chart
+    # and controller-only PRs skip it. Keep in sync with AGENTS.md "Pull requests".
+    paths:
+      - 'python/**'
+      - 'api/**'
+      - 'config/crd/**'
+      - 'catalogs/**/*.go'
+      - 'hack/pyschema/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/test-python.yml'
 
 jobs:
   python:

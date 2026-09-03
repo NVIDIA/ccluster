@@ -2,6 +2,15 @@ name: Lint
 
 on:
   pull_request:
+    # Only when Go code or the linter's inputs change; docs, chart, catalog-chart and
+    # Python-only PRs skip it. Keep in sync with AGENTS.md "Pull requests".
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yml'
+      - 'Makefile'
+      - '.github/workflows/lint.yml'
 
 jobs:
   lint:
