@@ -593,11 +593,23 @@ two caches, through `DOCKER_BUILD_ARGS` (`--load` plus the cache flags) and a bu
 builder installed as the default `docker build`.
 
 Two more CI caches to keep in mind when changing the Makefile: `bin/` is cached in
-`test.yml` and `test-e2e.yml` keyed on the Makefile and `go.sum`, so bumping a tool
-version there is what invalidates it; and `lint.yml` does not run `make lint` at all — it
-reads `GOLANGCI_LINT_VERSION` out of the Makefile and runs `golangci-lint-action`, which
-downloads the release binary and caches its analysis. Keep that version line in the
-`NAME ?= value` form the workflow's `sed` expects.
+`lint.yml`, `test.yml` and `test-e2e.yml` keyed on the Makefile and `go.sum` (lint also
+on `.custom-gcl.yml` and `.golangci.yml`, and it caches `~/.cache/golangci-lint` too), so
+bumping a tool version there is what invalidates it. Lint has to stay `make lint`: the
+binary is a custom golangci-lint build with the `logcheck` plugin, which the marketplace
+`golangci-lint-action` cannot produce.
+
+**The org restricts GitHub Actions to an allow-list.** A workflow that references an
+action not on it fails at *startup* with no job and no log, only "This run likely failed
+because of a workflow file issue". GitHub-owned and verified-creator actions are allowed;
+anything else must appear in the list, sometimes only at a pinned SHA — which is why
+`buildkit-cache-dance` is pinned to a SHA and why the runtime variables for the `type=gha`
+cache are exported with `actions/github-script` rather than
+`crazy-max/ghaction-github-runtime`. Check before adding an action:
+
+```bash
+gh api repos/NVIDIA/ccluster/actions/permissions/selected-actions | jq -r '.patterns_allowed[]' | grep <owner>
+```
 
 ## Image tags
 

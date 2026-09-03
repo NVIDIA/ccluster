@@ -16,16 +16,20 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The Makefile is the single source of the golangci-lint version; `make lint`
-      # builds that version from source, which takes over a minute in CI. The action
-      # downloads the release binary instead and caches the analysis results between
-      # runs. `verify` is `make lint-config`.
-      - name: Read the golangci-lint version from the Makefile
-        id: version
-        run: echo "version=$(sed -n 's/^GOLANGCI_LINT_VERSION ?= //p' Makefile)" >> "$GITHUB_OUTPUT"
-
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v8
+      # `make lint` builds a custom golangci-lint with the logcheck plugin
+      # (.custom-gcl.yml), which the marketplace golangci-lint-action cannot do, and that
+      # build costs over a minute. Cache the resulting binary (in bin/) and golangci-lint's
+      # own analysis cache instead.
+      - uses: actions/cache@v4
         with:
-          version: ${{ steps.version.outputs.version }}
-          verify: true
+          path: |
+            bin
+            ~/.cache/golangci-lint
+          key: lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum', '.custom-gcl.yml', '.golangci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            lint-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum', '.custom-gcl.yml', '.golangci.yml') }}-
+
+      - name: Check linter configuration
+        run: make lint-config
+      - name: Run linter
+        run: make lint

@@ -46,7 +46,15 @@ jobs:
         id: buildx
         with:
           install: true
-      - uses: crazy-max/ghaction-github-runtime@v3
+      # The buildx CLI's type=gha cache needs the Actions cache endpoint and token, which the
+      # runner hands only to JavaScript actions. Export them the way
+      # crazy-max/ghaction-github-runtime does; that action is not on the org's allow-list.
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            for (const v of ["ACTIONS_CACHE_URL", "ACTIONS_RESULTS_URL", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_RUNTIME_URL", "ACTIONS_CACHE_SERVICE_V2"]) {
+              if (process.env[v]) core.exportVariable(v, process.env[v]);
+            }
       - uses: actions/cache@v4
         id: go-cache
         with:
@@ -57,7 +65,8 @@ jobs:
           restore-keys: |
             go-buildkit-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-buildkit-${{ runner.os }}-
-      - uses: reproducible-containers/buildkit-cache-dance@v3
+      # Pinned to the SHA the org's Actions allow-list admits (v3.3.0).
+      - uses: reproducible-containers/buildkit-cache-dance@5b81f4d29dc8397a7d341dba3aeecc7ec54d6361
         with:
           builder: ${{ steps.buildx.outputs.name }}
           cache-map: |
