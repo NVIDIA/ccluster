@@ -129,13 +129,18 @@ type ApplicationSourceHelm struct {
 	ValuesObject *apiextensionsv1.JSON `json:"valuesObject,omitempty"`
 }
 
-// ApplicationDestination is where an Application is deployed.
+// ApplicationDestination is where an Application is deployed. AppProject reuses it to say
+// where Applications *may* be deployed, with "*" as a wildcard in any field.
 type ApplicationDestination struct {
 	// name is the cluster's name as Argo CD knows it, which is what the operator's
-	// mirrored cluster Secret defines. Argo CD also accepts a "server" URL instead;
-	// addressing the cluster by name keeps the CCLInfraPlane's name the only identifier
-	// the operator has to agree with itself on.
+	// mirrored cluster Secret defines. Applications address their cluster this way,
+	// because the name is the one identifier the operator has to agree with itself on.
 	Name string `json:"name,omitempty"`
+
+	// server is the cluster's API server URL, the alternative to name. The operator
+	// never sets it on an Application; it appears in AppProject destinations as the
+	// wildcard "*".
+	Server string `json:"server,omitempty"`
 
 	// namespace is the namespace on that cluster.
 	Namespace string `json:"namespace,omitempty"`

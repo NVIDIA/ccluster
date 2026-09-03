@@ -43,9 +43,10 @@ type ownerAnnotations struct {
 	namespaceKey string
 }
 
-// The key pairs in use. They apply to disjoint kinds - a CCLInfraPlane only ever stamps
-// the mirrored cluster Secret, and a CCLDeployment only ever stamps its Applications -
-// so one object never carries both, and ownedBy does not have to tell them apart.
+// The owners in use. Each kind is stamped by exactly one of them - a mirrored cluster
+// Secret by infraPlaneOwner, an Application by deploymentOwner, an AppProject by
+// projectOwner - so one object never carries two, and ownedBy does not have to tell
+// them apart.
 var (
 	infraPlaneOwner = ownerAnnotations{
 		nameKey:      annotationInfraPlaneName,
@@ -56,6 +57,8 @@ var (
 		nameKey:      annotationDeploymentName,
 		namespaceKey: annotationDeploymentNamespace,
 	}
+
+	projectOwner = namespaceOwner{key: annotationInfraPlaneNamespace}
 )
 
 // ownedBy reports whether obj is unclaimed or already back-references owner.
@@ -78,13 +81,7 @@ func (a ownerAnnotations) ownedBy(obj client.Object, owner client.Object) bool {
 // stamp writes the back-reference annotations and the operator's labels onto obj. Call
 // it only after ownedBy has agreed the object is ours to write.
 func (a ownerAnnotations) stamp(obj client.Object, owner client.Object) {
-	labels := obj.GetLabels()
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	labels[labelName] = labelNameValue
-	labels[labelManagedBy] = labelManagedByValue
-	obj.SetLabels(labels)
+	stampLabels(obj)
 
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
@@ -93,4 +90,44 @@ func (a ownerAnnotations) stamp(obj client.Object, owner client.Object) {
 	annotations[a.nameKey] = owner.GetName()
 	annotations[a.namespaceKey] = owner.GetNamespace()
 	obj.SetAnnotations(annotations)
+}
+
+// namespaceOwner is a single annotation key recording which ccluster namespace an object
+// in the Argo CD namespace was created for. It is for objects shared by every custom
+// resource in that namespace - the AppProject - where naming one resource as the owner
+// would make the second CCLInfraPlane in the namespace look like a conflict.
+type namespaceOwner struct {
+	key string
+}
+
+// ownedBy reports whether obj is unclaimed or already back-references namespace. The
+// adopt-if-unclaimed rule is the same as ownerAnnotations.ownedBy, and for the same
+// reason: it is what lets the operator take over Argo CD's built-in "default" project
+// when the CCLInfraPlanes live in the "default" namespace.
+func (o namespaceOwner) ownedBy(obj client.Object, namespace string) bool {
+	claimed, has := obj.GetAnnotations()[o.key]
+	return !has || claimed == namespace
+}
+
+// stamp writes the back-reference annotation and the operator's labels onto obj.
+func (o namespaceOwner) stamp(obj client.Object, namespace string) {
+	stampLabels(obj)
+
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[o.key] = namespace
+	obj.SetAnnotations(annotations)
+}
+
+// stampLabels writes the operator's labels onto obj, allocating the map if needed.
+func stampLabels(obj client.Object) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[labelName] = labelNameValue
+	labels[labelManagedBy] = labelManagedByValue
+	obj.SetLabels(labels)
 }

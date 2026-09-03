@@ -15,7 +15,8 @@ limitations under the License.
 */
 
 // Package v1alpha1 contains a partial mirror of Argo CD's argoproj.io/v1alpha1 API,
-// covering only what the ccluster operators write.
+// covering only what the ccluster operators write: the Application and AppProject
+// fields the control-plane operator sets or reads.
 //
 // Argo CD owns these types and the CRDs behind them. This package exists because the
 // alternatives are worse: importing github.com/argoproj/argo-cd pulls in a module that

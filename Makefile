@@ -100,24 +100,24 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER_E2E) ;; \
 	esac
 
-# Set E2E_FULL=true (or use test-e2e-full) to run the full e2e tier: real Argo CD, a
-# multi-component ordered release, reverse teardown, and drift/selfHeal correction. The
-# quick tier (default) deploys with ARGOCD=false and skips every Argo-CD-dependent spec;
-# the full tier deploys real Argo CD and skips the Argo-CD-absent specs. See
-# test/e2e/e2e_test.go's BeforeAll, which reads E2E_FULL to pick the matching deploy-cp
-# invocation - keep this variable in sync with the label-filter below; don't hand-edit one
-# without the other.
+# Set E2E_FULL=true (or use test-e2e-full) to run every e2e spec. The quick tier
+# (default) skips the specs labelled "full" - the ones that need real Argo CD: a real
+# rollout, multi-component ordered release, reverse teardown, drift/selfHeal correction,
+# a values change rolling forward, and the AppProject tenancy check. The full tier runs
+# everything: the suite always deploys without Argo CD first and runs the quick specs,
+# then the "with real Argo CD" container in test/e2e/e2e_test.go upgrades the release to
+# add Argo CD and runs the rest. So the full tier is a strict superset of the quick one.
 E2E_FULL ?= false
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, for the full tier.
-	E2E_FULL=$(E2E_FULL) KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) \
+test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) \
 		go test -tags=e2e ./test/e2e/ -v -ginkgo.v \
-		-ginkgo.label-filter="$(if $(filter true,$(E2E_FULL)),!quick,!full)"
+		$(if $(filter true,$(E2E_FULL)),,-ginkgo.label-filter="!full")
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: test-e2e-full
-test-e2e-full: ## Run the full e2e tests: real Argo CD rollout, ordered release, reverse teardown, drift correction. Slower; explicit only.
+test-e2e-full: ## Run every e2e test: the quick tier, then real Argo CD rollout, ordered release, reverse teardown, drift correction, values roll-forward and tenancy. Slower; explicit only.
 	$(MAKE) test-e2e E2E_FULL=true
 
 .PHONY: cleanup-test-e2e
@@ -340,6 +340,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enable=$(ARGOCD) \
 		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
+		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
 .PHONY: undeploy-cp
@@ -396,6 +397,27 @@ ARGOCD ?= true
 # repo-server clones the repository itself, so the revision must be pushed.
 CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
 CATALOG_REVISION ?= main
+# Argo CD clones the catalog anonymously unless told otherwise, and GitHub answers a
+# private repository with "authentication required: Repository not found". Set
+# GITHUB_TOKEN (a token with read access to CATALOG_REPO_URL; in GitHub Actions the
+# built-in one) and deploy-cp registers the catalog as an Argo CD repository with that
+# credential, through the argo-cd chart's configs.repositories. Empty means anonymous.
+#
+# The token is expanded by the recipe's shell ($$GITHUB_TOKEN, exported below) rather than
+# by make, so that make's echo of the helm command shows the variable name, not the value.
+#
+# Unset, it defaults to `gh auth token` when the GitHub CLI is installed and logged in, so
+# a local `make deploy-cp` picks up the developer's own credential without being told. The
+# assignment is guarded on `origin` so an explicit GITHUB_TOKEN=... on the command line or
+# in the environment still wins, and simply-expanded so gh runs at most once per make.
+ifeq ($(origin GITHUB_TOKEN),undefined)
+GITHUB_TOKEN := $(shell command -v gh >/dev/null 2>&1 && gh auth token 2>/dev/null)
+endif
+export GITHUB_TOKEN
+CATALOG_CREDENTIALS = $(if $(GITHUB_TOKEN),\
+	--set argo-cd.configs.repositories.catalog.url=$(CATALOG_REPO_URL) \
+	--set argo-cd.configs.repositories.catalog.username=git \
+	--set-string "argo-cd.configs.repositories.catalog.password=$$GITHUB_TOKEN",)
 # The kubeconfig context each operator is deployed to. Empty means "whatever the
 # current context is", which is what deploy-cp / deploy-ip on their own have always
 # done. `make deploy` sets them to the two development clusters.

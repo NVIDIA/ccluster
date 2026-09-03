@@ -245,7 +245,7 @@ func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
 }
 
 func TestApplicationsCondition(t *testing.T) {
-	reconciler := &CCLDeploymentReconciler{ArgoCDNamespace: "argocd"}
+	reconciler := &CCLDeploymentReconciler{}
 	deployment := deploymentWith("a", "b")
 
 	noMatch := &apimeta.NoKindMatchError{
@@ -333,7 +333,7 @@ func TestApplicationsCondition(t *testing.T) {
 }
 
 func TestRolloutStatus(t *testing.T) {
-	reconciler := &CCLDeploymentReconciler{ArgoCDNamespace: "argocd"}
+	reconciler := &CCLDeploymentReconciler{}
 
 	withMessage := app(argocdv1alpha1.HealthStatusDegraded, "OutOfSync")
 	withMessage.Status.Health.Message = "back-off pulling image"
@@ -452,7 +452,6 @@ func TestApplicationNameCollidesAcrossDeployments(t *testing.T) {
 // to drop, and dropping it emits an empty helm block on every valueless component.
 func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 	reconciler := &CCLDeploymentReconciler{
-		ArgoCDNamespace: "argocd",
 		CatalogRepoURL:  "https://github.com/NVIDIA/ccluster",
 		CatalogRevision: "main",
 	}
@@ -467,7 +466,7 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			spec := reconciler.applicationSpec(cclusternvidiacomv1alpha1.ComponentSpec{
+			spec := reconciler.applicationSpec(deploymentWith("a"), cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          "a",
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
@@ -483,11 +482,12 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 	}
 }
 
-// TestApplicationCRDInstalled covers the startup decision that guards the Application
-// watch. It matters more than its size suggests: registering that watch when the CRD is
-// absent stops the whole controller from ever starting, because controller-runtime waits
-// for every watch source to sync and a source for an unserved kind never does.
-func TestApplicationCRDInstalled(t *testing.T) {
+// TestArgoCDKindInstalled covers the startup decision that guards the Application and
+// AppProject watches. It matters more than its size suggests: registering a watch when
+// its CRD is absent stops the whole controller from ever starting, because
+// controller-runtime waits for every watch source to sync and a source for an unserved
+// kind never does.
+func TestArgoCDKindInstalled(t *testing.T) {
 	applicationGK := argocdv1alpha1.GroupVersion.WithKind("Application").GroupKind()
 
 	installed := apimeta.NewDefaultRESTMapper([]schema.GroupVersion{argocdv1alpha1.GroupVersion})
@@ -521,8 +521,8 @@ func TestApplicationCRDInstalled(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := applicationCRDInstalled(test.mapper, logr.Discard()); got != test.want {
-				t.Errorf("applicationCRDInstalled() = %v, want %v", got, test.want)
+			if got := argoCDKindInstalled(test.mapper, logr.Discard(), "Application"); got != test.want {
+				t.Errorf("argoCDKindInstalled() = %v, want %v", got, test.want)
 			}
 		})
 	}

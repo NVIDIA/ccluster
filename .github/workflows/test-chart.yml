@@ -56,8 +56,12 @@ jobs:
       - name: Verify the Argo CD dependency renders as expected
         run: |
           grep -q 'controller.diff.server.side: "true"' /tmp/cp.yaml
+          # Applications in any namespace: without it Argo CD ignores the Applications
+          # the operator writes next to each CCLDeployment.
+          grep -q "application.namespaces: '\*'" /tmp/cp.yaml
           grep -q 'name: argocd-cmd-params-cm$' /tmp/cp.yaml
           grep -q 'applications.argoproj.io' /tmp/cp.yaml
           grep -q 'applicationsets.argoproj.io' /tmp/cp.yaml
+          grep -q 'appprojects.argoproj.io' /tmp/cp.yaml
           # The ip chart has no dependencies; Argo CD is control-plane only.
           ! grep -q 'argoproj.io' /tmp/ip.yaml

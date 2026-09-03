@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
 var _ = Describe("CCLInfraPlane Controller", func() {
@@ -41,6 +42,11 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			namespace       = "default"
 			argoCDNamespace = "argocd"
 			serverURL       = "https://infra.example.com:6443"
+			repoURL         = "https://github.com/NVIDIA/ccluster"
+
+			// mirrorName is what the cluster is registered as: prefixed with the
+			// namespace, because Argo CD's cluster names are global.
+			mirrorName = namespace + "-" + resourceName
 		)
 
 		// credentials is the opaque payload the controller must clone byte for byte.
@@ -63,22 +69,32 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Namespace: namespace,
 		}
 		mirrorNamespacedName := types.NamespacedName{
-			Name:      resourceName,
+			Name:      mirrorName,
+			Namespace: argoCDNamespace,
+		}
+		// The namespace's AppProject, named after the namespace, in the Argo CD namespace.
+		projectNamespacedName := types.NamespacedName{
+			Name:      namespace,
 			Namespace: argoCDNamespace,
 		}
 
 		// Built in BeforeEach: k8sClient does not exist until BeforeSuite has run.
 		var reconciler *CCLInfraPlaneReconciler
 
+		// reconcileKey reconciles the named CCLInfraPlane and asserts no error is returned.
+		reconcileKey := func(key types.NamespacedName) {
+			GinkgoHelper()
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
 		// reconcileAndGet reconciles the CCLInfraPlane, asserts no error is returned,
 		// and returns the refreshed object.
 		reconcileAndGet := func() *cclusternvidiacomv1alpha1.CCLInfraPlane {
 			GinkgoHelper()
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
+			reconcileKey(typeNamespacedName)
 
 			refreshed := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, refreshed)).To(Succeed())
@@ -92,6 +108,55 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			reconcileAndGet()
 			return reconcileAndGet()
+		}
+
+		// createInfraPlane creates a second CCLInfraPlane in the given namespace, for the
+		// specs about a project shared between planes. Cleaned up by AfterEach.
+		createInfraPlane := func(key types.NamespacedName) {
+			GinkgoHelper()
+
+			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
+					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
+						Name: key.Name + "-credentials",
+					},
+				},
+			})).To(Succeed())
+		}
+
+		// deleteAndFinalize deletes a CCLInfraPlane and runs the reconcile that clears
+		// its finalizer, then waits for it to be gone.
+		deleteAndFinalize := func(key types.NamespacedName) {
+			GinkgoHelper()
+
+			resource := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, key, resource)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			reconcileKey(key)
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, key, resource))
+			}).Should(BeTrue())
+		}
+
+		// getProject returns the namespace's AppProject.
+		getProject := func(key types.NamespacedName) *argocdv1alpha1.AppProject {
+			GinkgoHelper()
+
+			project := &argocdv1alpha1.AppProject{}
+			Expect(k8sClient.Get(ctx, key, project)).To(Succeed())
+			return project
+		}
+
+		projectExists := func(key types.NamespacedName) bool {
+			GinkgoHelper()
+
+			err := k8sClient.Get(ctx, key, &argocdv1alpha1.AppProject{})
+			if apierrors.IsNotFound(err) {
+				return false
+			}
+			Expect(err).NotTo(HaveOccurred())
+			return true
 		}
 
 		// createSecret creates the referenced source Secret with the given keys.
@@ -121,6 +186,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
 				ArgoCDNamespace: argoCDNamespace,
+				CatalogRepoURL:  repoURL,
 			}
 
 			By("creating the Argo CD namespace")
@@ -146,24 +212,16 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		})
 
 		AfterEach(func() {
-			By("Cleanup the specific resource instance CCLInfraPlane")
-			resource := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-
-				// envtest runs no garbage collector, so the object survives until the
-				// controller drops its finalizer. Without this the next spec's Create
-				// fails with AlreadyExists.
-				_, err = reconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: typeNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
-				Eventually(func() bool {
-					return apierrors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, resource))
-				}).Should(BeTrue())
-			} else {
-				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+			By("Cleanup every CCLInfraPlane, running the finalizer of each")
+			// envtest runs no garbage collector, so an object survives until the
+			// controller drops its finalizer. Without this the next spec's Create
+			// fails with AlreadyExists.
+			for _, ns := range []string{namespace, argoCDNamespace} {
+				var list cclusternvidiacomv1alpha1.CCLInfraPlaneList
+				Expect(k8sClient.List(ctx, &list, client.InNamespace(ns))).To(Succeed())
+				for i := range list.Items {
+					deleteAndFinalize(client.ObjectKeyFromObject(&list.Items[i]))
+				}
 			}
 
 			By("Cleanup the source and mirrored Secrets")
@@ -175,6 +233,13 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 				}
 			}
+
+			By("Cleanup any AppProject a spec left behind")
+			var projects argocdv1alpha1.AppProjectList
+			Expect(k8sClient.List(ctx, &projects, client.InNamespace(argoCDNamespace))).To(Succeed())
+			for i := range projects.Items {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &projects.Items[i]))).To(Succeed())
+			}
 		})
 
 		It("should report SecretNotFound and mirror nothing when the source Secret is missing", func() {
@@ -185,6 +250,84 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(condition.Reason).To(Equal(reasonSecretNotFound))
 
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+		})
+
+		// The project comes before the Secret: it exists for as long as any CCLInfraPlane
+		// does, credentials or not, so a CCLDeployment in the namespace always has one.
+		It("should create the namespace's AppProject even before the credentials Secret exists", func() {
+			settle()
+
+			project := getProject(projectNamespacedName)
+
+			By("confining the namespace's Applications to the catalog and its own clusters")
+			Expect(project.Spec.SourceRepos).To(Equal([]string{repoURL}))
+			Expect(project.Spec.SourceNamespaces).To(Equal([]string{namespace}))
+			Expect(project.Spec.Destinations).To(Equal([]argocdv1alpha1.ApplicationDestination{
+				{Server: "*", Namespace: "*"},
+			}))
+			Expect(project.Spec.PermitOnlyProjectScopedClusters).To(BeTrue())
+			Expect(project.Spec.ClusterResourceWhitelist).To(Equal([]metav1.GroupKind{
+				{Group: "*", Kind: "*"},
+			}))
+
+			By("stamping it as the operator's, for this namespace")
+			Expect(project.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			Expect(project.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
+		})
+
+		It("should restore the AppProject after it drifts", func() {
+			settle()
+
+			By("loosening the AppProject by hand")
+			project := getProject(projectNamespacedName)
+			project.Spec.SourceRepos = []string{"*"}
+			project.Spec.PermitOnlyProjectScopedClusters = false
+			Expect(k8sClient.Update(ctx, project)).To(Succeed())
+
+			reconcileAndGet()
+
+			restored := getProject(projectNamespacedName)
+			Expect(restored.Spec.SourceRepos).To(Equal([]string{repoURL}))
+			Expect(restored.Spec.PermitOnlyProjectScopedClusters).To(BeTrue())
+		})
+
+		// Argo CD refuses an AppProject that lists the Argo CD namespace itself in
+		// sourceNamespaces, and Applications there may use any project anyway.
+		It("should omit sourceNamespaces for a CCLInfraPlane in the Argo CD namespace", func() {
+			key := types.NamespacedName{Name: "in-argocd", Namespace: argoCDNamespace}
+			createInfraPlane(key)
+			reconcileKey(key)
+			reconcileKey(key)
+
+			project := getProject(types.NamespacedName{Name: argoCDNamespace, Namespace: argoCDNamespace})
+			Expect(project.Spec.SourceNamespaces).To(BeEmpty())
+			Expect(project.Spec.SourceRepos).To(Equal([]string{repoURL}))
+		})
+
+		It("should report ProjectConflict for an AppProject claimed by another namespace", func() {
+			createSecret(credentials)
+
+			By("planting an AppProject stamped for a different namespace")
+			Expect(k8sClient.Create(ctx, &argocdv1alpha1.AppProject{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        namespace,
+					Namespace:   argoCDNamespace,
+					Annotations: map[string]string{annotationInfraPlaneNamespace: "other-namespace"},
+				},
+				Spec: argocdv1alpha1.AppProjectSpec{SourceRepos: []string{"someone-elses"}},
+			})).To(Succeed())
+
+			infraPlane := settle()
+
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(reasonProjectConflict))
+
+			By("leaving the foreign AppProject untouched and mirroring nothing")
+			Expect(getProject(projectNamespacedName).Spec.SourceRepos).To(Equal([]string{"someone-elses"}))
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
 		})
@@ -206,8 +349,11 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			mirror := getMirror()
 			Expect(mirror.Type).To(Equal(source.Type))
 
-			By("overwriting the Argo CD cluster name with the CCLInfraPlane's name")
-			Expect(mirror.Data).To(HaveKeyWithValue("name", []byte(resourceName)))
+			By("overwriting the Argo CD cluster name with the namespace-prefixed name")
+			Expect(mirror.Data).To(HaveKeyWithValue("name", []byte(mirrorName)))
+
+			By("scoping the cluster to the namespace's AppProject")
+			Expect(mirror.Data).To(HaveKeyWithValue("project", []byte(namespace)))
 
 			By("cloning every other key verbatim")
 			for key, value := range source.Data {
@@ -216,7 +362,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}
 				Expect(mirror.Data).To(HaveKeyWithValue(key, value))
 			}
-			Expect(mirror.Data).To(HaveLen(len(source.Data)))
+			Expect(mirror.Data).To(HaveLen(len(source.Data) + 1))
 
 			Expect(mirror.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
 			Expect(mirror.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
@@ -240,7 +386,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			restored := getMirror()
 			Expect(restored.Data).To(HaveKeyWithValue("config", source.Data["config"]))
-			Expect(restored.Data).To(HaveKeyWithValue("name", []byte(resourceName)))
+			Expect(restored.Data).To(HaveKeyWithValue("name", []byte(mirrorName)))
 			Expect(restored.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
 		})
 
@@ -250,7 +396,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			By("planting a mirrored Secret that belongs to a CCLInfraPlane in another namespace")
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
+					Name:      mirrorName,
 					Namespace: argoCDNamespace,
 					Annotations: map[string]string{
 						annotationInfraPlaneName:      resourceName,
@@ -270,22 +416,51 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(getMirror().Data).To(HaveKeyWithValue("config", []byte("someone-elses")))
 		})
 
-		It("should delete the mirrored Secret when the CCLInfraPlane is deleted", func() {
+		It("should delete the mirrored Secret and the AppProject when the CCLInfraPlane is deleted", func() {
 			createSecret(credentials)
 
 			infraPlane := settle()
 			Expect(controllerutil.ContainsFinalizer(infraPlane, finalizerName)).To(BeTrue())
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
 
 			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
+			reconcileKey(typeNamespacedName)
 
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+			Expect(projectExists(projectNamespacedName)).To(BeFalse())
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, typeNamespacedName, &cclusternvidiacomv1alpha1.CCLInfraPlane{}))).To(BeTrue())
+		})
+
+		// The project is shared: it belongs to the namespace, and goes only with the
+		// last CCLInfraPlane out.
+		It("should keep the AppProject while another CCLInfraPlane remains in the namespace", func() {
+			other := types.NamespacedName{Name: "other-plane", Namespace: namespace}
+			createInfraPlane(other)
+			settle()
+			reconcileKey(other)
+			reconcileKey(other)
+
+			By("deleting the first plane")
+			deleteAndFinalize(typeNamespacedName)
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
+
+			By("deleting the last plane")
+			deleteAndFinalize(other)
+			Expect(projectExists(projectNamespacedName)).To(BeFalse())
+		})
+
+		It("should leave an AppProject claimed by another namespace in place on delete", func() {
+			settle()
+
+			By("re-stamping the AppProject for a different namespace")
+			project := getProject(projectNamespacedName)
+			project.Annotations[annotationInfraPlaneNamespace] = "other-namespace"
+			Expect(k8sClient.Update(ctx, project)).To(Succeed())
+
+			deleteAndFinalize(typeNamespacedName)
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
 		})
 
 		// The Secret watch is what makes the controller react to credentials changing
@@ -323,6 +498,30 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		It("should not enqueue anything for an unannotated Secret in the Argo CD namespace", func() {
 			Expect(reconciler.infraPlanesForSecret(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "argocd-server-tls", Namespace: argoCDNamespace},
+			})).To(BeEmpty())
+		})
+
+		// The AppProject watch is what repairs a project deleted or loosened by hand.
+		It("should enqueue every CCLInfraPlane in the namespace an AppProject is named after", func() {
+			other := types.NamespacedName{Name: "other-plane", Namespace: namespace}
+			createInfraPlane(other)
+
+			requests := reconciler.infraPlanesForProject(ctx, &argocdv1alpha1.AppProject{
+				ObjectMeta: metav1.ObjectMeta{Name: namespace, Namespace: argoCDNamespace},
+			})
+			Expect(requests).To(ConsistOf(
+				reconcile.Request{NamespacedName: typeNamespacedName},
+				reconcile.Request{NamespacedName: other},
+			))
+
+			By("ignoring an AppProject outside the Argo CD namespace")
+			Expect(reconciler.infraPlanesForProject(ctx, &argocdv1alpha1.AppProject{
+				ObjectMeta: metav1.ObjectMeta{Name: namespace, Namespace: "elsewhere"},
+			})).To(BeEmpty())
+
+			By("ignoring an AppProject named after a namespace with no CCLInfraPlanes")
+			Expect(reconciler.infraPlanesForProject(ctx, &argocdv1alpha1.AppProject{
+				ObjectMeta: metav1.ObjectMeta{Name: "empty-namespace", Namespace: argoCDNamespace},
 			})).To(BeEmpty())
 		})
 

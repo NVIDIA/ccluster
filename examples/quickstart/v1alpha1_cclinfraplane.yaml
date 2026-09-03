@@ -18,17 +18,30 @@
 # no ambient access to, whose Secret carries a bearerToken and caData. The operator does
 # not care which of the two this is - apart from the "name" key it clones whatever the
 # Secret holds.
+# Everything in this quickstart lives in its own namespace. The operator creates one Argo
+# CD AppProject per namespace, named after it, so applying these to "default" would make
+# the operator adopt Argo CD's built-in "default" project. A dedicated namespace keeps the
+# quickstart's project, cluster and Applications separate from anything else in Argo CD.
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/name: ccluster
+  name: ccluster-quickstart
+---
 apiVersion: v1
 kind: Secret
 metadata:
   labels:
     app.kubernetes.io/name: ccluster
-    app.kubernetes.io/managed-by: kustomize
   name: ccluster-local-credentials
+  namespace: ccluster-quickstart
 type: Opaque
 stringData:
-  # No "name" key: the operator sets it from the CCLInfraPlane's name, so this cluster
-  # appears in Argo CD as "ccluster-local". Anything set here would be overwritten.
+  # No "name" or "project" key: the operator sets both. The name is the CCLInfraPlane's,
+  # prefixed with its namespace, so this cluster appears in Argo CD as
+  # "ccluster-quickstart-ccluster-local"; the project is the namespace's own AppProject,
+  # "ccluster-quickstart". Anything set here would be overwritten.
   #
   # Must be this exact string to get the credential-free in-cluster treatment.
   server: https://kubernetes.default.svc
@@ -40,8 +53,8 @@ kind: CCLInfraPlane
 metadata:
   labels:
     app.kubernetes.io/name: ccluster
-    app.kubernetes.io/managed-by: kustomize
   name: ccluster-local
+  namespace: ccluster-quickstart
 spec:
   clusterCredentialsRef:
     name: ccluster-local-credentials

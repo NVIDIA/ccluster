@@ -1,0 +1,9 @@
+# A CCLInfraPlane pointing at a cluster credentials Secret in its own namespace.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  clusterCredentialsRef:
+    name: {{ .CredentialsName }}

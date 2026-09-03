@@ -56,19 +56,22 @@ With the operators deployed and a kubeconfig pinned:
 
 ```bash
 # Register a cluster (the samples register the control-plane cluster with itself)
-kubectl apply -f config/samples/v1alpha1_cclinfraplane.yaml
+kubectl apply -f examples/quickstart/v1alpha1_cclinfraplane.yaml
 
 # Roll out an ordered bundle of catalog charts onto it
-kubectl apply -f config/samples/v1alpha1_ccldeployment.yaml
+kubectl apply -f examples/quickstart/v1alpha1_ccldeployment.yaml
 
-kubectl get cclinfraplanes
-kubectl get ccldeployments
-kubectl get applications -n argocd -L ccluster.nvidia.com/wave
+kubectl -n ccluster-quickstart get cclinfraplanes
+kubectl -n ccluster-quickstart get ccldeployments
+# The Applications sit next to the CCLDeployment, in its namespace, under an Argo CD
+# AppProject named after that namespace.
+kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
 The sample `CCLDeployment` deploys from `--catalog-repo-url` at `--catalog-revision`
-(`https://github.com/NVIDIA/ccluster` at `main` by default), so it works against a fresh
-clone without any extra setup. Point it at a fork or branch with
+(`https://github.com/NVIDIA/ccluster` at `main` by default). Argo CD clones that repository
+itself, so if it is private give it a token with read access:
+`make deploy-cp GITHUB_TOKEN=...`. Point it at a fork or branch with
 `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 
 ## Local development

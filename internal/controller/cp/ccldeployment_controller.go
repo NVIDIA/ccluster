@@ -65,17 +65,19 @@ const (
 
 // Metadata written onto the generated Applications.
 const (
-	// Back-references to the CCLDeployment an Application was created for, for the
-	// reason given on ownerAnnotations: owner references may not cross namespaces.
+	// Back-references to the CCLDeployment an Application was created for. An
+	// Application lives in its CCLDeployment's own namespace, so an owner reference
+	// would be legal here - and is deliberately not used. Garbage collection would
+	// delete every Application at once when the CCLDeployment goes, and teardownNext
+	// exists precisely to take them down one at a time in reverse order.
 	annotationDeploymentName      = "ccluster.nvidia.com/deployment-name"
 	annotationDeploymentNamespace = "ccluster.nvidia.com/deployment-namespace"
 
-	// The same back-reference as labels, because a label can be selected on and an
-	// annotation cannot: listing a CCLDeployment's Applications is how the operator
-	// knows what it has already released. This is why a CCLDeployment's name is capped
-	// at a label value's 63 characters.
-	labelDeploymentName      = "ccluster.nvidia.com/deployment-name"
-	labelDeploymentNamespace = "ccluster.nvidia.com/deployment-namespace"
+	// The name again as a label, because a label can be selected on and an annotation
+	// cannot: listing a CCLDeployment's Applications is how the operator knows what it
+	// has already released. The namespace needs no label - it is the Application's own.
+	// This is why a CCLDeployment's name is capped at a label value's 63 characters.
+	labelDeploymentName = "ccluster.nvidia.com/deployment-name"
 
 	// labelWave carries a component's position in the rollout. Nothing acts on it; it
 	// exists so `kubectl get applications -L ccluster.nvidia.com/wave` shows the order.
@@ -98,10 +100,6 @@ type CCLDeploymentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// ArgoCDNamespace is the namespace Argo CD runs in, and therefore the namespace the
-	// generated Applications are written to.
-	ArgoCDNamespace string
-
 	// CatalogRepoURL and CatalogRevision locate the chart catalog components are
 	// deployed from. Component paths in the spec are relative to that repository's
 	// root; the repository and revision themselves are not settable per component.
@@ -118,9 +116,11 @@ type CCLDeploymentReconciler struct {
 //
 //  1. Every component's infraPlaneRef is resolved. The CCLInfraPlane must exist and be
 //     Available, because the generated Applications address their destination cluster by
-//     name, and that name only exists once its cluster Secret has been mirrored.
-//     Reported as the Validated condition.
-//  2. One Argo CD Application is written per released component. Reported as the
+//     name, and that name only exists once its cluster Secret has been mirrored. An
+//     Available CCLInfraPlane also guarantees its namespace's AppProject exists, so the
+//     project is never checked here. Reported as the Validated condition.
+//  2. One Argo CD Application is written per released component, into the
+//     CCLDeployment's own namespace under that project. Reported as the
 //     ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
 //     released and to report where the rollout has got to. Reported as the Progressing
@@ -182,7 +182,7 @@ func (r *CCLDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		r.applicationsCondition(&deployment, released, applyErr)
 
 	if applyErr == nil && changed {
-		log.Info("Applied Argo CD Applications", "namespace", r.ArgoCDNamespace,
+		log.Info("Applied Argo CD Applications", "namespace", deployment.Namespace,
 			"released", released, "components", len(deployment.Spec.Components))
 	}
 	if appliedStatus != metav1.ConditionTrue {
@@ -357,19 +357,18 @@ func (r *CCLDeploymentReconciler) deploymentsForInfraPlane(ctx context.Context, 
 }
 
 // deploymentForApplication maps an Application back to the CCLDeployment it was created
-// for, using the labels the operator stamps on it. This is what lets the next component be
-// released the moment the previous one reports healthy, rather than on a poll.
+// for: the one named by its label, in the Application's own namespace. This is what lets
+// the next component be released the moment the previous one reports healthy, rather
+// than on a poll.
 func (r *CCLDeploymentReconciler) deploymentForApplication(_ context.Context, obj client.Object) []reconcile.Request {
-	labels := obj.GetLabels()
-	name, hasName := labels[labelDeploymentName]
-	namespace, hasNamespace := labels[labelDeploymentNamespace]
-	if !hasName || !hasNamespace {
+	name, hasName := obj.GetLabels()[labelDeploymentName]
+	if !hasName {
 		// Not one of ours - Argo CD Applications created by anything else.
 		return nil
 	}
 
 	return []reconcile.Request{{
-		NamespacedName: client.ObjectKey{Namespace: namespace, Name: name},
+		NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: name},
 	}}
 }
 
@@ -395,7 +394,7 @@ func (r *CCLDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Application health changes, so the operator must be restarted after Argo CD is
 	// installed for a rollout to progress past its first wave. That is the same
 	// restart the chart performs when it installs both together.
-	if applicationCRDInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("ccldeployment")) {
+	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("ccldeployment"), "Application") {
 		builder = builder.Watches(&argocdv1alpha1.Application{},
 			handler.EnqueueRequestsFromMapFunc(r.deploymentForApplication))
 	}
@@ -403,25 +402,24 @@ func (r *CCLDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return builder.Named("ccldeployment").Complete(r)
 }
 
-// applicationCRDInstalled reports whether the API server currently serves Argo CD's
-// Application kind. It takes the RESTMapper rather than the manager so the three
-// outcomes below can be tested without standing one up.
-func applicationCRDInstalled(mapper apimeta.RESTMapper, log logr.Logger) bool {
-	gvk := argocdv1alpha1.GroupVersion.WithKind("Application")
+// argoCDKindInstalled reports whether the API server currently serves the named Argo CD
+// kind. It takes the RESTMapper rather than the manager so the three outcomes below can
+// be tested without standing one up.
+func argoCDKindInstalled(mapper apimeta.RESTMapper, log logr.Logger, kind string) bool {
+	gvk := argocdv1alpha1.GroupVersion.WithKind(kind)
 	_, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	switch {
 	case err == nil:
 		return true
 	case apimeta.IsNoMatchError(err):
-		log.Info("Argo CD Application CRD not installed, watching CCLDeployment and "+
-			"CCLInfraPlane only; restart the operator after installing Argo CD",
-			"kind", gvk.String())
+		log.Info("Argo CD CRD not installed, not watching its kind; "+
+			"restart the operator after installing Argo CD", "kind", gvk.String())
 		return false
 	default:
 		// Discovery itself failed. Assume the CRD is present rather than silently
 		// dropping the watch for the lifetime of the process.
-		log.Error(err, "Failed to check for the Argo CD Application CRD, "+
-			"registering the watch anyway", "kind", gvk.String())
+		log.Error(err, "Failed to check for an Argo CD CRD, registering the watch anyway",
+			"kind", gvk.String())
 		return true
 	}
 }

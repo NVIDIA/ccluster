@@ -34,16 +34,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
 // Condition types and reasons reported on CCLInfraPlane.status.
 const (
-	// conditionTypeAvailable reports on the mirrored Argo CD cluster Secret.
+	// conditionTypeAvailable reports on the cluster's registration with Argo CD: its
+	// namespace's AppProject and its mirrored cluster Secret.
 	conditionTypeAvailable = "Available"
 
 	reasonClusterSecretCreated  = "ClusterSecretCreated"
 	reasonSecretNotFound        = "SecretNotFound"
 	reasonClusterSecretConflict = "ClusterSecretConflict"
+	reasonProjectConflict       = "ProjectConflict"
 )
 
 // Metadata written onto the mirrored Secret in the Argo CD namespace.
@@ -58,6 +61,11 @@ const (
 	// under two different names depending on who wrote the credentials Secret.
 	argoCDClusterNameKey = "name"
 
+	// argoCDClusterProjectKey is the data key that makes a cluster project-scoped: only
+	// Applications in the named AppProject may deploy to it. The operator sets it to the
+	// CCLInfraPlane's namespace, which is that namespace's AppProject.
+	argoCDClusterProjectKey = "project"
+
 	// Back-references to the CCLInfraPlane a mirrored Secret was created for. An
 	// owner reference cannot be used: it may not cross namespaces, and the garbage
 	// collector deletes objects whose owner it cannot find in their own namespace.
@@ -71,8 +79,9 @@ const (
 )
 
 // errClusterSecretConflict reports that the mirrored Secret name is already taken by
-// another CCLInfraPlane. Two CCLInfraPlanes of the same name in different namespaces
-// map onto one Secret name in the Argo CD namespace, so this is reachable.
+// another CCLInfraPlane. The mirror is named <namespace>-<name>, which is not
+// collision-free: namespace "a-b" with plane "c" and namespace "a" with plane "b-c" both
+// map onto "a-b-c" in the Argo CD namespace, so this is reachable.
 var errClusterSecretConflict = errors.New("cluster Secret belongs to another CCLInfraPlane")
 
 // CCLInfraPlaneReconciler reconciles a CCLInfraPlane object
@@ -81,21 +90,32 @@ type CCLInfraPlaneReconciler struct {
 	Scheme *runtime.Scheme
 
 	// ArgoCDNamespace is the namespace Argo CD runs in, and therefore the namespace
-	// the mirrored cluster Secrets are written to.
+	// the mirrored cluster Secrets and the AppProjects are written to.
 	ArgoCDNamespace string
+
+	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one
+	// source repository each AppProject permits, so that nothing an Application in a
+	// ccluster namespace deploys can come from anywhere but the catalog.
+	CatalogRepoURL string
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile registers the infra-plane cluster with Argo CD, and stops there.
 //
-// The Secret named by clusterCredentialsRef is cloned into the Argo CD namespace, under
-// the CCLInfraPlane's own name and labelled as an Argo CD cluster Secret. Its data is
-// copied verbatim - what it has to contain is Argo CD's business, not this operator's.
-// Reported as the Available condition.
+// Two objects are written into the Argo CD namespace. First the AppProject for the
+// CCLInfraPlane's namespace, which every CCLInfraPlane and CCLDeployment in that
+// namespace shares; it exists for as long as any CCLInfraPlane in the namespace does.
+// Then the Secret named by clusterCredentialsRef is cloned, under the name
+// <namespace>-<name>, labelled as an Argo CD cluster Secret and scoped to that project.
+// Its data is otherwise copied verbatim - what it has to contain is Argo CD's business,
+// not this operator's. Both are reported as the Available condition, in that order: when
+// Available is true the project exists, which is what lets the CCLDeployment controller
+// write Applications into it without checking.
 //
 // Deciding what runs on the registered cluster is CCLDeployment's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
@@ -127,7 +147,34 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Patch(ctx, &infraPlane, client.MergeFrom(base)))
 	}
 
+	op, err := r.reconcileProject(ctx, &infraPlane)
+	switch {
+	case apimeta.IsNoMatchError(err):
+		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
+		// started first. Not reported on the status: the Application CRD is missing in
+		// the same situations, and the CCLDeployment controller reports that. On the
+		// restart that follows installing Argo CD, every CCLInfraPlane is reconciled
+		// again and the project gets created then.
+		log.Info("Argo CD AppProject CRD not installed, skipped AppProject",
+			"project", projectName(infraPlane.Namespace))
+	case errors.Is(err, errProjectConflict):
+		// No requeue: only an edit elsewhere can resolve this, and the AppProject
+		// watch picks that up.
+		log.Info("Refused to overwrite AppProject claimed by another namespace",
+			"project", projectName(infraPlane.Namespace), "projectNamespace", r.ArgoCDNamespace)
+		return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+			reasonProjectConflict, fmt.Sprintf(
+				"AppProject %q in namespace %q belongs to another namespace",
+				projectName(infraPlane.Namespace), r.ArgoCDNamespace))
+	case err != nil:
+		return ctrl.Result{}, err
+	case op != controllerutil.OperationResultNone:
+		log.Info("Applied Argo CD AppProject", "project", projectName(infraPlane.Namespace),
+			"projectNamespace", r.ArgoCDNamespace, "operation", op)
+	}
+
 	secretName := infraPlane.Spec.ClusterCredentialsRef.Name
+	mirrorName := argoCDClusterName(infraPlane.Namespace, infraPlane.Name)
 
 	var source corev1.Secret
 	key := client.ObjectKey{Namespace: infraPlane.Namespace, Name: secretName}
@@ -141,46 +188,49 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	op, err := r.mirrorClusterSecret(ctx, &infraPlane, &source)
+	op, err = r.mirrorClusterSecret(ctx, &infraPlane, &source)
 	if err != nil {
 		if errors.Is(err, errClusterSecretConflict) {
 			// No requeue: only an edit elsewhere can resolve a name collision, and the
 			// Secret watch picks that up.
 			log.Info("Refused to overwrite cluster Secret owned by another CCLInfraPlane",
-				"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
+				"secret", mirrorName, "secretNamespace", r.ArgoCDNamespace)
 			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
 				reasonClusterSecretConflict, fmt.Sprintf(
 					"Secret %q in namespace %q belongs to another CCLInfraPlane",
-					infraPlane.Name, r.ArgoCDNamespace))
+					mirrorName, r.ArgoCDNamespace))
 		}
 		return ctrl.Result{}, err
 	}
 
 	// Names and namespaces only: the credentials themselves must never reach the logs.
 	if op != controllerutil.OperationResultNone {
-		log.Info("Mirrored Argo CD cluster Secret", "secret", infraPlane.Name,
+		log.Info("Mirrored Argo CD cluster Secret", "secret", mirrorName,
 			"secretNamespace", r.ArgoCDNamespace, "operation", op)
 	}
 
 	return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
 		reasonClusterSecretCreated, fmt.Sprintf("Mirrored Secret %q into namespace %q",
-			infraPlane.Name, r.ArgoCDNamespace))
+			mirrorName, r.ArgoCDNamespace))
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
 // source. Only source's data and type are copied; its labels and annotations are not.
 //
-// The one key the operator owns is "name", which Argo CD displays as the cluster name:
-// it is always the CCLInfraPlane's name, whatever the source Secret says. Everything
-// else is cloned verbatim.
+// Two keys are the operator's, whatever the source Secret says. "name", which Argo CD
+// displays as the cluster name and Applications address it by, is always
+// <namespace>-<name> - the same string the mirror itself is named. "project" scopes the
+// cluster to the namespace's AppProject, so only that namespace's Applications can deploy
+// to it. Everything else is cloned verbatim.
 func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	source *corev1.Secret,
 ) (controllerutil.OperationResult, error) {
+	clusterName := argoCDClusterName(infraPlane.Namespace, infraPlane.Name)
 	mirror := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      infraPlane.Name,
+			Name:      clusterName,
 			Namespace: r.ArgoCDNamespace,
 		},
 	}
@@ -196,18 +246,20 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 		mirror.Labels[argoCDSecretTypeLabel] = argoCDSecretTypeCluster
 
 		mirror.Type = source.Type
-		mirror.Data = make(map[string][]byte, len(source.Data)+1)
+		mirror.Data = make(map[string][]byte, len(source.Data)+2)
 		for k, v := range source.Data {
 			mirror.Data[k] = append([]byte(nil), v...)
 		}
-		// Written last so it wins over any "name" the source Secret carries.
-		mirror.Data[argoCDClusterNameKey] = []byte(infraPlane.Name)
+		// Written last so they win over anything the source Secret carries.
+		mirror.Data[argoCDClusterNameKey] = []byte(clusterName)
+		mirror.Data[argoCDClusterProjectKey] = []byte(projectName(infraPlane.Namespace))
 		return nil
 	})
 }
 
-// finalize deletes the mirrored Secret, if it is still ours, and then drops the
-// finalizer so the CCLInfraPlane can go away.
+// finalize deletes the mirrored Secret, if it is still ours, and the namespace's
+// AppProject if this was the last CCLInfraPlane using it, then drops the finalizer so the
+// CCLInfraPlane can go away.
 func (r *CCLInfraPlaneReconciler) finalize(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -219,7 +271,8 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	}
 
 	var mirror corev1.Secret
-	key := client.ObjectKey{Namespace: r.ArgoCDNamespace, Name: infraPlane.Name}
+	mirrorName := argoCDClusterName(infraPlane.Namespace, infraPlane.Name)
+	key := client.ObjectKey{Namespace: r.ArgoCDNamespace, Name: mirrorName}
 	switch err := r.Get(ctx, key, &mirror); {
 	case apierrors.IsNotFound(err):
 		// Already gone; nothing to clean up.
@@ -227,13 +280,17 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return err
 	case !infraPlaneOwner.ownedBy(&mirror, infraPlane):
 		log.Info("Left cluster Secret owned by another CCLInfraPlane in place",
-			"secret", infraPlane.Name, "secretNamespace", r.ArgoCDNamespace)
+			"secret", mirrorName, "secretNamespace", r.ArgoCDNamespace)
 	default:
 		if err := r.Delete(ctx, &mirror); client.IgnoreNotFound(err) != nil {
 			return err
 		}
-		log.Info("Deleted Argo CD cluster Secret", "secret", infraPlane.Name,
+		log.Info("Deleted Argo CD cluster Secret", "secret", mirrorName,
 			"secretNamespace", r.ArgoCDNamespace)
+	}
+
+	if err := r.deleteProjectIfUnused(ctx, infraPlane); err != nil {
+		return err
 	}
 
 	// Patched rather than updated, and NotFound ignored, for the reasons in setAvailable:
@@ -322,10 +379,19 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 //
 // The Secret watch is unfiltered, so the manager caches every Secret in the cluster. If
 // that becomes costly, scope it with cache.ByObject in internal/manager.
+//
+// The AppProject watch is registered only when Argo CD's CRD is already installed, for
+// the reason given on CCLDeploymentReconciler.SetupWithManager: a watch on a kind the API
+// server does not serve never syncs, and the controller would never start.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret)).
-		Named("cclinfraplane").
-		Complete(r)
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret))
+
+	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"), "AppProject") {
+		builder = builder.Watches(&argocdv1alpha1.AppProject{},
+			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForProject))
+	}
+
+	return builder.Named("cclinfraplane").Complete(r)
 }

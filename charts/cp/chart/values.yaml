@@ -23,8 +23,10 @@ manager:
   ## Arguments
   ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
-  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the Applications it
-  ## builds from each CCLDeployment's components. The default matches a stock Argo CD install. Note
+  ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
+  ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
+  ## CCLDeployment go into the CCLDeployment's own namespace — see
+  ## `application.namespaces` below.) The default matches a stock Argo CD install. Note
   ## that the `argo-cd` subchart below installs into this chart's RELEASE namespace,
   ## not `argocd` — so when Argo CD comes from this chart, override this to the release
   ## namespace. `make deploy-cp` does that for you.
@@ -154,4 +156,19 @@ argo-cd:
       ## argo-rollouts' rollouts.argoproj.io CRD is ~600KB; several other cluster_base
       ## charts are comparable.
       controller.diff.server.side: "true"
+
+      ## "Applications in any namespace". The operator writes each CCLDeployment's
+      ## Applications into the CCLDeployment's own namespace, under an AppProject named
+      ## after that namespace, so that one namespace's Applications and clusters are
+      ## isolated from another's. Argo CD only looks for Applications in the namespaces
+      ## listed here, and the list is static — changing it restarts argocd-server and
+      ## the application controller — so a glob is the only way to cover namespaces
+      ## that do not exist yet. What an Application in a given namespace may do is
+      ## still bounded by its AppProject's sourceNamespaces, which the operator sets to
+      ## exactly that namespace.
+      ##
+      ## Setting this also makes the argo-cd chart widen argocd-server's ClusterRole to
+      ## manage Applications cluster-wide; the application controller's ClusterRole
+      ## already covers every namespace.
+      application.namespaces: "*"
 
