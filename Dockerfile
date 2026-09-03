@@ -17,17 +17,24 @@ COPY go.mod go.mod
 COPY go.sum go.sum
 # cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+# The module and build caches are BuildKit cache mounts: they persist on the builder
+# across builds, so the second image (ip after cp) and every rebuild recompile only what
+# changed instead of all of controller-runtime. In CI the mounts are saved and restored
+# between runs by reproducible-containers/buildkit-cache-dance (see main.yml).
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy the Go source (relies on .dockerignore to filter)
 COPY . .
 
-# Build
-# the GOARCH has no default value to allow the binary to be built according to the host where the command
-# was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager ./cmd/${CMD}
+# Build. GOARCH is left empty when TARGETARCH is unset (plain `docker build`) so the
+# binary matches the host. No `-a`: it forced recompiling the standard library and every
+# dependency on each build and defeated the caches above. -trimpath and -s -w drop build
+# paths and debug symbols, which are noise in a distroless image.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o manager ./cmd/${CMD}
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details

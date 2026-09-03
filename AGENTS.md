@@ -576,6 +576,20 @@ cluster, is refused by Argo CD (`PermitOnlyProjectScopedClusters` plus the mirro
 cluster Secrets with a duplicate `server` URL. This tier is opt-in only — not run in CI —
 because of the real image pulls and multi-minute convergence waits involved.
 
+## Image builds
+
+The Dockerfile's build stage runs on `BUILDPLATFORM` and cross-compiles via
+`TARGETOS`/`TARGETARCH`, so a multi-arch build never emulates. The Go module and build
+caches are BuildKit **cache mounts**, which is what makes the second image (ip after cp)
+and every rebuild cheap: they persist on the builder, not in image layers. Two things
+follow. Do not reintroduce `go build -a`, which recompiles everything and defeats them.
+And in CI the mounts are saved and restored around the build by
+`reproducible-containers/buildkit-cache-dance` (`main.yml`) — the layer cache
+(`--cache-from/--cache-to type=gha`, passed through `BUILDX_ARGS`) cannot carry them, and
+without both a Go change costs a full cold compile of controller-runtime, twice per image.
+`.dockerignore` admits only `*.go`, `go.mod` and `go.sum`, so a docs-only merge is a
+complete layer-cache hit.
+
 ## Image tags
 
 Every image is tagged with the commit it was built from: `IMG_TAG` defaults to
