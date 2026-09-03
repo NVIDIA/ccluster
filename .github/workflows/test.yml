@@ -28,7 +28,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # bin/ holds the downloaded tools (controller-gen, kustomize, setup-envtest and its
+      # Kubernetes assets, golangci-lint, yq). Building them from source costs a minute
+      # or more per job, so they are cached on the Makefile (tool versions) and go.sum
+      # (envtest's version derives from controller-runtime's).
+      - uses: actions/cache@v4
+        with:
+          path: bin
+          key: bin-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
+
       - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+        run: make test

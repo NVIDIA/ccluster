@@ -28,6 +28,45 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # bin/ holds the downloaded tools (controller-gen, kustomize, setup-envtest and its
+      # Kubernetes assets, golangci-lint, yq). Building them from source costs a minute
+      # or more per job, so they are cached on the Makefile (tool versions) and go.sum
+      # (envtest's version derives from controller-runtime's).
+      - uses: actions/cache@v4
+        with:
+          path: bin
+          key: bin-${{ runner.os }}-${{ hashFiles('Makefile', 'go.sum') }}
+
+      # The suite builds the manager image with `make docker-build-cp`, a plain
+      # `docker build`. Give it the same two caches main.yml uses (see AGENTS.md "Image
+      # builds"): `install: true` routes `docker build` through a buildx builder so the
+      # type=gha layer cache works, and buildkit-cache-dance carries the Go cache mounts
+      # across runs. --load puts the result in the local image store for `kind load`.
+      - uses: docker/setup-buildx-action@v3
+        id: buildx
+        with:
+          install: true
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: actions/cache@v4
+        id: go-cache
+        with:
+          path: |
+            go-build-cache
+            go-mod-cache
+          key: go-buildkit-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-buildkit-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-buildkit-${{ runner.os }}-
+      - uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "go-build-cache": "/root/.cache/go-build",
+              "go-mod-cache": "/go/pkg/mod"
+            }
+          skip-extraction: ${{ steps.go-cache.outputs.cache-hit }}
+
       - name: Install the latest version of kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
@@ -38,6 +77,6 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+        env:
+          DOCKER_BUILD_ARGS: --load --cache-from type=gha,scope=e2e --cache-to type=gha,scope=e2e,mode=max
+        run: make test-e2e

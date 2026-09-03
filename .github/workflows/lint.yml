@@ -16,7 +16,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check linter configuration
-        run: make lint-config
+      # The Makefile is the single source of the golangci-lint version; `make lint`
+      # builds that version from source, which takes over a minute in CI. The action
+      # downloads the release binary instead and caches the analysis results between
+      # runs. `verify` is `make lint-config`.
+      - name: Read the golangci-lint version from the Makefile
+        id: version
+        run: echo "version=$(sed -n 's/^GOLANGCI_LINT_VERSION ?= //p' Makefile)" >> "$GITHUB_OUTPUT"
+
       - name: Run linter
-        run: make lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ steps.version.outputs.version }}
+          verify: true

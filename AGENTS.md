@@ -588,7 +588,16 @@ And in CI the mounts are saved and restored around the build by
 (`--cache-from/--cache-to type=gha`, passed through `BUILDX_ARGS`) cannot carry them, and
 without both a Go change costs a full cold compile of controller-runtime, twice per image.
 `.dockerignore` admits only `*.go`, `go.mod` and `go.sum`, so a docs-only merge is a
-complete layer-cache hit.
+complete layer-cache hit. `test-e2e.yml` gives the suite's `make docker-build-cp` the same
+two caches, through `DOCKER_BUILD_ARGS` (`--load` plus the cache flags) and a buildx
+builder installed as the default `docker build`.
+
+Two more CI caches to keep in mind when changing the Makefile: `bin/` is cached in
+`test.yml` and `test-e2e.yml` keyed on the Makefile and `go.sum`, so bumping a tool
+version there is what invalidates it; and `lint.yml` does not run `make lint` at all — it
+reads `GOLANGCI_LINT_VERSION` out of the Makefile and runs `golangci-lint-action`, which
+downloads the release binary and caches its analysis. Keep that version line in the
+`NAME ?= value` form the workflow's `sed` expects.
 
 ## Image tags
 

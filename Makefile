@@ -21,6 +21,8 @@ IMG_IP    ?= $(REGISTRY)/ccluster-ip-operator:$(IMG_TAG)
 PLATFORMS ?= linux/amd64,linux/arm64
 # Extra flags for docker-buildx-*; CI passes layer-cache flags (--cache-from/--cache-to).
 BUILDX_ARGS ?=
+# Extra flags for docker-build-*; test-e2e.yml passes --load and the same cache flags.
+DOCKER_BUILD_ARGS ?=
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -188,11 +190,11 @@ docker-build: docker-build-cp docker-build-ip ## Build both manager images.
 
 .PHONY: docker-build-cp
 docker-build-cp: ## Build docker image with the ccluster-cp-operator manager.
-	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} .
+	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} $(DOCKER_BUILD_ARGS) .
 
 .PHONY: docker-build-ip
 docker-build-ip: ## Build docker image with the ccluster-ip-operator manager.
-	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} .
+	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} $(DOCKER_BUILD_ARGS) .
 
 # A locally built image is invisible to a Kind cluster until it is loaded onto the
 # node - that, not a bad tag, is the usual cause of ErrImagePull on a `:dev` image.
