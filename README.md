@@ -151,16 +151,19 @@ including RBAC, CRD and chart regeneration after an API change.
 
 ## Releases
 
-A release is a git tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which
-retags the images already built for that commit, packages and pushes both charts to
-`oci://ghcr.io/nvidia/charts`, publishes `ccluster-py==X.Y.Z` to PyPI, and opens a GitHub
-Release with generated notes and the artifacts attached. Nothing in the tree is bumped.
+Every merge to `main` publishes both operator images tagged with the commit hash and both
+charts as version `0.0.0-g<sha>`, so any commit can be deployed before it is released:
 
 ```bash
-git checkout main && git pull
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+make deploy-cp IMG_TAG=<sha>
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.0-g<sha> ...
 ```
+
+A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or
+`gh release create vX.Y.Z --generate-notes`) and `.github/workflows/release.yml` retags
+the images already built for that commit as `X.Y.Z`, re-packages both charts as `X.Y.Z`
+pointing at them, publishes `ccluster-py==X.Y.Z` to PyPI, and attaches the tarballs and
+dists to the release. Nothing in the tree is bumped.
 
 | Artifact | Location |
 | --- | --- |
@@ -168,9 +171,6 @@ git push origin v0.1.0
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
 | Python package | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/), imported as `ccluster` |
 | Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
-
-Every commit on `main` also publishes both images tagged with its commit hash, so an
-unreleased build can be deployed with `make deploy-cp IMG_TAG=<sha>`.
 
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 - Broader direction and upcoming capabilities are described in [DESIGN.md](DESIGN.md).

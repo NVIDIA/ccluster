@@ -2,6 +2,18 @@ name: Tests
 
 on:
   pull_request:
+    # Only when something the suite depends on changes; docs, catalog and workflow-only
+    # PRs skip it. Keep in sync with AGENTS.md "Pull requests".
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'Dockerfile'
+      - 'config/**'
+      - 'charts/**'
+      - 'test/**'
+      - '.github/workflows/test.yml'
 
 jobs:
   test:
