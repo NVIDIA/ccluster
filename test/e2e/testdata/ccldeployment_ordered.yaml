@@ -1,0 +1,23 @@
+# A two-component CCLDeployment, argo-rollouts then keda, matching
+# examples/quickstart/v1alpha1_ccldeployment.yaml. Order is the position in the list.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+    - name: keda
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/keda
+      namespace: keda
+      values:
+        keda:
+          operator:
+            replicaCount: 1

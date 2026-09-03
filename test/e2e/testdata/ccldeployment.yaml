@@ -1,0 +1,13 @@
+# A single-component CCLDeployment: argo-rollouts onto one plane.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLDeployment
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts

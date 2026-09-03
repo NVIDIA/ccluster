@@ -439,8 +439,8 @@ tag are unchanged, even though the image content changed.
 | --- | --- | --- | --- |
 | unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
-| e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick) and the status paths reachable without Argo CD. | A real rollout — see the full tier |
-| e2e (full) | `make test-e2e-full` | Same cluster, deployed with real Argo CD instead. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, and selfHeal drift correction — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
+| e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick), the status paths reachable without Argo CD, and the watch wiring a running manager alone can prove: source-Secret edits reaching the mirror, drift on the mirror / AppProject / Application being restored, a plane appearing after its CCLDeployment, and a removed component being pruned. | A real rollout — see the full tier |
+| e2e (full) | `make test-e2e-full` | Same cluster, deployed with real Argo CD instead. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, selfHeal drift correction, a values change rolling forward, and the AppProject refusing a cross-namespace destination — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
 | charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
 
@@ -486,29 +486,51 @@ rather than a coverage regression. Note three things about how they run:
 decide whether `deploy-cp` gets `ARGOCD=false` or real Argo CD, so the fixture and the spec
 selection never drift apart). A handful of specs carry no label and run in both tiers: the
 manager comes up, both CRDs' RBAC surface not tied to Argo CD's presence (Secret mirroring and
-`CCLInfraPlane` finalizer cleanup, and `CCLDeployment`'s `InfraPlaneNotFound` status path).
+`CCLInfraPlane` finalizer cleanup, and `CCLDeployment`'s `InfraPlaneNotFound` status path),
+and two **watch-wiring** specs: a source Secret edited after the fact reaches the mirror and a
+deleted mirror is re-created, and a `CCLDeployment` created before its plane becomes
+`Validated` once the plane appears, without being touched. Those two exist because envtest
+never starts a controller — the `Watches` map functions are only ever called directly there —
+so a running manager in e2e is the only place a missing or mis-mapped watch can be caught.
+The plane in the second spec self-registers the control-plane cluster rather than pointing
+at a fake endpoint, because in the full tier Argo CD has to reach the destination to run the
+cascade teardown on delete.
 
 The **quick** tier (`make test-e2e`, the default, no `E2E_FULL` needed) deploys with
-`ARGOCD=false` and adds two `Label("quick")` specs that need Argo CD genuinely absent:
+`ARGOCD=false` and adds three `Label("quick")` specs that need Argo CD genuinely absent:
 `ApplicationCRDMissing` — the graceful-degradation path for a cluster where Argo CD isn't
-installed yet — and a spec that renders just the Application and AppProject CRDs out of the
+installed yet; a spec that renders just the Application and AppProject CRDs out of the
 vendored `argo-cd` dependency chart with `helm template --show-only` (static resources, no
-images to pull), applies them, restarts the manager to pick up the watches, and asserts a
+images to pull), applies them, restarts the manager to pick up the watches, asserts a
 real `AppProject` and `Application` get created under the operator's own
-`argoproj.io/appprojects` and `argoproj.io/applications` RBAC. This is what makes the quick
-tier fast enough to run on every PR while still exercising real RBAC.
+`argoproj.io/appprojects` and `argoproj.io/applications` RBAC, and then drifts both objects'
+specs by hand and asserts the operator restores them (the argoproj watches are only
+registered when the CRD is served at startup, so this is the one place they can be proven);
+and a pruning spec that runs straight after it on the same CRDs — with no Argo CD present the
+Application CRD has no status subresource, so a merge patch on `status` hand-converges the
+first component, the second is released, then removed from the spec and its Application
+pruned. That spec deletes the argoproj CRDs when it finishes; the CRD-install spec
+deliberately does not. This is what makes the quick tier fast enough to run on every PR
+while still exercising real RBAC and real watches.
 
 The **full** tier (`make test-e2e-full`, or `make test-e2e E2E_FULL=true`) deploys real Argo CD
-instead and adds three `Label("full")` specs: one registers the control-plane cluster with
+instead and adds five `Label("full")` specs: one registers the control-plane cluster with
 itself, the same trick `examples/quickstart/v1alpha1_cclinfraplane.yaml` documents, and drives one
 catalog component all the way to `Healthy`/`Synced` under Argo CD's own reconciliation
 (including an explicit check that argo-rollouts' ~600KB CRD resource itself reports `Synced`,
 not just the aggregate Application — the concrete regression `ServerSideApply` and
 `controller.diff.server.side` exist to prevent, DESIGN.md §6); one deploys two components in
 order and proves both `releaseCount` withholding and `teardownNext`'s reverse, one-at-a-time
-teardown against real convergence timing, not hand-written status; and one mutates a live
-managed resource and confirms Argo CD's `selfHeal` reverts it. This tier is opt-in only — not
-run in CI — because of the real image pulls and multi-minute convergence waits involved.
+teardown against real convergence timing, not hand-written status; one mutates a live
+managed resource and confirms Argo CD's `selfHeal` reverts it; one edits a component's
+`values` on a converged CCLDeployment and asserts first that the Application's `valuesObject`
+follows (operator side) and then that the managed Deployment follows (Argo CD side); and one
+proves the AppProject is a real tenancy boundary — a hand-written Application in one
+namespace, under that namespace's project, targeting another namespace's project-scoped
+cluster, is refused by Argo CD (`PermitOnlyProjectScopedClusters` plus the mirror's
+`data.project`). Only one of the two planes in that spec is a real cluster: Argo CD skips
+cluster Secrets with a duplicate `server` URL. This tier is opt-in only — not run in CI —
+because of the real image pulls and multi-minute convergence waits involved.
 
 ## Image tags
 

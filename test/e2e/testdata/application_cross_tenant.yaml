@@ -1,0 +1,16 @@
+# A hand-written Argo CD Application, deliberately without the operator's ownership
+# labels, whose only fault is a destination cluster scoped to a different project.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  project: {{ .Project }}
+  source:
+    repoURL: {{ .RepoURL }}
+    targetRevision: {{ .Revision }}
+    path: catalogs/cluster_base/argo_rollouts
+  destination:
+    name: {{ .DestinationName }}
+    namespace: argo-rollouts
