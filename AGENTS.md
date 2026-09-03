@@ -28,7 +28,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster` and published to PyPI as `ccluster-py` (that name was taken). **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
-| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
+| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -632,6 +632,27 @@ because GHCR namespaces are lowercase and `github.repository_owner` is `NVIDIA`.
 PyPI uploads are permanent, so cut a `vX.Y.Z-rc.N` release first when in doubt; uv
 normalises it to `X.Y.ZrcN`, and the GitHub "pre-release" checkbox has no effect on the
 workflow.
+
+## Pull requests
+
+The repository squash-merges with the PR title as the commit subject, so the title is a
+Conventional Commit line (`feat(cp): ...`, enforced by `pr-title.yml`) and the PR
+description becomes the commit body. Write the description in this shape, and nothing
+else — no section headers, no "Test plan", no checkbox lists, no generated-by footer:
+
+1. One or two lines of prose saying what the change does and why, in the imperative.
+2. A blank line, then a bullet list of the major changes. Each bullet is a sentence or
+   two, names the concrete thing that changed in backticks, and says what it does now.
+   Order by importance, not by file.
+
+`git show -s 9977f3a` is the reference. If verification is itself part of the change
+(a new e2e spec, a fixed assertion) it belongs in a bullet, not in a separate checklist.
+
+`test.yml` and `test-e2e.yml` carry `paths:` filters so a docs-, catalog- or
+workflow-only PR does not spin up envtest and a kind cluster. Keep the filter lists in
+sync with what those suites actually depend on; a change that slips past them is not
+tested until it lands on `main`. Do not mark those two as required status checks in
+branch protection: a PR that skips them would then never be mergeable.
 
 ## Code style
 
