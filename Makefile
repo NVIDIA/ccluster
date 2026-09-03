@@ -441,6 +441,15 @@ helm: ## Verify that the helm binary is available.
 
 KUBEBUILDER ?= kubebuilder
 
+UV ?= uv
+
+.PHONY: uv
+uv: ## Verify that the uv binary is available.
+	@command -v "$(UV)" >/dev/null 2>&1 || { \
+		echo "uv not found. Install it from https://docs.astral.sh/uv/getting-started/installation/ or set UV=<path>." >&2; \
+		exit 1; \
+	}
+
 .PHONY: kubebuilder
 kubebuilder: ## Verify that the kubebuilder CLI is available.
 	@command -v "$(KUBEBUILDER)" >/dev/null 2>&1 || { \
@@ -489,6 +498,40 @@ helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and
 helm-lint: helm helm-deps-cp ## Lint both operator charts.
 	"$(HELM)" lint $(CHART_CP) $(CHART_IP)
 
+##@ Python
+
+# python/ is a Pydantic rendering of the CRDs and the catalog's typed values, generated
+# in two steps: hack/pyschema writes JSON Schema for each (plus the package __init__.py
+# files), then datamodel-code-generator turns every schema into a module beside its
+# __init__.py. It is run per file rather than over the directory because directory mode
+# rewrites every __init__.py on the way through, and hack/pyschema owns those.
+# The generated subpackages are deleted and rebuilt on each run; see hack/pyschema/main.go.
+PYSCHEMA_DIR ?= dist/pyschema
+PYTHON_PKG ?= python/src/ccluster
+
+.PHONY: python-generate
+python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalog Go types.
+	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)"
+	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
+		rel="$${schema#$(PYSCHEMA_DIR)/}"; \
+		out="$(PYTHON_PKG)/$${rel%.json}.py"; \
+		echo "$$schema -> $$out"; \
+		"$(UV)" tool run --from "datamodel-code-generator==$(DATAMODEL_CODEGEN_VERSION)" \
+			datamodel-codegen \
+			--input "$$schema" --input-file-type jsonschema --output "$$out" \
+			--output-model-type pydantic_v2.BaseModel --target-python-version 3.10 \
+			--use-annotated --field-constraints --snake-case-field \
+			--allow-population-by-field-name --use-title-as-name \
+			--use-schema-description --use-field-description --use-default \
+			--collapse-root-models --use-double-quotes --disable-timestamp \
+			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
+			|| exit 1; \
+	done
+
+.PHONY: python-test
+python-test: uv ## Run the python/ package's tests.
+	cd python && "$(UV)" sync --quiet && "$(UV)" run pytest
+
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -519,6 +562,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
+DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)

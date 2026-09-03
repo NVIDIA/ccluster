@@ -1,0 +1,31 @@
+name: Python
+
+on:
+  pull_request:
+
+jobs:
+  python:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      # python/ is generated from the CRDs and the catalog Go packages. Regenerate it
+      # here and fail if the committed copy differs, so the Go types and the Python
+      # models can never drift.
+      - name: Verify the committed Python models match the CRDs and catalog
+        run: |
+          make python-generate
+          git diff --exit-code -- python/
+
+      - name: Run the Python tests
+        run: make python-test
