@@ -9,8 +9,10 @@ name: ccluster-cp-operator
 description: ccluster control-plane operator and its cluster dependencies
 type: application
 
-version: 0.1.0
-appVersion: "0.1.0"
+# Placeholders. The release version is the git tag, and `make helm-package` stamps it
+# into both fields (`helm package --version --app-version`) on a copy under dist/.
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
 
 keywords:
   - kubernetes

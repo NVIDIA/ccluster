@@ -1,7 +1,24 @@
 # Image URLs to use for all building/pushing image targets. The two operators
 # ship as separate images, built from the same Dockerfile via --build-arg CMD.
-IMG_CP ?= ccluster-cp-operator:dev
-IMG_IP ?= ccluster-ip-operator:dev
+#
+# Every image is tagged with the commit it was built from - there is no :dev or :latest.
+# A release never rebuilds: `make docker-retag VERSION=X.Y.Z` adds the version tag to the
+# :<sha> manifest that CI already pushed for that commit, so the released image is
+# bit-for-bit the one that was built and tested. A dirty working tree gets a -dirty
+# suffix so it cannot masquerade as a commit. The kind loop (docker-build-*, load-*,
+# deploy-*) is unaffected: a locally built ghcr.io/... :<sha> image is loaded and
+# deployed by that name and never pulled (IfNotPresent, non-latest tag).
+GIT_SHA   ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
+IMG_TAG   ?= $(GIT_SHA)
+# VERSION is the release version (the git tag without its leading v). Set by the release
+# workflow; empty in day-to-day use. Targets that publish refuse to run without it.
+VERSION   ?=
+# REGISTRY is the OCI prefix for both the images and the charts (oci://$(REGISTRY)/charts).
+REGISTRY  ?= ghcr.io/nvidia
+IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
+IMG_IP    ?= $(REGISTRY)/ccluster-ip-operator:$(IMG_TAG)
+# Platforms docker-buildx-* builds for. Only what is actually run and tested.
+PLATFORMS ?= linux/amd64,linux/arm64
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -207,26 +224,39 @@ docker-push-cp: ## Push the ccluster-cp-operator docker image.
 docker-push-ip: ## Push the ccluster-ip-operator docker image.
 	$(CONTAINER_TOOL) push ${IMG_IP}
 
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
-# - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-# CMD and IMG select which operator to cross-build; override both together, e.g.
-#   make docker-buildx CMD=ccluster-ip-operator IMG=myregistry/ccluster-ip-operator:0.0.1
-CMD ?= ccluster-cp-operator
-IMG ?= $(IMG_CP)
+# Multi-platform builds. These push straight to the registry (a multi-arch manifest list
+# cannot be loaded into the local docker image store), always under the :<sha> tag, and
+# need a buildx builder with the docker-container driver: `docker buildx create --use`
+# locally, docker/setup-buildx-action in CI. The Dockerfile already carries
+# --platform=$BUILDPLATFORM on its build stage, so no rewritten copy is needed.
 .PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name ccluster-builder
-	$(CONTAINER_TOOL) buildx use ccluster-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=$(CMD) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm ccluster-builder
-	rm Dockerfile.cross
+docker-buildx: docker-buildx-cp docker-buildx-ip ## Build and push both manager images for PLATFORMS.
+
+.PHONY: docker-buildx-cp
+docker-buildx-cp: ## Build and push the multi-platform ccluster-cp-operator image.
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} .
+
+.PHONY: docker-buildx-ip
+docker-buildx-ip: ## Build and push the multi-platform ccluster-ip-operator image.
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} .
+
+# Releasing an image is a retag, not a rebuild. `imagetools create` copies the manifest
+# list already in the registry under a second tag, server-side: nothing is pulled, and the
+# :X.Y.Z image is by construction the :<sha> image that CI built for the tagged commit.
+.PHONY: docker-retag
+docker-retag: docker-retag-cp docker-retag-ip ## Retag both :<sha> images in the registry as :$(VERSION).
+
+.PHONY: docker-retag-cp
+docker-retag-cp: require-version ## Retag the pushed ccluster-cp-operator:<sha> image as :$(VERSION).
+	$(CONTAINER_TOOL) buildx imagetools create -t $(REGISTRY)/ccluster-cp-operator:$(VERSION) ${IMG_CP}
+
+.PHONY: docker-retag-ip
+docker-retag-ip: require-version ## Retag the pushed ccluster-ip-operator:<sha> image as :$(VERSION).
+	$(CONTAINER_TOOL) buildx imagetools create -t $(REGISTRY)/ccluster-ip-operator:$(VERSION) ${IMG_IP}
+
+.PHONY: require-version
+require-version:
+	@[ -n "$(VERSION)" ] || { echo "VERSION is required, e.g. make $(MAKECMDGOALS) VERSION=0.1.0" >&2; exit 1; }
 
 .PHONY: build-installer
 build-installer: build-installer-cp build-installer-ip ## Generate consolidated install YAML for both operators.
@@ -498,6 +528,65 @@ helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and
 helm-lint: helm helm-deps-cp ## Lint both operator charts.
 	"$(HELM)" lint $(CHART_CP) $(CHART_IP)
 
+##@ Release
+
+# The git tag is the only version. Nothing committed is bumped for a release: the
+# committed charts carry `version: 0.0.0-dev` and an empty image tag, python/ carries
+# 0.0.0.dev0, and the targets below stamp VERSION (the tag without its leading v) into a
+# copy of each artifact under dist/. helm-package-* and python-build fall back to the dev
+# placeholder so they can be dry-run locally; the targets that actually publish
+# (docker-retag-*, helm-push-*) refuse to run without VERSION.
+PKG_VERSION = $(or $(VERSION),0.0.0-dev)
+# PEP 440 spelling of PKG_VERSION: Helm's `X.Y.Z-dev` is Python's `X.Y.Z.dev0`; release
+# versions are identical in both. uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
+PY_VERSION = $(patsubst %-dev,%.dev0,$(PKG_VERSION))
+DIST_CHARTS ?= dist/charts
+DIST_PYTHON ?= dist/python
+
+.PHONY: helm-package
+helm-package: helm-package-cp helm-package-ip ## Package both operator charts into $(DIST_CHARTS), stamped with VERSION.
+
+# Packaging works on a copy so charts/{cp,ip}/chart stay byte-identical to what
+# `make helm-generate` emits; CI fails on any diff there. The stamped values are the
+# image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
+# --catalog-revision, so a released chart pins the catalog to its own tag.
+.PHONY: helm-package-cp
+helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-operator-$(PKG_VERSION).tgz.
+	rm -rf $(DIST_CHARTS)/ccluster-cp-operator && mkdir -p $(DIST_CHARTS)
+	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp-operator
+	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
+		$(DIST_CHARTS)/ccluster-cp-operator/values.yaml
+	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=v$(PKG_VERSION)"' \
+		$(DIST_CHARTS)/ccluster-cp-operator/values.yaml
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp-operator --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+
+.PHONY: helm-package-ip
+helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-operator-$(PKG_VERSION).tgz.
+	rm -rf $(DIST_CHARTS)/ccluster-ip-operator && mkdir -p $(DIST_CHARTS)
+	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip-operator
+	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
+		$(DIST_CHARTS)/ccluster-ip-operator/values.yaml
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip-operator --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+
+.PHONY: helm-push
+helm-push: helm-push-cp helm-push-ip ## Push both packaged charts to oci://$(REGISTRY)/charts.
+
+.PHONY: helm-push-cp
+helm-push-cp: require-version helm ## Push the packaged cp chart to oci://$(REGISTRY)/charts.
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-cp-operator-$(VERSION).tgz oci://$(REGISTRY)/charts
+
+.PHONY: helm-push-ip
+helm-push-ip: require-version helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-operator-$(VERSION).tgz oci://$(REGISTRY)/charts
+
+# `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
+# locally with `git checkout python/pyproject.toml`. Publishing is left to the release
+# workflow (PyPI trusted publishing), which needs no credentials in the Makefile.
+.PHONY: python-build
+python-build: uv ## Build the ccluster wheel and sdist into $(DIST_PYTHON), stamped with VERSION.
+	rm -rf $(DIST_PYTHON)
+	cd python && "$(UV)" version --no-sync $(PY_VERSION) && "$(UV)" build --out-dir ../$(DIST_PYTHON)
+
 ##@ Python
 
 # python/ is a Pydantic rendering of the CRDs and the catalog's typed values, generated
@@ -543,12 +632,14 @@ $(LOCALBIN):
 KUBECTL ?= kubectl
 KIND ?= kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
+YQ ?= $(LOCALBIN)/yq
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
+YQ_VERSION ?= v4.53.6
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
@@ -567,6 +658,11 @@ DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+
+.PHONY: yq
+yq: $(YQ) ## Download yq locally if necessary.
+$(YQ): $(LOCALBIN)
+	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.

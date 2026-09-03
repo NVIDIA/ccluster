@@ -45,10 +45,28 @@ export KUBECONFIG=~/.kube/my-cluster.yaml
 ```
 
 If the cluster already runs Argo CD, install the operator on its own with
-`make deploy-cp ARGOCD=false`. The charts live in `charts/cp/chart` and `charts/ip/chart`
-and can also be installed directly with `helm install`; they are generated from the
-kustomize overlays in `config/`, so regenerate them with `make helm-generate` after changing
-the API or any RBAC marker.
+`make deploy-cp ARGOCD=false`.
+
+The `make deploy-*` targets install the charts from this checkout with a locally built
+image. Released versions are published to GHCR and can be installed without a clone:
+
+```bash
+# Control-plane cluster: ccluster-cp-operator + Argo CD
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp-operator --version X.Y.Z \
+  -n ccluster-cp-system --create-namespace
+
+# Infra-plane cluster: ccluster-ip-operator
+helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip-operator --version X.Y.Z \
+  -n ccluster-ip-system --create-namespace
+```
+
+Each released chart references `ghcr.io/nvidia/ccluster-{cp,ip}-operator:X.Y.Z` and pins
+`--catalog-revision` to the matching `vX.Y.Z` tag. The Pydantic models for the API and the
+catalog ship as `pip install ccluster`.
+
+The charts themselves live in `charts/cp/chart` and `charts/ip/chart`; they are generated
+from the kustomize overlays in `config/`, so regenerate them with `make helm-generate`
+after changing the API or any RBAC marker.
 
 ## Trying it out
 
@@ -132,6 +150,27 @@ including RBAC, CRD and chart regeneration after an API change.
   both development clusters; `make build load deploy` builds, loads and installs into them.
 
 ## Releases
+
+A release is a git tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which
+retags the images already built for that commit, packages and pushes both charts to
+`oci://ghcr.io/nvidia/charts`, publishes `ccluster==X.Y.Z` to PyPI, and opens a GitHub
+Release with generated notes and the artifacts attached. Nothing in the tree is bumped.
+
+```bash
+git checkout main && git pull
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+| Artifact | Location |
+| --- | --- |
+| Operator images | `ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z`, `ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z` (also tagged with the commit hash) |
+| Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp-operator`, `oci://ghcr.io/nvidia/charts/ccluster-ip-operator` |
+| Python package | [`ccluster` on PyPI](https://pypi.org/project/ccluster/) |
+| Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
+
+Every commit on `main` also publishes both images tagged with its commit hash, so an
+unreleased build can be deployed with `make deploy-cp IMG_TAG=<sha>`.
 
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 - Broader direction and upcoming capabilities are described in [DESIGN.md](DESIGN.md).

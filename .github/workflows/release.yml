@@ -1,0 +1,123 @@
+# Cut a release from a git tag vX.Y.Z. The tag is the only version: nothing in the tree is
+# bumped. VERSION=${tag#v} is stamped into the charts and the Python package, and the
+# images are not rebuilt at all - the :<sha> manifests for the tagged commit are retagged
+# :X.Y.Z, so what ships is exactly what was built for that commit.
+#
+# Artifacts:
+#   ghcr.io/<owner>/ccluster-{cp,ip}-operator:X.Y.Z        (retag of :<sha>)
+#   oci://ghcr.io/<owner>/charts/ccluster-{cp,ip}-operator  (chart version = appVersion = X.Y.Z)
+#   PyPI ccluster==X.Y.Z                                    (trusted publishing, `pypi` environment)
+#   GitHub Release vX.Y.Z with the chart tarballs and Python dists attached
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+# GHCR namespaces are lowercase while github.repository_owner is "NVIDIA", hence the
+# ${GITHUB_REPOSITORY_OWNER,,} in every make call. It also makes a fork publish into its
+# own namespace instead of failing to push to ghcr.io/nvidia.
+permissions:
+  contents: read
+
+jobs:
+  # Cheap gate. The PR that produced the tagged commit already ran e2e and the drift
+  # checks; this only guards against tagging something that never went through a PR.
+  check:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v6
+      - run: make test
+      - run: make helm-lint
+      - run: make python-test
+
+  images:
+    name: Retag images
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Normally a no-op push of a manifest images.yml already produced for this commit;
+      # it is here so a tag on a commit that never reached main still gets an image.
+      - name: Ensure the :<sha> images exist
+        run: make docker-buildx REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+      - name: Retag :<sha> as :${{ github.ref_name }}
+        run: make docker-retag REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" VERSION="${GITHUB_REF_NAME#v}"
+
+  charts:
+    name: Publish charts
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Package and push
+        run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" VERSION="${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: charts
+          path: dist/charts/*.tgz
+          if-no-files-found: error
+
+  python:
+    name: Publish to PyPI
+    needs: check
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI trusts this repository + workflow + environment, no token.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - name: Build
+        run: make python-build VERSION="${GITHUB_REF_NAME#v}"
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python
+          path: dist/python/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [charts, python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            --title "$GITHUB_REF_NAME" dist/charts/*.tgz dist/python/*

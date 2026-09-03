@@ -15,9 +15,13 @@ fullnameOverride: "ccluster-cp"
 manager:
   replicas: 1
 
+  ## repository is the published image. tag is deliberately empty in the committed chart:
+  ## `make helm-package` stamps it with the release version (which is also the chart
+  ## version and appVersion) and `make deploy-*` sets both from IMG_CP / IMG_IP, whose
+  ## default tag is the current commit hash. Nothing installs from this file unstamped.
   image:
-    repository: ccluster-cp-operator
-    tag: dev
+    repository: ghcr.io/nvidia/ccluster-cp-operator
+    tag: ""
     pullPolicy: IfNotPresent
 
   ## Arguments

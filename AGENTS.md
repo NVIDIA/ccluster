@@ -28,6 +28,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster`. **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
+| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`), plus `images.yml` (push `:<sha>` images on every `main` commit) and `release.yml` (tag `vX.Y.Z` → retag images, publish charts and the Python package, GitHub Release). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -309,10 +310,20 @@ make docker-build-cp     make docker-build-ip      # one Dockerfile, --build-arg
 make deploy-cp           make deploy-ip            # helm upgrade --install
 make undeploy-cp         make undeploy-ip          # helm uninstall
 make build-installer-cp  make build-installer-ip   # dist/install-{cp,ip}.yaml
+make docker-buildx-cp    make docker-buildx-ip     # multi-arch build, pushes :<sha>
+make docker-retag-cp     make docker-retag-ip      # retag pushed :<sha> as :$(VERSION)
+make helm-package-cp     make helm-package-ip      # stamped chart tarball under dist/charts
+make helm-push-cp        make helm-push-ip         # helm push to oci://$(REGISTRY)/charts
 
-IMG_CP ?= ccluster-cp-operator:dev
-IMG_IP ?= ccluster-ip-operator:dev
+REGISTRY ?= ghcr.io/nvidia
+IMG_TAG  ?= $(GIT_SHA)                             # short commit hash, `-dirty` if the tree is
+IMG_CP   ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
+IMG_IP   ?= $(REGISTRY)/ccluster-ip-operator:$(IMG_TAG)
 ```
+
+`docker-buildx` no longer takes `CMD` / `IMG`; it builds both images for `PLATFORMS`
+(`linux/amd64,linux/arm64`) and always pushes, because a multi-arch manifest cannot be
+loaded into the local image store.
 
 `make install` / `make uninstall` (CRDs only), `make helm-generate` and `make helm-lint`
 cover both operators at once, and so does `make test`.
@@ -567,10 +578,46 @@ because of the real image pulls and multi-minute convergence waits involved.
 
 ## Image tags
 
-Do not use a `:latest` tag for local images. Kubernetes defaults `imagePullPolicy` to `Always`
-for `:latest`, so a locally built and `kind load`ed image is ignored and the pod lands in
-`ImagePullBackOff`. Any other tag defaults to `IfNotPresent` and works. Hence the `:dev`
-default in `IMG_CP` / `IMG_IP`.
+Every image is tagged with the commit it was built from: `IMG_TAG` defaults to
+`git rev-parse --short=12 HEAD`, with a `-dirty` suffix when the working tree has
+uncommitted changes. There is no `:dev` and no `:latest`.
+
+Do not introduce a `:latest` tag for local images. Kubernetes defaults `imagePullPolicy` to
+`Always` for `:latest`, so a locally built and `kind load`ed image is ignored and the pod
+lands in `ImagePullBackOff`. Any other tag defaults to `IfNotPresent` and works — which is
+also why a locally built `ghcr.io/nvidia/ccluster-cp-operator:<sha>` loaded into kind is
+never actually pulled from GHCR.
+
+## Releasing
+
+Images and charts publish to GHCR as OCI artifacts, the Python package to PyPI. Two rules
+shape everything in `.github/workflows/images.yml` and `release.yml`:
+
+- **Images are built once, as `:<sha>`, and a release retags.** `images.yml` runs
+  `make docker-buildx` for every commit on `main`. `release.yml` runs it again (a no-op
+  push if the manifest exists) and then `make docker-retag VERSION=X.Y.Z`, which is
+  `docker buildx imagetools create` — a registry-side copy of the manifest list under the
+  version tag. The released image is by construction the one CI built for that commit.
+  Never add a build step that produces a *different* image for the version tag.
+- **The git tag is the only version.** Pushing `vX.Y.Z` is the whole release procedure.
+  `VERSION=${tag#v}` is stamped into copies under `dist/`: `helm-package-*` copies each
+  chart to `dist/charts/`, sets `manager.image.tag`, and for cp rewrites
+  `--catalog-revision` to `vX.Y.Z` so the released chart pins the catalog to its own tag,
+  then `helm package --version --app-version`; `python-build` runs `uv version` on
+  `python/pyproject.toml` (dirtying it — `git checkout python/pyproject.toml` after a local
+  run) and `uv build`. The committed placeholders — `version: 0.0.0-dev` and `tag: ""` in
+  the charts, `0.0.0.dev0` in `pyproject.toml` — are never bumped. Do not add a version
+  bump to a release, and do not make the committed charts reference a real tag.
+
+`helm-package` and `python-build` work with `VERSION` unset (they fall back to the dev
+placeholder) so they can be dry-run locally; `docker-retag-*` and `helm-push-*` refuse to.
+`REGISTRY` (`ghcr.io/nvidia`) is a variable so a fork's CI publishes into its own
+namespace — the workflows pass it lowercased, because GHCR namespaces are lowercase and
+`github.repository_owner` is `NVIDIA`.
+
+PyPI uses trusted publishing from the `pypi` GitHub environment, so there is no token
+anywhere. Uploads are permanent, so cut a `vX.Y.Z-rc.N` first when in doubt; the tag glob
+admits it and uv normalises it to `X.Y.ZrcN`.
 
 ## Code style
 
