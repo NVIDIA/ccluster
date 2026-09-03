@@ -1,0 +1,42 @@
+# Publish every merge to main, keyed by commit hash: both operator images as :<sha> and
+# both charts as 0.0.0-g<sha> (pointing at the :<sha> images), all to GHCR.
+#
+# This is the build half of the release flow. release.yml never builds an image; it
+# retags what this workflow pushed. It also lets an unreleased main commit be deployed:
+#   make deploy-cp IMG_TAG=<sha>
+#   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.0-g<sha>
+name: Main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish :<sha> images and charts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR for Helm
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # GHCR namespaces are lowercase while github.repository_owner is "NVIDIA". Passing
+      # REGISTRY also makes a fork publish into its own namespace.
+      - name: Build and push both images
+        run: make docker-buildx REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+      - name: Package and push both charts
+        run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"

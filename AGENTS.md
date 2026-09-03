@@ -28,7 +28,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster` and published to PyPI as `ccluster-py` (that name was taken). **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
-| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`), plus `images.yml` (push `:<sha>` images on every `main` commit) and `release.yml` (tag `vX.Y.Z` → retag images, publish charts and the Python package, GitHub Release). See "Releasing". |
+| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -594,34 +594,44 @@ Images and charts publish to GHCR as OCI artifacts, the Python package to PyPI. 
 are named **`ccluster-cp`** and **`ccluster-ip`** — after the plane, not the operator,
 because each will carry more than the operator — and land at
 `oci://ghcr.io/nvidia/charts/ccluster-{cp,ip}`. The images and binaries keep the
-`ccluster-{cp,ip}-operator` names, since they really are just the operator. Two rules
-shape everything in `.github/workflows/images.yml` and `release.yml`:
+`ccluster-{cp,ip}-operator` names, since they really are just the operator. The flow is
+two workflows, and the rules below are the contract between them:
 
-- **Images are built once, as `:<sha>`, and a release retags.** `images.yml` runs
-  `make docker-buildx` for every commit on `main`. `release.yml` runs it again (a no-op
-  push if the manifest exists) and then `make docker-retag VERSION=X.Y.Z`, which is
-  `docker buildx imagetools create` — a registry-side copy of the manifest list under the
-  version tag. The released image is by construction the one CI built for that commit.
-  Never add a build step that produces a *different* image for the version tag.
-- **The git tag is the only version.** Pushing `vX.Y.Z` is the whole release procedure.
-  `VERSION=${tag#v}` is stamped into copies under `dist/`: `helm-package-*` copies each
-  chart to `dist/charts/`, sets `manager.image.tag`, and for cp rewrites
-  `--catalog-revision` to `vX.Y.Z` so the released chart pins the catalog to its own tag,
-  then `helm package --version --app-version`; `python-build` runs `uv version` on
-  `python/pyproject.toml` (dirtying it — `git checkout python/pyproject.toml` after a local
-  run) and `uv build`. The committed placeholders — `version: 0.0.0-dev` and `tag: ""` in
-  the charts, `0.0.0.dev0` in `pyproject.toml` — are never bumped. Do not add a version
-  bump to a release, and do not make the committed charts reference a real tag.
+- **Every merge to `main` publishes, keyed by commit hash.** `main.yml` runs
+  `make docker-buildx helm-package helm-push`: both images as `:<sha>`, both charts as
+  `0.0.0-g<sha>` (a chart needs a semver version) with `manager.image.tag` and
+  `--catalog-revision` inside set to that same sha. An unreleased commit is therefore
+  deployable — `make deploy-cp IMG_TAG=<sha>`, or `helm install` the `0.0.0-g<sha>` chart.
+- **A release is a GitHub Release, and it retags rather than rebuilds.** `release.yml`
+  triggers on `release: published`, so the procedure is: create a release in the GitHub UI
+  (or `gh release create`) against a new tag `vX.Y.Z`. The workflow checks out that tag
+  and runs `make docker-retag VERSION=X.Y.Z` — `docker buildx imagetools create`, a
+  registry-side copy of the `:<sha>` manifest under the version tag. Helm has no
+  server-side retag and the version lives inside the tarball, so the charts are
+  re-packaged from the identical tagged commit as `X.Y.Z`, pointing at the `:X.Y.Z` image
+  and `--catalog-revision=vX.Y.Z`. The Python package is built as `ccluster-py==X.Y.Z` and
+  published via trusted publishing from the `pypi` environment; the tarballs and dists are
+  uploaded onto the existing Release with `gh release upload`. Never add a build step that
+  produces a *different* image for the version tag, and do not add a `push: tags:`
+  trigger: creating a release in the UI creates the tag too, and both would fire.
+- **A tag on a commit that never went through `main` fails.** There is no `:<sha>` image
+  to retag, and that is the intended outcome rather than something to paper over.
+- **Nothing committed is bumped.** The placeholders — `version: 0.0.0-dev` and `tag: ""`
+  in the charts, `0.0.0.dev0` in `pyproject.toml` — stay as they are; every target stamps
+  a copy under `dist/`. `python-build` runs `uv version` on `python/pyproject.toml`, which
+  dirties it — `git checkout python/pyproject.toml` after a local run.
 
-`helm-package` and `python-build` work with `VERSION` unset (they fall back to the dev
-placeholder) so they can be dry-run locally; `docker-retag-*` and `helm-push-*` refuse to.
-`REGISTRY` (`ghcr.io/nvidia`) is a variable so a fork's CI publishes into its own
-namespace — the workflows pass it lowercased, because GHCR namespaces are lowercase and
-`github.repository_owner` is `NVIDIA`.
+The Makefile derives the three stamped values from `VERSION`: unset, the chart version is
+`0.0.0-g$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the bare sha;
+set, all three are `X.Y.Z` / `vX.Y.Z`. So `make helm-package` with no arguments produces
+exactly what `main.yml` publishes for the current commit, and `docker-retag-*` is the only
+target that refuses to run without `VERSION`. `REGISTRY` (`ghcr.io/nvidia`) is a variable
+so a fork's CI publishes into its own namespace — the workflows pass it lowercased,
+because GHCR namespaces are lowercase and `github.repository_owner` is `NVIDIA`.
 
-PyPI uses trusted publishing from the `pypi` GitHub environment, so there is no token
-anywhere. Uploads are permanent, so cut a `vX.Y.Z-rc.N` first when in doubt; the tag glob
-admits it and uv normalises it to `X.Y.ZrcN`.
+PyPI uploads are permanent, so cut a `vX.Y.Z-rc.N` release first when in doubt; uv
+normalises it to `X.Y.ZrcN`, and the GitHub "pre-release" checkbox has no effect on the
+workflow.
 
 ## Code style
 

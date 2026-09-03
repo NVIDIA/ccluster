@@ -530,60 +530,70 @@ helm-lint: helm helm-deps-cp ## Lint both operator charts.
 
 ##@ Release
 
-# The git tag is the only version. Nothing committed is bumped for a release: the
-# committed charts carry `version: 0.0.0-dev` and an empty image tag, python/ carries
-# 0.0.0.dev0, and the targets below stamp VERSION (the tag without its leading v) into a
-# copy of each artifact under dist/. helm-package-* and python-build fall back to the dev
-# placeholder so they can be dry-run locally; the targets that actually publish
-# (docker-retag-*, helm-push-*) refuse to run without VERSION.
-PKG_VERSION = $(or $(VERSION),0.0.0-dev)
-# PEP 440 spelling of PKG_VERSION: Helm's `X.Y.Z-dev` is Python's `X.Y.Z.dev0`; release
-# versions are identical in both. uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
-PY_VERSION = $(patsubst %-dev,%.dev0,$(PKG_VERSION))
+# Two kinds of build, one set of targets.
+#
+# A main-branch build is keyed by the commit: images are :<sha>, and the charts - which
+# need a semver version - are published as 0.0.0-g<sha>, with the image tag and
+# --catalog-revision inside them set to the same sha. That is what .github/workflows/main.yml
+# pushes for every merge.
+#
+# A release (VERSION=X.Y.Z, set by .github/workflows/release.yml from the GitHub Release's
+# tag) never rebuilds an image: docker-retag-* adds the version tag to the :<sha> manifest
+# already in the registry. Helm has no server-side retag and the version lives inside the
+# tarball, so the charts are re-packaged from the identical tagged commit with the release
+# version and pointed at the :X.Y.Z image. The Python package is only built for a release.
+#
+# Nothing committed is bumped: the charts carry `version: 0.0.0-dev` and an empty image tag,
+# python/ carries 0.0.0.dev0, and everything below stamps a copy under dist/.
+CHART_VERSION   = $(or $(VERSION),0.0.0-g$(IMG_TAG))
+CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
+CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
+# PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
+PY_VERSION      = $(or $(VERSION),0.0.0.dev0)
 DIST_CHARTS ?= dist/charts
 DIST_PYTHON ?= dist/python
 
 .PHONY: helm-package
-helm-package: helm-package-cp helm-package-ip ## Package both operator charts into $(DIST_CHARTS), stamped with VERSION.
+helm-package: helm-package-cp helm-package-ip ## Package both charts into $(DIST_CHARTS) as $(CHART_VERSION).
 
 # Packaging works on a copy so charts/{cp,ip}/chart stay byte-identical to what
 # `make helm-generate` emits; CI fails on any diff there. The stamped values are the
 # image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
-# --catalog-revision, so a released chart pins the catalog to its own tag.
+# --catalog-revision, so a chart always pins the catalog to the commit or tag it came from.
 .PHONY: helm-package-cp
-helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(PKG_VERSION).tgz.
+helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-cp && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp
-	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
+	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
-	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=v$(PKG_VERSION)"' \
+	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=$(CATALOG_REV)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)
 
 .PHONY: helm-package-ip
-helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(PKG_VERSION).tgz.
+helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-ip && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip
-	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
+	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-ip/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)
 
 .PHONY: helm-push
 helm-push: helm-push-cp helm-push-ip ## Push both packaged charts to oci://$(REGISTRY)/charts.
 
 .PHONY: helm-push-cp
-helm-push-cp: require-version helm ## Push the packaged cp chart to oci://$(REGISTRY)/charts.
-	"$(HELM)" push $(DIST_CHARTS)/ccluster-cp-$(VERSION).tgz oci://$(REGISTRY)/charts
+helm-push-cp: helm ## Push the packaged cp chart to oci://$(REGISTRY)/charts.
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-cp-$(CHART_VERSION).tgz oci://$(REGISTRY)/charts
 
 .PHONY: helm-push-ip
-helm-push-ip: require-version helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
-	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-$(VERSION).tgz oci://$(REGISTRY)/charts
+helm-push-ip: helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz oci://$(REGISTRY)/charts
 
 # `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
 # locally with `git checkout python/pyproject.toml`. Publishing is left to the release
 # workflow (PyPI trusted publishing), which needs no credentials in the Makefile.
 .PHONY: python-build
-python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON), stamped with VERSION.
+python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as $(PY_VERSION).
 	rm -rf $(DIST_PYTHON)
 	cd python && "$(UV)" version --no-sync $(PY_VERSION) && "$(UV)" build --out-dir ../$(DIST_PYTHON)
 
