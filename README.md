@@ -52,11 +52,11 @@ image. Released versions are published to GHCR and can be installed without a cl
 
 ```bash
 # Control-plane cluster: ccluster-cp-operator + Argo CD
-helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp-operator --version X.Y.Z \
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
   -n ccluster-cp-system --create-namespace
 
 # Infra-plane cluster: ccluster-ip-operator
-helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip-operator --version X.Y.Z \
+helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z \
   -n ccluster-ip-system --create-namespace
 ```
 
@@ -165,7 +165,7 @@ git push origin v0.1.0
 | Artifact | Location |
 | --- | --- |
 | Operator images | `ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z`, `ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z` (also tagged with the commit hash) |
-| Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp-operator`, `oci://ghcr.io/nvidia/charts/ccluster-ip-operator` |
+| Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
 | Python package | [`ccluster` on PyPI](https://pypi.org/project/ccluster/) |
 | Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
 

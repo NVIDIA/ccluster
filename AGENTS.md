@@ -590,7 +590,11 @@ never actually pulled from GHCR.
 
 ## Releasing
 
-Images and charts publish to GHCR as OCI artifacts, the Python package to PyPI. Two rules
+Images and charts publish to GHCR as OCI artifacts, the Python package to PyPI. The charts
+are named **`ccluster-cp`** and **`ccluster-ip`** — after the plane, not the operator,
+because each will carry more than the operator — and land at
+`oci://ghcr.io/nvidia/charts/ccluster-{cp,ip}`. The images and binaries keep the
+`ccluster-{cp,ip}-operator` names, since they really are just the operator. Two rules
 shape everything in `.github/workflows/images.yml` and `release.yml`:
 
 - **Images are built once, as `:<sha>`, and a release retags.** `images.yml` runs

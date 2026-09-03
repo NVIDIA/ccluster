@@ -551,33 +551,33 @@ helm-package: helm-package-cp helm-package-ip ## Package both operator charts in
 # image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
 # --catalog-revision, so a released chart pins the catalog to its own tag.
 .PHONY: helm-package-cp
-helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-operator-$(PKG_VERSION).tgz.
-	rm -rf $(DIST_CHARTS)/ccluster-cp-operator && mkdir -p $(DIST_CHARTS)
-	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp-operator
+helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(PKG_VERSION).tgz.
+	rm -rf $(DIST_CHARTS)/ccluster-cp && mkdir -p $(DIST_CHARTS)
+	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
-		$(DIST_CHARTS)/ccluster-cp-operator/values.yaml
+		$(DIST_CHARTS)/ccluster-cp/values.yaml
 	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=v$(PKG_VERSION)"' \
-		$(DIST_CHARTS)/ccluster-cp-operator/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp-operator --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+		$(DIST_CHARTS)/ccluster-cp/values.yaml
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
 
 .PHONY: helm-package-ip
-helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-operator-$(PKG_VERSION).tgz.
-	rm -rf $(DIST_CHARTS)/ccluster-ip-operator && mkdir -p $(DIST_CHARTS)
-	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip-operator
+helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(PKG_VERSION).tgz.
+	rm -rf $(DIST_CHARTS)/ccluster-ip && mkdir -p $(DIST_CHARTS)
+	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(PKG_VERSION)"' \
-		$(DIST_CHARTS)/ccluster-ip-operator/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip-operator --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
+		$(DIST_CHARTS)/ccluster-ip/values.yaml
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(PKG_VERSION) --app-version $(PKG_VERSION) -d $(DIST_CHARTS)
 
 .PHONY: helm-push
 helm-push: helm-push-cp helm-push-ip ## Push both packaged charts to oci://$(REGISTRY)/charts.
 
 .PHONY: helm-push-cp
 helm-push-cp: require-version helm ## Push the packaged cp chart to oci://$(REGISTRY)/charts.
-	"$(HELM)" push $(DIST_CHARTS)/ccluster-cp-operator-$(VERSION).tgz oci://$(REGISTRY)/charts
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-cp-$(VERSION).tgz oci://$(REGISTRY)/charts
 
 .PHONY: helm-push-ip
 helm-push-ip: require-version helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
-	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-operator-$(VERSION).tgz oci://$(REGISTRY)/charts
+	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-$(VERSION).tgz oci://$(REGISTRY)/charts
 
 # `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
 # locally with `git checkout python/pyproject.toml`. Publishing is left to the release
