@@ -47,7 +47,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
     CCLInfraPlane                        ┌──────────────────────┐
     + credentials Secret  ───────────▶   │                      │
                                          │ ccluster-cp-operator │
-    CCLDeployment                        │                      │
+    CCLComponentSet                        │                      │
     components[0..n]      ───────────▶   └───────┬──────────────┘
                                                  │
                         writes cluster Secrets   │   ▲
@@ -106,7 +106,7 @@ mirror.Data[argoCDClusterProjectKey] = []byte("<namespace>")          // "projec
 ```
 
 `data["name"]` is always overwritten, because that key *is* the cluster's identity inside
-Argo CD, and it is what `CCLDeployment` components address a destination by. Letting the
+Argo CD, and it is what `CCLComponentSet` components address a destination by. Letting the
 source Secret set it would break the link between the two CRDs. `data["project"]` makes the
 cluster **project-scoped**: only Applications in that AppProject may deploy to it.
 
@@ -114,7 +114,7 @@ cluster **project-scoped**: only Applications in that AppProject may deploy to i
 
 Before it touches the Secret, the same reconciler writes an Argo CD `AppProject` into the
 Argo CD namespace, **named after the CCLInfraPlane's namespace**
-(`cclinfraplane_project.go`). Every CCLInfraPlane and CCLDeployment in a namespace shares it;
+(`cclinfraplane_project.go`). Every CCLInfraPlane and CCLComponentSet in a namespace shares it;
 it is the isolation boundary on the Argo CD side:
 
 ```go
@@ -135,7 +135,7 @@ Terminating planes are not counted, so two deleted together both try the delete 
 each deferring to the other.
 
 The project exists before `Available` is ever set to true. That ordering is a contract:
-`CCLDeploymentReconciler` writes Applications into the project without checking for it,
+`CCLComponentSetReconciler` writes Applications into the project without checking for it,
 because an `Available` CCLInfraPlane in the namespace already guarantees it.
 
 Naming the project after the namespace means CCLInfraPlanes in the `default` namespace adopt
@@ -145,7 +145,7 @@ built-in project permits everything, which is exactly what a ccluster namespace'
 must not do.
 
 If Argo CD is not installed, the AppProject CRD is missing along with the Application CRD.
-The reconciler logs and carries on rather than failing: the CCLDeployment controller reports
+The reconciler logs and carries on rather than failing: the CCLComponentSet controller reports
 `ApplicationCRDMissing` in the same situation, and the restart that follows installing Argo
 CD reconciles every CCLInfraPlane and creates the projects then.
 
@@ -188,11 +188,11 @@ on delete — and only if the ownership check still agrees they are ours.
 Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No failure
 requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
 
-## 4. `CCLDeployment` — an ordered bundle of charts
+## 4. `CCLComponentSet` — an ordered bundle of charts
 
 ```yaml
 apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
+kind: CCLComponentSet
 metadata:
   name: ccluster-local-base
   namespace: default
@@ -220,7 +220,7 @@ Each component is one Helm chart on one cluster:
   Application uses `source.path`; `source.chart` would make Argo CD look for a chart of that
   name in a Helm registry. The repository and revision are **operator configuration**
   (`--catalog-repo-url`, `--catalog-revision`), not per-component fields, so every component
-  of every `CCLDeployment` deploys from one catalog at one revision. A chart edit is
+  of every `CCLComponentSet` deploys from one catalog at one revision. A chart edit is
   therefore invisible until it is *pushed* to that revision — Argo CD's repo-server clones
   the repository itself.
 - **`infraPlaneRef` is same-namespace**, and the CCLInfraPlane must already be `Available`,
@@ -243,7 +243,7 @@ from a typed, per-chart values struct.
 Each chart under `catalogs/cluster_base/` has a Go package alongside it declaring its values
 as typed structs, plus a `New(namespace, values)` that builds a `v1alpha1.ComponentEntry`
 from them — the API type itself, not a catalog-side mirror of it. A caller building a
-`CCLDeployment` in Go gets compile-time checking of the values it sets.
+`CCLComponentSet` in Go gets compile-time checking of the values it sets.
 
 A component knows its chart directory and nothing else: its name, its namespace and its
 position in the rollout are all the caller's, because they are deployment choices rather
@@ -253,9 +253,9 @@ struct but teleport-kube-agent's, and the rollout order carried over from the le
 catalog's sync waves — so that a caller has something to copy rather than an empty page.
 
 **None of this is enforced at admission.** The CRD's `values` is as untyped as it ever was, so
-a hand-written `CCLDeployment` bypasses the typed layer entirely and is forwarded to Helm
+a hand-written `CCLComponentSet` bypasses the typed layer entirely and is forwarded to Helm
 verbatim. The concrete hazard is `teleport_kube_agent`, whose `values.yaml` ships `proxyAddr:
-"<PROXY_ADDR>"` and three more placeholders: a `CCLDeployment` that omits them is accepted and
+"<PROXY_ADDR>"` and three more placeholders: a `CCLComponentSet` that omits them is accepted and
 installs an agent that cannot connect. The only check is a `Values` type's `Validate()`,
 called by `catalogs.Entry` — which a caller only reaches by going through the Go layer.
 
@@ -274,15 +274,15 @@ adding dependencies will not invalidate objects written today.
 
 ### The generated Application
 
-One Argo CD `Application` per released component, named `{deployment}-{component}`, **in
-the CCLDeployment's own namespace** — not the Argo CD namespace — under that namespace's
-AppProject (`ccldeployment_builder.go`):
+One Argo CD `Application` per released component, named `{componentSet}-{component}`, **in
+the CCLComponentSet's own namespace** — not the Argo CD namespace — under that namespace's
+AppProject (`cclcomponentset_builder.go`):
 
 ```go
-Project: <deployment.Namespace>,
+Project: <componentSet.Namespace>,
 Source: { RepoURL: <--catalog-repo-url>, TargetRevision: <--catalog-revision>,
           Path: component.Chart, Helm: {ValuesObject: component.Values} },
-Destination: { Name: "<deployment.Namespace>-<component.InfraPlaneRef.Name>",
+Destination: { Name: "<componentSet.Namespace>-<component.InfraPlaneRef.Name>",
                Namespace: component.Namespace },
 SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
               SyncOptions: ["CreateNamespace=true", "ServerSideApply=true"] },
@@ -290,7 +290,7 @@ SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
 
 Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
 them because the project's `sourceNamespaces` names the namespace. Since Applications and
-CCLDeployment now share a namespace, two same-named CCLDeployments can no longer collide on
+CCLComponentSet now share a namespace, two same-named CCLComponentSets can no longer collide on
 an Application name; the ownership check remains for a manifest copied in from elsewhere.
 
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
@@ -299,7 +299,7 @@ unmanaged on the infra-plane cluster.
 
 `spec` is rebuilt from scratch on every reconcile, so hand edits are reverted rather than
 merged. Ownership uses the same annotation scheme as above, with
-`ccluster.nvidia.com/deployment-{name,namespace}`; the name is also written as a *label*,
+`ccluster.nvidia.com/componentset-{name,namespace}`; the name is also written as a *label*,
 which is what the controller selects on to find the Applications it has already released.
 An owner reference would be legal here, since both objects share a namespace, and is
 deliberately not used: garbage collection would delete every Application at once, and the
@@ -310,7 +310,7 @@ whole point of the teardown finalizer is to remove them one at a time in reverse
 Both were implemented and then removed (commit `2e00925`).
 
 An **ApplicationSet** earns its keep when the set is *derived* from something the operator
-does not already know — clusters, Git directories, a matrix. A `CCLDeployment` enumerates its
+does not already know — clusters, Git directories, a matrix. A `CCLComponentSet` enumerates its
 components explicitly, so a generator would only interpose a Go-template layer between the
 operator and an object it already knows in full, and would force values through a templated
 string instead of structured data.
@@ -323,7 +323,7 @@ these Applications depend on for drift correction.
 
 The rollout order is enforced by **not creating** an Application until its predecessors are
 converged, rather than by creating them all and holding their syncs. `releaseCount`
-(`ccldeployment_builder.go`):
+(`cclcomponentset_builder.go`):
 
 1. Count the leading run of components that already have an Application — that is what has
    been released. Zero released means release the first: it has nothing to wait on.
@@ -379,15 +379,15 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | CRD | Condition | Meaning |
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
-| `CCLDeployment` | `Validated` | Every `infraPlaneRef` resolves to an `Available` CCLInfraPlane. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
-| `CCLDeployment` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
-| `CCLDeployment` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on; `False/RolloutComplete` when every component is healthy and synced. |
+| `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to an `Available` CCLInfraPlane. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
+| `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
+| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on; `False/RolloutComplete` when every component is healthy and synced. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLDeployment`.
+Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
 
@@ -408,8 +408,8 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   lists CCLInfraPlanes in the Secret's namespace and matches `clusterCredentialsRef`. It
   also watches `AppProject`s: one in the Argo CD namespace maps to every CCLInfraPlane in
   the namespace it is named after, so a project deleted or loosened by hand is repaired.
-- `CCLDeployment` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
-  deployments waiting on it) and `Application`s (so a component becoming healthy releases the
+- `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
+  CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
 
 There is no `RequeueAfter` polling anywhere except the 15s teardown retry.

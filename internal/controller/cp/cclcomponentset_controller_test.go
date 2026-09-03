@@ -39,13 +39,13 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
-var _ = Describe("CCLDeployment Controller", func() {
+var _ = Describe("CCLComponentSet Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
-			deploymentName = "test-deployment"
-			namespace      = "default"
-			repoURL        = "https://github.com/NVIDIA/ccluster"
-			revision       = "test-revision"
+			componentSetName = "test-componentset"
+			namespace        = "default"
+			repoURL          = "https://github.com/NVIDIA/ccluster"
+			revision         = "test-revision"
 
 			planeA = "plane-a"
 			planeB = "plane-b"
@@ -56,15 +56,15 @@ var _ = Describe("CCLDeployment Controller", func() {
 
 		ctx := context.Background()
 
-		deploymentKey := types.NamespacedName{Name: deploymentName, Namespace: namespace}
+		componentSetKey := types.NamespacedName{Name: componentSetName, Namespace: namespace}
 
 		// Built in BeforeEach: k8sClient does not exist until BeforeSuite has run.
-		var reconciler *CCLDeploymentReconciler
+		var reconciler *CCLComponentSetReconciler
 
-		// Applications live alongside their CCLDeployment, not in the Argo CD namespace.
+		// Applications live alongside their CCLComponentSet, not in the Argo CD namespace.
 		appKey := func(component string) types.NamespacedName {
 			return types.NamespacedName{
-				Name:      applicationName(deploymentName, component),
+				Name:      applicationName(componentSetName, component),
 				Namespace: namespace,
 			}
 		}
@@ -121,28 +121,28 @@ var _ = Describe("CCLDeployment Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 		}
 
-		createDeployment := func(specComponents []cclusternvidiacomv1alpha1.ComponentSpec) {
+		createComponentSet := func(specComponents []cclusternvidiacomv1alpha1.ComponentSpec) {
 			GinkgoHelper()
 
-			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
-				ObjectMeta: metav1.ObjectMeta{Name: deploymentName, Namespace: namespace},
-				Spec:       cclusternvidiacomv1alpha1.CCLDeploymentSpec{Components: specComponents},
+			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+				ObjectMeta: metav1.ObjectMeta{Name: componentSetName, Namespace: namespace},
+				Spec:       cclusternvidiacomv1alpha1.CCLComponentSetSpec{Components: specComponents},
 			})).To(Succeed())
 		}
 
-		reconcileAndGet := func() *cclusternvidiacomv1alpha1.CCLDeployment {
+		reconcileAndGet := func() *cclusternvidiacomv1alpha1.CCLComponentSet {
 			GinkgoHelper()
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
 			Expect(err).NotTo(HaveOccurred())
 
-			refreshed := &cclusternvidiacomv1alpha1.CCLDeployment{}
-			Expect(k8sClient.Get(ctx, deploymentKey, refreshed)).To(Succeed())
+			refreshed := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, refreshed)).To(Succeed())
 			return refreshed
 		}
 
 		// settle reconciles twice: the first pass only writes the finalizer.
-		settle := func() *cclusternvidiacomv1alpha1.CCLDeployment {
+		settle := func() *cclusternvidiacomv1alpha1.CCLComponentSet {
 			GinkgoHelper()
 
 			reconcileAndGet()
@@ -150,11 +150,11 @@ var _ = Describe("CCLDeployment Controller", func() {
 		}
 
 		// reconcileOnly is reconcileAndGet without the re-fetch, for passes after which
-		// the CCLDeployment may no longer exist.
+		// the CCLComponentSet may no longer exist.
 		reconcileOnly := func() {
 			GinkgoHelper()
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
 			Expect(err).NotTo(HaveOccurred())
 		}
 
@@ -218,16 +218,16 @@ var _ = Describe("CCLDeployment Controller", func() {
 			}
 		}
 
-		conditionOf := func(deployment *cclusternvidiacomv1alpha1.CCLDeployment, name string) *metav1.Condition {
+		conditionOf := func(componentSet *cclusternvidiacomv1alpha1.CCLComponentSet, name string) *metav1.Condition {
 			GinkgoHelper()
 
-			condition := apimeta.FindStatusCondition(deployment.Status.Conditions, name)
+			condition := apimeta.FindStatusCondition(componentSet.Status.Conditions, name)
 			Expect(condition).NotTo(BeNil(), "expected a %q condition", name)
 			return condition
 		}
 
 		BeforeEach(func() {
-			reconciler = &CCLDeploymentReconciler{
+			reconciler = &CCLComponentSetReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
 				CatalogRepoURL:  repoURL,
@@ -236,15 +236,15 @@ var _ = Describe("CCLDeployment Controller", func() {
 		})
 
 		AfterEach(func() {
-			By("Cleanup the CCLDeployment")
-			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
-			err := k8sClient.Get(ctx, deploymentKey, deployment)
+			By("Cleanup the CCLComponentSet")
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			err := k8sClient.Get(ctx, componentSetKey, componentSet)
 			if err == nil {
-				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
 
 				// Teardown removes one Application per pass and waits for it to go.
 				// Nothing here runs Argo CD or a garbage collector, so the cascade
-				// finalizers have to be cleared as we go, and the CCLDeployment
+				// finalizers have to be cleared as we go, and the CCLComponentSet
 				// survives until they are.
 				Eventually(func() bool {
 					var applications argocdv1alpha1.ApplicationList
@@ -263,10 +263,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 					}
 
 					_, err := reconciler.Reconcile(ctx,
-						reconcile.Request{NamespacedName: deploymentKey})
+						reconcile.Request{NamespacedName: componentSetKey})
 					Expect(err).NotTo(HaveOccurred())
 
-					return apierrors.IsNotFound(k8sClient.Get(ctx, deploymentKey, deployment))
+					return apierrors.IsNotFound(k8sClient.Get(ctx, componentSetKey, componentSet))
 				}, "15s", "50ms").Should(BeTrue())
 			} else {
 				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
@@ -296,12 +296,12 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should create only the first component's Application until it is healthy", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 
-			deployment := settle()
-			Expect(conditionOf(deployment, conditionTypeValidated).Status).
+			componentSet := settle()
+			Expect(conditionOf(componentSet, conditionTypeValidated).Status).
 				To(Equal(metav1.ConditionTrue))
-			Expect(conditionOf(deployment, conditionTypeComponentsApplied).Reason).
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
 				To(Equal(reasonApplicationsCreated))
 
 			By("creating only the first component")
@@ -324,7 +324,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should never withdraw a released component that becomes unhealthy", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 			release(firstComponent)
 			Expect(applicationExists(secondComponent)).To(BeTrue())
@@ -342,7 +342,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should pass component values through untouched as structured Helm values", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 			release(firstComponent)
 
@@ -362,7 +362,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should leave the sync policy to Argo CD", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 
 			// Argo CD's RollingSync gates Applications by switching automated sync
@@ -380,7 +380,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should target the component's infra plane from the operator's catalog flags", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 
 			application := getApplication(firstComponent)
@@ -400,10 +400,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 			By("carrying the cascade finalizer")
 			Expect(application.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
 
-			By("carrying the back-reference to its CCLDeployment")
-			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentName, deploymentName))
-			Expect(application.Annotations).To(HaveKeyWithValue(annotationDeploymentNamespace, namespace))
-			Expect(application.Labels).To(HaveKeyWithValue(labelDeploymentName, deploymentName))
+			By("carrying the back-reference to its CCLComponentSet")
+			Expect(application.Annotations).To(HaveKeyWithValue(annotationComponentSetName, componentSetName))
+			Expect(application.Annotations).To(HaveKeyWithValue(annotationComponentSetNamespace, namespace))
+			Expect(application.Labels).To(HaveKeyWithValue(labelComponentSetName, componentSetName))
 		})
 
 		// The catalog packages under catalogs/ are the only place the shape of a
@@ -447,7 +447,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 			}
 
 			createInfraPlane(planeA, true)
-			createDeployment(specs)
+			createComponentSet(specs)
 
 			By("releasing the first component, and only that one")
 			settle()
@@ -462,21 +462,21 @@ var _ = Describe("CCLDeployment Controller", func() {
 			duplicate := components()
 			duplicate[1].Name = duplicate[0].Name
 
-			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
-				ObjectMeta: metav1.ObjectMeta{Name: deploymentName, Namespace: namespace},
-				Spec:       cclusternvidiacomv1alpha1.CCLDeploymentSpec{Components: duplicate},
+			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+				ObjectMeta: metav1.ObjectMeta{Name: componentSetName, Namespace: namespace},
+				Spec:       cclusternvidiacomv1alpha1.CCLComponentSetSpec{Components: duplicate},
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("component names must be unique"))
 		})
 
 		It("should reject a name too long to be a label value", func() {
-			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
+			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      strings.Repeat("a", 64),
 					Namespace: namespace,
 				},
-				Spec: cclusternvidiacomv1alpha1.CCLDeploymentSpec{Components: components()},
+				Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{Components: components()},
 			})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("at most 63 characters"))
@@ -487,10 +487,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 		// panic. See TestReleaseCountEmptySpecDoesNotPanic. Both guards are kept - the
 		// API rejects the object, and the controller survives it if the marker is ever
 		// relaxed.
-		It("should reject a CCLDeployment with no components", func() {
-			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLDeployment{
-				ObjectMeta: metav1.ObjectMeta{Name: deploymentName, Namespace: namespace},
-				Spec: cclusternvidiacomv1alpha1.CCLDeploymentSpec{
+		It("should reject a CCLComponentSet with no components", func() {
+			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+				ObjectMeta: metav1.ObjectMeta{Name: componentSetName, Namespace: namespace},
+				Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
 					Components: []cclusternvidiacomv1alpha1.ComponentSpec{},
 				},
 			})
@@ -501,7 +501,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should restore an Application spec after it drifts", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 
 			By("repointing the Application at another repository")
@@ -517,16 +517,16 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should prune the Application of a component removed from the spec", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 			release(firstComponent)
 			Expect(applicationExists(secondComponent)).To(BeTrue())
 
 			By("removing the second component")
-			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			deployment.Spec.Components = deployment.Spec.Components[:1]
-			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			componentSet.Spec.Components = componentSet.Spec.Components[:1]
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
 
 			reconcileAndGet()
 
@@ -545,11 +545,11 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should report InfraPlaneNotFound and apply nothing when a plane is missing", func() {
 			createInfraPlane(planeA, true)
 			// planeB is deliberately absent.
-			createDeployment(components())
+			createComponentSet(components())
 
-			deployment := settle()
+			componentSet := settle()
 
-			validated := conditionOf(deployment, conditionTypeValidated)
+			validated := conditionOf(componentSet, conditionTypeValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
 			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotFound))
 			Expect(validated.Message).To(ContainSubstring(planeB))
@@ -560,10 +560,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should report InfraPlaneNotReady until the plane becomes Available", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, false)
-			createDeployment(components())
+			createComponentSet(components())
 
-			deployment := settle()
-			validated := conditionOf(deployment, conditionTypeValidated)
+			componentSet := settle()
+			validated := conditionOf(componentSet, conditionTypeValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
 			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotReady))
 
@@ -579,8 +579,8 @@ var _ = Describe("CCLDeployment Controller", func() {
 			})
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 
-			deployment = reconcileAndGet()
-			Expect(conditionOf(deployment, conditionTypeValidated).Status).
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 
 			// Only the first: nothing is deployed yet, so there is nothing for the
@@ -592,56 +592,56 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should report which component the rollout is waiting on", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 
-			deployment := settle()
-			progressing := conditionOf(deployment, conditionTypeProgressing)
+			componentSet := settle()
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
 			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
 			Expect(progressing.Message).To(ContainSubstring(firstComponent))
 
 			release(firstComponent)
-			deployment = reconcileAndGet()
-			Expect(conditionOf(deployment, conditionTypeProgressing).Message).
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Message).
 				To(ContainSubstring(secondComponent))
 
 			release(secondComponent)
-			deployment = reconcileAndGet()
-			progressing = conditionOf(deployment, conditionTypeProgressing)
+			componentSet = reconcileAndGet()
+			progressing = conditionOf(componentSet, conditionTypeProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionFalse))
 			Expect(progressing.Reason).To(Equal(reasonRolloutComplete))
 		})
 
-		It("should enqueue the CCLDeployments that reference a CCLInfraPlane", func() {
+		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 
-			requests := reconciler.deploymentsForInfraPlane(ctx,
+			requests := reconciler.componentSetsForInfraPlane(ctx,
 				&cclusternvidiacomv1alpha1.CCLInfraPlane{
 					ObjectMeta: metav1.ObjectMeta{Name: planeB, Namespace: namespace},
 				})
-			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: deploymentKey}))
+			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: componentSetKey}))
 
 			By("ignoring a CCLInfraPlane no component references")
-			Expect(reconciler.deploymentsForInfraPlane(ctx,
+			Expect(reconciler.componentSetsForInfraPlane(ctx,
 				&cclusternvidiacomv1alpha1.CCLInfraPlane{
 					ObjectMeta: metav1.ObjectMeta{Name: "unreferenced", Namespace: namespace},
 				})).To(BeEmpty())
 		})
 
-		It("should map an Application back to its CCLDeployment", func() {
-			requests := reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
+		It("should map an Application back to its CCLComponentSet", func() {
+			requests := reconciler.componentSetForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      applicationName(deploymentName, firstComponent),
+					Name:      applicationName(componentSetName, firstComponent),
 					Namespace: namespace,
-					Labels:    map[string]string{labelDeploymentName: deploymentName},
+					Labels:    map[string]string{labelComponentSetName: componentSetName},
 				},
 			})
-			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: deploymentKey}))
+			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: componentSetKey}))
 
 			By("ignoring an Application the operator did not create")
-			Expect(reconciler.deploymentForApplication(ctx, &argocdv1alpha1.Application{
+			Expect(reconciler.componentSetForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: namespace},
 			})).To(BeEmpty())
 		})
@@ -649,14 +649,14 @@ var _ = Describe("CCLDeployment Controller", func() {
 		It("should tear the components down in reverse order", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 			release(firstComponent)
 
-			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(controllerutil.ContainsFinalizer(deployment, deploymentFinalizerName)).To(BeTrue())
-			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(componentSet, componentSetFinalizerName)).To(BeTrue())
+			Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
 
 			By("removing the last component first")
 			reconcileOnly()
@@ -670,57 +670,57 @@ var _ = Describe("CCLDeployment Controller", func() {
 			reconcileOnly()
 			reconcileOnly()
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed(),
-				"the CCLDeployment must outlive its components")
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed(),
+				"the CCLComponentSet must outlive its components")
 
 			By("moving on once Argo CD has finished with it")
 			finishTeardown(secondComponent)
 			reconcileOnly()
 			Expect(getApplication(firstComponent).DeletionTimestamp).NotTo(BeNil())
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
 
 			By("dropping the finalizer only when everything is gone")
 			finishTeardown(firstComponent)
 			reconcileOnly()
 			Eventually(func() bool {
-				return apierrors.IsNotFound(k8sClient.Get(ctx, deploymentKey, deployment))
+				return apierrors.IsNotFound(k8sClient.Get(ctx, componentSetKey, componentSet))
 			}).Should(BeTrue())
 		})
 
 		It("should requeue while a component is still terminating", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
-			createDeployment(components())
+			createComponentSet(components())
 			settle()
 
-			deployment := &cclusternvidiacomv1alpha1.CCLDeployment{}
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
 
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
 			Expect(err).NotTo(HaveOccurred())
 			// A backstop for a missed Application watch event, so a teardown that
 			// stalls does not do so silently.
 			Expect(result.RequeueAfter).To(Equal(teardownRetryInterval))
 
 			finishTeardown(firstComponent)
-			result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: deploymentKey})
+			result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeZero())
 		})
 
-		It("should refuse to touch an Application owned by another CCLDeployment", func() {
+		It("should refuse to touch an Application owned by another CCLComponentSet", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 
-			By("planting an Application whose back-reference points at a CCLDeployment elsewhere")
+			By("planting an Application whose back-reference points at a CCLComponentSet elsewhere")
 			planted := &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      applicationName(deploymentName, firstComponent),
+					Name:      applicationName(componentSetName, firstComponent),
 					Namespace: namespace,
 					Annotations: map[string]string{
-						annotationDeploymentName:      deploymentName,
-						annotationDeploymentNamespace: "other-namespace",
+						annotationComponentSetName:      componentSetName,
+						annotationComponentSetNamespace: "other-namespace",
 					},
 				},
 				Spec: argocdv1alpha1.ApplicationSpec{
@@ -730,10 +730,10 @@ var _ = Describe("CCLDeployment Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, planted)).To(Succeed())
 
-			createDeployment(components())
-			deployment := settle()
+			createComponentSet(components())
+			componentSet := settle()
 
-			applied := conditionOf(deployment, conditionTypeComponentsApplied)
+			applied := conditionOf(componentSet, conditionTypeComponentsApplied)
 			Expect(applied.Status).To(Equal(metav1.ConditionFalse))
 			Expect(applied.Reason).To(Equal(reasonApplicationConflict))
 
@@ -742,7 +742,7 @@ var _ = Describe("CCLDeployment Controller", func() {
 				To(Equal("https://example.com/someone-elses"))
 
 			By("leaving it in place on delete, too")
-			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
 			reconcileOnly()
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 		})

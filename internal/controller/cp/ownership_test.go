@@ -114,8 +114,8 @@ func TestOwnedBy(t *testing.T) {
 			// carries both pairs, this expectation is what fails and points at it.
 			name: "treats an object stamped by the other key pair as unclaimed",
 			annotations: map[string]string{
-				annotationDeploymentName:      "some-deployment",
-				annotationDeploymentNamespace: "default",
+				annotationComponentSetName:      "some-componentset",
+				annotationComponentSetNamespace: "default",
 			},
 			want: true,
 		},

@@ -42,15 +42,15 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
-const testDeploymentName = "test-deployment"
+const testComponentSetName = "test-componentset"
 
-// deploymentWith builds a CCLDeployment whose components are named, in order, by names.
-func deploymentWith(names ...string) *cclusternvidiacomv1alpha1.CCLDeployment {
-	deployment := &cclusternvidiacomv1alpha1.CCLDeployment{
-		ObjectMeta: metav1.ObjectMeta{Name: testDeploymentName, Namespace: "default"},
+// componentSetWith builds a CCLComponentSet whose components are named, in order, by names.
+func componentSetWith(names ...string) *cclusternvidiacomv1alpha1.CCLComponentSet {
+	componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{
+		ObjectMeta: metav1.ObjectMeta{Name: testComponentSetName, Namespace: "default"},
 	}
 	for _, name := range names {
-		deployment.Spec.Components = append(deployment.Spec.Components,
+		componentSet.Spec.Components = append(componentSet.Spec.Components,
 			cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          name,
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
@@ -60,7 +60,7 @@ func deploymentWith(names ...string) *cclusternvidiacomv1alpha1.CCLDeployment {
 				},
 			})
 	}
-	return deployment
+	return componentSet
 }
 
 // app builds an Application in the state Argo CD would report. A health of "" stands for
@@ -85,7 +85,7 @@ func healthyApp() *argocdv1alpha1.Application {
 func applications(byComponent map[string]*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
 	out := make(map[string]*argocdv1alpha1.Application, len(byComponent))
 	for component, application := range byComponent {
-		out[applicationName(testDeploymentName, component)] = application
+		out[applicationName(testComponentSetName, component)] = application
 	}
 	return out
 }
@@ -199,7 +199,7 @@ func TestReleaseCount(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := releaseCount(deploymentWith(test.components...), test.existing)
+			got := releaseCount(componentSetWith(test.components...), test.existing)
 			if got != test.want {
 				t.Errorf("releaseCount() = %d, want %d", got, test.want)
 			}
@@ -222,10 +222,10 @@ func TestReleaseCountIgnoresTerminatingApplications(t *testing.T) {
 		"b": deleting,
 	})
 
-	if got := releaseCount(deploymentWith("a", "b", "c"), existing); got != 3 {
+	if got := releaseCount(componentSetWith("a", "b", "c"), existing); got != 3 {
 		t.Errorf("releaseCount() over all Applications = %d, want 3", got)
 	}
-	if got := releaseCount(deploymentWith("a", "b", "c"), liveApplications(existing)); got != 2 {
+	if got := releaseCount(componentSetWith("a", "b", "c"), liveApplications(existing)); got != 2 {
 		t.Errorf("releaseCount() over live Applications = %d, want 2", got)
 	}
 }
@@ -233,20 +233,20 @@ func TestReleaseCountIgnoresTerminatingApplications(t *testing.T) {
 // TestReleaseCountEmptySpecDoesNotPanic pins the reason for the clamp: the value
 // releaseCount returns is used to slice the component list.
 func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
-	deployment := deploymentWith()
-	released := releaseCount(deployment, nil)
+	componentSet := componentSetWith()
+	released := releaseCount(componentSet, nil)
 
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("slicing Components[:%d] panicked: %v", released, r)
 		}
 	}()
-	_ = deployment.Spec.Components[:released]
+	_ = componentSet.Spec.Components[:released]
 }
 
 func TestApplicationsCondition(t *testing.T) {
-	reconciler := &CCLDeploymentReconciler{}
-	deployment := deploymentWith("a", "b")
+	reconciler := &CCLComponentSetReconciler{}
+	componentSet := componentSetWith("a", "b")
 
 	noMatch := &apimeta.NoKindMatchError{
 		GroupKind: schema.GroupKind{Group: "argoproj.io", Kind: "Application"},
@@ -311,7 +311,7 @@ func TestApplicationsCondition(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			status, reason, message, retryErr := reconciler.applicationsCondition(
-				deployment, test.released, test.err)
+				componentSet, test.released, test.err)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)
@@ -333,7 +333,7 @@ func TestApplicationsCondition(t *testing.T) {
 }
 
 func TestRolloutStatus(t *testing.T) {
-	reconciler := &CCLDeploymentReconciler{}
+	reconciler := &CCLComponentSetReconciler{}
 
 	withMessage := app(argocdv1alpha1.HealthStatusDegraded, "OutOfSync")
 	withMessage.Status.Health.Message = "back-off pulling image"
@@ -415,7 +415,7 @@ func TestRolloutStatus(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			status, reason, message := reconciler.rolloutStatus(
-				deploymentWith(test.components...), test.existing)
+				componentSetWith(test.components...), test.existing)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)
@@ -433,14 +433,14 @@ func TestRolloutStatus(t *testing.T) {
 	}
 }
 
-// TestApplicationNameCollidesAcrossDeployments is a regression guard, not a test of
+// TestApplicationNameCollidesAcrossComponentSets is a regression guard, not a test of
 // string concatenation. applicationName does no escaping, and neither the DNS-1123
-// pattern on component names nor the 63-character CEL rule on the CCLDeployment name
-// prevents two different deployments mapping onto one Application. The only thing that
+// pattern on component names nor the 63-character CEL rule on the CCLComponentSet name
+// prevents two different componentSets mapping onto one Application. The only thing that
 // stops the second one clobbering the first is the ownedBy check in reconcileApplication,
 // which reports errApplicationConflict. If this test is ever "simplified away", so is the
 // reason that check exists.
-func TestApplicationNameCollidesAcrossDeployments(t *testing.T) {
+func TestApplicationNameCollidesAcrossComponentSets(t *testing.T) {
 	if applicationName("a-b", "c") != applicationName("a", "b-c") {
 		t.Fatal("expected the documented collision; if this now passes, the ownership " +
 			"conflict check may no longer be the only guard")
@@ -451,7 +451,7 @@ func TestApplicationNameCollidesAcrossDeployments(t *testing.T) {
 // values-present path is asserted by the envtest suite; this is the branch that is easy
 // to drop, and dropping it emits an empty helm block on every valueless component.
 func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
-	reconciler := &CCLDeploymentReconciler{
+	reconciler := &CCLComponentSetReconciler{
 		CatalogRepoURL:  "https://github.com/NVIDIA/ccluster",
 		CatalogRevision: "main",
 	}
@@ -466,7 +466,7 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			spec := reconciler.applicationSpec(deploymentWith("a"), cclusternvidiacomv1alpha1.ComponentSpec{
+			spec := reconciler.applicationSpec(componentSetWith("a"), cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          "a",
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{

@@ -44,7 +44,7 @@ type ownerAnnotations struct {
 }
 
 // The owners in use. Each kind is stamped by exactly one of them - a mirrored cluster
-// Secret by infraPlaneOwner, an Application by deploymentOwner, an AppProject by
+// Secret by infraPlaneOwner, an Application by componentSetOwner, an AppProject by
 // projectOwner - so one object never carries two, and ownedBy does not have to tell
 // them apart.
 var (
@@ -53,9 +53,9 @@ var (
 		namespaceKey: annotationInfraPlaneNamespace,
 	}
 
-	deploymentOwner = ownerAnnotations{
-		nameKey:      annotationDeploymentName,
-		namespaceKey: annotationDeploymentNamespace,
+	componentSetOwner = ownerAnnotations{
+		nameKey:      annotationComponentSetName,
+		namespaceKey: annotationComponentSetNamespace,
 	}
 
 	projectOwner = namespaceOwner{key: annotationInfraPlaneNamespace}

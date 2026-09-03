@@ -18,13 +18,13 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - `CCLInfraPlane` (`ccluster.nvidia.com/v1alpha1`), which registers an infra-plane cluster
   with Argo CD by mirroring the Secret named by `spec.clusterCredentialsRef` into the Argo CD
   namespace as a cluster Secret, under the resource's own name.
-- `CCLDeployment` (`ccluster.nvidia.com/v1alpha1`), which rolls out an ordered bundle of
+- `CCLComponentSet` (`ccluster.nvidia.com/v1alpha1`), which rolls out an ordered bundle of
   catalog charts onto registered clusters. Each component becomes one Argo CD `Application`;
   a component's Application is not created until every component before it reports Healthy
   and Synced, and teardown runs in reverse, one at a time. Progress is reported on
   `status.conditions` as `Validated`, `ComponentsApplied` and `Progressing`.
 - `catalogs/cluster_base`, a pure-Helm catalog of 18 platform components, which is what
-  `CCLDeployment` component `chart` paths resolve against. The repository and revision are
+  `CCLComponentSet` component `chart` paths resolve against. The repository and revision are
   operator configuration (`--catalog-repo-url`, `--catalog-revision`), settable at deploy
   time with `make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
 - Go packages describing each `catalogs/cluster_base` chart's Helm values as typed structs,
@@ -37,8 +37,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   cannot be installed without — they ship as placeholders — and its `New` reports them
   rather than returning an entry that installs an agent which cannot connect.
 
-  These are a convenience for callers building a `CCLDeployment` in Go, **not** a validation
-  layer: the CRD's `values` field remains untyped, and a hand-written `CCLDeployment` is still
+  These are a convenience for callers building a `CCLComponentSet` in Go, **not** a validation
+  layer: the CRD's `values` field remains untyped, and a hand-written `CCLComponentSet` is still
   forwarded to Helm verbatim.
 - `DESIGN.md`, describing the control-plane design and the alternatives rejected along the
   way — notably Argo CD `ApplicationSet` generators and the `RollingSync` sync strategy.
@@ -58,6 +58,13 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   deleting anything.
 
 ### Changed
+- **Breaking:** the `CCLDeployment` kind is renamed `CCLComponentSet` (plural `cclcomponentsets`),
+  since it is an ordered set of catalog components rather than a workload, and "Deployment"
+  collided with the core Kubernetes kind. The back-reference annotations and label on the
+  generated Applications move from `ccluster.nvidia.com/deployment-{name,namespace}` to
+  `ccluster.nvidia.com/componentset-{name,namespace}`. There is no conversion or alias:
+  existing `CCLDeployment` objects must be recreated as `CCLComponentSet`, and Applications
+  stamped with the old annotations are no longer recognised as owned.
 - `ComponentSpec`'s `chart`, `namespace` and `values` fields are grouped into a
   `ComponentEntry` struct, embedded inline. **No wire-format change:** the embed is anonymous,
   so all three remain component-level fields and the generated CRD schema is byte-identical.
@@ -89,7 +96,7 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the things that target's name implied.
 
 ### Fixed
-- The CCLDeployment controller no longer refuses to start when Argo CD is absent. Its watch
+- The CCLComponentSet controller no longer refuses to start when Argo CD is absent. Its watch
   on `Application` is registered only if the CRD is served, because controller-runtime
   blocks a controller until every watch source syncs and a source for an unserved kind never
   does. Previously `make deploy-cp ARGOCD=false` — or simply starting the operator before
@@ -98,7 +105,7 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `ApplicationCRDMissing` status unreachable. Install Argo CD after the operator and the
   operator must be restarted to pick up the watch — the quick e2e tier now exercises exactly
   this sequence end to end (see above).
-- `releaseCount` no longer returns 1 for a CCLDeployment with no components, which made the
+- `releaseCount` no longer returns 1 for a CCLComponentSet with no components, which made the
   caller slice an empty component list and panic. The `MinItems=1` CRD marker still rejects
   such objects; the controller no longer depends on it for memory safety.
 

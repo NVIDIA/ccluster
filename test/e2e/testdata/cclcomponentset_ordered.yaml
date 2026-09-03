@@ -1,7 +1,7 @@
-# A two-component CCLDeployment, argo-rollouts then keda, matching
-# examples/quickstart/v1alpha1_ccldeployment.yaml. Order is the position in the list.
+# A two-component CCLComponentSet, argo-rollouts then keda, matching
+# examples/quickstart/v1alpha1_cclcomponentset.yaml. Order is the position in the list.
 apiVersion: ccluster.nvidia.com/v1alpha1
-kind: CCLDeployment
+kind: CCLComponentSet
 metadata:
   name: {{ .Name }}
   namespace: {{ .Namespace }}

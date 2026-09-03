@@ -123,7 +123,7 @@ type ApplicationSource struct {
 type ApplicationSourceHelm struct {
 	// valuesObject is structured Helm values. Argo CD also accepts `values`, a string
 	// holding a YAML document; the structured form is used because the operator copies
-	// a CCLDeployment component's values straight through, and passing them as an
+	// a CCLComponentSet component's values straight through, and passing them as an
 	// object avoids serialising and re-parsing what the API server already validated.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ValuesObject *apiextensionsv1.JSON `json:"valuesObject,omitempty"`

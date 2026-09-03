@@ -18,14 +18,14 @@ limitations under the License.
 //
 // Each chart under catalogs/cluster_base/<component> has a Go package alongside it
 // declaring that chart's values schema and a New function that builds a
-// v1alpha1.ComponentEntry from it, so that a caller assembling a CCLDeployment gets
+// v1alpha1.ComponentEntry from it, so that a caller assembling a CCLComponentSet gets
 // compile-time checking of the values it sets. There is no catalog-side mirror of the
 // API types: New returns the API type itself.
 //
 // # Nothing here is enforced at admission time
 //
-// The CCLDeployment CRD stores values as an untyped JSON blob with
-// x-kubernetes-preserve-unknown-fields. A CCLDeployment written by hand bypasses these
+// The CCLComponentSet CRD stores values as an untyped JSON blob with
+// x-kubernetes-preserve-unknown-fields. A CCLComponentSet written by hand bypasses these
 // types entirely and is forwarded to Helm verbatim, placeholders and all. These packages
 // help the callers that go through them; they are not a guarantee about what is in the
 // cluster.
@@ -33,7 +33,7 @@ limitations under the License.
 // # Conventions for adding a chart
 //
 // A component package exports a Chart constant, a Values struct and a New function. It
-// does not name itself: the component's name within a CCLDeployment is the caller's, and
+// does not name itself: the component's name within a CCLComponentSet is the caller's, and
 // so is the namespace it installs into.
 //
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
@@ -71,7 +71,7 @@ type Validator interface {
 // Values implementing Validator are validated first. Values that marshal to null or an
 // empty object are dropped rather than stored: the builder omits the Application's helm
 // block entirely when Values is nil or its Raw is empty (see applicationSpec in
-// internal/controller/cp/ccldeployment_builder.go), and storing an empty object would
+// internal/controller/cp/cclcomponentset_builder.go), and storing an empty object would
 // defeat that and hand Helm a meaningless override.
 func Entry(
 	chart, namespace string,

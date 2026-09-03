@@ -7,12 +7,12 @@ metadata:
     app.kubernetes.io/name: ccluster
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-  name: {{ include "ccluster.resourceName" (dict "suffix" "ccldeployment-editor-role" "context" $) }}
+  name: {{ include "ccluster.resourceName" (dict "suffix" "cclcomponentset-editor-role" "context" $) }}
 rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments
+  - cclcomponentsets
   verbs:
   - create
   - delete
@@ -24,7 +24,7 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
-  - ccldeployments/status
+  - cclcomponentsets/status
   verbs:
   - get
 {{- end }}

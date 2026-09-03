@@ -27,14 +27,14 @@ import (
 // It is embedded into ComponentSpec inline, so chart, namespace and values remain
 // component-level fields on the wire. It exists as a type so that the catalog packages
 // under catalogs/ can build one from a typed, per-chart values struct — see
-// catalogs.Entry. Nothing validates a submitted CCLDeployment against those typed
+// catalogs.Entry. Nothing validates a submitted CCLComponentSet against those typed
 // schemas: values here is as untyped as it has always been.
 type ComponentEntry struct {
 	// chart is the chart's directory, relative to the root of the catalog repository.
 	//
 	// The repository and revision are not settable per component: they are how the
 	// operator itself is configured (--catalog-repo-url and --catalog-revision), so
-	// every component of every CCLDeployment deploys from the same catalog.
+	// every component of every CCLComponentSet deploys from the same catalog.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=512
@@ -57,7 +57,7 @@ type ComponentEntry struct {
 
 // ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
 type ComponentSpec struct {
-	// name identifies the component within this CCLDeployment. It is templated into
+	// name identifies the component within this CCLComponentSet. It is templated into
 	// the generated Argo CD Application's name, so it has to be DNS-1123.
 	// +required
 	// +kubebuilder:validation:MinLength=1
@@ -66,7 +66,7 @@ type ComponentSpec struct {
 	Name string `json:"name"`
 
 	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-	// in the same namespace as this CCLDeployment, and must already be Available -
+	// in the same namespace as this CCLComponentSet, and must already be Available -
 	// that is, its cluster credentials have been mirrored into the Argo CD namespace,
 	// which is what lets the generated Application address the cluster by name.
 	// +required
@@ -78,8 +78,8 @@ type ComponentSpec struct {
 	ComponentEntry `json:",inline"`
 }
 
-// CCLDeploymentSpec defines the desired state of CCLDeployment
-type CCLDeploymentSpec struct {
+// CCLComponentSetSpec defines the desired state of CCLComponentSet
+type CCLComponentSetSpec struct {
 	// components are rolled out in the order given: the operator withholds a
 	// component's Argo CD Application until every component before it reports both
 	// Healthy and Synced. There is no timeout on that wait - a component that never
@@ -98,9 +98,9 @@ type CCLDeploymentSpec struct {
 	Components []ComponentSpec `json:"components"`
 }
 
-// CCLDeploymentStatus defines the observed state of CCLDeployment.
-type CCLDeploymentStatus struct {
-	// conditions represent the current state of the CCLDeployment resource.
+// CCLComponentSetStatus defines the observed state of CCLComponentSet.
+type CCLComponentSetStatus struct {
+	// conditions represent the current state of the CCLComponentSet resource.
 	//
 	// Condition types reported by the control-plane operator:
 	//   - "Validated": every component's infraPlaneRef resolves to an Available
@@ -128,37 +128,37 @@ type CCLDeploymentStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name must be at most 63 characters, because it is used as a label value on the generated Argo CD Applications"
 
-// CCLDeployment is the Schema for the ccldeployments API.
+// CCLComponentSet is the Schema for the cclcomponentsets API.
 //
 // It describes a bundle of Helm charts from the ccluster catalog, each with its own
 // values and its own destination cluster, rolled out in a fixed order. The operator does
 // not install anything itself: it creates one Argo CD Application per component, in
 // order, and Argo CD does the work.
-type CCLDeployment struct {
+type CCLComponentSet struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of CCLDeployment
+	// spec defines the desired state of CCLComponentSet
 	// +required
-	Spec CCLDeploymentSpec `json:"spec"`
+	Spec CCLComponentSetSpec `json:"spec"`
 
-	// status defines the observed state of CCLDeployment
+	// status defines the observed state of CCLComponentSet
 	// +optional
-	Status CCLDeploymentStatus `json:"status,omitzero"`
+	Status CCLComponentSetStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// CCLDeploymentList contains a list of CCLDeployment
-type CCLDeploymentList struct {
+// CCLComponentSetList contains a list of CCLComponentSet
+type CCLComponentSetList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []CCLDeployment `json:"items"`
+	Items           []CCLComponentSet `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&CCLDeployment{}, &CCLDeploymentList{})
+	SchemeBuilder.Register(&CCLComponentSet{}, &CCLComponentSetList{})
 }

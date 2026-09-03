@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	// Name is the component's name in a CCLDeployment.
+	// Name is the component's name in a CCLComponentSet.
 	Name = "istio"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/istio"

@@ -25,14 +25,14 @@ manager:
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
   ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
   ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
-  ## CCLDeployment go into the CCLDeployment's own namespace — see
+  ## CCLComponentSet go into the CCLComponentSet's own namespace — see
   ## `application.namespaces` below.) The default matches a stock Argo CD install. Note
   ## that the `argo-cd` subchart below installs into this chart's RELEASE namespace,
   ## not `argocd` — so when Argo CD comes from this chart, override this to the release
   ## namespace. `make deploy-cp` does that for you.
   ##
   ## --catalog-repo-url and --catalog-revision are the Git repository and revision a
-  ## CCLDeployment's components are resolved against; each component's `chart` is a
+  ## CCLComponentSet's components are resolved against; each component's `chart` is a
   ## path within that repository. Argo CD's repo-server clones it, so the revision has
   ## to be pushed — point --catalog-revision at a branch to try a catalog change before
   ## it merges.
@@ -151,14 +151,14 @@ argo-cd:
       ## server-side apply stops maintaining. Large CRDs then report OutOfSync forever
       ## despite syncing cleanly, and because the operator releases the next component
       ## only on Healthy *and* Synced, one such CRD stalls every later component of a
-      ## CCLDeployment.
+      ## CCLComponentSet.
       ##
       ## argo-rollouts' rollouts.argoproj.io CRD is ~600KB; several other cluster_base
       ## charts are comparable.
       controller.diff.server.side: "true"
 
-      ## "Applications in any namespace". The operator writes each CCLDeployment's
-      ## Applications into the CCLDeployment's own namespace, under an AppProject named
+      ## "Applications in any namespace". The operator writes each CCLComponentSet's
+      ## Applications into the CCLComponentSet's own namespace, under an AppProject named
       ## after that namespace, so that one namespace's Applications and clusters are
       ## isolated from another's. Argo CD only looks for Applications in the namespaces
       ## listed here, and the list is static — changing it restarts argocd-server and

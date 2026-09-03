@@ -44,7 +44,7 @@ type Values struct {
 //
 // The four required fields ship in catalogs/cluster_base/teleport_kube_agent/values.yaml
 // as the literal placeholders "<PROXY_ADDR>", "<CLUSTER_NAME>", "<KUBE_CLUSTER>" and
-// "<TOKEN>". A CCLDeployment that omits them is accepted by the API server and installs
+// "<TOKEN>". A CCLComponentSet that omits them is accepted by the API server and installs
 // an agent that cannot connect, so they are non-pointer and carry no omitempty: an unset
 // one reaches Helm as the empty string and fails there rather than silently inheriting
 // the placeholder.

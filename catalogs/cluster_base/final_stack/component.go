@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	// Name is the component's name in a CCLDeployment.
+	// Name is the component's name in a CCLComponentSet.
 	Name = "final-stack"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/final_stack"
@@ -40,7 +40,7 @@ const (
 // Global values are not modelled by this catalog yet. Until they are, this component
 // renders against the chart's own defaults and the resources it produces will carry
 // the placeholder domain, so a caller that needs a real one has to set
-// global.cluster.domain on the CCLDeployment component's values by hand.
+// global.cluster.domain on the CCLComponentSet component's values by hand.
 type Values struct{}
 
 // New returns the final-stack chart entry, installed into namespace with values.

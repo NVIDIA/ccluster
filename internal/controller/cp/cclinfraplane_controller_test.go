@@ -255,7 +255,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		})
 
 		// The project comes before the Secret: it exists for as long as any CCLInfraPlane
-		// does, credentials or not, so a CCLDeployment in the namespace always has one.
+		// does, credentials or not, so a CCLComponentSet in the namespace always has one.
 		It("should create the namespace's AppProject even before the credentials Secret exists", func() {
 			settle()
 
