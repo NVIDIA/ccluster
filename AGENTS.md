@@ -647,20 +647,42 @@ PyPI uploads are permanent, so cut a `vX.Y.Z-rc.N` release first when in doubt; 
 normalises it to `X.Y.ZrcN`, and the GitHub "pre-release" checkbox has no effect on the
 workflow.
 
-## Pull requests
+## Commit messages and pull requests
 
 The repository squash-merges with the PR title as the commit subject, so the title is a
 Conventional Commit line (`feat(cp): ...`, enforced by `pr-title.yml`) and the PR
-description becomes the commit body. Write the description in this shape, and nothing
-else — no section headers, no "Test plan", no checkbox lists, no generated-by footer:
+description becomes the commit body. The same shape applies to every commit message
+written on a branch. Write the body in this shape, and nothing else — no section headers,
+no "Test plan", no checkbox lists, no generated-by footer:
 
-1. One or two lines of prose saying what the change does and why, in the imperative.
+1. One or two sentences of prose saying what the change does and why, in the imperative.
 2. A blank line, then a bullet list of the major changes. Each bullet is a sentence or
-   two, names the concrete thing that changed in backticks, and says what it does now.
-   Order by importance, not by file.
+   two, names the concrete thing that changed, and says what it does now. Order by
+   importance, not by file.
 
-`git show -s 9977f3a` is the reference. If verification is itself part of the change
-(a new e2e spec, a fixed assertion) it belongs in a bullet, not in a separate checklist.
+Write the body as plain text, not Markdown. It is read mostly in `git log` in a
+terminal, where backticks, bold markers and headers are noise rather than formatting.
+Name identifiers bare — write CCLInfraPlaneReconciler, make deploy-cp, data.project —
+and never wrap them in backticks. A hyphen bullet is the only Markdown-looking syntax
+allowed, because it reads as a list either way. Wrap lines at about 72 columns.
+
+A body in the intended shape:
+
+```
+Make the Kubernetes namespace the tenancy boundary for everything the
+control-plane operator writes into Argo CD.
+
+- CCLInfraPlaneReconciler creates one AppProject per namespace, before
+  mirroring the cluster Secret or reporting Available. The project is
+  deleted by the last non-terminating CCLInfraPlane in the namespace.
+- Mirrored cluster Secrets are scoped to that project via data.project
+  and renamed <namespace>-<name>.
+- Applications now live in the CCLComponentSet's own namespace rather
+  than the Argo CD namespace.
+```
+
+If verification is itself part of the change (a new e2e spec, a fixed assertion) it
+belongs in a bullet, not in a separate checklist.
 
 `test.yml` and `test-e2e.yml` carry `paths:` filters so a docs-, catalog- or
 workflow-only PR does not spin up envtest and a kind cluster. Keep the filter lists in
