@@ -80,13 +80,29 @@ Run it after touching anything under `config/`, `api/`, or any `+kubebuilder:rba
 CI (`.github/workflows/test-chart.yml`) regenerates and fails on any diff, so stale charts
 are caught in review.
 
+The kubebuilder CLI is a pinned tool like controller-gen and kustomize:
+`KUBEBUILDER_VERSION` in the Makefile, downloaded into `bin/` on first use. It is pinned
+because the plugin's output changes between releases — v4.14.0 started emitting the
+`imagePullSecrets` block and renamed every `enable` values key to `enabled` — and the CI
+drift check only means something if every machine regenerates with the same version. To
+bump it, change the variable, run `make helm-generate`, and reconcile `values.yaml` by hand
+against a fresh chart: the plugin preserves the committed `values.yaml`, so a key the new
+templates expect and the old file does not have shows up as a `nil pointer evaluating`
+error from `helm template`, not as a diff.
+
 The plugin's regeneration contract decides what you may hand-edit:
 
 - **`Chart.yaml` and `values.yaml` are preserved** across regeneration. They are the only
   files in the charts you may edit, and the only safe home for the Argo CD dependency and
-  the pinned `fullnameOverride`.
-- **Everything under `templates/` is overwritten every run.** Do not put hand-written
-  templates there; they will disappear. Carry additional resources in a separate chart.
+  the pinned `fullnameOverride`. A values key is only honoured if a template consumes it;
+  `manager.imagePullSecrets` sat in `values.yaml` unread for the first release because the
+  pinned plugin predated the template that renders it.
+- **Everything under `templates/` is deleted and regenerated every run.** `make
+  helm-generate` removes the directory before invoking the plugin, because the plugin only
+  skips, never deletes, files it no longer emits, and without `--force` it also keeps an
+  existing `_helpers.tpl` and `NOTES.txt` even when its other templates need helpers the
+  old file lacks. Do not put hand-written templates there; they will disappear. Carry
+  additional resources in a separate chart.
 
 Two sharp edges:
 
@@ -404,7 +420,7 @@ leaves the CRD stuck `Terminating`.
 - `**/zz_generated.*.go` — via `make generate`
 - `PROJECT` — from `kubebuilder` CLI commands
 - `charts/{cp,ip}/chart/templates/**` and `.helmignore` — from the kustomize overlays, via
-  `make helm-generate`. Overwritten on every run.
+  `make helm-generate`. The `templates/` directory is deleted and rebuilt on every run.
 - `charts/cp/chart/Chart.lock` — via `make helm-deps-update-cp`
 - `python/src/ccluster/v1alpha1/**` and `python/src/ccluster/catalogs/cluster_base/**` —
   from the CRDs and the catalog Go types, via `make python-generate`. Both directories are

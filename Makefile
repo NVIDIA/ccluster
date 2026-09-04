@@ -383,7 +383,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--namespace $(HELM_NAMESPACE_CP) --create-namespace \
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
-		--set argo-cd.enable=$(ARGOCD) \
+		--set argo-cd.enabled=$(ARGOCD) \
 		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
@@ -414,9 +414,12 @@ undeploy-ip: helm ## Undeploy ccluster-ip-operator.
 # for the manager Deployment, RBAC and CRDs, and controller-gen output can never
 # drift from what gets deployed.
 #
-# The plugin preserves Chart.yaml and values.yaml and regenerates everything under
-# templates/. Hand-edit only the former two — the Argo CD dependency and the pinned
-# fullnameOverride live there for exactly that reason.
+# The plugin preserves Chart.yaml and values.yaml. Hand-edit only those two — the Argo
+# CD dependency and the pinned fullnameOverride live there for exactly that reason.
+# Everything under templates/ is generated: helm-generate deletes the directory first,
+# because the plugin only skips, never removes, files it no longer emits (it left a
+# stale templates/monitoring/ behind once) and without --force it also keeps an
+# existing _helpers.tpl and NOTES.txt, which a newer plugin's templates may not match.
 #
 # Note the plugin records only ONE chart in PROJECT (the last invocation), so both
 # charts are always regenerated here with explicit --manifests/--output-dir flags
@@ -484,8 +487,6 @@ helm: ## Verify that the helm binary is available.
 		exit 1; \
 	}
 
-KUBEBUILDER ?= kubebuilder
-
 UV ?= uv
 
 .PHONY: uv
@@ -495,15 +496,9 @@ uv: ## Verify that the uv binary is available.
 		exit 1; \
 	}
 
-.PHONY: kubebuilder
-kubebuilder: ## Verify that the kubebuilder CLI is available.
-	@command -v "$(KUBEBUILDER)" >/dev/null 2>&1 || { \
-		echo "kubebuilder not found. Install it from https://book.kubebuilder.io/quick-start or set KUBEBUILDER=<path>." >&2; \
-		exit 1; \
-	}
-
 .PHONY: helm-generate
 helm-generate: kubebuilder build-installer-cp build-installer-ip ## Regenerate both operator charts from the kustomize overlays.
+	rm -rf $(CHART_IP)/templates $(CHART_CP)/templates
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-ip.yaml --output-dir=charts/ip
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-cp.yaml --output-dir=charts/cp
 
@@ -663,6 +658,14 @@ YQ ?= $(LOCALBIN)/yq
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+# kubebuilder is pinned and downloaded into bin/ like the other tools, because the
+# helm/v2-alpha plugin's output changes between releases (v4.14.0 started emitting the
+# imagePullSecrets block and renamed the values keys) and the chart drift check in CI
+# is only meaningful when every machine regenerates with the same version. The CLI is
+# not `go install`able into a usable state - the release binaries carry their version
+# via ldflags, which kubebuilder writes into PROJECT - so this fetches the GitHub
+# release asset for the host platform.
+KUBEBUILDER ?= $(LOCALBIN)/kubebuilder
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -680,6 +683,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
+KUBEBUILDER_VERSION ?= v4.15.0
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -718,6 +722,20 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
 		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
 	} || true
+
+.PHONY: kubebuilder
+kubebuilder: $(KUBEBUILDER) ## Download kubebuilder locally if necessary.
+$(KUBEBUILDER): $(LOCALBIN)
+	@[ -f "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] && \
+	[ "$$(readlink -- "$(KUBEBUILDER)" 2>/dev/null)" = "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] || { \
+		set -e; \
+		echo "Downloading kubebuilder $(KUBEBUILDER_VERSION)"; \
+		rm -f "$(KUBEBUILDER)"; \
+		curl -fsSL -o "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" \
+			"https://github.com/kubernetes-sigs/kubebuilder/releases/download/$(KUBEBUILDER_VERSION)/kubebuilder_$$(go env GOOS)_$$(go env GOARCH)"; \
+		chmod +x "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)"; \
+	}
+	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

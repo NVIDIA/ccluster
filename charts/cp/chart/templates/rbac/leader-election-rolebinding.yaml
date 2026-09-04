@@ -14,5 +14,5 @@ roleRef:
   name: {{ include "ccluster.resourceName" (dict "suffix" "leader-election-role" "context" $) }}
 subjects:
 - kind: ServiceAccount
-  name: {{ include "ccluster.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+  name: {{ include "ccluster.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}

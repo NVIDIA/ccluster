@@ -13,12 +13,17 @@ fullnameOverride: "ccluster-cp"
 ## Configure the controller manager deployment
 ##
 manager:
+  ## Set to false to skip manager installation
+  ##
+  enabled: true
+
   replicas: 1
 
   ## repository is the published image. tag is deliberately empty in the committed chart:
   ## `make helm-package` stamps it with the release version (which is also the chart
   ## version and appVersion) and `make deploy-*` sets both from IMG_CP / IMG_IP, whose
-  ## default tag is the current commit hash. Nothing installs from this file unstamped.
+  ## default tag is the current commit hash. Nothing installs from this file unstamped;
+  ## an empty tag falls back to Chart.appVersion.
   image:
     repository: ghcr.io/nvidia/ccluster-cp-operator
     tag: ""
@@ -46,17 +51,12 @@ manager:
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
     - --catalog-revision=main
 
-  ## Environment variables
+  ## Image pull secrets, rendered as the pod's imagePullSecrets when non-empty.
+  ## The ghcr.io/nvidia operator images are private, so anything outside GitHub
+  ## Actions needs one:
   ##
-  env: []
-
-  ## Env overrides (--set manager.envOverrides.VAR=value)
-  ## Same name in env above: this value takes precedence.
-  ##
-  envOverrides: {}
-
-  ## Image pull secrets
-  ##
+  ## imagePullSecrets:
+  ##   - name: ghcr-credentials
   imagePullSecrets: []
 
   ## Pod-level security settings
@@ -97,41 +97,114 @@ manager:
   ##
   tolerations: []
 
-## Helper RBAC roles for managing custom resources
+  ## Deployment strategy
+  ##
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxSurge: 25%
+  #     maxUnavailable: 25%
+
+  ## Priority class name
+  ##
+  # priorityClassName: ""
+
+  ## Topology spread constraints
+  ##
+  # topologySpreadConstraints: []
+
+  ## Termination grace period seconds
+  ##
+  terminationGracePeriodSeconds: 10
+
+  ## Custom Deployment labels
+  ##
+  # labels: {}
+
+  ## Custom Deployment annotations
+  ##
+  # annotations: {}
+
+  ## Custom Pod labels and annotations
+  ##
+  # pod:
+  #   labels: {}
+  #   annotations: {}
+
+## RBAC configuration
 ##
-rbacHelpers:
-  # Install convenience admin/editor/viewer roles for CRDs.
-  # Enabled to match what the kustomize overlay installed; the operators do not
-  # use these roles themselves, they exist to help cluster admins hand out access.
-  enable: true
+rbac:
+  ## RBAC resource scope
+  ## - false (default): ClusterRole/ClusterRoleBinding (all namespaces)
+  ## - true: Role/RoleBinding (release namespace only)
+  ##
+  ## The operator watches CCLInfraPlanes and CCLComponentSets in every namespace and
+  ## writes into the Argo CD namespace, so it needs the cluster-scoped default.
+  namespaced: false
+
+  ## Helper roles for CRD management (admin/editor/viewer)
+  ##
+  helpers:
+    ## Install convenience admin/editor/viewer roles for CRDs.
+    ## Enabled to match what the kustomize overlay installed; the operators do not
+    ## use these roles themselves, they exist to help cluster admins hand out access.
+    enabled: true
+
+## ServiceAccount configuration
+##
+serviceAccount:
+  # Install default ServiceAccount provided
+  enabled: true
+
+  ## Existing ServiceAccount name (only when enabled=false)
+  ## Note: When enabled=true, respects nameOverride/fullnameOverride
+  ##
+  # name: ""
+
+  ## Custom ServiceAccount annotations
+  ##
+  # annotations: {}
+
+  ## Custom ServiceAccount labels
+  ##
+  # labels: {}
 
 ## Custom Resource Definitions
 ##
 crd:
   # Install CRDs with the chart
-  enable: true
+  enabled: true
   # Keep CRDs when uninstalling
   keep: true
 
 ## Controller metrics endpoint.
-## Enable to expose /metrics endpoint with RBAC protection.
+## Enable to expose /metrics endpoint
 ##
 metrics:
-  enable: true
+  enabled: true
   # Metrics server port
   port: 8443
+  # Enable secure metrics: HTTPS with certs/auth (true) or HTTP (false).
+  # Note: Metrics authn/authz needs ClusterRole access.
+  secure: true
 
 ## Cert-manager integration for TLS certificates.
 ## Required for webhook certificates and metrics endpoint certificates.
 ##
 certManager:
-  enable: false
+  enabled: false
 
 ## Prometheus ServiceMonitor for metrics scraping.
 ## Requires prometheus-operator to be installed in the cluster.
 ##
 prometheus:
-  enable: false
+  enabled: false
+
+## Network policies for controlling traffic flow.
+## Enable to restrict ingress to the controller manager.
+##
+networkPolicy:
+  enabled: false
 
 ## Argo CD — a dependency of this chart, not something the operator installs.
 ## See the rationale in Chart.yaml. Values here are passed to the upstream
@@ -141,7 +214,7 @@ prometheus:
 ## Argo CD, or for hermetic tests that must not pull the Argo CD images
 ## (`make deploy-cp ARGOCD=false`).
 argo-cd:
-  enable: true
+  enabled: true
 
   configs:
     params:
@@ -175,4 +248,3 @@ argo-cd:
       ## manage Applications cluster-wide; the application controller's ClusterRole
       ## already covers every namespace.
       application.namespaces: "*"
-

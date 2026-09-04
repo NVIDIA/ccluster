@@ -7,6 +7,25 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Fixed
+- `manager.imagePullSecrets` in the `ccluster-cp` and `ccluster-ip` charts is now rendered
+  into the manager Deployment's pod spec. It was declared in `values.yaml` but no template
+  consumed it, so a chart installed from a cluster that needs credentials for the private
+  `ghcr.io/nvidia` images went `ImagePullBackOff` with the value silently ignored. The
+  charts are regenerated with kubebuilder v4.15.0, whose `helm/v2-alpha` plugin emits the
+  block; the Makefile now pins and downloads that version instead of using whatever is on
+  `PATH`.
+
+### Changed
+- The chart values toggles follow the plugin's new naming: `crd.enabled`,
+  `metrics.enabled`, `certManager.enabled`, `prometheus.enabled`, `rbac.helpers.enabled`
+  (was `rbacHelpers.enable`) and, for consistency, `argo-cd.enabled`. New keys with the
+  plugin's defaults: `manager.enabled`, `manager.terminationGracePeriodSeconds`,
+  `metrics.secure`, `rbac.namespaced`, `serviceAccount.*`, `networkPolicy.enabled`. The
+  unused `manager.env` and `manager.envOverrides` keys are gone. The rendered manifests are
+  otherwise unchanged, except that an empty `manager.image.tag` now falls back to
+  `Chart.appVersion`.
+
 ## [0.0.1] - 2026-09-04
 
 First release. Everything below is new; the entries that described intermediate states

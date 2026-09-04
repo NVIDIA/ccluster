@@ -650,7 +650,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("rendering the Argo CD Application and AppProject CRDs from the vendored dependency chart")
 			cmd := exec.Command("helm", "template", "charts/cp/chart",
-				"--set", "argo-cd.enable=true",
+				"--set", "argo-cd.enabled=true",
 				"--show-only", "charts/argo-cd/templates/crds/crd-application.yaml",
 				"--show-only", "charts/argo-cd/templates/crds/crd-appproject.yaml")
 			argoCDCRDs, err := utils.Run(cmd)
