@@ -4,7 +4,9 @@ on:
   pull_request:
     # Only when Go code or the linter's inputs change; docs, chart, catalog-chart and
     # Python-only PRs skip it. Keep in sync with AGENTS.md "Commit messages, pull requests, releases and reviews".
+    # VERSION is here so a release PR, which changes little else, runs this check too.
     paths:
+      - 'VERSION'
       - '**.go'
       - 'go.mod'
       - 'go.sum'

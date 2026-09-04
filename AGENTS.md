@@ -678,7 +678,9 @@ update a skill when the process changes; they are documentation that gets execut
 
 `test.yml`, `test-e2e.yml`, `lint.yml` and `test-python.yml` carry `paths:` filters so
 a docs-, catalog-chart- or workflow-only PR does not spin up envtest, a kind cluster,
-golangci-lint or the Python drift check. `lint` runs on Go code and the linter's own
+golangci-lint or the Python drift check. All four list `VERSION`, so a release PR, which
+changes only `CHANGELOG.md` and `VERSION`, runs every check — and the e2e one as the full
+tier, via the `release` label. `lint` runs on Go code and the linter's own
 inputs; `test-python` runs on `python/` plus everything `make python-generate` reads —
 `api/`, `config/crd/`, the catalog `component.go` files and `hack/pyschema/` — since a
 doc-comment edit on a `Values` struct changes the generated models. Keep the filter
