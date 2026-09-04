@@ -487,16 +487,6 @@ helm: ## Verify that the helm binary is available.
 		exit 1; \
 	}
 
-# kubebuilder is pinned and downloaded into bin/ like the other tools, because the
-# helm/v2-alpha plugin's output changes between releases (v4.14.0 started emitting the
-# imagePullSecrets block and renamed the values keys) and the chart drift check in CI
-# is only meaningful when every machine regenerates with the same version. The CLI is
-# not `go install`able into a usable state - the release binaries carry their version
-# via ldflags, which kubebuilder writes into PROJECT - so this fetches the GitHub
-# release asset for the host platform.
-KUBEBUILDER ?= $(LOCALBIN)/kubebuilder
-KUBEBUILDER_VERSION ?= v4.15.0
-
 UV ?= uv
 
 .PHONY: uv
@@ -505,20 +495,6 @@ uv: ## Verify that the uv binary is available.
 		echo "uv not found. Install it from https://docs.astral.sh/uv/getting-started/installation/ or set UV=<path>." >&2; \
 		exit 1; \
 	}
-
-.PHONY: kubebuilder
-kubebuilder: $(KUBEBUILDER) ## Download kubebuilder locally if necessary.
-$(KUBEBUILDER): $(LOCALBIN)
-	@[ -f "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] && \
-	[ "$$(readlink -- "$(KUBEBUILDER)" 2>/dev/null)" = "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] || { \
-		set -e; \
-		echo "Downloading kubebuilder $(KUBEBUILDER_VERSION)"; \
-		rm -f "$(KUBEBUILDER)"; \
-		curl -fsSL -o "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" \
-			"https://github.com/kubernetes-sigs/kubebuilder/releases/download/$(KUBEBUILDER_VERSION)/kubebuilder_$$(go env GOOS)_$$(go env GOARCH)"; \
-		chmod +x "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)"; \
-	}
-	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
 
 .PHONY: helm-generate
 helm-generate: kubebuilder build-installer-cp build-installer-ip ## Regenerate both operator charts from the kustomize overlays.
@@ -682,6 +658,14 @@ YQ ?= $(LOCALBIN)/yq
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+# kubebuilder is pinned and downloaded into bin/ like the other tools, because the
+# helm/v2-alpha plugin's output changes between releases (v4.14.0 started emitting the
+# imagePullSecrets block and renamed the values keys) and the chart drift check in CI
+# is only meaningful when every machine regenerates with the same version. The CLI is
+# not `go install`able into a usable state - the release binaries carry their version
+# via ldflags, which kubebuilder writes into PROJECT - so this fetches the GitHub
+# release asset for the host platform.
+KUBEBUILDER ?= $(LOCALBIN)/kubebuilder
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -699,6 +683,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
+KUBEBUILDER_VERSION ?= v4.15.0
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -737,6 +722,20 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
 		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
 	} || true
+
+.PHONY: kubebuilder
+kubebuilder: $(KUBEBUILDER) ## Download kubebuilder locally if necessary.
+$(KUBEBUILDER): $(LOCALBIN)
+	@[ -f "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] && \
+	[ "$$(readlink -- "$(KUBEBUILDER)" 2>/dev/null)" = "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] || { \
+		set -e; \
+		echo "Downloading kubebuilder $(KUBEBUILDER_VERSION)"; \
+		rm -f "$(KUBEBUILDER)"; \
+		curl -fsSL -o "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" \
+			"https://github.com/kubernetes-sigs/kubebuilder/releases/download/$(KUBEBUILDER_VERSION)/kubebuilder_$$(go env GOOS)_$$(go env GOARCH)"; \
+		chmod +x "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)"; \
+	}
+	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
