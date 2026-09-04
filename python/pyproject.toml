@@ -7,7 +7,7 @@ build-backend = "uv_build"
 # `ccluster` (src/ccluster).
 name = "ccluster-py"
 # Placeholder: the release version is the git tag, stamped in by `make python-build`.
-version = "0.0.0.dev0"
+version = "0.0.1"
 description = "Pydantic models for the ccluster.nvidia.com API and its Helm chart catalog"
 readme = "README.md"
 license = "Apache-2.0"
