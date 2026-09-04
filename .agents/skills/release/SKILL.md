@@ -44,7 +44,9 @@ Then branch on what you find:
 | Release PR merged, no `vX.Y.Z` tag yet | Phase 2 |
 | Tag and release exist | Step 8, verify, then report |
 
-The version in the PR title (`chore(release): vX.Y.Z`) is the version for the later phases.
+The version in the PR title (`chore(release): prepare vX.Y.Z`) is the version for the later
+phases. The word "prepare" is not decoration: `pr-title.yml` rejects a summary shorter than
+ten characters, and a bare `vX.Y.Z` fails that check.
 
 ## Phase 1. Prepare the release PR
 
@@ -133,7 +135,7 @@ Do not run `make python-build` or `make helm-package` here: `python-build` rewri
 Follow the `commit-pr` skill for format. Title and body:
 
 ```
-chore(release): vX.Y.Z
+chore(release): prepare vX.Y.Z
 
 Prepare the vX.Y.Z release.
 
@@ -148,7 +150,7 @@ Prepare the vX.Y.Z release.
 git add CHANGELOG.md charts/cp/chart/Chart.yaml charts/ip/chart/Chart.yaml python/pyproject.toml python/uv.lock
 git commit -s -F - <<'MSG' ... MSG
 git push -u origin release/vX.Y.Z
-gh pr create --title "chore(release): vX.Y.Z" --body-file - <<'BODY' ... BODY
+gh pr create --title "chore(release): prepare vX.Y.Z" --body-file - <<'BODY' ... BODY
 ```
 
 Report the PR URL and that it needs another maintainer's approval and merge. Then go to

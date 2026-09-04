@@ -633,7 +633,7 @@ two workflows, and the rules below are the contract between them:
   to retag, and that is the intended outcome rather than something to paper over.
 - **The release is prepared in a release PR, and the workflow stamps from the tag.**
   The committed versions in both `Chart.yaml` files and `python/pyproject.toml`, and the
-  `CHANGELOG.md` section, are set by a reviewed `chore(release): vX.Y.Z` PR; the
+  `CHANGELOG.md` section, are set by a reviewed `chore(release): prepare vX.Y.Z` PR; the
   workflow never reads them — `VERSION=${tag#v}` is stamped into copies under `dist/` —
   so they exist to keep the tree and the artifacts in agreement. How to choose the
   version, prepare that PR and create the Release on its merge commit is the `release`
