@@ -132,11 +132,15 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 # then the "with real Argo CD" container in test/e2e/e2e_test.go upgrades the release to
 # add Argo CD and runs the rest. So the full tier is a strict superset of the quick one.
 E2E_FULL ?= false
+# go test kills the binary after 10m by default. The quick tier fits; the full tier does
+# not once the Argo CD and catalog images are pulled cold, as they are in CI, and the
+# panic that results looks like a hang in the last spec rather than a timeout.
+E2E_TIMEOUT ?= $(if $(filter true,$(E2E_FULL)),40m,20m)
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) \
-		go test -tags=e2e ./test/e2e/ -v -ginkgo.v \
+		go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) \
 		$(if $(filter true,$(E2E_FULL)),,-ginkgo.label-filter="!full")
 	$(MAKE) cleanup-test-e2e
 
