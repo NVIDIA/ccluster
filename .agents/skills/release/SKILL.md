@@ -9,19 +9,21 @@ A release is one reviewed pull request followed by one GitHub Release, and this 
 all of it except the approval:
 
 1. **Phase 1, prepare.** Cut `release/vX.Y.Z` from `main`, agree the version with the
-   user, consolidate the `Unreleased` changelog entries under `X.Y.Z`, bump the committed
-   versions, commit, and open the release PR.
+   user, consolidate the `Unreleased` changelog entries under `X.Y.Z`, write the version
+   to the `VERSION` file, commit, and open the release PR with the `release` label.
 2. **Approval.** Another maintainer reviews and merges the PR. The skill never merges it.
+   The label makes CI run the full e2e tier, so the release commit is the one commit
+   proven against real Argo CD.
 3. **Phase 2, publish.** Create the GitHub Release `vX.Y.Z` on the merge commit with
-   `gh`. That creates the tag and fires `.github/workflows/release.yml`, which retags the
-   `:<sha>` images, re-packages the charts, publishes `ccluster-py==X.Y.Z` to PyPI and
-   attaches the assets. Verify the artifacts.
+   `gh`. That creates the tag and fires `.github/workflows/release.yml`, which checks the
+   tag against `VERSION`, retags the `:<sha>` images, re-packages the charts, publishes
+   `ccluster-py==X.Y.Z` to PyPI and attaches the assets. Verify the artifacts.
 
 Nobody has to touch the GitHub UI. Nothing is ever rebuilt for a release: the images a
 release ships are the ones `main.yml` pushed for the merge commit, and the workflow
-stamps the version from the tag (`VERSION=${tag#v}`). The committed versions and the
-changelog exist so the tree and the artifacts agree, and the tag is created only on the
-commit that carries them.
+stamps the version from the tag (`VERSION=${tag#v}`). The root `VERSION` file is the one
+committed version; `make check-version` fails the release if the tag disagrees with it,
+which is what ties a tag to the commit that carries its changelog.
 
 ## Step 0. Find out where the release stands
 
@@ -31,7 +33,7 @@ Always start here, on a clean checkout with `gh auth status` working:
 git checkout main && git pull --ff-only && git status --short
 LAST=$(gh release list --exclude-drafts --limit 20 --json tagName,isPrerelease \
          --jq '[.[] | select(.isPrerelease == false)][0].tagName')   # empty before the first release
-gh pr list --state all --search 'in:title "chore(release):"' --limit 5 \
+gh pr list --state all --search 'in:title "release: new ccluster version"' --limit 5 \
   --json number,title,state,headRefName,mergeCommit
 ```
 
@@ -44,9 +46,8 @@ Then branch on what you find:
 | Release PR merged, no `vX.Y.Z` tag yet | Phase 2 |
 | Tag and release exist | Step 8, verify, then report |
 
-The version in the PR title (`chore(release): prepare vX.Y.Z`) is the version for the later
-phases. The word "prepare" is not decoration: `pr-title.yml` rejects a summary shorter than
-ten characters, and a bare `vX.Y.Z` fails that check.
+The version in the PR title (`release: new ccluster version vX.Y.Z`) is the version for
+the later phases.
 
 ## Phase 1. Prepare the release PR
 
@@ -107,54 +108,36 @@ section and drop the rc headings and links; the rc tags remain on GitHub.
 
 Do not edit sections of already released versions.
 
-### Step 4. Bump the committed versions
+### Step 4. Set the version
 
-These are the only files that carry a version. Set all of them to the same value:
-
-| File | Field | Value |
-| --- | --- | --- |
-| `charts/cp/chart/Chart.yaml` | `version`, `appVersion` | `X.Y.Z` (or `X.Y.Z-rc.N`) |
-| `charts/ip/chart/Chart.yaml` | `version`, `appVersion` | same |
-| `python/pyproject.toml` | `version` | `X.Y.Z` (or `X.Y.ZrcN`, PEP 440) |
-| `python/uv.lock` | `version` of the `ccluster-py` package entry | same as `pyproject.toml`; `make python-test` rewrites it for you |
-
-Do not touch `manager.image.tag` in the chart values, anything under `dist/`, or
-`charts/*/chart/templates/`. Then check the tree still lints and tests:
+The root `VERSION` file is the only committed version. Write the bare version to it:
 
 ```bash
-make helm-lint
-make python-test
-git status --short   # only CHANGELOG.md and the four files above may be modified
+echo X.Y.Z > VERSION            # or X.Y.Z-rc.N
+make check-version VERSION=X.Y.Z
+git status --short              # only CHANGELOG.md and VERSION may be modified
 ```
 
-Do not run `make python-build` or `make helm-package` here: `python-build` rewrites
-`pyproject.toml` to whatever `VERSION` is, undoing the bump.
+Nothing else is bumped. `charts/*/chart/Chart.yaml` stays at `0.0.0-dev` and
+`python/pyproject.toml` at `0.0.0.dev0`; the release workflow stamps every artifact from
+the tag, and `check-version` guarantees the tag equals this file.
 
 ### Step 5. Commit and open the release PR
 
-Follow the `commit-pr` skill for format. Title and body:
-
-```
-chore(release): prepare vX.Y.Z
-
-Prepare the vX.Y.Z release.
-
-- CHANGELOG.md consolidates the Unreleased entries under X.Y.Z dated
-  YYYY-MM-DD and opens a new empty Unreleased section.
-- charts/cp/chart and charts/ip/chart are versioned X.Y.Z, and
-  python/pyproject.toml X.Y.Z, matching the tag the release workflow
-  will stamp from.
-```
+The release PR has a fixed title, no description, and the `release` label. The title is
+the squash-merge subject; the changelog is the description, so the PR body is empty.
 
 ```bash
-git add CHANGELOG.md charts/cp/chart/Chart.yaml charts/ip/chart/Chart.yaml python/pyproject.toml python/uv.lock
-git commit -s -F - <<'MSG' ... MSG
+git add CHANGELOG.md VERSION
+git commit -s -m "release: new ccluster version vX.Y.Z"
 git push -u origin release/vX.Y.Z
-gh pr create --title "chore(release): prepare vX.Y.Z" --body-file - <<'BODY' ... BODY
+gh pr create --title "release: new ccluster version vX.Y.Z" --body "" --label release
 ```
 
-Report the PR URL and that it needs another maintainer's approval and merge. Then go to
-Step 6.
+The `release` label makes `test-e2e.yml` run the full tier (real Argo CD, real rollout)
+on this PR instead of the quick one; it takes several minutes longer than usual. Report
+the PR URL, that CI is running the full e2e tier, and that it needs another maintainer's
+approval and merge. Then go to Step 6.
 
 ### Step 6. Wait for the merge
 
@@ -181,12 +164,11 @@ MERGE_SHA=$(gh pr view <number> --json mergeCommit --jq .mergeCommit.oid)
 ```
 
 The release always targets `MERGE_SHA`, even if `main` has moved on: that commit carries
-the changelog and versions being released. Confirm the tree there agrees with the version
-before tagging anything:
+the changelog and the `VERSION` file being released. Confirm they agree before tagging:
 
 ```bash
-git show "$MERGE_SHA:charts/cp/chart/Chart.yaml" | grep '^version:'
-git show "$MERGE_SHA:python/pyproject.toml"      | grep '^version'
+git show "$MERGE_SHA:VERSION"                       # must print X.Y.Z
+git show "$MERGE_SHA:CHANGELOG.md" | grep -n "^## \[X.Y.Z\]"
 ```
 
 Wait for `main.yml` on that commit to finish, because the release retags the images it

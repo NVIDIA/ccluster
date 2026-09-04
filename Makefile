@@ -13,6 +13,11 @@ IMG_TAG   ?= $(GIT_SHA)
 # VERSION is the release version (the git tag without its leading v). Set by the release
 # workflow; empty in day-to-day use. Targets that publish refuse to run without it.
 VERSION   ?=
+# RELEASE_VERSION is the version recorded in the VERSION file at the repository root: the
+# one place a release bumps. Nothing stamps from it - artifacts are stamped from VERSION,
+# i.e. the tag - but `make check-version` refuses a release whose tag disagrees with it,
+# which is what ties a tag to the commit that carries its changelog.
+RELEASE_VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 # REGISTRY is the OCI prefix for both the images and the charts (oci://$(REGISTRY)/charts).
 REGISTRY  ?= ghcr.io/nvidia
 IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
@@ -259,6 +264,10 @@ docker-retag-ip: require-version ## Retag the pushed ccluster-ip-operator:<sha> 
 .PHONY: require-version
 require-version:
 	@[ -n "$(VERSION)" ] || { echo "VERSION is required, e.g. make $(MAKECMDGOALS) VERSION=0.1.0" >&2; exit 1; }
+
+.PHONY: check-version
+check-version: require-version ## Fail unless VERSION matches the VERSION file (the release tag must be cut on the release commit).
+	@[ "$(VERSION)" = "$(RELEASE_VERSION)" ] || { echo "VERSION=$(VERSION) but the VERSION file says '$(RELEASE_VERSION)': tag the commit that carries the release PR" >&2; exit 1; }
 
 .PHONY: build-installer
 build-installer: build-installer-cp build-installer-ip ## Generate consolidated install YAML for both operators.
@@ -545,9 +554,10 @@ helm-lint: helm helm-deps-cp ## Lint both operator charts.
 # tarball, so the charts are re-packaged from the identical tagged commit with the release
 # version and pointed at the :X.Y.Z image. The Python package is only built for a release.
 #
-# The committed chart and python versions are bumped by the release PR for bookkeeping
-# only; nothing below reads them. Everything below stamps a copy under dist/ from VERSION,
-# or 0.0.0-g<sha> / 0.0.0.dev0 when it is unset.
+# Nothing committed in the charts or python/ is bumped: they carry `version: 0.0.0-dev` and
+# 0.0.0.dev0 forever, and everything below stamps a copy under dist/ from VERSION, or
+# 0.0.0-g<sha> / 0.0.0.dev0 when it is unset. The only committed version is the VERSION
+# file, which check-version compares against the tag.
 CHART_VERSION   = $(or $(VERSION),0.0.0-g$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))

@@ -154,16 +154,20 @@ force-push over review history unless the user asks for a rebase.
 Every push to an open PR is followed by a fresh look at the PR description, because the
 description, not the commit list, becomes the squash-merge commit body.
 
-1. Commit the new work with the same rules as step 4 (its own subject and body are for
+1. Check the PR is still open before pushing anything to its branch:
+   `gh pr view <number> --json state --jq .state` must print `OPEN`. A PR someone merged
+   or closed in the meantime gets a new branch from `main` and a new PR, never a push to
+   the old branch and never an edit of the merged PR's title or body.
+2. Commit the new work with the same rules as step 4 (its own subject and body are for
    the branch history only).
-2. Re-read the whole diff against the base, not just the new commit:
+3. Re-read the whole diff against the base, not just the new commit:
    `gh pr diff <number>`.
-3. Rewrite the PR body so it describes the PR as it now is. Fold in what the new commit
+4. Rewrite the PR body so it describes the PR as it now is. Fold in what the new commit
    changed, drop bullets that no longer hold (a first attempt replaced by a second, a
    fix to something introduced earlier in the same PR), and re-order by importance. Do
    not append a "follow-up" or "also" bullet describing the fixup; the reader of the
    commit on main never saw the intermediate state. Adjust the title if the scope moved.
-4. Apply it:
+5. Apply it:
 
 ```bash
 gh api -X PATCH repos/{owner}/{repo}/pulls/<number> -f title="<type>(<scope>): <summary>" -F body=@<file>

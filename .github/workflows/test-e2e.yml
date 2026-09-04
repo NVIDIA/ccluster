@@ -2,9 +2,13 @@ name: E2E Tests
 
 on:
   pull_request:
+    # `labeled` so adding the release label to an open PR re-runs it as the full tier.
+    types: [opened, synchronize, reopened, labeled]
     # Only when something the suite depends on changes; docs, catalog and workflow-only
     # PRs skip it. Keep in sync with AGENTS.md "Commit messages, pull requests, releases and reviews".
+    # VERSION is here so a release PR, which changes little else, runs the full tier.
     paths:
+      - 'VERSION'
       - '**.go'
       - 'go.mod'
       - 'go.sum'
@@ -37,7 +41,13 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      # A PR carrying the `release` label runs the full tier: real Argo CD, real rollout,
+      # ordered release and teardown. Everything else runs the quick tier. Argo CD clones
+      # the catalog from this (internal) repository, so it needs the workflow token.
       - name: Running Test e2e
+        env:
+          E2E_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'release') && 'true' || 'false' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           go mod tidy
-          make test-e2e
+          make test-e2e E2E_FULL="$E2E_FULL"
