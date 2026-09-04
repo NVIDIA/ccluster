@@ -166,8 +166,12 @@ description, not the commit list, becomes the squash-merge commit body.
 4. Apply it:
 
 ```bash
-gh pr edit <number> --title "<type>(<scope>): <summary>" --body-file <file>
+gh api -X PATCH repos/{owner}/{repo}/pulls/<number> -f title="<type>(<scope>): <summary>" -F body=@<file>
 ```
+
+(`gh pr edit` also works in principle, but on this repository it fails with a GraphQL
+error about deprecated classic Projects and leaves the body unchanged; the REST call
+above does not.)
 
 Review fixes count too: a review round that only tightened wording may leave the body
 unchanged, but check it rather than assume. Keep the length discipline from step 4; the
