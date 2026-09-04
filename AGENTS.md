@@ -29,6 +29,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster` and published to PyPI as `ccluster-py` (that name was taken). **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
 | `.agents/skills/` | Agent-neutral skills (`commit-pr`, `release`, `pr-review`), one `SKILL.md` each. `.claude/skills` is a symlink here. See "Commit messages, pull requests, releases and reviews". |
+| `VERSION` | The one committed version, written by a release PR. Nothing stamps from it; `make check-version` compares it to the release tag. |
 | `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change; `lint` only when Go code, `go.mod`/`go.sum`, `.golangci.yml` or the Makefile change; `test-python` only when `python/`, `api/`, `config/crd/`, catalog Go files, `hack/pyschema/`, `go.mod`/`go.sum` or the Makefile change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
@@ -476,7 +477,7 @@ tag are unchanged, even though the image content changed.
 | unit | `go test ./internal/controller/cp/...` | Pure rollout logic — `releaseCount`, `rolloutStatus`, `applicationsCondition`, `ownedBy`. Sub-second, no envtest binaries. | Anything touching the API server |
 | envtest | `make test` | Controller logic against a real API server + etcd. No cluster needed. | RBAC, images, manifests |
 | e2e (quick) | `make test-e2e` | Helm deploy with `ARGOCD=false` into a dedicated kind cluster (`ccluster-test-e2e`), created and destroyed by the target. Fast; runs on every PR. Covers RBAC (Secret mirroring, `Application` CRUD via a CRD-only trick), the status paths reachable without Argo CD, and the watch wiring a running manager alone can prove: source-Secret edits reaching the mirror, drift on the mirror / AppProject / Application being restored, a plane appearing after its CCLComponentSet, and a removed component being pruned. | A real rollout — see the full tier |
-| e2e (full) | `make test-e2e-full` | Everything the quick tier runs, then the same release upgraded to add real Argo CD. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, selfHeal drift correction, a values change rolling forward, and the AppProject refusing a cross-namespace destination — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits); explicit only, not run in CI. | — |
+| e2e (full) | `make test-e2e-full` | Everything the quick tier runs, then the same release upgraded to add real Argo CD. A real catalog component reaching `Healthy`/`Synced`, multi-component ordered release, reverse teardown, selfHeal drift correction, a values change rolling forward, and the AppProject refusing a cross-namespace destination — all under Argo CD's own reconciliation. Slower (real image pulls, multi-minute convergence waits). In CI only on PRs carrying the `release` label; explicit locally. | — |
 | charts | `make helm-lint`, CI drift check | That the committed charts match `config/` and render, and that the vendored Argo CD dependency renders its CRDs and `controller.diff.server.side`. | Anything runtime |
 | python | `make python-test`, CI drift check | That the committed Python models match the CRDs and the catalog Go types, that the quickstart examples round-trip through them, and that the catalog helpers dump values the way `catalogs.Entry` does. | Anything touching a cluster |
 | manual | `make run-cp` | Fast iteration on logic | **RBAC** — runs as your kubeconfig identity, not the operator ServiceAccount |
@@ -574,7 +575,7 @@ proves the AppProject is a real tenancy boundary — a hand-written Application 
 namespace, under that namespace's project, targeting another namespace's project-scoped
 cluster, is refused by Argo CD (`PermitOnlyProjectScopedClusters` plus the mirror's
 `data.project`). Only one of the two planes in that spec is a real cluster: Argo CD skips
-cluster Secrets with a duplicate `server` URL. This tier is opt-in only — not run in CI —
+cluster Secrets with a duplicate `server` URL. This tier runs in CI only on PRs with the `release` label —
 because of the real image pulls and multi-minute convergence waits involved.
 
 ## Image builds
@@ -632,12 +633,16 @@ two workflows, and the rules below are the contract between them:
 - **A tag on a commit that never went through `main` fails.** There is no `:<sha>` image
   to retag, and that is the intended outcome rather than something to paper over.
 - **The release is prepared in a release PR, and the workflow stamps from the tag.**
-  The committed versions in both `Chart.yaml` files and `python/pyproject.toml`, and the
-  `CHANGELOG.md` section, are set by a reviewed `chore(release): prepare vX.Y.Z` PR; the
-  workflow never reads them — `VERSION=${tag#v}` is stamped into copies under `dist/` —
-  so they exist to keep the tree and the artifacts in agreement. How to choose the
-  version, prepare that PR and create the Release on its merge commit is the `release`
-  skill, `.agents/skills/release/SKILL.md`; do not duplicate it here.
+  The root `VERSION` file is the only committed version. A reviewed PR titled
+  `release: new ccluster version vX.Y.Z`, with no description and the `release` label,
+  consolidates the `Unreleased` changelog section under `X.Y.Z` and writes `X.Y.Z` to
+  `VERSION`; the label makes `test-e2e.yml` run the full tier on it. The GitHub Release is
+  then created on that merge commit. The workflow stamps artifacts from the tag
+  (`VERSION=${tag#v}`), never from the file, but `make check-version` fails the release
+  if the two disagree, which ties a tag to the commit that carries its changelog. The
+  charts stay at `version: 0.0.0-dev` and `python/pyproject.toml` at `0.0.0.dev0`
+  forever. The procedure, including choosing the version, is the `release` skill,
+  `.agents/skills/release/SKILL.md`; do not duplicate it here.
 
 The Makefile derives the three stamped values from `VERSION`: unset, the chart version is
 `0.0.0-g$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the bare sha;

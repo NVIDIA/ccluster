@@ -438,7 +438,7 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
   `Reconcile` directly rather than running the controllers in the test manager, so the
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a
   quick tier (`make test-e2e`, the CI default, `ARGOCD=false`) and a full tier
-  (`make test-e2e-full`, explicit only, real Argo CD). The quick tier covers
+  (`make test-e2e-full`, real Argo CD; in CI only on `release`-labelled PRs). The quick tier covers
   `ApplicationCRDMissing` and, via a CRD-only render trick, the `argoproj.io/applications`
   and `argoproj.io/appprojects` RBAC rules without paying for a real Argo CD install. The full tier goes further: a real catalog
   component reaching `Healthy`/`Synced` under genuine reconciliation (with an explicit check

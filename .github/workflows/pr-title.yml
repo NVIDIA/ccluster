@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+          types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|release'
           # <type>(<optional scope>)<optional !>: <summary>
           pattern="^(${types})(\([a-z0-9._/-]+\))?!?: .+"
 
@@ -60,11 +60,12 @@ jobs:
 
           if [ "${ok}" -ne 1 ]; then
             echo "::error::PR title must follow Conventional Commits — <type>(<scope>): <summary>"
-            echo "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+            echo "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, release"
             echo "Examples:"
             echo "  feat(catalog): add retry policy to job_deployment"
             echo "  fix: correct memory normalization for Gi values"
             echo "  docs(readme): document Argo CD rendering"
+            echo "  release: new ccluster version v0.1.0"
             echo "This title becomes the squashed commit message on main, so make it count."
             exit 1
           fi

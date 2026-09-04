@@ -12,8 +12,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   both charts (`0.0.0-g<sha>`) to GHCR; publishing a GitHub Release `vX.Y.Z` retags the
   images as `X.Y.Z`, re-packages the charts as `X.Y.Z` under `oci://ghcr.io/nvidia/charts`,
   publishes `ccluster-py==X.Y.Z` to PyPI and attaches the artifacts to the release. The
-  release is prepared in a reviewed `release/vX.Y.Z` PR that updates this file and the
-  committed chart and Python versions; the workflow stamps the artifacts from the tag.
+  release is prepared in a reviewed PR titled `release: new ccluster version vX.Y.Z` that
+  updates this file and the root `VERSION` file, the one committed version; the workflow
+  stamps the artifacts from the tag and refuses a tag that disagrees with `VERSION`. PRs
+  carrying the `release` label run the full e2e tier in CI.
 - Agent skills under `.agents/skills/` (`commit-pr`, `release`, `pr-review`), which
   write down the commit, release and review procedures so any coding agent runs them the
   same way. `.claude/skills` symlinks to the same directory.

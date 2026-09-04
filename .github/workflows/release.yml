@@ -32,6 +32,10 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: astral-sh/setup-uv@v6
+      - name: Check the tag matches the VERSION file
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: make check-version VERSION="${TAG#v}"
       - run: make test
       - run: make helm-lint
       - run: make python-test
