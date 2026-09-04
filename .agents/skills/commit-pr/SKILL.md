@@ -98,7 +98,20 @@ Rules:
   part of the change (a new e2e spec, a fixed assertion), it is a bullet.
 - No migration notes or backward-compatibility caveats; the project is pre-release.
 
-The example body in the "Commit messages and pull requests" section of `AGENTS.md` is the reference.
+A body in the intended shape:
+
+```
+Make the Kubernetes namespace the tenancy boundary for everything the
+control-plane operator writes into Argo CD.
+
+- CCLInfraPlaneReconciler creates one AppProject per namespace, before
+  mirroring the cluster Secret or reporting Available. The project is
+  deleted by the last non-terminating CCLInfraPlane in the namespace.
+- Mirrored cluster Secrets are scoped to that project via data.project
+  and renamed <namespace>-<name>.
+- Applications now live in the CCLComponentSet's own namespace rather
+  than the Argo CD namespace.
+```
 
 Prefer one commit per PR. If there are several, the PR body must still stand alone,
 because only the squashed message survives.
