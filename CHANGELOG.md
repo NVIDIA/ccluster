@@ -12,7 +12,11 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   both charts (`0.0.0-g<sha>`) to GHCR; publishing a GitHub Release `vX.Y.Z` retags the
   images as `X.Y.Z`, re-packages the charts as `X.Y.Z` under `oci://ghcr.io/nvidia/charts`,
   publishes `ccluster-py==X.Y.Z` to PyPI and attaches the artifacts to the release. The
-  tag is the only version: nothing in the tree is bumped.
+  release is prepared in a reviewed `release/vX.Y.Z` PR that updates this file and the
+  committed chart and Python versions; the workflow stamps the artifacts from the tag.
+- Agent skills under `.agents/skills/` (`commit-pr`, `release`, `pr-review`), which
+  write down the commit, release and review procedures so any coding agent runs them the
+  same way. `.claude/skills` symlinks to the same directory.
 - Initial public release of the `catalog` package: Helm charts paired with typed
   Pydantic value schemas for cluster base components and user workloads.
 - `cluster_base` platform stack (Istio, cert-manager, SPIRE, KEDA, GPU Operator,

@@ -101,3 +101,4 @@ go.work
 
 # ctags
 tags
+.claude/settings.local.json

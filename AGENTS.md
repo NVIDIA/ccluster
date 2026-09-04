@@ -28,6 +28,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster` and published to PyPI as `ccluster-py` (that name was taken). **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
+| `.agents/skills/` | Agent-neutral skills (`commit-pr`, `release`, `pr-review`), one `SKILL.md` each. `.claude/skills` is a symlink here. See "Commit messages and pull requests". |
 | `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change; `lint` only when Go code, `go.mod`/`go.sum`, `.golangci.yml` or the Makefile change; `test-python` only when `python/`, `api/`, `config/crd/`, catalog Go files, `hack/pyschema/`, `go.mod`/`go.sum` or the Makefile change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
@@ -630,10 +631,20 @@ two workflows, and the rules below are the contract between them:
   trigger: creating a release in the UI creates the tag too, and both would fire.
 - **A tag on a commit that never went through `main` fails.** There is no `:<sha>` image
   to retag, and that is the intended outcome rather than something to paper over.
-- **Nothing committed is bumped.** The placeholders — `version: 0.0.0-dev` and `tag: ""`
-  in the charts, `0.0.0.dev0` in `pyproject.toml` — stay as they are; every target stamps
-  a copy under `dist/`. `python-build` runs `uv version` on `python/pyproject.toml`, which
-  dirties it — `git checkout python/pyproject.toml` after a local run.
+- **The release is prepared in a release PR, and the workflow stamps from the tag.**
+  A `release/vX.Y.Z` branch consolidates the `Unreleased` section of `CHANGELOG.md`
+  under `X.Y.Z`, sets `version` and `appVersion` in both `Chart.yaml` files and
+  `version` in `python/pyproject.toml` to `X.Y.Z`, and is merged through a reviewed PR
+  titled `chore(release): vX.Y.Z`. The GitHub Release is then created on that merge
+  commit with `gh release create --target <merge sha>`; the `release` skill does every
+  step of this except approving the PR, and nobody needs the GitHub UI.
+  The workflow does not read those committed versions — `VERSION=${tag#v}` is stamped
+  into copies under `dist/` — so the committed values exist to keep the tree, the
+  changelog and the artifacts in agreement, and the release skill checks they match the
+  tag. Between releases the values stay at the last release; `main` builds are
+  `0.0.0-g<sha>` regardless. `python-build` runs `uv version` on `python/pyproject.toml`,
+  which dirties it — `git checkout python/pyproject.toml` after a local run.
+  The step-by-step procedure is `.agents/skills/release/SKILL.md`.
 
 The Makefile derives the three stamped values from `VERSION`: unset, the chart version is
 `0.0.0-g$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the bare sha;
@@ -683,6 +694,22 @@ control-plane operator writes into Argo CD.
 
 If verification is itself part of the change (a new e2e spec, a fixed assertion) it
 belongs in a bullet, not in a separate checklist.
+
+`CHANGELOG.md` is append-only between releases. A PR adds its own entry under
+`## [Unreleased]` and leaves everyone else's alone — no rewording, reordering or
+deleting, and no edits to a released version's section. Your own entry from the same
+unreleased cycle is yours to amend. The release PR is the one place the `Unreleased`
+list is consolidated, renamed to the version and dated; see the `release` skill.
+
+Three agent skills under `.agents/skills/` encode these workflows so they are run the
+same way every time, whichever coding agent runs them: `commit-pr` (branch, checks,
+CHANGELOG entry, signed-off commit, PR), `release` (release branch, CHANGELOG and version
+bumps, release PR, GitHub Release on the merge commit) and `pr-review` (what to check, in
+what order, and how to report). Each is a `SKILL.md` with `name` and `description`
+frontmatter, the format Codex reads from `.agents/skills/` directly; `.claude/skills` is
+a symlink to the same directory so Claude Code sees them too. Keep the text tool-neutral:
+no agent names, no tool-specific commands, nothing that only one agent can execute.
+Update them when the process changes; they are documentation that gets executed.
 
 `test.yml`, `test-e2e.yml`, `lint.yml` and `test-python.yml` carry `paths:` filters so
 a docs-, catalog-chart- or workflow-only PR does not spin up envtest, a kind cluster,
