@@ -152,11 +152,13 @@ including RBAC, CRD and chart regeneration after an API change.
 ## Releases
 
 Every merge to `main` publishes both operator images tagged with the commit hash and both
-charts as version `0.0.0-g<sha>`, so any commit can be deployed before it is released:
+charts as a pre-release of the next version, `X.Y.Z-dev.<sha>` (for example
+`0.0.2-dev.<sha>` while the latest release is `v0.0.1`), so any commit can be deployed
+before it is released:
 
 ```bash
 make deploy-cp IMG_TAG=<sha>
-helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.0-g<sha> ...
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.2-dev.<sha> ...
 ```
 
 A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or

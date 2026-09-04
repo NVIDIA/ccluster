@@ -18,6 +18,10 @@ VERSION   ?=
 # i.e. the tag - but `make check-version` refuses a release whose tag disagrees with it,
 # which is what ties a tag to the commit that carries its changelog.
 RELEASE_VERSION := $(strip $(shell cat VERSION 2>/dev/null))
+# NEXT_VERSION is RELEASE_VERSION with the patch bumped: the version a main-branch build
+# is heading towards, used as the base of the dev chart version so an unreleased build
+# sorts after the release it follows and before the one it precedes.
+NEXT_VERSION := $(shell printf '%s' '$(or $(RELEASE_VERSION),0.0.0)' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}')
 # REGISTRY is the OCI prefix for both the images and the charts (oci://$(REGISTRY)/charts).
 REGISTRY  ?= ghcr.io/nvidia
 IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
@@ -543,9 +547,12 @@ helm-lint: helm helm-deps-cp ## Lint both operator charts.
 # Two kinds of build, one set of targets.
 #
 # A main-branch build is keyed by the commit: images are :<sha>, and the charts - which
-# need a semver version - are published as 0.0.0-g<sha>, with the image tag and
-# --catalog-revision inside them set to the same sha. That is what .github/workflows/main.yml
-# pushes for every merge.
+# need a semver version - are published as <next>-dev.<sha>, where <next> is the VERSION
+# file with the patch bumped (0.0.2-dev.28ecd0dbadf6 after v0.0.1), with the image tag
+# and --catalog-revision inside them set to the same sha. That is what
+# .github/workflows/main.yml pushes for every merge. The pre-release form keeps dev builds
+# ordered between the release they follow and the one they precede; `helm search --devel`
+# is needed to see them.
 #
 # A release (VERSION=X.Y.Z, set by .github/workflows/release.yml from the GitHub Release's
 # tag) never rebuilds an image: docker-retag-* adds the version tag to the :<sha> manifest
@@ -555,9 +562,9 @@ helm-lint: helm helm-deps-cp ## Lint both operator charts.
 #
 # Nothing committed in the charts or python/ is bumped: they carry `version: 0.0.0-dev` and
 # 0.0.0.dev0 forever, and everything below stamps a copy under dist/ from VERSION, or
-# 0.0.0-g<sha> / 0.0.0.dev0 when it is unset. The only committed version is the VERSION
+# <next>-dev.<sha> / 0.0.0.dev0 when it is unset. The only committed version is the VERSION
 # file, which check-version compares against the tag.
-CHART_VERSION   = $(or $(VERSION),0.0.0-g$(IMG_TAG))
+CHART_VERSION   = $(or $(VERSION),$(NEXT_VERSION)-dev.$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
 # PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).

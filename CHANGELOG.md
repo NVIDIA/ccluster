@@ -7,6 +7,11 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Changed
+- Charts published from `main` are versioned `X.Y.Z-dev.<sha>`, where `X.Y.Z` is the
+  `VERSION` file with the patch bumped (`0.0.2-dev.<sha>` after `v0.0.1`), instead of
+  `0.0.0-g<sha>`. Dev builds now sort between the release they follow and the next one.
+
 ### Fixed
 - `manager.imagePullSecrets` in the `ccluster-cp` and `ccluster-ip` charts is now rendered
   into the manager Deployment's pod spec. It was declared in `values.yaml` but no template

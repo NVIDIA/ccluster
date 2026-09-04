@@ -30,7 +30,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
 | `.agents/skills/` | Agent-neutral skills (`commit-pr`, `release`, `pr-review`), one `SKILL.md` each. `.claude/skills` is a symlink here. See "Commit messages, pull requests, releases and reviews". |
 | `VERSION` | The one committed version, written by a release PR. Nothing stamps from it; `make check-version` compares it to the release tag. |
-| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change; `lint` only when Go code, `go.mod`/`go.sum`, `.golangci.yml` or the Makefile change; `test-python` only when `python/`, `api/`, `config/crd/`, catalog Go files, `hack/pyschema/`, `go.mod`/`go.sum` or the Makefile change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
+| `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change; `lint` only when Go code, `go.mod`/`go.sum`, `.golangci.yml` or the Makefile change; `test-python` only when `python/`, `api/`, `config/crd/`, catalog Go files, `hack/pyschema/`, `go.mod`/`go.sum` or the Makefile change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `<next>-dev.<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
 The two operators run in **different clusters**, which is why they have separate images,
@@ -631,9 +631,12 @@ two workflows, and the rules below are the contract between them:
 
 - **Every merge to `main` publishes, keyed by commit hash.** `main.yml` runs
   `make docker-buildx helm-package helm-push`: both images as `:<sha>`, both charts as
-  `0.0.0-g<sha>` (a chart needs a semver version) with `manager.image.tag` and
-  `--catalog-revision` inside set to that same sha. An unreleased commit is therefore
-  deployable — `make deploy-cp IMG_TAG=<sha>`, or `helm install` the `0.0.0-g<sha>` chart.
+  `<next>-dev.<sha>` — the `VERSION` file with the patch bumped, so `0.0.2-dev.<sha>`
+  after `v0.0.1` — with `manager.image.tag` and `--catalog-revision` inside set to that
+  same sha. A chart needs a semver version, and the pre-release form sorts dev builds
+  after the release they follow and before the next one (`helm search --devel` shows
+  them). An unreleased commit is therefore deployable — `make deploy-cp IMG_TAG=<sha>`,
+  or `helm install --version <next>-dev.<sha>`.
 - **A release is a GitHub Release, and it retags rather than rebuilds.** `release.yml`
   triggers on `release: published`, so the procedure is: create a release in the GitHub UI
   (or `gh release create`) against a new tag `vX.Y.Z`. The workflow checks out that tag
@@ -661,7 +664,8 @@ two workflows, and the rules below are the contract between them:
   `.agents/skills/release/SKILL.md`; do not duplicate it here.
 
 The Makefile derives the three stamped values from `VERSION`: unset, the chart version is
-`0.0.0-g$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the bare sha;
+`$(NEXT_VERSION)-dev.$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the
+bare sha;
 set, all three are `X.Y.Z` / `vX.Y.Z`. So `make helm-package` with no arguments produces
 exactly what `main.yml` publishes for the current commit, and `docker-retag-*` is the only
 target that refuses to run without `VERSION`. `REGISTRY` (`ghcr.io/nvidia`) is a variable
