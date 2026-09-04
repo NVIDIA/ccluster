@@ -89,6 +89,13 @@ Plain text, not Markdown. It is the squash-merge commit message.
    complete sentences that name the concrete thing that changed and say what it does now.
    Order by importance, not by file.
 
+Keep it short. The body is a summary a reviewer reads before the diff, not a narration of
+the diff: three to five bullets for a typical PR, one line of prose where one is enough,
+and nothing a reader would recover by opening the changed file. Leave out how you found
+the problem, what you tried first, file-by-file inventories, and anything a bullet above
+already implies. A rule of thumb is a body of at most about fifteen lines; a change that
+seems to need more is usually two PRs.
+
 Rules:
 
 - No backticks, bold, headers, or any other Markdown syntax. Write identifiers bare:
@@ -114,7 +121,7 @@ control-plane operator writes into Argo CD.
 ```
 
 Prefer one commit per PR. If there are several, the PR body must still stand alone,
-because only the squashed message survives.
+because only the squashed message survives; see step 7.
 
 ## 5. Push and open the PR
 
@@ -141,3 +148,28 @@ gh pr checks <number>
 as skipped for PRs that do not touch their inputs. `test-chart`, `dco` and `pr-title`
 always run. Fix a red check on the same branch with another signed-off commit; do not
 force-push over review history unless the user asks for a rebase.
+
+## 7. Adding commits to an open PR
+
+Every push to an open PR is followed by a fresh look at the PR description, because the
+description, not the commit list, becomes the squash-merge commit body.
+
+1. Commit the new work with the same rules as step 4 (its own subject and body are for
+   the branch history only).
+2. Re-read the whole diff against the base, not just the new commit:
+   `gh pr diff <number>`.
+3. Rewrite the PR body so it describes the PR as it now is. Fold in what the new commit
+   changed, drop bullets that no longer hold (a first attempt replaced by a second, a
+   fix to something introduced earlier in the same PR), and re-order by importance. Do
+   not append a "follow-up" or "also" bullet describing the fixup; the reader of the
+   commit on main never saw the intermediate state. Adjust the title if the scope moved.
+4. Apply it:
+
+```bash
+gh pr edit <number> --title "<type>(<scope>): <summary>" --body-file <file>
+```
+
+Review fixes count too: a review round that only tightened wording may leave the body
+unchanged, but check it rather than assume. Keep the length discipline from step 4; the
+body should not grow with every push.
+
