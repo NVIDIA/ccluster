@@ -1,10 +1,10 @@
 # Publish every merge to main, keyed by commit hash: both operator images as :<sha> and
-# both charts as 0.0.0-g<sha> (pointing at the :<sha> images), all to GHCR.
+# both charts as <next>-dev.<sha> (pointing at the :<sha> images), all to GHCR.
 #
 # This is the build half of the release flow. release.yml never builds an image; it
 # retags what this workflow pushed. It also lets an unreleased main commit be deployed:
 #   make deploy-cp IMG_TAG=<sha>
-#   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.0-g<sha>
+#   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version <next>-dev.<sha>
 name: Main
 
 on:
