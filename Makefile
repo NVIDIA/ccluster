@@ -383,7 +383,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--namespace $(HELM_NAMESPACE_CP) --create-namespace \
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
-		--set argo-cd.enable=$(ARGOCD) \
+		--set argo-cd.enabled=$(ARGOCD) \
 		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
@@ -414,9 +414,12 @@ undeploy-ip: helm ## Undeploy ccluster-ip-operator.
 # for the manager Deployment, RBAC and CRDs, and controller-gen output can never
 # drift from what gets deployed.
 #
-# The plugin preserves Chart.yaml and values.yaml and regenerates everything under
-# templates/. Hand-edit only the former two — the Argo CD dependency and the pinned
-# fullnameOverride live there for exactly that reason.
+# The plugin preserves Chart.yaml and values.yaml. Hand-edit only those two — the Argo
+# CD dependency and the pinned fullnameOverride live there for exactly that reason.
+# Everything under templates/ is generated: helm-generate deletes the directory first,
+# because the plugin only skips, never removes, files it no longer emits (it left a
+# stale templates/monitoring/ behind once) and without --force it also keeps an
+# existing _helpers.tpl and NOTES.txt, which a newer plugin's templates may not match.
 #
 # Note the plugin records only ONE chart in PROJECT (the last invocation), so both
 # charts are always regenerated here with explicit --manifests/--output-dir flags
@@ -484,7 +487,15 @@ helm: ## Verify that the helm binary is available.
 		exit 1; \
 	}
 
-KUBEBUILDER ?= kubebuilder
+# kubebuilder is pinned and downloaded into bin/ like the other tools, because the
+# helm/v2-alpha plugin's output changes between releases (v4.14.0 started emitting the
+# imagePullSecrets block and renamed the values keys) and the chart drift check in CI
+# is only meaningful when every machine regenerates with the same version. The CLI is
+# not `go install`able into a usable state - the release binaries carry their version
+# via ldflags, which kubebuilder writes into PROJECT - so this fetches the GitHub
+# release asset for the host platform.
+KUBEBUILDER ?= $(LOCALBIN)/kubebuilder
+KUBEBUILDER_VERSION ?= v4.15.0
 
 UV ?= uv
 
@@ -496,14 +507,22 @@ uv: ## Verify that the uv binary is available.
 	}
 
 .PHONY: kubebuilder
-kubebuilder: ## Verify that the kubebuilder CLI is available.
-	@command -v "$(KUBEBUILDER)" >/dev/null 2>&1 || { \
-		echo "kubebuilder not found. Install it from https://book.kubebuilder.io/quick-start or set KUBEBUILDER=<path>." >&2; \
-		exit 1; \
+kubebuilder: $(KUBEBUILDER) ## Download kubebuilder locally if necessary.
+$(KUBEBUILDER): $(LOCALBIN)
+	@[ -f "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] && \
+	[ "$$(readlink -- "$(KUBEBUILDER)" 2>/dev/null)" = "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] || { \
+		set -e; \
+		echo "Downloading kubebuilder $(KUBEBUILDER_VERSION)"; \
+		rm -f "$(KUBEBUILDER)"; \
+		curl -fsSL -o "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" \
+			"https://github.com/kubernetes-sigs/kubebuilder/releases/download/$(KUBEBUILDER_VERSION)/kubebuilder_$$(go env GOOS)_$$(go env GOARCH)"; \
+		chmod +x "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)"; \
 	}
+	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
 
 .PHONY: helm-generate
 helm-generate: kubebuilder build-installer-cp build-installer-ip ## Regenerate both operator charts from the kustomize overlays.
+	rm -rf $(CHART_IP)/templates $(CHART_CP)/templates
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-ip.yaml --output-dir=charts/ip
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-cp.yaml --output-dir=charts/cp
 

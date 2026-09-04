@@ -18,14 +18,8 @@ jobs:
 
       # charts/{cp,ip}/chart are generated from the kustomize overlays. Regenerate
       # them here and fail if the committed copies differ, so config/ and the charts
-      # can never drift.
-      - name: Install kubebuilder
-        run: |
-          curl -fsSL -o kubebuilder \
-            "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.13.0/kubebuilder_linux_$(go env GOARCH)"
-          chmod +x kubebuilder
-          sudo mv kubebuilder /usr/local/bin/
-
+      # can never drift. The Makefile downloads the pinned kubebuilder into bin/, so
+      # this runs the same plugin version a developer does.
       - name: Verify the committed charts match config/
         run: |
           make helm-generate
