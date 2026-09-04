@@ -28,6 +28,7 @@ Two Kubernetes operators built from **one Go module**, plus a catalog of Helm ch
 | `examples/` | Example CRs, one subdirectory per scenario. `examples/quickstart/` is the pair the README walks through: a CCLInfraPlane that registers the control-plane cluster with itself, and a CCLComponentSet that rolls two catalog components onto it. Hand-written, applied with `kubectl apply -f`; not a kustomize input. |
 | `python/` | A Pydantic v2 rendering of the CRDs and of every catalog component's `Values`, importable as `ccluster` and published to PyPI as `ccluster-py` (that name was taken). **Generated** by `make python-generate`; only `python/src/ccluster/__init__.py`, `python/src/ccluster/catalogs/__init__.py`, `pyproject.toml`, `README.md` and `tests/` are hand-written. See below. |
 | `hack/pyschema/` | The Go half of that generator: lifts JSON Schema out of the CRDs, reflects the catalog `Values` types, and writes the generated packages' `__init__.py` files. |
+| `.agents/skills/` | Agent-neutral skills (`commit-pr`, `release`, `pr-review`), one `SKILL.md` each. `.claude/skills` is a symlink here. See "Commit messages, pull requests, releases and reviews". |
 | `.github/workflows/` | PR checks (`lint`, `test`, `test-e2e`, `test-chart`, `test-python`, `dco`, `pr-title`; `test` and `test-e2e` run only when Go code, `go.mod`/`go.sum`, the Makefile, `Dockerfile`, `config/`, `charts/` or `test/` change; `lint` only when Go code, `go.mod`/`go.sum`, `.golangci.yml` or the Makefile change; `test-python` only when `python/`, `api/`, `config/crd/`, catalog Go files, `hack/pyschema/`, `go.mod`/`go.sum` or the Makefile change), plus `main.yml` (every merge to `main` pushes `:<sha>` images and `0.0.0-g<sha>` charts to GHCR) and `release.yml` (publishing a GitHub Release `vX.Y.Z` retags the images, re-packages the charts as `X.Y.Z`, publishes the Python package to PyPI and attaches the assets). See "Releasing". |
 | `catalog/` | Legacy Python/Pydantic packaging of an older copy of those charts. Being retired once the remaining charts are migrated to `catalogs/` — leave it alone. Not to be confused with `python/`, which is generated from the Go catalog rather than a parallel implementation of it. |
 
@@ -630,10 +631,13 @@ two workflows, and the rules below are the contract between them:
   trigger: creating a release in the UI creates the tag too, and both would fire.
 - **A tag on a commit that never went through `main` fails.** There is no `:<sha>` image
   to retag, and that is the intended outcome rather than something to paper over.
-- **Nothing committed is bumped.** The placeholders — `version: 0.0.0-dev` and `tag: ""`
-  in the charts, `0.0.0.dev0` in `pyproject.toml` — stay as they are; every target stamps
-  a copy under `dist/`. `python-build` runs `uv version` on `python/pyproject.toml`, which
-  dirties it — `git checkout python/pyproject.toml` after a local run.
+- **The release is prepared in a release PR, and the workflow stamps from the tag.**
+  The committed versions in both `Chart.yaml` files and `python/pyproject.toml`, and the
+  `CHANGELOG.md` section, are set by a reviewed `chore(release): vX.Y.Z` PR; the
+  workflow never reads them — `VERSION=${tag#v}` is stamped into copies under `dist/` —
+  so they exist to keep the tree and the artifacts in agreement. How to choose the
+  version, prepare that PR and create the Release on its merge commit is the `release`
+  skill, `.agents/skills/release/SKILL.md`; do not duplicate it here.
 
 The Makefile derives the three stamped values from `VERSION`: unset, the chart version is
 `0.0.0-g$(IMG_TAG)`, the image tag `$(IMG_TAG)` and the catalog revision the bare sha;
@@ -643,46 +647,29 @@ target that refuses to run without `VERSION`. `REGISTRY` (`ghcr.io/nvidia`) is a
 so a fork's CI publishes into its own namespace — the workflows pass it lowercased,
 because GHCR namespaces are lowercase and `github.repository_owner` is `NVIDIA`.
 
-PyPI uploads are permanent, so cut a `vX.Y.Z-rc.N` release first when in doubt; uv
-normalises it to `X.Y.ZrcN`, and the GitHub "pre-release" checkbox has no effect on the
-workflow.
+`python-build` runs `uv version` on `python/pyproject.toml`, which dirties it — `git
+checkout python/pyproject.toml` after a local run. The GitHub "pre-release" flag has no
+effect on the workflow; uv normalises an `X.Y.Z-rc.N` tag to `X.Y.ZrcN`.
 
-## Commit messages and pull requests
+## Commit messages, pull requests, releases and reviews
 
-The repository squash-merges with the PR title as the commit subject, so the title is a
-Conventional Commit line (`feat(cp): ...`, enforced by `pr-title.yml`) and the PR
-description becomes the commit body. The same shape applies to every commit message
-written on a branch. Write the body in this shape, and nothing else — no section headers,
-no "Test plan", no checkbox lists, no generated-by footer:
+The repository squash-merges with the PR title as the commit subject (a Conventional
+Commit line, enforced by `pr-title.yml`) and the PR description as the commit body, so
+both are read mostly in `git log` in a terminal. The procedures live in three
+agent-neutral skills under `.agents/skills/`, one `SKILL.md` each, and are not repeated
+here — read the skill before doing the task:
 
-1. One or two sentences of prose saying what the change does and why, in the imperative.
-2. A blank line, then a bullet list of the major changes. Each bullet is a sentence or
-   two, names the concrete thing that changed, and says what it does now. Order by
-   importance, not by file.
+- `commit-pr` — branch naming, which checks to run per changed path, the append-only
+  `CHANGELOG.md` entry, the signed-off commit and its plain-text body format, and
+  opening the PR.
+- `release` — the whole release except approving the release PR: version choice,
+  changelog consolidation, version bumps, the release PR, and the GitHub Release on its
+  merge commit.
+- `pr-review` — what to check, in what order, and how to report.
 
-Write the body as plain text, not Markdown. It is read mostly in `git log` in a
-terminal, where backticks, bold markers and headers are noise rather than formatting.
-Name identifiers bare — write CCLInfraPlaneReconciler, make deploy-cp, data.project —
-and never wrap them in backticks. A hyphen bullet is the only Markdown-looking syntax
-allowed, because it reads as a list either way. Wrap lines at about 72 columns.
-
-A body in the intended shape:
-
-```
-Make the Kubernetes namespace the tenancy boundary for everything the
-control-plane operator writes into Argo CD.
-
-- CCLInfraPlaneReconciler creates one AppProject per namespace, before
-  mirroring the cluster Secret or reporting Available. The project is
-  deleted by the last non-terminating CCLInfraPlane in the namespace.
-- Mirrored cluster Secrets are scoped to that project via data.project
-  and renamed <namespace>-<name>.
-- Applications now live in the CCLComponentSet's own namespace rather
-  than the Argo CD namespace.
-```
-
-If verification is itself part of the change (a new e2e spec, a fixed assertion) it
-belongs in a bullet, not in a separate checklist.
+`.claude/skills` is a symlink to `.agents/skills` so Claude Code and Codex read the same
+files. Keep the text tool-neutral — no agent names, no tool-specific commands — and
+update a skill when the process changes; they are documentation that gets executed.
 
 `test.yml`, `test-e2e.yml`, `lint.yml` and `test-python.yml` carry `paths:` filters so
 a docs-, catalog-chart- or workflow-only PR does not spin up envtest, a kind cluster,

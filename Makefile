@@ -545,8 +545,9 @@ helm-lint: helm helm-deps-cp ## Lint both operator charts.
 # tarball, so the charts are re-packaged from the identical tagged commit with the release
 # version and pointed at the :X.Y.Z image. The Python package is only built for a release.
 #
-# Nothing committed is bumped: the charts carry `version: 0.0.0-dev` and an empty image tag,
-# python/ carries 0.0.0.dev0, and everything below stamps a copy under dist/.
+# The committed chart and python versions are bumped by the release PR for bookkeeping
+# only; nothing below reads them. Everything below stamps a copy under dist/ from VERSION,
+# or 0.0.0-g<sha> / 0.0.0.dev0 when it is unset.
 CHART_VERSION   = $(or $(VERSION),0.0.0-g$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
