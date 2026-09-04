@@ -114,6 +114,7 @@ These are the only files that carry a version. Set all of them to the same value
 | `charts/cp/chart/Chart.yaml` | `version`, `appVersion` | `X.Y.Z` (or `X.Y.Z-rc.N`) |
 | `charts/ip/chart/Chart.yaml` | `version`, `appVersion` | same |
 | `python/pyproject.toml` | `version` | `X.Y.Z` (or `X.Y.ZrcN`, PEP 440) |
+| `python/uv.lock` | `version` of the `ccluster-py` package entry | same as `pyproject.toml`; `make python-test` rewrites it for you |
 
 Do not touch `manager.image.tag` in the chart values, anything under `dist/`, or
 `charts/*/chart/templates/`. Then check the tree still lints and tests:
@@ -121,7 +122,7 @@ Do not touch `manager.image.tag` in the chart values, anything under `dist/`, or
 ```bash
 make helm-lint
 make python-test
-git status --short   # only CHANGELOG.md and the three files above may be modified
+git status --short   # only CHANGELOG.md and the four files above may be modified
 ```
 
 Do not run `make python-build` or `make helm-package` here: `python-build` rewrites
@@ -144,7 +145,7 @@ Prepare the vX.Y.Z release.
 ```
 
 ```bash
-git add CHANGELOG.md charts/cp/chart/Chart.yaml charts/ip/chart/Chart.yaml python/pyproject.toml
+git add CHANGELOG.md charts/cp/chart/Chart.yaml charts/ip/chart/Chart.yaml python/pyproject.toml python/uv.lock
 git commit -s -F - <<'MSG' ... MSG
 git push -u origin release/vX.Y.Z
 gh pr create --title "chore(release): vX.Y.Z" --body-file - <<'BODY' ... BODY
@@ -186,13 +187,19 @@ git show "$MERGE_SHA:charts/cp/chart/Chart.yaml" | grep '^version:'
 git show "$MERGE_SHA:python/pyproject.toml"      | grep '^version'
 ```
 
-Wait for `main.yml` on that commit to succeed, because the release retags the images it
+Wait for `main.yml` on that commit to finish, because the release retags the images it
 pushes and fails if they are missing:
 
 ```bash
 RUN=$(gh run list --workflow=main.yml --commit "$MERGE_SHA" --limit 1 --json databaseId --jq '.[0].databaseId')
-gh run watch "$RUN" --exit-status
+gh run watch "$RUN"
+gh run view "$RUN" --json jobs --jq '.jobs[].steps[] | select(.conclusion=="failure") | .name'
 ```
+
+Judge the run by its steps, not its overall conclusion: the post-job cache-save step has
+been failing with "no space left on device" after the push steps succeeded. If "Build and
+push both images" and "Package and push both charts" passed, the artifacts exist and the
+release can proceed. If either of those failed, stop and report.
 
 Write the release notes: the `## [X.Y.Z]` section of `CHANGELOG.md` at `MERGE_SHA`, from
 the line after the heading up to the next `## [` heading, into a temporary file. Then
