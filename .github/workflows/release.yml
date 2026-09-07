@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Check the tag matches the VERSION file
         env:
           TAG: ${{ github.event.release.tag_name }}
@@ -95,7 +95,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Build
         env:
           TAG: ${{ github.event.release.tag_name }}
