@@ -65,7 +65,7 @@ jobs:
             }
           skip-extraction: ${{ steps.go-cache.outputs.cache-hit }}
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
