@@ -78,7 +78,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" VERSION="${TAG#v}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: charts
           path: dist/charts/*.tgz
@@ -103,7 +103,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/python
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python
           path: dist/python/*
