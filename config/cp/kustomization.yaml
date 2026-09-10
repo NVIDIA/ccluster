@@ -1,5 +1,6 @@
 # Deploy overlay for ccluster-cp-operator, which runs in the control-plane cluster.
-# Built by `make deploy-cp` / `make build-installer-cp`.
+# Built by `make build-installer-cp` into dist/install-cp.yaml, the input
+# `make helm-generate` turns into charts/cp/chart.
 
 # Adds namespace to all resources.
 namespace: ccluster-cp-system
@@ -28,10 +29,10 @@ resources:
 # be able to communicate with the Webhook Server.
 #- ../network-policy
 
-# `make deploy-cp IMG_CP=...` rewrites newName/newTag below via `kustomize edit set image`.
+# The image name is fixed here and nothing rewrites it. No tag is set: the deployed
+# image is manager.image in the chart's values.yaml, stamped by `make helm-package-cp`.
 images:
 - name: controller
-  newName: ccluster-cp-operator
-  newTag: dev
+  newName: ghcr.io/nvidia/ccluster-cp-operator
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

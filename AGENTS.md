@@ -426,13 +426,10 @@ leaves the CRD stuck `Terminating`.
   from the CRDs and the catalog Go types, via `make python-generate`. Both directories are
   deleted and rebuilt on every run.
 
-**Modified by the build (expect it dirty in `git status`):**
-
-- `config/{cp,ip}/kustomization.yaml` — `make build-installer-*` (and therefore
-  `helm-generate`) rewrites the image via `kustomize edit set image`
-
-**Hand-written, yours to edit:** everything else, including `config/base/manager.yaml`, all
-other kustomization files, `examples/`, `config/ip/rbac/role.yaml` (for now), and —
+**Hand-written, yours to edit:** everything else, including `config/base/manager.yaml`, every
+kustomization file (the build reads them and never rewrites them; the image name in
+`config/{cp,ip}/kustomization.yaml` is committed and the tag lives only in the packaged
+charts), `examples/`, `config/ip/rbac/role.yaml` (for now), and —
 the two exceptions inside the generated charts — `charts/{cp,ip}/chart/Chart.yaml` and
 `charts/{cp,ip}/chart/values.yaml`.
 
