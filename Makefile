@@ -50,7 +50,7 @@ SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 .PHONY: all
-all: build
+all: init build load deploy ## Create both dev Kind clusters, build everything, load the images and deploy both operators.
 
 ##@ General
 
