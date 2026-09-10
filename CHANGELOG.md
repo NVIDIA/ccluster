@@ -7,6 +7,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `ccluster.client.CCLClient` in `ccluster-py`: `register_cluster(name, server,
+  bearer_token, ca_cert)` creates an Argo CD-shaped credentials Secret and the
+  `CCLInfraPlane` that points at it, and `unregister_cluster(name)` removes both. The
+  client writes into one namespace, creating it if needed, and connects with the
+  in-cluster configuration unless given an `ApiClient`. `python/examples/register_cluster.py`
+  drives it from the command line. `ccluster-py` now depends on the `kubernetes` package.
+
 ### Changed
 - Charts published from `main` are versioned `X.Y.Z-dev.<sha>`, where `X.Y.Z` is the
   `VERSION` file with the patch bumped (`0.0.2-dev.<sha>` after `v0.0.1`), instead of

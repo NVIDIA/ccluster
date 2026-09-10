@@ -1,8 +1,9 @@
 # ccluster (Python)
 
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
-every chart in the catalog. The package is **generated**: nothing in `ccluster/v1alpha1/`
-or `ccluster/catalogs/cluster_base/` is written by hand.
+every chart in the catalog, plus a small client that registers clusters with the control
+plane. The models are **generated**: nothing in `ccluster/v1alpha1/` or
+`ccluster/catalogs/cluster_base/` is written by hand.
 
 ```bash
 uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py
@@ -37,6 +38,42 @@ Field names are snake_case with the wire name as the alias, so always dump with
 the values Helm sees while an explicit `False` stays in — the same distinction the Go
 catalog makes with pointer fields.
 
+## Registering a cluster
+
+`CCLClient` writes into one namespace, given at construction and created then if it does
+not exist, and by default connects with the in-cluster configuration of the pod it runs
+in. `register_cluster` creates a Secret named `<name>-credentials` in Argo CD's
+cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
+`CCLInfraPlane` pointing at it; `unregister_cluster` deletes the Secret and the CCLInfraPlane, the
+CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
+leaves the namespace. Everything is server-side applied under the `ccluster-py` field
+manager, so re-registering a cluster rotates its token in place.
+
+```python
+from ccluster.client import CCLClient
+
+client = CCLClient("tenant-a")   # in-cluster
+plane = client.register_cluster(
+    "edge-1",
+    "https://10.0.0.1:6443",
+    bearer_token=open("token").read(),
+    ca_cert=open("ca.crt").read(),
+)
+client.unregister_cluster("edge-1")
+```
+
+From a workstation, pass a client built from your kubeconfig:
+
+```python
+from kubernetes.config import new_client_from_config
+
+client = CCLClient("tenant-a", api_client=new_client_from_config())
+```
+
+`examples/register_cluster.py` is the same as a command. The call returns once the
+objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
+has marked the plane `Available`.
+
 ## What is generated from what
 
 | Python | Source | Via |
@@ -51,8 +88,8 @@ instead of an opaque dict, and a component's `values` is typed `dict[str, Any]` 
 "anything". Everything else, including every validation constraint and doc comment, is the
 CRD's.
 
-`ccluster/__init__.py`, `ccluster/catalogs/__init__.py` (`entry`, `component`) and `tests/`
-are hand-written.
+`ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
+(`entry`, `component`), `examples/` and `tests/` are hand-written.
 
 ## Regenerating
 
