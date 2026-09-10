@@ -63,7 +63,8 @@ MSG
 ```
 
 If your agent tooling adds a co-author trailer of its own, it goes after the body,
-separated by a blank line, and is left out of the PR description.
+separated by a blank line, and is left out of the PR description. Any "generated
+with" or similar tool footer is left out of both.
 
 ### Subject line
 
