@@ -8,11 +8,12 @@ build-backend = "uv_build"
 name = "ccluster-py"
 # Placeholder: the release version is the git tag, stamped in by `make python-build`.
 version = "0.0.0.dev0"
-description = "Pydantic models for the ccluster.nvidia.com API and its Helm chart catalog"
+description = "Pydantic models and a client for the ccluster.nvidia.com API and its Helm chart catalog"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
+    "kubernetes>=30",
     "pydantic>=2.11",
 ]
 classifiers = [
