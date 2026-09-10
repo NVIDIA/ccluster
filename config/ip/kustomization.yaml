@@ -1,5 +1,6 @@
 # Deploy overlay for ccluster-ip-operator, which runs in an infra-plane cluster.
-# Built by `make deploy-ip` / `make build-installer-ip`.
+# Built by `make build-installer-ip` into dist/install-ip.yaml, the input
+# `make helm-generate` turns into charts/ip/chart.
 #
 # The infra-plane cluster gets no CRDs: this operator owns no kinds yet. Add
 # ../crd (or a subset of it) here once it does.
@@ -20,10 +21,10 @@ resources:
 # [NETWORK POLICY] Protect the /metrics endpoint with NetworkPolicy.
 #- ../network-policy
 
-# `make deploy-ip IMG_IP=...` rewrites newName/newTag below via `kustomize edit set image`.
+# The image name is fixed here and nothing rewrites it. No tag is set: the deployed
+# image is manager.image in the chart's values.yaml, stamped by `make helm-package-ip`.
 images:
 - name: controller
-  newName: ccluster-ip-operator
-  newTag: dev
+  newName: ghcr.io/nvidia/ccluster-ip-operator
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

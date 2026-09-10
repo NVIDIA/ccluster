@@ -50,7 +50,7 @@ SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
 .PHONY: all
-all: build
+all: init build load deploy ## Create both dev Kind clusters, build everything, load the images and deploy both operators.
 
 ##@ General
 
@@ -280,16 +280,18 @@ check-version: require-version ## Fail unless VERSION matches the VERSION file (
 .PHONY: build-installer
 build-installer: build-installer-cp build-installer-ip ## Generate consolidated install YAML for both operators.
 
+# dist/install-*.yaml is input for the chart generator, not a deploy path. The image
+# it carries is never consumed: the deployed image is manager.image in the chart's
+# values.yaml, which helm-generate preserves and helm-package-* stamps. The image name
+# is committed in the overlays and nothing here rewrites them.
 .PHONY: build-installer-cp
 build-installer-cp: manifests generate kustomize ## Generate dist/install-cp.yaml (CRDs + cp deployment).
 	mkdir -p dist
-	cd config/cp && "$(KUSTOMIZE)" edit set image controller=${IMG_CP}
 	"$(KUSTOMIZE)" build config/cp > dist/install-cp.yaml
 
 .PHONY: build-installer-ip
 build-installer-ip: manifests generate kustomize ## Generate dist/install-ip.yaml (ip deployment, no CRDs).
 	mkdir -p dist
-	cd config/ip && "$(KUSTOMIZE)" edit set image controller=${IMG_IP}
 	"$(KUSTOMIZE)" build config/ip > dist/install-ip.yaml
 
 ##@ Deployment

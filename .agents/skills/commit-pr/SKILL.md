@@ -32,10 +32,8 @@ changed.
 | `api/`, `config/crd/`, `catalogs/**/*.go`, `hack/pyschema/`, `python/` | `make python-generate && git status --short python/` (must be clean) and `make python-test` |
 | `test/e2e/` | `make test-e2e` when feasible; say so in the PR if not run |
 
-`make build-installer-*` (and so `helm-generate`) dirties `config/{cp,ip}/kustomization.yaml`
-with the local image tag. Do not commit that change unless it is intended: run
-`git checkout config/cp/kustomization.yaml config/ip/kustomization.yaml` first.
-`make python-build` dirties `python/pyproject.toml` the same way.
+`make python-build` dirties `python/pyproject.toml` with the local version. Do not commit
+that change: run `git checkout python/pyproject.toml` first.
 
 ## 3. CHANGELOG
 
