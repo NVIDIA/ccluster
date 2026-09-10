@@ -40,19 +40,19 @@ catalog makes with pointer fields.
 
 ## Registering a cluster
 
-`CCLClient` writes into one namespace and, with no arguments, runs inside the
-control-plane cluster: it loads the in-cluster configuration and uses the pod's own
-namespace. `register_cluster` creates a Secret named `<name>-credentials` in Argo CD's
-cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
-`CCLInfraPlane` pointing at it; `unregister_cluster` deletes both, the CCLInfraPlane first
-so the operator's finalizer removes the mirrored Argo CD Secret. Both are server-side
-applies under the `ccluster-py` field manager, so re-registering a cluster rotates its
-token in place.
+`CCLClient` writes into one namespace, given at construction, and by default connects
+with the in-cluster configuration of the pod it runs in. `register_cluster` creates the
+namespace if needed, then a Secret named `<name>-credentials` in Argo CD's cluster-secret
+shape (`server`, and a `config` carrying the bearer token and the CA) and a `CCLInfraPlane`
+pointing at it; `unregister_cluster` deletes the Secret and the CCLInfraPlane, the
+CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
+leaves the namespace. Everything is server-side applied under the `ccluster-py` field
+manager, so re-registering a cluster rotates its token in place.
 
 ```python
 from ccluster.client import CCLClient
 
-client = CCLClient()   # in-cluster
+client = CCLClient("tenant-a")   # in-cluster
 plane = client.register_cluster(
     "edge-1",
     "https://10.0.0.1:6443",
@@ -62,16 +62,17 @@ plane = client.register_cluster(
 client.unregister_cluster("edge-1")
 ```
 
-From a workstation, pass the namespace and a client built from your kubeconfig:
+From a workstation, pass a client built from your kubeconfig:
 
 ```python
 from kubernetes.config import new_client_from_config
 
-client = CCLClient(namespace="ccluster-quickstart", api_client=new_client_from_config())
+client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-The call returns once the objects are applied; `kubectl get cclinfraplane -n <namespace>`
-shows when the operator has marked the plane `Available`.
+`examples/register_cluster.py` is the same as a command. The call returns once the
+objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
+has marked the plane `Available`.
 
 ## What is generated from what
 
@@ -88,7 +89,7 @@ instead of an opaque dict, and a component's `values` is typed `dict[str, Any]` 
 CRD's.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
-(`entry`, `component`) and `tests/` are hand-written.
+(`entry`, `component`), `examples/` and `tests/` are hand-written.
 
 ## Regenerating
 

@@ -19,6 +19,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from kubernetes import client as k8s
 from kubernetes.dynamic.exceptions import NotFoundError
 
 from ccluster import client as client_module
@@ -72,24 +73,33 @@ def fake(monkeypatch):
 
 
 def make_client(fake, namespace="tenant"):
-    c = CCLClient(namespace=namespace, api_client=object())
+    c = CCLClient(namespace, api_client=k8s.ApiClient())
     return c, fake["client"]
 
 
-def test_register_cluster_applies_secret_then_infra_plane(fake):
+def test_register_cluster_applies_namespace_secret_then_infra_plane(fake):
     c, dyn = make_client(fake)
 
     plane = c.register_cluster("edge-1", "https://10.0.0.1:6443", "tok", CA)
 
     kinds = [kind for kind, *_ in dyn.applied]
-    assert kinds == ["Secret", "CCLInfraPlane"]
-    for _, namespace, body, kwargs in dyn.applied:
-        assert namespace == "tenant"
-        assert body["metadata"]["namespace"] == "tenant"
+    assert kinds == ["Namespace", "Secret", "CCLInfraPlane"]
+    for _, _, _, kwargs in dyn.applied:
         assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
 
-    secret = dyn.applied[0][2]
-    assert secret["metadata"]["name"] == "edge-1-credentials"
+    _, ns_arg, namespace, _ = dyn.applied[0]
+    assert ns_arg is None
+    assert namespace == {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "tenant"},
+    }
+
+    _, ns_arg, secret, _ = dyn.applied[1]
+    assert ns_arg == "tenant"
+    assert secret["apiVersion"] == "v1"
+    assert secret["kind"] == "Secret"
+    assert secret["metadata"] == {"name": "edge-1-credentials", "namespace": "tenant"}
     assert secret["type"] == "Opaque"
     assert secret["stringData"]["server"] == "https://10.0.0.1:6443"
     assert set(secret["stringData"]) == {"server", "config"}
@@ -101,7 +111,8 @@ def test_register_cluster_applies_secret_then_infra_plane(fake):
         },
     }
 
-    infra_plane = dyn.applied[1][2]
+    _, ns_arg, infra_plane, _ = dyn.applied[2]
+    assert ns_arg == "tenant"
     assert infra_plane["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
     assert infra_plane["kind"] == "CCLInfraPlane"
     assert infra_plane["metadata"] == {"name": "edge-1", "namespace": "tenant"}
@@ -118,7 +129,7 @@ def test_register_cluster_applies_secret_then_infra_plane(fake):
 def test_register_cluster_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.register_cluster("edge-1", "https://10.0.0.1:6443", "tok", CA.encode())
-    config = json.loads(dyn.applied[0][2]["stringData"]["config"])
+    config = json.loads(dyn.applied[1][2]["stringData"]["config"])
     assert config["tlsClientConfig"]["caData"] == base64.b64encode(CA.encode()).decode()
 
 
@@ -138,24 +149,20 @@ def test_unregister_cluster_ignores_missing_objects(fake):
     assert dyn.deleted == []
 
 
-def test_defaults_to_in_cluster_config_and_namespace(fake, monkeypatch, tmp_path):
+def test_defaults_to_in_cluster_config(fake, monkeypatch):
     loaded = []
     monkeypatch.setattr(
         client_module.config, "load_incluster_config", lambda: loaded.append(True)
     )
     monkeypatch.setattr(client_module.k8s, "ApiClient", lambda: "in-cluster-api-client")
-    ns_file = tmp_path / "namespace"
-    ns_file.write_text("pod-namespace\n")
-    monkeypatch.setattr(client_module, "SERVICE_ACCOUNT_NAMESPACE", ns_file)
 
-    c = CCLClient()
+    c = CCLClient("tenant")
 
     assert loaded == [True]
-    assert c.namespace == "pod-namespace"
+    assert c.namespace == "tenant"
     assert fake["client"].api_client == "in-cluster-api-client"
 
 
-def test_namespace_required_outside_a_cluster(fake, monkeypatch, tmp_path):
-    monkeypatch.setattr(client_module, "SERVICE_ACCOUNT_NAMESPACE", tmp_path / "absent")
-    with pytest.raises(ValueError, match="namespace is required"):
-        CCLClient(api_client=object())
+def test_namespace_is_required(fake):
+    with pytest.raises(TypeError):
+        CCLClient(api_client=k8s.ApiClient())
