@@ -39,12 +39,26 @@ class FakeDynamicClient:
 
     def __init__(self, api_client):
         self.api_client = api_client
+        self.namespaces = set()
+        self.created = []
         self.applied = []
         self.deleted = []
         self.missing = set()
         self.resources = SimpleNamespace(
             get=lambda api_version, kind: FakeResource(kind)
         )
+
+    def get(self, resource, name):
+        if resource.kind == "Namespace" and name not in self.namespaces:
+            raise NotFoundError(
+                SimpleNamespace(status=404, reason="NotFound", body=b"{}", headers={})
+            )
+        return SimpleNamespace(to_dict=lambda: {"metadata": {"name": name}})
+
+    def create(self, resource, body):
+        self.created.append((resource.kind, body))
+        if resource.kind == "Namespace":
+            self.namespaces.add(body["metadata"]["name"])
 
     def server_side_apply(self, resource, body, namespace, **kwargs):
         self.applied.append((resource.kind, namespace, body, kwargs))
@@ -77,26 +91,40 @@ def make_client(fake, namespace="tenant"):
     return c, fake["client"]
 
 
-def test_register_cluster_applies_namespace_secret_then_infra_plane(fake):
+def test_constructing_creates_a_missing_namespace(fake):
+    _, dyn = make_client(fake)
+    assert dyn.created == [
+        (
+            "Namespace",
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "tenant"}},
+        )
+    ]
+
+
+def test_constructing_leaves_an_existing_namespace_alone(fake, monkeypatch):
+    original = FakeDynamicClient.__init__
+
+    def with_tenant(self, api_client):
+        original(self, api_client)
+        self.namespaces.add("tenant")
+
+    monkeypatch.setattr(FakeDynamicClient, "__init__", with_tenant)
+    _, dyn = make_client(fake)
+    assert dyn.created == []
+
+
+def test_register_cluster_applies_secret_then_infra_plane(fake):
     c, dyn = make_client(fake)
 
     plane = c.register_cluster("edge-1", "https://10.0.0.1:6443", "tok", CA)
 
     kinds = [kind for kind, *_ in dyn.applied]
-    assert kinds == ["Namespace", "Secret", "CCLInfraPlane"]
-    for _, _, _, kwargs in dyn.applied:
+    assert kinds == ["Secret", "CCLInfraPlane"]
+    for _, ns_arg, _, kwargs in dyn.applied:
+        assert ns_arg == "tenant"
         assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
 
-    _, ns_arg, namespace, _ = dyn.applied[0]
-    assert ns_arg is None
-    assert namespace == {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {"name": "tenant"},
-    }
-
-    _, ns_arg, secret, _ = dyn.applied[1]
-    assert ns_arg == "tenant"
+    secret = dyn.applied[0][2]
     assert secret["apiVersion"] == "v1"
     assert secret["kind"] == "Secret"
     assert secret["metadata"] == {"name": "edge-1-credentials", "namespace": "tenant"}
@@ -111,8 +139,7 @@ def test_register_cluster_applies_namespace_secret_then_infra_plane(fake):
         },
     }
 
-    _, ns_arg, infra_plane, _ = dyn.applied[2]
-    assert ns_arg == "tenant"
+    infra_plane = dyn.applied[1][2]
     assert infra_plane["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
     assert infra_plane["kind"] == "CCLInfraPlane"
     assert infra_plane["metadata"] == {"name": "edge-1", "namespace": "tenant"}
@@ -129,7 +156,7 @@ def test_register_cluster_applies_namespace_secret_then_infra_plane(fake):
 def test_register_cluster_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.register_cluster("edge-1", "https://10.0.0.1:6443", "tok", CA.encode())
-    config = json.loads(dyn.applied[1][2]["stringData"]["config"])
+    config = json.loads(dyn.applied[0][2]["stringData"]["config"])
     assert config["tlsClientConfig"]["caData"] == base64.b64encode(CA.encode()).decode()
 
 
@@ -154,13 +181,14 @@ def test_defaults_to_in_cluster_config(fake, monkeypatch):
     monkeypatch.setattr(
         client_module.config, "load_incluster_config", lambda: loaded.append(True)
     )
-    monkeypatch.setattr(client_module.k8s, "ApiClient", lambda: "in-cluster-api-client")
+    in_cluster = k8s.ApiClient()
+    monkeypatch.setattr(client_module.k8s, "ApiClient", lambda: in_cluster)
 
     c = CCLClient("tenant")
 
     assert loaded == [True]
     assert c.namespace == "tenant"
-    assert fake["client"].api_client == "in-cluster-api-client"
+    assert fake["client"].api_client is in_cluster
 
 
 def test_namespace_is_required(fake):

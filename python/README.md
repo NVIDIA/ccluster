@@ -40,11 +40,11 @@ catalog makes with pointer fields.
 
 ## Registering a cluster
 
-`CCLClient` writes into one namespace, given at construction, and by default connects
-with the in-cluster configuration of the pod it runs in. `register_cluster` creates the
-namespace if needed, then a Secret named `<name>-credentials` in Argo CD's cluster-secret
-shape (`server`, and a `config` carrying the bearer token and the CA) and a `CCLInfraPlane`
-pointing at it; `unregister_cluster` deletes the Secret and the CCLInfraPlane, the
+`CCLClient` writes into one namespace, given at construction and created then if it does
+not exist, and by default connects with the in-cluster configuration of the pod it runs
+in. `register_cluster` creates a Secret named `<name>-credentials` in Argo CD's
+cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
+`CCLInfraPlane` pointing at it; `unregister_cluster` deletes the Secret and the CCLInfraPlane, the
 CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
 leaves the namespace. Everything is server-side applied under the `ccluster-py` field
 manager, so re-registering a cluster rotates its token in place.

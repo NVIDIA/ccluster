@@ -95,6 +95,20 @@ class CCLClient:
         self._infra_planes = resources.get(
             api_version=_API_VERSION, kind="CCLInfraPlane"
         )
+        self._ensure_namespace()
+
+    def _ensure_namespace(self) -> None:
+        try:
+            self._dynamic.get(self._namespaces, name=self.namespace)
+        except NotFoundError:
+            namespace = k8s.V1Namespace(
+                api_version="v1",
+                kind="Namespace",
+                metadata=k8s.V1ObjectMeta(name=self.namespace),
+            )
+            self._dynamic.create(
+                self._namespaces, body=self._api.sanitize_for_serialization(namespace)
+            )
 
     def register_cluster(
         self,
@@ -105,22 +119,14 @@ class CCLClient:
     ) -> CCLInfraPlane:
         """Register the cluster at server as the CCLInfraPlane called name.
 
-        Ensures the namespace exists, then creates (or updates) a Secret named
-        "<name>-credentials" in Argo CD's cluster-secret shape and a CCLInfraPlane
-        pointing at it. ca_cert is the API server's CA certificate in PEM. The call
-        returns as soon as the objects are applied; it does not wait for the operator to
-        report Available.
+        Creates (or updates) a Secret named "<name>-credentials" in Argo CD's
+        cluster-secret shape, then a CCLInfraPlane pointing at it. ca_cert is the API
+        server's CA certificate in PEM. The call returns as soon as both objects are
+        applied; it does not wait for the operator to report Available.
         """
         if isinstance(ca_cert, str):
             ca_cert = ca_cert.encode()
         secret_name = _credentials_secret_name(name)
-
-        namespace = k8s.V1Namespace(
-            api_version="v1",
-            kind="Namespace",
-            metadata=k8s.V1ObjectMeta(name=self.namespace),
-        )
-        self._apply(self._namespaces, namespace, namespace=None)
 
         cluster_config = ClusterConfig(
             bearer_token=bearer_token,
@@ -140,7 +146,7 @@ class CCLClient:
                 ),
             },
         )
-        self._apply(self._secrets, secret, namespace=self.namespace)
+        self._apply(self._secrets, secret)
 
         plane = CCLInfraPlane(
             metadata=ObjectMeta(name=name, namespace=self.namespace),
@@ -149,9 +155,7 @@ class CCLClient:
             ),
         )
         applied = self._apply(
-            self._infra_planes,
-            plane.model_dump(by_alias=True, exclude_none=True),
-            namespace=self.namespace,
+            self._infra_planes, plane.model_dump(by_alias=True, exclude_none=True)
         )
         return CCLInfraPlane.model_validate(applied.to_dict())
 
@@ -165,11 +169,11 @@ class CCLClient:
         self._delete(self._infra_planes, name)
         self._delete(self._secrets, _credentials_secret_name(name))
 
-    def _apply(self, resource, body, namespace: str | None):
+    def _apply(self, resource, body):
         return self._dynamic.server_side_apply(
             resource,
             body=self._api.sanitize_for_serialization(body),
-            namespace=namespace,
+            namespace=self.namespace,
             field_manager=_FIELD_MANAGER,
             force_conflicts=True,
         )
