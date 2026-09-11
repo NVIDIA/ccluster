@@ -136,8 +136,9 @@ kind get kubeconfig --name ccluster-cp > ~/.kube/ccluster-dev.yaml
 export KUBECONFIG=~/.kube/ccluster-dev.yaml
 ```
 
-See [AGENTS.md](AGENTS.md) for the full set of build, test and Helm-generation targets,
-including RBAC, CRD and chart regeneration after an API change.
+See [Development](docs/development.md) for controller wiring, RBAC, CRD and chart
+generation, [Testing](docs/testing.md) for test selection, and
+[Build and release contracts](docs/build-and-release.md) for Docker and CI mechanics.
 
 # Requirements
 
@@ -182,8 +183,9 @@ dists to the release. Nothing in the tree is bumped.
 CCluster is early and evolving quickly — contributions, ideas, and feedback on the direction are welcome.
 
 - Start here: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- Working on the operators: [`AGENTS.md`](AGENTS.md) for the build and generation mechanics,
-  [`DESIGN.md`](DESIGN.md) for how the control plane works.
+- Working on the operators: [Development](docs/development.md) for build and generation
+  mechanics, [`DESIGN.md`](DESIGN.md) for the control plane, and
+  [`AGENTS.md`](AGENTS.md) for agent instructions.
 - Development quickstart:
 
 ```bash

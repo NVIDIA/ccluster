@@ -2,7 +2,8 @@
 
 How the CCluster control plane works today, and why it is built this way. For the project's
 goals and roadmap see [README.md](README.md); for the mechanics of building, generating and
-deploying it see [AGENTS.md](AGENTS.md).
+deploying it see [Development](docs/development.md). Agent instructions are in
+[AGENTS.md](AGENTS.md).
 
 This document describes what is implemented in `v1alpha1`, not what is planned. Where a
 decision was made against an obvious alternative, the reasoning is recorded here so it does
