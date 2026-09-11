@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CCLClient writes the Secret and CCLInfraPlane the operator expects, without a cluster."""
+"""CCLClient writes the Secret, CCLInfraPlane and CCLComponentSet the operator expects, without a cluster."""
 
 import base64
 import json
@@ -21,10 +21,13 @@ from types import SimpleNamespace
 import pytest
 from kubernetes import client as k8s
 from kubernetes.dynamic.exceptions import NotFoundError
+from pydantic import ValidationError
 
+from ccluster import catalogs
 from ccluster import client as client_module
+from ccluster.catalogs.cluster_base import argo_rollouts, keda
 from ccluster.client import CCLClient
-from ccluster.v1alpha1 import CCLInfraPlane
+from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane
 
 CA = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 
@@ -185,6 +188,75 @@ def test_unregister_cluster_ignores_missing_objects(fake):
     c, dyn = make_client(fake)
     dyn.missing = {("CCLInfraPlane", "edge-1"), ("Secret", "edge-1-credentials")}
     c.unregister_cluster("edge-1")
+    assert dyn.deleted == []
+
+
+def test_create_component_set_applies_the_set(fake):
+    c, dyn = make_client(fake)
+    components = [
+        catalogs.component(
+            "argo-rollouts", "edge-1", argo_rollouts.CHART, "argo-rollouts"
+        ),
+        catalogs.component(
+            "keda",
+            "edge-1",
+            keda.CHART,
+            "keda",
+            keda.Values(keda=keda.ChartValues(operator=keda.Replicas(replica_count=1))),
+        ),
+    ]
+
+    component_set = c.create_component_set("local-base", components)
+
+    assert [kind for kind, *_ in dyn.applied] == ["CCLComponentSet"]
+    _, ns_arg, body, kwargs = dyn.applied[0]
+    assert ns_arg == "tenant"
+    assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
+    assert body["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
+    assert body["kind"] == "CCLComponentSet"
+    assert body["metadata"] == {"name": "local-base", "namespace": "tenant"}
+    assert body["spec"] == {
+        "components": [
+            {
+                "name": "argo-rollouts",
+                "infraPlaneRef": {"name": "edge-1"},
+                "chart": argo_rollouts.CHART,
+                "namespace": "argo-rollouts",
+            },
+            {
+                "name": "keda",
+                "infraPlaneRef": {"name": "edge-1"},
+                "chart": keda.CHART,
+                "namespace": "keda",
+                "values": {"keda": {"operator": {"replicaCount": 1}}},
+            },
+        ]
+    }
+    assert "status" not in body
+
+    assert isinstance(component_set, CCLComponentSet)
+    assert component_set.metadata.name == "local-base"
+    assert [x.name for x in component_set.spec.components] == ["argo-rollouts", "keda"]
+    assert component_set.spec.components[1].infra_plane_ref.name == "edge-1"
+
+
+def test_create_component_set_rejects_empty_components(fake):
+    c, dyn = make_client(fake)
+    with pytest.raises(ValidationError):
+        c.create_component_set("local-base", [])
+    assert dyn.applied == []
+
+
+def test_delete_component_set_deletes_the_set(fake):
+    c, dyn = make_client(fake)
+    c.delete_component_set("local-base")
+    assert dyn.deleted == [("CCLComponentSet", "local-base", "tenant")]
+
+
+def test_delete_component_set_ignores_a_missing_set(fake):
+    c, dyn = make_client(fake)
+    dyn.missing = {("CCLComponentSet", "local-base")}
+    c.delete_component_set("local-base")
     assert dyn.deleted == []
 
 

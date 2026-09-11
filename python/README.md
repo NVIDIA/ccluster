@@ -2,7 +2,7 @@
 
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
 every chart in the catalog, plus a small client that registers clusters with the control
-plane. The models are **generated**: nothing in `ccluster/v1alpha1/` or
+plane and deploys component sets onto them. The models are **generated**: nothing in `ccluster/v1alpha1/` or
 `ccluster/catalogs/cluster_base/` is written by hand.
 
 ```bash
@@ -81,6 +81,36 @@ client = CCLClient("tenant-a", api_client=new_client_from_config())
 `examples/register_cluster.py` is the same as a command. The call returns once the
 objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
 has marked the plane `Available`.
+
+## Deploying a component set
+
+`create_component_set` server-side applies a `CCLComponentSet` in the client's namespace
+from a list of components built with `catalogs.component`. Each component's `infraPlaneRef`
+names the registered cluster it deploys to, so one set may span several planes; those
+planes must be in the same namespace and already `Available`. List order is rollout order.
+Because the set is applied under the same `ccluster-py` field manager, calling
+`create_component_set` again with a different list updates it in place.
+
+```python
+from ccluster import catalogs
+from ccluster.catalogs.cluster_base import keda
+from ccluster.client import CCLClient
+
+client = CCLClient("tenant-a")
+client.register_cluster("ccluster-local")
+cs = client.create_component_set(
+    "local-base",
+    [catalogs.component("keda", "ccluster-local", keda.CHART, "keda")],
+)
+client.delete_component_set("local-base")
+```
+
+`delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
+then uninstalls the set's charts in reverse order, one at a time, so the object stays in
+`Terminating` until the last one is gone; a missing set is not an error, and the referenced
+`CCLInfraPlane`s stay. `kubectl get cclcomponentset -n <namespace>` shows when the operator
+has marked a set `ComponentsApplied` and when a deleted one has disappeared.
+`examples/create_component_set.py` is the same as a command.
 
 ## What is generated from what
 
