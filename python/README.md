@@ -62,6 +62,14 @@ plane = client.register_cluster(
 client.unregister_cluster("edge-1")
 ```
 
+`server`, `bearer_token` and `ca_cert` are all optional. With none given,
+`register_cluster` registers the cluster the operator itself runs in, credential-free —
+Argo CD's special-cased in-cluster address, no ServiceAccount or token needed:
+
+```python
+plane = client.register_cluster("ccluster-local")
+```
+
 From a workstation, pass a client built from your kubeconfig:
 
 ```python
