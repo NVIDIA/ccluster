@@ -44,6 +44,11 @@ _API_VERSION = "ccluster.nvidia.com/v1alpha1"
 # without conflicting with itself, and what marks the objects as ours in managedFields.
 _FIELD_MANAGER = "ccluster-py"
 
+# Argo CD special-cases this exact server URL: it connects with its own ServiceAccount
+# rather than anything in the Secret's "config", so no token or CA is needed to register
+# the cluster the operator itself runs in. See examples/quickstart/v1alpha1_cclinfraplane.yaml.
+_IN_CLUSTER_SERVER = "https://kubernetes.default.svc"
+
 
 class TLSClientConfig(BaseModel):
     """The tlsClientConfig block of an Argo CD cluster Secret's config."""
@@ -113,9 +118,9 @@ class CCLClient:
     def register_cluster(
         self,
         name: str,
-        server: str,
-        bearer_token: str,
-        ca_cert: str | bytes,
+        server: str | None = None,
+        bearer_token: str | None = None,
+        ca_cert: str | bytes | None = None,
     ) -> CCLInfraPlane:
         """Register the cluster at server as the CCLInfraPlane called name.
 
@@ -123,7 +128,13 @@ class CCLClient:
         cluster-secret shape, then a CCLInfraPlane pointing at it. ca_cert is the API
         server's CA certificate in PEM. The call returns as soon as both objects are
         applied; it does not wait for the operator to report Available.
+
+        server, bearer_token and ca_cert are all optional. With none given, this
+        registers the cluster the operator itself runs in: server defaults to Argo CD's
+        special-cased in-cluster address, and bearer_token/ca_cert stay unset, which Argo
+        CD accepts for that address by connecting with its own ServiceAccount instead.
         """
+        server = server or _IN_CLUSTER_SERVER
         if isinstance(ca_cert, str):
             ca_cert = ca_cert.encode()
         secret_name = _credentials_secret_name(name)
@@ -131,7 +142,7 @@ class CCLClient:
         cluster_config = ClusterConfig(
             bearer_token=bearer_token,
             tls_client_config=TLSClientConfig(
-                ca_data=base64.b64encode(ca_cert).decode(),
+                ca_data=base64.b64encode(ca_cert).decode() if ca_cert else None,
             ),
         )
         secret = k8s.V1Secret(

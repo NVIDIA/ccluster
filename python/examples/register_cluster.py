@@ -20,6 +20,11 @@ registered, with the rights Argo CD needs there. Inside the control-plane cluste
     python register_cluster.py --namespace tenant-a edge-1 https://10.0.0.1:6443 \\
         --token-file token --ca-file ca.crt
 
+Omit server, --token-file and --ca-file to register the cluster the operator itself runs
+in instead, credential-free:
+
+    python register_cluster.py --namespace tenant-a ccluster-local
+
 From a workstation, add --kubeconfig to connect with the current kubeconfig context
 instead of the in-cluster configuration.
 """
@@ -35,13 +40,19 @@ from ccluster.client import CCLClient
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("name", help="name of the CCLInfraPlane to create")
-    parser.add_argument("server", help="API server URL of the cluster to register")
+    parser.add_argument(
+        "server",
+        nargs="?",
+        default=None,
+        help="API server URL of the cluster to register; omit to register the "
+        "in-cluster server",
+    )
     parser.add_argument(
         "--namespace", required=True, help="namespace to register it in"
     )
-    parser.add_argument("--token-file", required=True, type=Path)
+    parser.add_argument("--token-file", type=Path, default=None)
     parser.add_argument(
-        "--ca-file", required=True, type=Path, help="CA certificate, PEM"
+        "--ca-file", type=Path, default=None, help="CA certificate, PEM"
     )
     parser.add_argument(
         "--kubeconfig",
@@ -55,8 +66,8 @@ def main() -> None:
     plane = client.register_cluster(
         args.name,
         args.server,
-        bearer_token=args.token_file.read_text().strip(),
-        ca_cert=args.ca_file.read_bytes(),
+        bearer_token=args.token_file.read_text().strip() if args.token_file else None,
+        ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
     )
     print(f"registered {plane.metadata.namespace}/{plane.metadata.name}")
 

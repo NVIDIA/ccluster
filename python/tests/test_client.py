@@ -153,6 +153,18 @@ def test_register_cluster_applies_secret_then_infra_plane(fake):
     assert plane.spec.cluster_credentials_ref.name == "edge-1-credentials"
 
 
+def test_register_cluster_defaults_to_in_cluster_credential_free(fake):
+    c, dyn = make_client(fake)
+
+    c.register_cluster("edge-1")
+
+    secret = dyn.applied[0][2]
+    assert secret["stringData"]["server"] == "https://kubernetes.default.svc"
+    assert json.loads(secret["stringData"]["config"]) == {
+        "tlsClientConfig": {"insecure": False}
+    }
+
+
 def test_register_cluster_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.register_cluster("edge-1", "https://10.0.0.1:6443", "tok", CA.encode())
