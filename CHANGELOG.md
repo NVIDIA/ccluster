@@ -7,6 +7,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-11
+
 ### Added
 - `ccluster.client.CCLClient` in `ccluster-py`: `register_cluster(name, server=None,
   bearer_token=None, ca_cert=None)` creates an Argo CD-shaped credentials Secret and the
@@ -27,6 +29,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `ghcr.io/nvidia/ccluster-{cp,ip}-operator` and set no tag; the deployed image is
   `manager.image` in the chart's `values.yaml`, stamped at `make helm-package`, so the
   kustomize image was dead output that only dirtied a tracked file.
+- The chart values toggles follow the plugin's new naming: `crd.enabled`,
+  `metrics.enabled`, `certManager.enabled`, `prometheus.enabled`, `rbac.helpers.enabled`
+  (was `rbacHelpers.enable`) and, for consistency, `argo-cd.enabled`. New keys with the
+  plugin's defaults: `manager.enabled`, `manager.terminationGracePeriodSeconds`,
+  `metrics.secure`, `rbac.namespaced`, `serviceAccount.*`, `networkPolicy.enabled`. The
+  unused `manager.env` and `manager.envOverrides` keys are gone. The rendered manifests are
+  otherwise unchanged, except that an empty `manager.image.tag` now falls back to
+  `Chart.appVersion`.
 
 ### Fixed
 - `manager.imagePullSecrets` in the `ccluster-cp` and `ccluster-ip` charts is now rendered
@@ -36,16 +46,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   charts are regenerated with kubebuilder v4.15.0, whose `helm/v2-alpha` plugin emits the
   block; the Makefile now pins and downloads that version instead of using whatever is on
   `PATH`.
-
-### Changed
-- The chart values toggles follow the plugin's new naming: `crd.enabled`,
-  `metrics.enabled`, `certManager.enabled`, `prometheus.enabled`, `rbac.helpers.enabled`
-  (was `rbacHelpers.enable`) and, for consistency, `argo-cd.enabled`. New keys with the
-  plugin's defaults: `manager.enabled`, `manager.terminationGracePeriodSeconds`,
-  `metrics.secure`, `rbac.namespaced`, `serviceAccount.*`, `networkPolicy.enabled`. The
-  unused `manager.env` and `manager.envOverrides` keys are gone. The rendered manifests are
-  otherwise unchanged, except that an empty `manager.image.tag` now falls back to
-  `Chart.appVersion`.
 
 ## [0.0.1] - 2026-09-04
 
@@ -133,5 +133,6 @@ Template for future releases:
 ### Security
 -->
 
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/NVIDIA/ccluster/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/NVIDIA/ccluster/releases/tag/v0.0.1
