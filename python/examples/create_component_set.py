@@ -15,8 +15,9 @@
 """Create or delete a component set on a registered cluster.
 
 Deploys the quickstart pair, argo-rollouts then keda, onto the CCLInfraPlane named by
---infra-plane, which must be in the same namespace and already Available. Inside the
-control-plane cluster:
+--infra-plane, which must be in the same namespace and already Available. keda's typed
+Values pin the operator to one replica, as examples/quickstart does; argo-rollouts uses
+the chart's defaults. Inside the control-plane cluster:
 
     python create_component_set.py --namespace tenant-a --infra-plane ccluster-local local-base
 
@@ -75,7 +76,15 @@ def main() -> None:
             catalogs.component(
                 "argo-rollouts", args.infra_plane, argo_rollouts.CHART, "argo-rollouts"
             ),
-            catalogs.component("keda", args.infra_plane, keda.CHART, "keda"),
+            catalogs.component(
+                "keda",
+                args.infra_plane,
+                keda.CHART,
+                "keda",
+                keda.Values(
+                    keda=keda.ChartValues(operator=keda.Replicas(replica_count=1)),
+                ),
+            ),
         ],
     )
     print(f"created {component_set.metadata.namespace}/{component_set.metadata.name}")

@@ -85,7 +85,8 @@ has marked the plane `Available`.
 ## Deploying a component set
 
 `create_component_set` server-side applies a `CCLComponentSet` in the client's namespace
-from a list of components built with `catalogs.component`. Each component's `infraPlaneRef`
+from a list of components built with `catalogs.component`, each with a chart's typed
+`Values` where the defaults are not wanted. Each component's `infraPlaneRef`
 names the registered cluster it deploys to, so one set may span several planes; those
 planes must be in the same namespace and already `Available`. List order is rollout order.
 Because the set is applied under the same `ccluster-py` field manager, calling
@@ -100,7 +101,12 @@ client = CCLClient("tenant-a")
 client.register_cluster("ccluster-local")
 cs = client.create_component_set(
     "local-base",
-    [catalogs.component("keda", "ccluster-local", keda.CHART, "keda")],
+    [
+        catalogs.component(
+            "keda", "ccluster-local", keda.CHART, "keda",
+            keda.Values(keda=keda.ChartValues(operator=keda.Replicas(replica_count=1))),
+        ),
+    ],
 )
 client.delete_component_set("local-base")
 ```
