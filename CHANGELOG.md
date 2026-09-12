@@ -16,6 +16,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   leaves the operator to uninstall the set's charts in reverse, one at a time.
   `python/examples/create_component_set.py` drives both from the command line.
 
+### Changed
+- `CCLClient.register_cluster` and `unregister_cluster` are renamed
+  `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
+  create and remove. `python/examples/register_cluster.py` is now
+  `register_infraplane.py`.
+
 ## [0.0.2] - 2026-09-11
 
 ### Added

@@ -48,7 +48,7 @@ __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
 _API_VERSION = "ccluster.nvidia.com/v1alpha1"
 
 # Server-side apply records, per field, which manager last set it. Applying under one
-# fixed name is what lets a later register_cluster update the Secret this client wrote
+# fixed name is what lets a later register_infraplane update the Secret this client wrote
 # without conflicting with itself, and what marks the objects as ours in managedFields.
 _FIELD_MANAGER = "ccluster-py"
 
@@ -128,7 +128,7 @@ class CCLClient:
                 self._namespaces, body=self._api.sanitize_for_serialization(namespace)
             )
 
-    def register_cluster(
+    def register_infraplane(
         self,
         name: str,
         server: str | None = None,
@@ -183,7 +183,7 @@ class CCLClient:
         )
         return CCLInfraPlane.model_validate(applied.to_dict())
 
-    def unregister_cluster(self, name: str) -> None:
+    def unregister_infraplane(self, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
 
         The CCLInfraPlane goes first so its finalizer can remove the mirrored Argo CD

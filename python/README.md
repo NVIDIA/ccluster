@@ -42,9 +42,9 @@ catalog makes with pointer fields.
 
 `CCLClient` writes into one namespace, given at construction and created then if it does
 not exist, and by default connects with the in-cluster configuration of the pod it runs
-in. `register_cluster` creates a Secret named `<name>-credentials` in Argo CD's
+in. `register_infraplane` creates a Secret named `<name>-credentials` in Argo CD's
 cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
-`CCLInfraPlane` pointing at it; `unregister_cluster` deletes the Secret and the CCLInfraPlane, the
+`CCLInfraPlane` pointing at it; `unregister_infraplane` deletes the Secret and the CCLInfraPlane, the
 CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
 leaves the namespace. Everything is server-side applied under the `ccluster-py` field
 manager, so re-registering a cluster rotates its token in place.
@@ -53,21 +53,21 @@ manager, so re-registering a cluster rotates its token in place.
 from ccluster.client import CCLClient
 
 client = CCLClient("tenant-a")   # in-cluster
-plane = client.register_cluster(
+plane = client.register_infraplane(
     "edge-1",
     "https://10.0.0.1:6443",
     bearer_token=open("token").read(),
     ca_cert=open("ca.crt").read(),
 )
-client.unregister_cluster("edge-1")
+client.unregister_infraplane("edge-1")
 ```
 
 `server`, `bearer_token` and `ca_cert` are all optional. With none given,
-`register_cluster` registers the cluster the operator itself runs in, credential-free —
+`register_infraplane` registers the cluster the operator itself runs in, credential-free —
 Argo CD's special-cased in-cluster address, no ServiceAccount or token needed:
 
 ```python
-plane = client.register_cluster("ccluster-local")
+plane = client.register_infraplane("ccluster-local")
 ```
 
 From a workstation, pass a client built from your kubeconfig:
@@ -78,7 +78,7 @@ from kubernetes.config import new_client_from_config
 client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-`examples/register_cluster.py` is the same as a command. The call returns once the
+`examples/register_infraplane.py` is the same as a command. The call returns once the
 objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
 has marked the plane `Available`.
 
@@ -98,7 +98,7 @@ from ccluster.catalogs.cluster_base import keda
 from ccluster.client import CCLClient
 
 client = CCLClient("tenant-a")
-client.register_cluster("ccluster-local")
+client.register_infraplane("ccluster-local")
 cs = client.create_component_set(
     "local-base",
     [
