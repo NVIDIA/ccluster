@@ -14,9 +14,10 @@
 
 """A client for the control-plane operator's API.
 
-CCLClient registers infra-plane clusters with the control plane and removes them again.
-It writes into one namespace, fixed at construction, and by default connects with the
-in-cluster configuration of the pod it runs in.
+CCLClient registers infra-plane clusters with the control plane and removes them again,
+and creates and deletes the component sets deployed onto them. It writes into one
+namespace, fixed at construction, and by default connects with the in-cluster
+configuration of the pod it runs in.
 """
 
 from __future__ import annotations
@@ -29,10 +30,17 @@ from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
-from ccluster.v1alpha1 import CCLInfraPlane, CCLInfraPlaneSpec
+from ccluster.v1alpha1 import (
+    CCLComponentSet,
+    CCLComponentSetSpec,
+    CCLInfraPlane,
+    CCLInfraPlaneSpec,
+    ComponentSpec,
+)
 
-# The package-level LocalObjectReference is the CCLComponentSet module's; the generator
-# emits a second, identical class in the CCLInfraPlane module and the spec wants that one.
+# The generator emits identical LocalObjectReference and ObjectMeta classes in each CR's
+# module, and each CR's fields are typed with its own module's class. Import both.
+from ccluster.v1alpha1.cclcomponentset import ObjectMeta as ComponentSetObjectMeta
 from ccluster.v1alpha1.cclinfraplane import LocalObjectReference, ObjectMeta
 
 __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
@@ -40,7 +48,7 @@ __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
 _API_VERSION = "ccluster.nvidia.com/v1alpha1"
 
 # Server-side apply records, per field, which manager last set it. Applying under one
-# fixed name is what lets a later register_cluster update the Secret this client wrote
+# fixed name is what lets a later register_infraplane update the Secret this client wrote
 # without conflicting with itself, and what marks the objects as ours in managedFields.
 _FIELD_MANAGER = "ccluster-py"
 
@@ -80,11 +88,13 @@ def _credentials_secret_name(cluster: str) -> str:
 
 
 class CCLClient:
-    """Register and unregister infra-plane clusters in one namespace.
+    """Register and unregister infra-plane clusters, and create and delete component
+    sets, in one namespace.
 
-    namespace is where the CCLInfraPlane and its credentials Secret are written; it is
-    created if it does not exist. api_client defaults to the in-cluster configuration;
-    from a workstation pass kubernetes.config.new_client_from_config().
+    namespace is where the CCLInfraPlanes, their credentials Secrets and the
+    CCLComponentSets are written; it is created if it does not exist. api_client
+    defaults to the in-cluster configuration; from a workstation pass
+    kubernetes.config.new_client_from_config().
     """
 
     def __init__(self, namespace: str, api_client: k8s.ApiClient | None = None) -> None:
@@ -99,6 +109,9 @@ class CCLClient:
         self._secrets = resources.get(api_version="v1", kind="Secret")
         self._infra_planes = resources.get(
             api_version=_API_VERSION, kind="CCLInfraPlane"
+        )
+        self._component_sets = resources.get(
+            api_version=_API_VERSION, kind="CCLComponentSet"
         )
         self._ensure_namespace()
 
@@ -115,7 +128,7 @@ class CCLClient:
                 self._namespaces, body=self._api.sanitize_for_serialization(namespace)
             )
 
-    def register_cluster(
+    def register_infraplane(
         self,
         name: str,
         server: str | None = None,
@@ -170,7 +183,7 @@ class CCLClient:
         )
         return CCLInfraPlane.model_validate(applied.to_dict())
 
-    def unregister_cluster(self, name: str) -> None:
+    def unregister_infraplane(self, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
 
         The CCLInfraPlane goes first so its finalizer can remove the mirrored Argo CD
@@ -179,6 +192,40 @@ class CCLClient:
         """
         self._delete(self._infra_planes, name)
         self._delete(self._secrets, _credentials_secret_name(name))
+
+    def create_component_set(
+        self, name: str, components: list[ComponentSpec]
+    ) -> CCLComponentSet:
+        """Create (or update) the CCLComponentSet called name.
+
+        components deploy in list order, each onto the CCLInfraPlane its infraPlaneRef
+        names; those planes must live in this client's namespace and already be
+        Available. One set may target several planes. Build components with
+        ccluster.catalogs.component. Applying under the client's field manager means
+        calling again with a different list updates the set in place.
+
+        The call returns as soon as the object is applied; it does not wait for the
+        operator to report ComponentsApplied.
+        """
+        component_set = CCLComponentSet(
+            metadata=ComponentSetObjectMeta(name=name, namespace=self.namespace),
+            spec=CCLComponentSetSpec(components=components),
+        )
+        applied = self._apply(
+            self._component_sets,
+            component_set.model_dump(by_alias=True, exclude_none=True),
+        )
+        return CCLComponentSet.model_validate(applied.to_dict())
+
+    def delete_component_set(self, name: str) -> None:
+        """Remove the CCLComponentSet called name.
+
+        Returns as soon as the delete is accepted. The operator's finalizer then removes
+        the set's Argo CD Applications in reverse order, one at a time, so the object
+        stays in Terminating until every chart is uninstalled. Already being gone is not
+        an error. The referenced CCLInfraPlanes and the namespace are left in place.
+        """
+        self._delete(self._component_sets, name)
 
     def _apply(self, resource, body):
         return self._dynamic.server_side_apply(

@@ -7,6 +7,21 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `CCLClient.create_component_set(name, components)` and
+  `CCLClient.delete_component_set(name)` in `ccluster-py`. `create_component_set`
+  server-side applies a `CCLComponentSet` in the client's namespace from a list of
+  `ComponentSpec`s built with `ccluster.catalogs.component`, so calling it again updates
+  the set in place; `delete_component_set` returns as soon as the delete is accepted and
+  leaves the operator to uninstall the set's charts in reverse, one at a time.
+  `python/examples/create_component_set.py` drives both from the command line.
+
+### Changed
+- `CCLClient.register_cluster` and `unregister_cluster` are renamed
+  `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
+  create and remove. `python/examples/register_cluster.py` is now
+  `register_infraplane.py`.
+
 ## [0.0.2] - 2026-09-11
 
 ### Added
