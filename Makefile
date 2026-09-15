@@ -175,7 +175,7 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 # does not touch a cluster - `kind load docker-image` and `make deploy-{cp,ip}` are
 # still separate, per the rule that every cluster-touching target is suffixed.
 .PHONY: build
-build: build-cp build-ip docker-build helm-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images and both charts.
+build: build-cp build-ip docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images, both charts and the Python models.
 
 .PHONY: build-cp
 build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
