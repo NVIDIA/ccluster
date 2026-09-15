@@ -5,12 +5,12 @@
         <type>(<optional scope>): <summary>
 
     types: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert
-    e.g.   feat(catalog): add retry policy to job_deployment
+    e.g.   feat(catalogs): add retry policy to job_deployment
 
 BEFORE OPENING THIS PR:
   • Sign off every commit (DCO):  git commit -s   (enforced by "Check Signed-off-by")
   • Add or update tests where it makes sense
-  • Update docs (README / catalog/README.md) if behavior changed
+  • Update docs (README / docs/ / python/README.md) if behavior changed
 
 HOW THIS BODY IS USED:
     Everything inside HTML comments (like this block) is stripped from the commit

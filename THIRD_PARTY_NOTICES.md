@@ -2,13 +2,13 @@
 
 CCluster packages and depends on third-party open-source software. This file
 lists the third-party components redistributed or referenced as Helm chart
-dependencies by the `catalog` package, together with their upstream source and
+dependencies by the charts under `catalogs/`, together with their upstream source and
 license. This list is provided for attribution and convenience; it is **not** a
 substitute for the license text shipped with each upstream project.
 
 > **Maintainers:** verify each entry's license against the exact pinned version
 > before a release. Chart versions are pinned in the corresponding
-> `catalog/**/Chart.yaml` files. Entries flagged **VERIFY** below require
+> `catalogs/**/Chart.yaml` files. Entries flagged **VERIFY** below require
 > particular attention.
 
 ## Helm chart dependencies
@@ -41,8 +41,7 @@ substitute for the license text shipped with each upstream project.
 - Chart *dependencies* above are fetched from their upstream repositories at
   build/sync time; this repository pins their versions but does not vendor their
   source. The images those charts deploy carry their own licenses.
-- Runtime Python dependencies (`pydantic`, `pyyaml`) are declared in
-  [`catalog/pyproject.toml`](catalog/pyproject.toml) and are both permissively
-  licensed (MIT).
+- Runtime dependencies of the `ccluster-py` package are declared in
+  [`python/pyproject.toml`](python/pyproject.toml).
 - If you add, remove, or bump a chart dependency, update this file in the same
   change.

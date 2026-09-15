@@ -16,7 +16,6 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components, `deployments/` tenant workloads, `resources/` the queues and volumes they use. |
 | `hack/pyschema/` → `python/` | CRD/catalog schema generator → Pydantic package. |
 | `examples/` | Hand-written example CRs. |
-| `catalog/` | Legacy catalog; leave it alone. |
 
 ## Read for your task
 
