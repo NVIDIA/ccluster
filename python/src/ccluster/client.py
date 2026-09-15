@@ -179,7 +179,7 @@ class CCLClient:
             ),
         )
         applied = self._apply(
-            self._infra_planes, plane.model_dump(by_alias=True, exclude_none=True)
+            self._infra_planes, plane.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
         return CCLInfraPlane.model_validate(applied.to_dict())
 
@@ -213,7 +213,7 @@ class CCLClient:
         )
         applied = self._apply(
             self._component_sets,
-            component_set.model_dump(by_alias=True, exclude_none=True),
+            component_set.model_dump(mode="json", by_alias=True, exclude_none=True),
         )
         return CCLComponentSet.model_validate(applied.to_dict())
 

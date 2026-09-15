@@ -1,0 +1,30 @@
+# Chart defaults for catalogs/deployments/inference_deployment. The values a chart cannot
+# be installed without (name, deploymentId, imageUrl, domain, containerPort, resources)
+# have no default; see component.go for the whole schema.
+
+# Pod scheduler. kai-scheduler bin-packs GPUs; set to "" for the cluster default.
+schedulerName: kai-scheduler
+# Size of the /dev/shm tmpfs, as a Kubernetes quantity.
+devShmSize: 512Mi
+# Ship container logs to the cluster's log pipeline.
+enableLogging: true
+# Path of the HTTP readiness probe on containerPort; "" switches to a TCP probe.
+healthcheck: /
+# Ingress backend protocol, HTTP or GRPC.
+backendProtocol: HTTP
+# Revision of this deployment; a change restarts the Rollout with a fresh ConfigMap.
+revisionNumber: 1
+rolloutPaused: false
+sessionAffinity: false
+enableNodeModelCache: false
+rolloutStrategy:
+  maxUnavailable: 1
+  maxSurge: 0
+hpa:
+  # min == max disables autoscaling; minReplicas 0 enables scale-to-zero via KEDA.
+  minReplicas: 1
+  maxReplicas: 1
+  # Target in-flight requests per pod. 2^53 effectively disables the trigger.
+  averageValue: 9007199254740992
+  # Seconds KEDA waits after the last active trigger before scaling down.
+  cooldownPeriod: 1800

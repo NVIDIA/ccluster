@@ -1,0 +1,23 @@
+{{- if gt (.Values.hpa.maxReplicas | int) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.name }}-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.name }}
+spec:
+  # Disruption budget based on replica count:
+  # - 2 replicas: allow 50% disruption (maxUnavailable: 50%)
+  # - 3+ replicas: allow 30% disruption (maxUnavailable: 30%)
+  {{- if eq (.Values.hpa.minReplicas | int) 2 }}
+  maxUnavailable: 50%
+  {{- else if gt (.Values.hpa.minReplicas | int) 2 }}
+  maxUnavailable: 30%
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+{{- end }}

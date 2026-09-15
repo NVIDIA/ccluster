@@ -13,7 +13,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `api/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
 | `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
-| `catalogs/` | Component Helm charts and typed Go values, part of the Go module. |
+| `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components, `deployments/` tenant workloads. |
 | `hack/pyschema/` → `python/` | CRD/catalog schema generator → Pydantic package. |
 | `examples/` | Hand-written example CRs. |
 | `catalog/` | Legacy catalog; leave it alone. |

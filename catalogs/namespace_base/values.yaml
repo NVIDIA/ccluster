@@ -1,0 +1,2 @@
+# catalogs/namespace_base takes no values: everything it creates is named
+# after, or scoped to, the release namespace.

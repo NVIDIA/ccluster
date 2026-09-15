@@ -31,9 +31,11 @@ limitations under the License.
 // __init__.py. The Makefile drives that second half, so the tool and its version are
 // pinned there and not here.
 //
-// The Python tree under --python that this tool owns (v1alpha1/ and catalogs/cluster_base/)
-// is deleted and rebuilt on every run, so a component removed from the table below
-// disappears from Python too. Everything else in the package is hand-written.
+// The charts come from catalogs/components.All, the catalog's own registry; this tool
+// keeps no list of its own. The Python tree under --python that it owns (v1alpha1/, one
+// catalogs/<catalog>/ per nested catalog and one catalogs/<chart>/ per chart directly
+// under catalogs/) is deleted and rebuilt on every run, so a component removed from the
+// registry disappears from Python too. Everything else in the package is hand-written.
 package main
 
 import (
@@ -53,58 +55,49 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
 
-	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
-	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
-	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
-	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
-	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
-	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
-	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
-	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
-	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
-	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
-	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
+	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
 // modulePath is the Go module, which invopop/jsonschema needs to match the comments
 // it parses out of the source tree to the types it reflects.
 const modulePath = "github.com/NVIDIA/ccluster"
 
-// component is one catalog chart: its path in the repository, which is also its
-// directory in the Python package, and the zero value of its Values type.
-type component struct {
-	chart  string
-	values any
+// catalogsRoot is the directory holding the catalog. Charts directly under it have no
+// catalog package of their own in Python, since ccluster.catalogs is hand-written.
+const catalogsRoot = "catalogs"
+
+// catalogDirs are the distinct parent directories of the catalog's charts relative to
+// the repository root, in registry order: "catalogs", "catalogs/cluster_base",
+// "catalogs/deployments". Each maps to the Python package of the same path; "catalogs"
+// itself is hand-written, and the charts directly under it are rebuilt one by one.
+func catalogDirs() []string {
+	var dirs []string
+	seen := map[string]bool{}
+	for _, c := range components.All {
+		dir := path.Dir(c.Chart)
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
-// components is the catalog as Python sees it. Adding a chart to catalogs/ means adding
-// it here too, as catalogs/cluster_base/cluster_base.go does for the sample rollout.
-var components = []component{
-	{argorollouts.Chart, argorollouts.Values{}},
-	{certmanager.Chart, certmanager.Values{}},
-	{externaldns.Chart, externaldns.Values{}},
-	{finalstack.Chart, finalstack.Values{}},
-	{fluentbit.Chart, fluentbit.Values{}},
-	{gpuoperator.Chart, gpuoperator.Values{}},
-	{ingressnginx.Chart, ingressnginx.Values{}},
-	{istio.Chart, istio.Values{}},
-	{keda.Chart, keda.Values{}},
-	{kubeprometheusstack.Chart, kubeprometheusstack.Values{}},
-	{longhorn.Chart, longhorn.Values{}},
-	{metricsserver.Chart, metricsserver.Values{}},
-	{networkoperator.Chart, networkoperator.Values{}},
-	{otelcollector.Chart, otelcollector.Values{}},
-	{prometheusadapter.Chart, prometheusadapter.Values{}},
-	{spire.Chart, spire.Values{}},
-	{spirecrds.Chart, spirecrds.Values{}},
-	{teleportkubeagent.Chart, teleportkubeagent.Values{}},
+// generatedDirs are the Python directories this tool owns under python: v1alpha1, one
+// per nested catalog, and one per chart that sits directly under catalogs/.
+func generatedDirs(python string) []string {
+	dirs := []string{filepath.Join(python, "v1alpha1")}
+	for _, dir := range catalogDirs() {
+		if dir != catalogsRoot {
+			dirs = append(dirs, filepath.Join(python, filepath.FromSlash(dir)))
+		}
+	}
+	for _, c := range components.All {
+		if path.Dir(c.Chart) == catalogsRoot {
+			dirs = append(dirs, filepath.Join(python, filepath.FromSlash(c.Chart)))
+		}
+	}
+	return dirs
 }
 
 // crdTypes names the nested schemas of each CRD, which the CRD itself does not do:
@@ -204,8 +197,7 @@ func run(repo, out, python, headerFile string) error {
 	}
 
 	// Rebuild the generated subpackages from scratch so nothing stale survives.
-	for _, dir := range []string{out, filepath.Join(python, "v1alpha1"),
-		filepath.Join(python, "catalogs", "cluster_base")} {
+	for _, dir := range append([]string{out}, generatedDirs(python)...) {
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}
@@ -331,7 +323,8 @@ func writeCRDs(repo, out, python string, header []byte) error {
 }
 
 // writeComponents reflects every component's Values into a schema and writes the
-// component's __init__.py alongside where the generator will put values.py.
+// component's __init__.py alongside where the generator will put values.py, then one
+// __init__.py per catalog re-exporting its charts.
 func writeComponents(repo, out, python string, header []byte) error {
 	reflector := jsonschema.Reflector{
 		// No $id: these are documents of ours, not published schemas.
@@ -347,46 +340,83 @@ func writeComponents(repo, out, python string, header []byte) error {
 		return err
 	}
 
-	var packages []string
-	for _, c := range components {
-		schema := reflector.Reflect(c.values)
+	packages := map[string][]string{} // catalog directory -> chart package names
+	for _, c := range components.All {
+		schema := reflector.Reflect(c.Values)
 		if schema.Type != "object" {
-			return fmt.Errorf("%s: Values did not reflect to a struct schema", c.chart)
+			return fmt.Errorf("%s: Values did not reflect to a struct schema", c.Chart)
 		}
 		schema.Title = "Values"
-		if err := writeJSON(filepath.Join(out, c.chart, "values.json"), schema); err != nil {
+		if err := writeJSON(filepath.Join(out, c.Chart, "values.json"), schema); err != nil {
 			return err
 		}
 
-		// The generator names a class after its $defs key, which is the Go type name.
+		// The generator names a class after its $defs key, which is the Go type name,
+		// or after the title of an inline enum, which the reflector does not hoist.
 		names := []string{"Values"}
 		for name := range schema.Definitions {
 			names = append(names, name)
 		}
+		names = append(names, enumTitles(schema)...)
 		sort.Strings(names)
 
 		var b bytes.Buffer
 		b.Write(header)
-		fmt.Fprintf(&b, "\"\"\"Values of the %s chart, generated from its Go package.\"\"\"\n\n", c.chart)
+		fmt.Fprintf(&b, "\"\"\"Values of the %s chart, generated from its Go package.\"\"\"\n\n", c.Chart)
 		b.WriteString("from typing import Final\n\n")
 		writeImport(&b, ".values", names)
 		b.WriteString("\n")
 		writeAll(&b, append([]string{"CHART"}, names...))
 		b.WriteString("\n# CHART is the chart's directory, relative to the root of the catalog repository.\n")
-		fmt.Fprintf(&b, "CHART: Final = %q\n", c.chart)
-		if err := writeFile(filepath.Join(python, c.chart, "__init__.py"), b.Bytes()); err != nil {
+		fmt.Fprintf(&b, "CHART: Final = %q\n", c.Chart)
+		if err := writeFile(filepath.Join(python, c.Chart, "__init__.py"), b.Bytes()); err != nil {
 			return err
 		}
-		packages = append(packages, path.Base(c.chart))
+		catalog := path.Dir(c.Chart)
+		packages[catalog] = append(packages[catalog], path.Base(c.Chart))
 	}
 
-	var b bytes.Buffer
-	b.Write(header)
-	b.WriteString("\"\"\"The cluster_base catalog: one subpackage per chart, each with a Values\n" +
-		"model and its CHART path.\"\"\"\n\n")
-	fmt.Fprintf(&b, "from . import %s\n\n", strings.Join(packages, ", "))
-	writeAll(&b, packages)
-	return writeFile(filepath.Join(python, "catalogs", "cluster_base", "__init__.py"), b.Bytes())
+	// ccluster.catalogs itself is hand-written; charts directly under it are imported
+	// by their own path and need no re-export.
+	for _, catalog := range catalogDirs() {
+		if catalog == catalogsRoot {
+			continue
+		}
+		var b bytes.Buffer
+		b.Write(header)
+		fmt.Fprintf(&b, "\"\"\"The %s catalog: one subpackage per chart, each with a Values\n"+
+			"model and its CHART path.\"\"\"\n\n", path.Base(catalog))
+		fmt.Fprintf(&b, "from . import %s\n\n", strings.Join(packages[catalog], ", "))
+		writeAll(&b, packages[catalog])
+		if err := writeFile(filepath.Join(python, filepath.FromSlash(catalog), "__init__.py"),
+			b.Bytes()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// enumTitles returns the titles of the enum-valued properties of schema and of its
+// definitions. invopop/jsonschema reflects a named string type inline, so an enum only
+// becomes a Python class of its own - and needs re-exporting - through the title its
+// field's jsonschema tag gives it.
+func enumTitles(schema *jsonschema.Schema) []string {
+	var titles []string
+	collect := func(s *jsonschema.Schema) {
+		if s.Properties == nil {
+			return
+		}
+		for pair := s.Properties.Oldest(); pair != nil; pair = pair.Next() {
+			if p := pair.Value; len(p.Enum) > 0 && p.Title != "" {
+				titles = append(titles, p.Title)
+			}
+		}
+	}
+	collect(schema)
+	for _, def := range schema.Definitions {
+		collect(def)
+	}
+	return titles
 }
 
 // toGeneric round-trips a JSONSchemaProps through JSON so its nodes can be edited as

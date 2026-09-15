@@ -71,10 +71,22 @@ in Argo CD; [DESIGN.md](../DESIGN.md#6-why-serversideapply-is-mandatory) explain
 
 ## Catalog components
 
-Each `catalogs/cluster_base/<component>/` is both a Helm chart and a Go package covered by
+Each chart directory under `catalogs/` is both a Helm chart and a Go package covered by
 module-wide builds, tests and lint. A compile error here also breaks controller-gen.
 See [the catalog design](../DESIGN.md#the-typed-catalog-and-what-it-does-not-guarantee)
 for validation boundaries and why deployment choices belong to callers.
+
+There are two catalogs and one standalone chart. `catalogs/cluster_base/` wraps upstream
+platform charts, so each `Values` nests the upstream values under the chart's key.
+`catalogs/deployments/` holds the tenant workload charts written here
+(`inference_deployment`, `compute_deployment`, `job_deployment`); their `Values` is the
+chart's own top-level document with camelCase keys, the shared pod-level fields come from
+embedding `deployments.Workload`, and every `Values` implements `Validate()`.
+`catalogs/namespace_base/` is the per-tenant namespace baseline those workloads assume is
+installed first; it takes no values. These charts derive everything namespace-scoped from
+the release namespace, which Argo CD sets to the component's `namespace`; they take no
+tenant identifier. Render one locally with
+`helm template <name> catalogs/<path> -n <namespace> -f <values>`.
 
 When adding or changing a component:
 
@@ -86,9 +98,13 @@ When adding or changing a component:
 - Optional scalars are pointers with `omitempty`, so explicit `false` survives marshaling.
   Required fields are non-pointer without `omitempty`. Add `Values.Validate()` when needed;
   `catalogs.Entry` calls it. Hand-written CRs bypass this validation.
-- Add new components to both `catalogs/cluster_base/cluster_base.go` and the table in
-  `hack/pyschema/main.go`. The former supplies a sample order and deployment choices,
-  not a universally deployable default; teleport values need real configuration.
+- Register the component in `catalogs/components/components.go`, the single list of
+  every chart; `hack/pyschema` and the tests read it, and `TestAllCoversTheTree` fails if
+  the list and the `catalogs/` tree disagree. The chart's path under `catalogs/` becomes
+  its path under `ccluster.catalogs` in Python automatically, whether it sits in a
+  catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
+  `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
+  choices, not a universally deployable default; teleport values need real configuration.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. This is separate from the generated operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.
@@ -103,6 +119,8 @@ Generated directories, deleted and rebuilt on each run:
 
 - `python/src/ccluster/v1alpha1/`
 - `python/src/ccluster/catalogs/cluster_base/`
+- `python/src/ccluster/catalogs/deployments/`
+- `python/src/ccluster/catalogs/namespace_base/`
 
 Hand-written files are `python/src/ccluster/__init__.py`,
 `python/src/ccluster/catalogs/__init__.py`, `python/pyproject.toml`, `python/README.md`

@@ -1,0 +1,133 @@
+{{- template "setExtraConfigFiles" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+  labels:
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    platform.centml.ai/workload_type: job
+  name: "{{ .Values.name }}"
+  namespace: {{ .Release.Namespace }}
+spec:
+  backoffLimit: {{ .Values.backoffLimit | int }}
+  ttlSecondsAfterFinished: 7200
+  {{- if .Values.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds | int64 }}
+  {{- end }}
+  completions: {{ .Values.completions | int }}
+  parallelism: {{ .Values.parallelism | int }}
+  completionMode: Indexed
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+        platform.centml.ai/revision-number: "1"
+        {{- if not .Values.enableLogging }}
+        platform.centml.ai/log-exclude: "true"
+        {{- end }}
+        {{- if .Values.userAnnotations }}
+        {{- range $key, $value := .Values.userAnnotations }}
+        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
+      labels:
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+        platform.centml.ai/revision-number: "1"
+        platform.centml.ai/workload_type: job
+        {{- if .Values.userAnnotations }}
+        {{- range $key, $value := .Values.userAnnotations }}
+        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
+    spec:
+      {{- if .Values.schedulerName }}
+      schedulerName: {{ .Values.schedulerName }}
+      {{- end }}
+      restartPolicy: Never
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                {{- range $key, $value := .Values.nodeAffinityLabels }}
+                - key: "{{ $key }}"
+                  operator: In
+                  values:
+                    - {{ $value | quote }}
+                {{- end }}
+      containers:
+        - name: user-container
+          image: "{{ .Values.imageUrl }}"
+          {{- if .Values.command }}
+          command:
+            {{- range .Values.command }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.args }}
+          args:
+            {{- range .Values.args }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: "JOB_COMPLETIONS"
+              value: "{{ .Values.completions | int }}"
+            {{- range $key, $value := .Values.envVars }}
+            - name: "{{ $key }}"
+              value: "{{ $value }}"
+            {{- end }}
+          resources:
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+              {{- with .Values.resources.limits }}
+              {{- if .acceleratorCount }}
+              {{ .acceleratorKey | default "nvidia.com/gpu" }}: {{ .acceleratorCount | int }}
+              {{- end }}
+              {{- end }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+              {{- with .Values.resources.requests }}
+              {{- if .acceleratorCount }}
+              {{ .acceleratorKey | default "nvidia.com/gpu" }}: {{ .acceleratorCount | int }}
+              {{- end }}
+              {{- end }}
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            # See _helpers.tpl for instructions on how to define extraConfigFiles.
+            # subPath/mountPath are quoted: a filename like "true" or "123" passes the
+            # API regex but would otherwise render as a YAML bool/number and be
+            # rejected by the k8s Job schema (subPath must be a string).
+            {{- range .ExtraConfigFiles }}
+            - name: {{ .configMapName }}
+              readOnly: {{ .volumeMountReadOnly }}
+              subPath: {{ .volumeMountSubPath | quote }}
+              mountPath: {{ .volumeMountMountPath | quote }}
+            {{- end }}
+      imagePullSecrets:
+        - name: ecr-image-pull
+        {{- if .Values.imagePullSecret }}
+        - name: {{ .Values.name }}-image-pull-secret
+        {{- end }}
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated_compute
+          operator: Equal
+          value: "true"
+      volumes:
+        - emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.devShmSize }}
+          name: dshm
+        # See _helpers.tpl for instructions on how to define extraConfigFiles
+        {{- range .ExtraConfigFiles }}
+        - name: {{ .configMapName }}
+          configMap:
+            name: {{ .configMapName }}
+        {{- end }}

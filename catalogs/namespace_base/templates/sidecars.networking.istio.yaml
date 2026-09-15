@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: namespace-default
+  namespace: {{ .Release.Namespace }}
+spec:
+  egress:
+    - hosts:
+        # Allow traffic to services within the same namespace
+        - ./*
+        # Allow traffic to the istio-system namespace
+        - istio-system/*
+        # Any other 'in-cluster' traffic is denied by default unless another policy 
+        # allows it explicitly. Any 'out-of-cluster' traffic controlled by global policy which defaults
+        # to ALLOW_ANY, so it is permitted. More info:
+        # https://istio.io/latest/docs/tasks/traffic-management/egress/egress-control/#envoy-passthrough-to-external-services

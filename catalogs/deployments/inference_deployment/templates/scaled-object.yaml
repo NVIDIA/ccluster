@@ -1,0 +1,66 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: "{{ .Values.name }}-scaledobject"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.name }}
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: {{ .Values.name }}
+  minReplicaCount: {{ .Values.hpa.minReplicas | int }}
+  maxReplicaCount: {{ .Values.hpa.maxReplicas | int }}
+  # Both cooldowns are driven by the same hpa.cooldownPeriod.
+  # initialCooldownPeriod: one-time grace period after the ScaledObject is first created
+  # before the first scale-down (only relevant when scaling to zero).
+  # cooldownPeriod: wait after the last active trigger before scaling down
+  # (only relevant when scaling to zero).
+  initialCooldownPeriod: {{ .Values.hpa.cooldownPeriod | int64 }}
+  cooldownPeriod: {{ .Values.hpa.cooldownPeriod | int64 }}
+  pollingInterval: 30
+  triggers:
+  # Handle auto-scaling from 1 to N.
+  # If there are any requests in flight above the threshold, then we start scaling up
+  - type: prometheus
+    metadata:
+      serverAddress: 'http://prometheus-op-kube-prometh-prometheus.prometheus.svc.cluster.local:9090'
+      metricName: "{{ .Values.name }}-envoy-rq-active"
+      # KEDA multiplies the threshold by 1000 (millivalue), so it is capped at 2^53
+      # where a float64-decoded value is still exact; that cap also means "autoscaling
+      # disabled", which is the chart default.
+      threshold: {{ .Values.hpa.averageValue | int64 | quote }}
+      query: >-
+        sum(
+          envoy_http_downstream_rq_active{
+            namespace="{{ .Release.Namespace }}",
+            http_conn_manager_prefix="inbound_0.0.0.0_{{ .Values.containerPort | int }}"
+          }
+        ) or on() vector(0)
+  # Handle 0→1 scaling. When scaled to zero, there is no envoy sidecar to report metrics,
+  # so we fall back to the nginx ingress controller request rate. Any non-zero RPS over the
+  # last 5 minutes triggers activation (activationThreshold: "0").
+  #
+  # PREREQUISITE: The cluster's Prometheus must scrape nginx ingress controller metrics.
+  # If nginx_ingress_controller_requests is absent, the `or on() vector(0)` fallback
+  # always returns 0, which never exceeds activationThreshold, so the deployment
+  # can never wake up from zero replicas.
+  - type: prometheus
+    metadata:
+      serverAddress: 'http://prometheus-op-kube-prometh-prometheus.prometheus.svc.cluster.local:9090'
+      metricName: "{{ .Values.name }}-istio-rps"
+      threshold: "1"
+      activationThreshold: "0"
+      query: >-
+        clamp_max(
+          sum(
+            rate(
+              nginx_ingress_controller_requests{
+                exported_namespace="{{ .Release.Namespace }}",
+                ingress="{{ .Values.name }}",
+              }[5m]
+            )
+          ),
+          1
+        ) or on() vector(0)

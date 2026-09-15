@@ -2,8 +2,9 @@
 
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
 every chart in the catalog, plus a small client that registers clusters with the control
-plane and deploys component sets onto them. The models are **generated**: nothing in `ccluster/v1alpha1/` or
-`ccluster/catalogs/cluster_base/` is written by hand.
+plane and deploys component sets onto them. The models are **generated**: nothing in `ccluster/v1alpha1/`,
+`ccluster/catalogs/cluster_base/`, `ccluster/catalogs/deployments/` or
+`ccluster/catalogs/namespace_base/` is written by hand.
 
 ```bash
 uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py
@@ -123,7 +124,7 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 | Python | Source | Via |
 | --- | --- | --- |
 | `ccluster/v1alpha1/*.py` | `config/crd/bases/*.yaml` (the CRD `openAPIV3Schema`) | `hack/pyschema` → JSON Schema → datamodel-code-generator |
-| `ccluster/catalogs/cluster_base/<chart>/values.py` | `catalogs/cluster_base/<chart>/component.go` (`Values` and friends) | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator |
+| `ccluster/catalogs/<catalog>/<chart>/values.py` | `catalogs/<catalog>/<chart>/component.go` (`Values` and friends) | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator |
 | every `__init__.py` under those two | the same | `hack/pyschema` |
 
 Three things are deliberately added on the way from the CRD: `apiVersion` and `kind` get

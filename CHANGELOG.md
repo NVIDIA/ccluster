@@ -8,6 +8,17 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
+- `catalogs/deployments/` and `catalogs/namespace_base/`: the tenant charts ported from
+  the legacy Python catalog, one version of each and without the cserve variants.
+  `inference_deployment` (from `inference_deployment_v3`), `compute_deployment` and
+  `job_deployment` are the workloads; `namespace_base` is the namespace baseline they
+  assume. Each pairs a Helm chart with a Go package (`Values`, `Validate`, `New`) and
+  generated Pydantic models under `ccluster.catalogs`. The charts take
+  camelCase values, scope everything to the release namespace instead of a user id, and
+  read plain values in place of the base64 fields the Argo CD `--set` path needed.
+- `catalogs/components`: the registry of every chart in the catalog. Adding a chart is
+  now a directory with a `component.go`, one line in `components.go` and
+  `make python-generate`; a test fails when the list and the tree disagree.
 - `CCLClient.create_component_set(name, components)` and
   `CCLClient.delete_component_set(name)` in `ccluster-py`. `create_component_set`
   server-side applies a `CCLComponentSet` in the client's namespace from a list of

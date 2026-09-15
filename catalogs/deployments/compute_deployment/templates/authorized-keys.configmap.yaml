@@ -1,0 +1,9 @@
+{{- if .Values.sshPublicKey }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "authorized-keys-{{ .Values.deploymentId }}"
+  namespace: {{ .Release.Namespace }}
+data:
+  authorized_keys: "{{ .Values.sshPublicKey }}"
+{{- end }}

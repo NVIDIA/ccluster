@@ -1,0 +1,13 @@
+{{- with .Values.configFile }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-config-{{ $.Values.deploymentId }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    platform.centml.ai/deployment-id: {{ $.Values.deploymentId | quote }}
+data:
+  {{- /* Quoted: a filename like "true" or "123" must stay a string map key. */}}
+  {{ .filename | quote }}: |-
+    {{- .content | nindent 4 }}
+{{- end }}
