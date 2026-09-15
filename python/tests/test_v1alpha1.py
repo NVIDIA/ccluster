@@ -72,13 +72,11 @@ def test_api_version_and_kind_default():
     assert "values" not in out["spec"]["components"][0]
 
 
-def test_crd_constraints_are_enforced():
+def test_required_fields_and_unknown_fields_are_enforced():
+    # The models are reflected from the Go API types, not lifted from the CRD, so the
+    # kubebuilder validation markers (name patterns, item counts) are the API server's
+    # to enforce. What Pydantic does check is the shape: required fields and no extras.
     with pytest.raises(ValidationError):
-        ComponentSpec(
-            name="Not-DNS-1123",
-            infra_plane_ref=LocalObjectReference(name="plane"),
-            chart="catalogs/cluster_base/keda",
-            namespace="keda",
-        )
+        ComponentSpec(name="keda", chart="catalogs/cluster_base/keda", namespace="keda")
     with pytest.raises(ValidationError):
-        CCLComponentSetSpec(components=[])
+        CCLComponentSetSpec.model_validate({"components": [], "unknown": 1})

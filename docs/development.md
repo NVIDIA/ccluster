@@ -115,27 +115,32 @@ When adding or changing a component:
 
 ## Python generation
 
-`make python-generate` runs `hack/pyschema` to extract CRD JSON Schema and reflect catalog
-`Values` with `invopop/jsonschema`, including Go comments. It then runs
-`datamodel-code-generator` to emit Pydantic v2 modules.
+`make python-generate` runs `hack/pyschema`, which reflects Go types into JSON Schema with
+`invopop/jsonschema`, Go doc comments included, and writes nothing else: one document per
+API version, with every kind registered in the runtime scheme by `AddToScheme`, and one per
+chart in `catalogs/components.All`. `datamodel-code-generator` then turns each document into
+one Python package, written as its `__init__.py`; the Makefile appends a `CHART` constant to
+each chart package. Adding a CRD or a chart therefore needs no change to pyschema; only a
+new API *package* needs a line in its `addToScheme` list.
 
-Generated directories, deleted and rebuilt on each run:
+Generated packages, deleted and rebuilt on each run:
 
-- `python/src/ccluster/v1alpha1/`
-- `python/src/ccluster/catalogs/cluster_base/`
-- `python/src/ccluster/catalogs/deployments/`
-- `python/src/ccluster/catalogs/resources/`
-- `python/src/ccluster/catalogs/namespace_base/`
+- `python/src/ccluster/<version>/` (currently `v1alpha1`)
+- `python/src/ccluster/catalogs/<catalog>/<chart>/` and `python/src/ccluster/catalogs/<chart>/`
 
-Hand-written files are `python/src/ccluster/__init__.py`,
-`python/src/ccluster/catalogs/__init__.py`, `python/pyproject.toml`, `python/README.md`
-and `python/tests/`. Generator changes belong in `hack/pyschema/` or the generation recipe,
-not in emitted modules.
+Catalog directories in between (`cluster_base`, `deployments`, `resources`) carry no
+`__init__.py`; they are namespace packages. Hand-written files are
+`python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`,
+`python/src/ccluster/catalogs/__init__.py`, `python/pyproject.toml`, `python/README.md` and
+`python/tests/`. Generator changes belong in `hack/pyschema/` or the generation recipe, not
+in emitted modules.
 
-The export adds API version/kind defaults, a small typed `ObjectMeta`, and dictionary
-values. Optional fields default to `None`; consumers use `exclude_none=True` to retain
-explicit `False` while omitting unset values. See [Python usage](../python/README.md).
-CI regenerates and checks for drift.
+Because the models are reflected from the Go types rather than lifted from the CRDs,
+kubebuilder validation markers (`MinLength`, `Pattern`, `MaxItems`, CEL rules) are not
+mirrored into Pydantic; the API server enforces them. The reflection adds `apiVersion` and
+`kind` defaults, a small `ObjectMeta`, and `dict` values. Optional fields default to
+`None`; consumers use `exclude_none=True` to retain explicit `False` while omitting unset
+values. See [Python usage](../python/README.md). CI regenerates and checks for drift.
 
 ## Cluster operations
 

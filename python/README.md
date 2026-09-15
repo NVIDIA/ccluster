@@ -123,15 +123,14 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 
 | Python | Source | Via |
 | --- | --- | --- |
-| `ccluster/v1alpha1/*.py` | `config/crd/bases/*.yaml` (the CRD `openAPIV3Schema`) | `hack/pyschema` → JSON Schema → datamodel-code-generator |
-| `ccluster/catalogs/<catalog>/<chart>/values.py` | `catalogs/<catalog>/<chart>/component.go` (`Values` and friends) | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator |
-| every `__init__.py` under those two | the same | `hack/pyschema` |
+| `ccluster/v1alpha1/__init__.py` | `api/v1alpha1/*_types.go`, every kind in the runtime scheme | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator |
+| `ccluster/catalogs/<catalog>/<chart>/__init__.py` | `catalogs/<catalog>/<chart>/component.go` (`Values` and friends), via `catalogs/components.All` | the same, plus a `CHART` constant appended by the Makefile |
 
-Three things are deliberately added on the way from the CRD: `apiVersion` and `kind` get
-defaults, `metadata` becomes a small `ObjectMeta` (name, namespace, labels, annotations)
-instead of an opaque dict, and a component's `values` is typed `dict[str, Any]` rather than
-"anything". Everything else, including every validation constraint and doc comment, is the
-CRD's.
+Three things are added on the way from the Go types: `apiVersion` and `kind` get defaults,
+`metadata` becomes a small `ObjectMeta` (name, namespace, labels, annotations), and free-form
+values become `dict`. The models are reflected from the Go API types rather than lifted from
+the CRDs, so the kubebuilder validation markers (name patterns, length and item bounds) are
+not mirrored; the API server enforces them.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
 (`entry`, `component`), `examples/` and `tests/` are hand-written.

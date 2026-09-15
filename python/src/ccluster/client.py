@@ -38,10 +38,7 @@ from ccluster.v1alpha1 import (
     ComponentSpec,
 )
 
-# The generator emits identical LocalObjectReference and ObjectMeta classes in each CR's
-# module, and each CR's fields are typed with its own module's class. Import both.
-from ccluster.v1alpha1.cclcomponentset import ObjectMeta as ComponentSetObjectMeta
-from ccluster.v1alpha1.cclinfraplane import LocalObjectReference, ObjectMeta
+from ccluster.v1alpha1 import LocalObjectReference, ObjectMeta
 
 __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
 
@@ -207,8 +204,13 @@ class CCLClient:
         The call returns as soon as the object is applied; it does not wait for the
         operator to report ComponentsApplied.
         """
+        # The CRD requires at least one component; the models do not carry that bound
+        # (they are reflected from the Go types), so check it here rather than let the
+        # API server reject the apply.
+        if not components:
+            raise ValueError("a CCLComponentSet needs at least one component")
         component_set = CCLComponentSet(
-            metadata=ComponentSetObjectMeta(name=name, namespace=self.namespace),
+            metadata=ObjectMeta(name=name, namespace=self.namespace),
             spec=CCLComponentSetSpec(components=components),
         )
         applied = self._apply(

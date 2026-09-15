@@ -30,6 +30,13 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `python/examples/create_component_set.py` drives both from the command line.
 
 ### Changed
+- `make python-generate` reflects the Go API types and catalog `Values` straight into JSON
+  Schema and lets datamodel-code-generator write every Python package, including each
+  `__init__.py`; `hack/pyschema` no longer parses the CRDs or shapes any Python, and new
+  CRDs and charts need no generator change. Kubebuilder validation markers are no longer
+  mirrored into the Pydantic models; the API server enforces them. Catalog directories
+  (`cluster_base`, `deployments`, `resources`) are now namespace packages without an
+  `__all__`.
 - `CCLClient.register_cluster` and `unregister_cluster` are renamed
   `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
   create and remove. `python/examples/register_cluster.py` is now

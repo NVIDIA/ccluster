@@ -242,7 +242,7 @@ def test_create_component_set_applies_the_set(fake):
 
 def test_create_component_set_rejects_empty_components(fake):
     c, dyn = make_client(fake)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         c.create_component_set("local-base", [])
     assert dyn.applied == []
 

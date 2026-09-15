@@ -620,21 +620,22 @@ python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as
 
 ##@ Python
 
-# python/ is a Pydantic rendering of the CRDs and the catalog's typed values, generated
-# in two steps: hack/pyschema writes JSON Schema for each (plus the package __init__.py
-# files), then datamodel-code-generator turns every schema into a module beside its
-# __init__.py. It is run per file rather than over the directory because directory mode
-# rewrites every __init__.py on the way through, and hack/pyschema owns those.
-# The generated subpackages are deleted and rebuilt on each run; see hack/pyschema/main.go.
+# python/ is a Pydantic rendering of the API types and the catalog's typed values,
+# generated in two steps: hack/pyschema reflects the Go types into one JSON Schema per API
+# version and per chart, then datamodel-code-generator turns each document into a Python
+# package, written as that package's __init__.py. Chart packages get a CHART constant
+# appended, naming the chart's directory. Catalog directories between ccluster.catalogs
+# and the chart packages carry no __init__.py of their own (namespace packages). The
+# generated packages are deleted and rebuilt on each run; see hack/pyschema/main.go.
 PYSCHEMA_DIR ?= dist/pyschema
 PYTHON_PKG ?= python/src/ccluster
 
 .PHONY: python-generate
-python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalog Go types.
+python-generate: uv ## Regenerate python/ from the API types and the catalog Go types.
 	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)"
 	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
-		rel="$${schema#$(PYSCHEMA_DIR)/}"; \
-		out="$(PYTHON_PKG)/$${rel%.json}.py"; \
+		rel="$${schema#$(PYSCHEMA_DIR)/}"; pkg="$${rel%.json}"; \
+		out="$(PYTHON_PKG)/$$pkg/__init__.py"; \
 		echo "$$schema -> $$out"; \
 		"$(UV)" tool run --from "datamodel-code-generator==$(DATAMODEL_CODEGEN_VERSION)" \
 			datamodel-codegen \
@@ -646,6 +647,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 			--collapse-root-models --use-double-quotes --disable-timestamp \
 			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
 			|| exit 1; \
+		case "$$pkg" in catalogs/*) printf '\n\n# CHART is the chart directory, relative to the root of the catalog repository.\nCHART = "%s"\n' "$$pkg" >> "$$out";; esac; \
 	done
 
 .PHONY: python-test
