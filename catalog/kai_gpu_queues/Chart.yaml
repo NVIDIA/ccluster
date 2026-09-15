@@ -1,8 +1,0 @@
-apiVersion: v2
-name: kai-gpu-queues
-description: CentML KAI GPU quota queues. Quota and limit match (hard cap). 0 is none; -1 is unlimited.
-type: application
-
-version: 1.0.0
-
-appVersion: "1.0.0"

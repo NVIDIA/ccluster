@@ -1,8 +1,0 @@
-prometheus-adapter:
-  prometheus:
-    # Matches the kube-prometheus-stack fullnameOverride ("prometheus-op-kube-prometh")
-    # and the IaC convention (iac/components/platform_k8s/prometheus.py:333).
-    url: http://prometheus-op-kube-prometh-prometheus.prometheus.svc
-    port: 9090
-  rules:
-    custom: []

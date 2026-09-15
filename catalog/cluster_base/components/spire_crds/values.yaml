@@ -1,3 +1,0 @@
-spire-crds:
-  annotations:
-    helm.sh/resource-policy: keep

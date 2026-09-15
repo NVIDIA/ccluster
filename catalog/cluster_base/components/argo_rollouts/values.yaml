@@ -1,5 +1,0 @@
-argo-rollouts:
-  controller:
-    replicas: 2
-  dashboard:
-    enabled: false
