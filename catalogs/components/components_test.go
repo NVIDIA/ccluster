@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package components_test
+package components
 
 import (
 	"os"
@@ -23,8 +23,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
 // TestAllCoversTheTree is the check that keeps All and the catalogs/ directory in step:
@@ -34,7 +32,7 @@ import (
 // chart silently missing from Python.
 func TestAllCoversTheTree(t *testing.T) {
 	root := filepath.Join("..", "..")
-	dirs := make([]string, 0, len(components.All))
+	dirs := make([]string, 0, len(All))
 	for _, pattern := range []string{
 		filepath.Join(root, "catalogs", "*", "Chart.yaml"),
 		filepath.Join(root, "catalogs", "*", "*", "Chart.yaml"),
@@ -60,14 +58,14 @@ func TestAllCoversTheTree(t *testing.T) {
 	}
 	slices.Sort(onDisk)
 
-	listed := make([]string, 0, len(components.All))
-	for _, c := range components.All {
+	listed := make([]string, 0, len(All))
+	for _, c := range All {
 		listed = append(listed, c.Chart)
 	}
 	slices.Sort(listed)
 
 	if !slices.Equal(onDisk, listed) {
-		t.Fatalf("components.All and catalogs/ disagree\n on disk: %s\n listed:  %s",
+		t.Fatalf("All and catalogs/ disagree\n on disk: %s\n listed:  %s",
 			strings.Join(onDisk, " "), strings.Join(listed, " "))
 	}
 }
@@ -75,7 +73,7 @@ func TestAllCoversTheTree(t *testing.T) {
 // TestAllValuesAreStructs: the Python generator reflects each Values into an object
 // schema, and a package that exported something else would only fail there.
 func TestAllValuesAreStructs(t *testing.T) {
-	for _, c := range components.All {
+	for _, c := range All {
 		if reflect.TypeOf(c.Values).Kind() != reflect.Struct {
 			t.Errorf("%s: Values is %T, want a struct", c.Chart, c.Values)
 		}

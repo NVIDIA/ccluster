@@ -14,15 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package catalogs_test
+package catalogs
 
 import (
 	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
-
-	"github.com/NVIDIA/ccluster/catalogs"
 )
 
 // stubValues mirrors the shape every per-chart Values type has: one key named for the
@@ -101,7 +99,7 @@ func TestEntry(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := catalogs.Entry(chart, namespace, test.values)
+			got, err := Entry(chart, namespace, test.values)
 			if err != nil {
 				t.Fatalf("Entry() error = %v, want nil", err)
 			}
@@ -140,7 +138,7 @@ func TestEntry(t *testing.T) {
 func TestEntryRejectsInvalidValues(t *testing.T) {
 	sentinel := errors.New("proxyAddr not set")
 
-	_, err := catalogs.Entry(chart, namespace, validatingValues{err: sentinel})
+	_, err := Entry(chart, namespace, validatingValues{err: sentinel})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("Entry() error = %v, want one wrapping %v", err, sentinel)
 	}
@@ -149,7 +147,7 @@ func TestEntryRejectsInvalidValues(t *testing.T) {
 // TestEntrySkipsValuesWithoutValidator is the other half: the 17 components that have no
 // required values must not be asked for a Validate they do not have.
 func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
-	if _, err := catalogs.Entry(chart, namespace, stubValues{}); err != nil {
+	if _, err := Entry(chart, namespace, stubValues{}); err != nil {
 		t.Fatalf("Entry() error = %v, want nil", err)
 	}
 }
