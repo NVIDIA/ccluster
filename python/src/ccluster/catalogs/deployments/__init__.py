@@ -17,10 +17,11 @@
 """The deployments catalog: one subpackage per chart, each with a Values
 model and its CHART path."""
 
-from . import compute_deployment, inference_deployment, job_deployment
+from . import compute_deployment, dynamo_deployment, inference_deployment, job_deployment
 
 __all__ = [
     "compute_deployment",
+    "dynamo_deployment",
     "inference_deployment",
     "job_deployment",
 ]

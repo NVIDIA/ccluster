@@ -82,13 +82,13 @@ func TestValidate(t *testing.T) {
 		{
 			name: "everything optional set",
 			mutate: func(v *inferencedeployment.Values) {
-				v.HPA = &inferencedeployment.HPA{
+				v.HPA = &deployments.HPA{
 					MinReplicas: ptr(int32(0)), MaxReplicas: ptr(int32(4)),
 					AverageValue: ptr(int64(10)), CooldownPeriod: ptr(int64(60)),
 				}
-				v.RolloutStrategy = &inferencedeployment.RolloutStrategy{MaxUnavailable: ptr(int32(0)), MaxSurge: ptr(int32(1))}
+				v.RolloutStrategy = &deployments.RolloutStrategy{MaxUnavailable: ptr(int32(0)), MaxSurge: ptr(int32(1))}
 				v.Metrics = &inferencedeployment.Metrics{Port: 9000, Path: "/metrics"}
-				v.BackendProtocol = ptr(inferencedeployment.GRPC)
+				v.BackendProtocol = ptr(deployments.GRPC)
 				v.ConfigFile = &deployments.ConfigFile{Filename: "c", MountPath: "/etc/c", Content: "x"}
 				v.Healthcheck = ptr("")
 			},
@@ -115,18 +115,18 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "hpa inverted",
-			mutate:  func(v *inferencedeployment.Values) { v.HPA = &inferencedeployment.HPA{MinReplicas: ptr(int32(3))} },
+			mutate:  func(v *inferencedeployment.Values) { v.HPA = &deployments.HPA{MinReplicas: ptr(int32(3))} },
 			wantErr: deployments.ErrInvalidValue, wantMsg: "hpa.maxReplicas 1 is below hpa.minReplicas 3",
 		},
 		{
 			name:    "hpa negative min",
-			mutate:  func(v *inferencedeployment.Values) { v.HPA = &inferencedeployment.HPA{MinReplicas: ptr(int32(-1))} },
+			mutate:  func(v *inferencedeployment.Values) { v.HPA = &deployments.HPA{MinReplicas: ptr(int32(-1))} },
 			wantErr: deployments.ErrInvalidValue, wantMsg: "negative",
 		},
 		{
 			name: "hpa average value past float64 exactness",
 			mutate: func(v *inferencedeployment.Values) {
-				v.HPA = &inferencedeployment.HPA{AverageValue: ptr(inferencedeployment.MaxAverageValue + 1)}
+				v.HPA = &deployments.HPA{AverageValue: ptr(deployments.MaxAverageValue + 1)}
 			},
 			wantErr: deployments.ErrInvalidValue, wantMsg: "averageValue",
 		},
@@ -134,7 +134,7 @@ func TestValidate(t *testing.T) {
 			// maxSurge defaults to 0, so zeroing maxUnavailable alone stalls the rollout.
 			name: "rollout strategy that cannot progress",
 			mutate: func(v *inferencedeployment.Values) {
-				v.RolloutStrategy = &inferencedeployment.RolloutStrategy{MaxUnavailable: ptr(int32(0))}
+				v.RolloutStrategy = &deployments.RolloutStrategy{MaxUnavailable: ptr(int32(0))}
 			},
 			wantErr: deployments.ErrInvalidValue, wantMsg: "sum to at least 1",
 		},
@@ -148,7 +148,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "unknown backend protocol",
 			mutate: func(v *inferencedeployment.Values) {
-				v.BackendProtocol = ptr(inferencedeployment.BackendProtocol("TCP"))
+				v.BackendProtocol = ptr(deployments.BackendProtocol("TCP"))
 			},
 			wantErr: deployments.ErrInvalidValue, wantMsg: "backendProtocol",
 		},

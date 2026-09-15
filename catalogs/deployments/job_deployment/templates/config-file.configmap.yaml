@@ -6,8 +6,9 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   labels:
     platform.centml.ai/deployment-id: {{ $.Values.deploymentId | quote }}
-data:
-  {{- /* Quoted: a filename like "true" or "123" must stay a string map key. */}}
-  {{ .filename | quote }}: |-
-    {{- .content | nindent 4 }}
+# binaryData carries the content base64-encoded, which Kubernetes decodes verbatim into
+# the file, so it survives byte-for-byte, trailing newlines included. The filename is
+# quoted so one like "true" or "123" stays a string map key.
+binaryData:
+  {{ .filename | quote }}: {{ .content | b64enc | quote }}
 {{- end }}

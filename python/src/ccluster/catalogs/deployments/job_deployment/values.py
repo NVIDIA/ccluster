@@ -101,6 +101,30 @@ class Resources(BaseModel):
     """
 
 
+class VolumeMount(BaseModel):
+    """
+    VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
+    does not own the claim; catalogs/resources/persistent_volume creates one.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    name: str
+    """
+    Name is the claim's name in the release namespace. Required.
+    """
+    mount_path: Annotated[str, Field(alias="mountPath")]
+    """
+    MountPath is the absolute directory it is mounted at. Required.
+    """
+    read_only: Annotated[bool | None, Field(alias="readOnly")] = None
+    """
+    ReadOnly mounts it read-only in this container. The chart ships false.
+    """
+
+
 class ResourceRequirements(BaseModel):
     """
     ResourceRequirements are a container's limits and requests, both required.
@@ -179,6 +203,16 @@ class Values(BaseModel):
     SchedulerName is the pod's scheduler. The chart ships kai-scheduler, which
     bin-packs GPUs; an explicit "" falls back to the cluster's default scheduler.
     """
+    kai_queue: Annotated[str | None, Field(alias="kaiQueue")] = None
+    """
+    KaiQueue is the KAI scheduler queue the pods are labelled kai.scheduler/queue
+    with, one of the leaf queues catalogs/resources/kai_gpu_queues creates. Unset
+    leaves the pods on the scheduler's default queue.
+    """
+    priority_class_name: Annotated[str | None, Field(alias="priorityClassName")] = None
+    """
+    PriorityClassName is the pod's PriorityClass. Unset leaves it to the cluster.
+    """
     enable_logging: Annotated[bool | None, Field(alias="enableLogging")] = None
     """
     EnableLogging ships the container's logs to the cluster's log pipeline. The
@@ -223,4 +257,10 @@ class Values(BaseModel):
     config_file: Annotated[ConfigFile | None, Field(alias="configFile")] = None
     """
     ConfigFile is a file mounted into the container from a ConfigMap.
+    """
+    volume_mounts: Annotated[list[VolumeMount] | None, Field(alias="volumeMounts")] = (
+        None
+    )
+    """
+    VolumeMounts are existing claims mounted into the container.
     """

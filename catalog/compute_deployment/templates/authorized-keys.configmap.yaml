@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: "authorized-keys-{{ .Values.deployment_id }}"
+  name: "authorized-keys-{{ .Values.deployment_id | int }}"
 data:
-  authorized_keys: "{{ .Values.ssh_public_key }}"
+  authorized_keys: {{ .Values.ssh_public_key | quote }}
 {{- end }}

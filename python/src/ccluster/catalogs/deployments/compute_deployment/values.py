@@ -75,6 +75,30 @@ class Resources(BaseModel):
     """
 
 
+class VolumeMount(BaseModel):
+    """
+    VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
+    does not own the claim; catalogs/resources/persistent_volume creates one.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    name: str
+    """
+    Name is the claim's name in the release namespace. Required.
+    """
+    mount_path: Annotated[str, Field(alias="mountPath")]
+    """
+    MountPath is the absolute directory it is mounted at. Required.
+    """
+    read_only: Annotated[bool | None, Field(alias="readOnly")] = None
+    """
+    ReadOnly mounts it read-only in this container. The chart ships false.
+    """
+
+
 class ResourceRequirements(BaseModel):
     """
     ResourceRequirements are a container's limits and requests, both required.
@@ -154,6 +178,16 @@ class Values(BaseModel):
     SchedulerName is the pod's scheduler. The chart ships kai-scheduler, which
     bin-packs GPUs; an explicit "" falls back to the cluster's default scheduler.
     """
+    kai_queue: Annotated[str | None, Field(alias="kaiQueue")] = None
+    """
+    KaiQueue is the KAI scheduler queue the pods are labelled kai.scheduler/queue
+    with, one of the leaf queues catalogs/resources/kai_gpu_queues creates. Unset
+    leaves the pods on the scheduler's default queue.
+    """
+    priority_class_name: Annotated[str | None, Field(alias="priorityClassName")] = None
+    """
+    PriorityClassName is the pod's PriorityClass. Unset leaves it to the cluster.
+    """
     enable_logging: Annotated[bool | None, Field(alias="enableLogging")] = None
     """
     EnableLogging ships the container's logs to the cluster's log pipeline. The
@@ -185,10 +219,26 @@ class Values(BaseModel):
     ExposedPort is the port the LoadBalancer Service exposes ContainerPort on.
     Required.
     """
+    revision_number: Annotated[int | None, Field(alias="revisionNumber")] = None
+    """
+    RevisionNumber is this deployment's revision. It labels the pod, so bumping it
+    recreates the pod. Unset, no revision label is rendered.
+    """
     storage_class_name: Annotated[str, Field(alias="storageClassName")]
     """
-    StorageClassName provisions the home volume. Its size is 100Gi per requested
-    accelerator, and at least 100Gi. Required.
+    StorageClassName provisions the home volume, unless HomePVCName supplies one.
+    Its size is 100Gi per requested accelerator, and at least 100Gi. Required.
+    """
+    home_pvc_name: Annotated[str | None, Field(alias="homePvcName")] = None
+    """
+    HomePVCName mounts an existing claim at /home instead of the chart creating one.
+    The SSH host keys then live under a per-deployment directory on it.
+    """
+    volume_mounts: Annotated[list[VolumeMount] | None, Field(alias="volumeMounts")] = (
+        None
+    )
+    """
+    VolumeMounts are additional existing claims mounted into the container.
     """
     ssh_injector_image: Annotated[str, Field(alias="sshInjectorImage")]
     """

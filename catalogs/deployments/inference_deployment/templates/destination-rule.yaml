@@ -10,7 +10,7 @@
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
-  name: {{ .Values.name }}
+  name: {{ .Values.name | quote }}
   namespace: {{ .Release.Namespace }}
   labels:
     platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"

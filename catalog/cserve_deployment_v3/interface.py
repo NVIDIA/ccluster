@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+# Copyright (c) CentML Inc. All Rights Reserved.
 """Defines the interfaces for deployment planner with pydantic"""
 
 from __future__ import annotations

@@ -8,14 +8,16 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
-- `catalogs/deployments/` and `catalogs/namespace_base/`: the tenant charts ported from
-  the legacy Python catalog, one version of each and without the cserve variants.
-  `inference_deployment` (from `inference_deployment_v3`), `compute_deployment` and
-  `job_deployment` are the workloads; `namespace_base` is the namespace baseline they
-  assume. Each pairs a Helm chart with a Go package (`Values`, `Validate`, `New`) and
-  generated Pydantic models under `ccluster.catalogs`. The charts take
-  camelCase values, scope everything to the release namespace instead of a user id, and
-  read plain values in place of the base64 fields the Argo CD `--set` path needed.
+- `catalogs/deployments/`, `catalogs/resources/` and `catalogs/namespace_base/`: the
+  tenant charts ported from the legacy Python catalog, one version of each and without
+  the cserve variants. `inference_deployment` (from `inference_deployment_v3`),
+  `compute_deployment`, `job_deployment` and `dynamo_deployment` are the workloads;
+  `kai_gpu_queues` and `persistent_volume` are the GPU quota queues and tenant volumes
+  they reference through `kaiQueue` and `volumeMounts`; `namespace_base` is the
+  namespace baseline they assume. Each pairs a Helm chart with a Go package (`Values`,
+  `Validate`, `New`) and generated Pydantic models under `ccluster.catalogs`. The charts
+  take camelCase values, scope everything to the release namespace instead of a user id,
+  and read plain values in place of the base64 fields the Argo CD `--set` path needed.
 - `catalogs/components`: the registry of every chart in the catalog. Adding a chart is
   now a directory with a `component.go`, one line in `components.go` and
   `make python-generate`; a test fails when the list and the tree disagree.

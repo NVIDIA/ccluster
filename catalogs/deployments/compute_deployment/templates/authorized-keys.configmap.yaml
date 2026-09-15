@@ -5,5 +5,5 @@ metadata:
   name: "authorized-keys-{{ .Values.deploymentId }}"
   namespace: {{ .Release.Namespace }}
 data:
-  authorized_keys: "{{ .Values.sshPublicKey }}"
+  authorized_keys: {{ .Values.sshPublicKey | quote }}
 {{- end }}

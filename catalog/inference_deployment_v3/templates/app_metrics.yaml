@@ -3,20 +3,20 @@
 # runaway high-cardinality user metric cannot blow up the cluster
 # Prometheus / AMP workspace budget.
 #
-# ArgoCD emits absent values as `--set metrics=` (empty string, not nil), 
-# we have to handle this case like this or change helm_params().
+# helm.values serializes an absent metrics bundle as `metrics: null`;
+# default dict keeps the field lookups below safe in that case.
 {{- $m := .Values.metrics | default dict }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Values.name }}-app-metrics
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
   labels:
-    platform.centml.ai/sm: custom-metrics-{{ .Values.deployment_id }}
+    platform.centml.ai/sm: custom-metrics-{{ .Values.deployment_id | int }}
 spec:
   selector:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
   ports:
     - name: metrics
       # 18000 mirrors the cserve namespace-shared scraper convention
@@ -37,14 +37,14 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ .Values.name }}-app-metrics
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
   selector:
     matchLabels:
-      platform.centml.ai/sm: custom-metrics-{{ .Values.deployment_id }}
+      platform.centml.ai/sm: custom-metrics-{{ .Values.deployment_id | int }}
   endpoints:
     - port: metrics
-      path: {{ $m.path | default "/metrics" }}
+      path: {{ $m.path | default "/metrics" | quote }}
       interval: 15s
       scheme: https
       # Force HTTP/1.1 to dodge a known transport-layer fragility specific to
@@ -86,6 +86,6 @@ spec:
         keyFile: /etc/istio-output-certs/key.pem
       metricRelabelings:
         - targetLabel: deployment_id
-          replacement: "{{ .Values.deployment_id }}"
+          replacement: "{{ .Values.deployment_id | int }}"
           action: replace
   sampleLimit: 2000

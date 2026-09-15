@@ -68,7 +68,7 @@ const catalogsRoot = "catalogs"
 
 // catalogDirs are the distinct parent directories of the catalog's charts relative to
 // the repository root, in registry order: "catalogs", "catalogs/cluster_base",
-// "catalogs/deployments". Each maps to the Python package of the same path; "catalogs"
+// "catalogs/deployments", "catalogs/resources". Each maps to the Python package of the same path; "catalogs"
 // itself is hand-written, and the charts directly under it are rebuilt one by one.
 func catalogDirs() []string {
 	var dirs []string

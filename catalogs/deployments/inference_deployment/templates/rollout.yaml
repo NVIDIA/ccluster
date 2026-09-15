@@ -4,7 +4,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: {{ .Values.name }}
+  name: {{ .Values.name | quote }}
   namespace: {{ .Release.Namespace }}
   annotations:
     {{- if .Values.userAnnotations }}
@@ -58,6 +58,10 @@ spec:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
         platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
         platform.centml.ai/custom_metrics: enabled
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kaiQueue }}
+        kai.scheduler/queue: {{ .Values.kaiQueue | quote }}
+        {{- end }}
         {{- if .Values.userAnnotations }}
         {{- range $key, $value := .Values.userAnnotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
@@ -66,6 +70,9 @@ spec:
     spec:
       {{- if .Values.schedulerName }}
       schedulerName: {{ .Values.schedulerName }}
+      {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName | quote }}
       {{- end }}
       # Security is enforced at namespace level via PSA "baseline".
       securityContext:
@@ -83,10 +90,10 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                   {{- range $key, $value := .Values.nodeAffinityLabels }}
-                  - key: {{ $key }}
+                  - key: {{ $key | quote }}
                     operator: In
                     values:
-                      - {{ $value }}
+                      - {{ $value | quote }}
                   {{- end }}
       containers:
         - image: "{{ .Values.imageUrl }}"
@@ -107,12 +114,12 @@ spec:
               value: /tmp
             {{- end }}
             {{- range $key, $value := .Values.envVars }}
-            - name: {{ $key }}
-              value: "{{ $value }}"
+            - name: {{ $key | quote }}
+              value: {{ $value | quote }}
             {{- end }}
             {{- if .Values.hfToken }}
             - name: HF_TOKEN
-              value: "{{ .Values.hfToken }}"
+              value: {{ .Values.hfToken | quote }}
             {{- end }}
           ports:
             - containerPort: {{ .Values.containerPort }}
@@ -126,7 +133,7 @@ spec:
             successThreshold: 1
             {{- if .Values.healthcheck }}
             httpGet:
-              path: {{ .Values.healthcheck }}
+              path: {{ .Values.healthcheck | quote }}
               port: {{ .Values.containerPort }}
             {{- else }}
             # TCP socket check for gRPC or when no healthcheck path is specified

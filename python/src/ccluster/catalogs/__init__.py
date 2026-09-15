@@ -14,9 +14,9 @@
 
 """The Helm chart catalog, as typed values.
 
-Each chart under ccluster.catalogs.cluster_base and ccluster.catalogs.deployments, and
-ccluster.catalogs.namespace_base itself, has a Values model and a CHART path, generated
-from the Go package beside the chart. entry()
+Each chart under ccluster.catalogs.cluster_base, ccluster.catalogs.deployments and
+ccluster.catalogs.resources, and ccluster.catalogs.namespace_base itself, has a Values
+model and a CHART path, generated from the Go package beside the chart. entry()
 turns one of those into the ComponentEntry fields of a CCLComponentSet component, as
 catalogs.Entry does in Go.
 """

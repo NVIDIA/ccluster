@@ -5,9 +5,9 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ .Values.name }}-pdb
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
   labels:
-    app: {{ .Values.name }}
+    app: {{ .Values.name | quote }}
 spec:
   # Disruption budget based on replica count:
   # - 2 replicas: allow 50% disruption (maxUnavailable: 50%)
@@ -21,5 +21,5 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+      platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
 {{- end }}

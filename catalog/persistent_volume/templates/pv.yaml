@@ -1,0 +1,38 @@
+{{- $backend := required "backend is required" .Values.backend }}
+{{- if eq $backend "object" }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  labels:
+    platform.centml.ai/volume-id: "{{ .Values.volume_id | int }}"
+    platform.centml.ai/volume-name: "{{ .Values.name }}"
+  name: vol-{{ .Values.volume_id | int }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  capacity:
+    # Mountpoint ignores capacity, but Kubernetes requires a value.
+    storage: 1Gi
+  claimRef:
+    name: vol-{{ .Values.volume_id | int }}
+    namespace: user-{{ .Values.user_id | int }}
+  csi:
+    driver: s3.csi.aws.com
+    volumeAttributes:
+      # The customer configures the CSI driver's IAM identity.
+      # CCluster does not manage workload pod identities.
+      authenticationSource: driver
+      bucketName: {{ .Values.bucket | quote }}
+    volumeHandle: vol-{{ .Values.volume_id | int }}
+  mountOptions:
+    - {{ printf "region %s" .Values.region | quote }}
+{{- with .Values.prefix }}
+    - {{ printf "prefix %s" . | quote }}
+{{- end }}
+{{- if .Values.read_only }}
+    - read-only
+{{- end }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Filesystem
+{{- end }}

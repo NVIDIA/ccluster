@@ -23,6 +23,7 @@ from .values import (
     ResourceRequirements,
     Resources,
     Values,
+    VolumeMount,
 )
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "ResourceRequirements",
     "Resources",
     "Values",
+    "VolumeMount",
 ]
 
 # CHART is the chart's directory, relative to the root of the catalog repository.

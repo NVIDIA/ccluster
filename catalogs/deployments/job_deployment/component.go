@@ -57,6 +57,9 @@ type Values struct {
 
 	// ConfigFile is a file mounted into the container from a ConfigMap.
 	ConfigFile *deployments.ConfigFile `json:"configFile,omitempty"`
+
+	// VolumeMounts are existing claims mounted into the container.
+	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
 }
 
 // New returns the job_deployment chart entry, installed into namespace with values.
@@ -73,6 +76,7 @@ func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
 		v.ConfigFile.Validate(),
+		deployments.ValidateVolumeMounts(v.VolumeMounts),
 	}
 	for _, count := range []struct {
 		name  string

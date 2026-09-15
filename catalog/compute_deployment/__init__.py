@@ -3,9 +3,9 @@
 
 from typing import Dict, Optional
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
-from catalog.components import BaseAppConfig, DeploymentBaseHelmValues
+from catalog.components import BaseAppConfig, DeploymentBaseHelmValues, PersistentVolumeClaimToMount
 from catalog.inference_deployment_v3 import ImagePullSecret
 
 
@@ -15,6 +15,8 @@ from catalog.inference_deployment_v3 import ImagePullSecret
 class ComputeDeploymentValues(DeploymentBaseHelmValues):
     user_id: int
     deployment_id: int
+    # Default keeps older persisted compute app configs parseable; new creates pass this explicitly.
+    revision_number: int = 1
     name: str
     image_url: str
     # Default keeps older persisted compute app configs parseable; new creates pass this explicitly.
@@ -27,6 +29,9 @@ class ComputeDeploymentValues(DeploymentBaseHelmValues):
     node_affinity_labels: Dict[str, str]
     env_vars: Dict[str, str] = {}
     storage_class_name: str
+    home_pvc_name: Optional[str] = None
+    # Additional mounts only. home_pvc_name selects the PVC mounted at /home.
+    volume_mounts: list[PersistentVolumeClaimToMount] = Field(default_factory=list)
     ssh_username: Optional[str] = ""
     ssh_password: Optional[str] = ""
     ssh_github_username: Optional[str] = ""
@@ -48,4 +53,4 @@ class ComputeDeploymentValues(DeploymentBaseHelmValues):
 
 class ComputeDeploymentConfig(BaseAppConfig):
     values: ComputeDeploymentValues
-    app_path: str = "catalog/compute_deployment"
+    app_path: str = "catalog/src/catalog/compute_deployment"

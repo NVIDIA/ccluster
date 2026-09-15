@@ -1,0 +1,6 @@
+apiVersion: v2
+name: resources_persistent_volume
+description: A tenant volume - a dynamically provisioned filesystem claim, or a static PersistentVolume and claim over an S3 bucket via the Mountpoint CSI driver
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

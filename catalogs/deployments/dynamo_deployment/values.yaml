@@ -1,0 +1,37 @@
+# Chart defaults for catalogs/deployments/dynamo_deployment. The values a chart cannot be
+# installed without (name, deploymentId, imageUrl, domain, model and a worker pool) have
+# no default; see component.go for the whole schema.
+
+# Pod scheduler. kai-scheduler bin-packs GPUs; set to "" for the cluster default.
+schedulerName: kai-scheduler
+# Ship container logs to the cluster's log pipeline.
+enableLogging: true
+# Port the Dynamo Frontend listens on; the operator's Service exposes 8000 and forwards
+# to the container's named http port, so this may differ.
+containerPort: 8000
+# With --kserve-grpc-server the Frontend serves HTTP metrics and health on this second
+# port, so containerPort may not equal it in GRPC mode.
+kserveGrpcMetricsPort: 8788
+# Frontend protocol, HTTP or GRPC.
+backendProtocol: HTTP
+# Dynamo event plane, pinned so upstream default changes do not move it.
+eventPlane: nats
+# Frontend to worker request plane. Only tcp is viable: worker responses stream back over
+# raw TCP regardless, which is also why the pods opt out of the Istio sidecar.
+requestPlane: tcp
+# aggregated (one KEDA-scaled workerPool) or disaggregated (fixed prefillPool and decodePool).
+servingMode: aggregated
+# Revision of this deployment; a change rolls the pods.
+revisionNumber: 1
+enableNodeModelCache: false
+rolloutStrategy:
+  maxUnavailable: 1
+  maxSurge: 0
+hpa:
+  # min == max pins the aggregated worker count; minReplicas must be at least 1.
+  minReplicas: 1
+  maxReplicas: 1
+  # Target in-flight Frontend requests per worker. 2^53 effectively disables the trigger.
+  averageValue: 9007199254740992
+  # Seconds the HPA waits after load drops before scaling the workers down.
+  cooldownPeriod: 1800

@@ -7,14 +7,14 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-type: external
     external-dns.alpha.kubernetes.io/hostname: {{ default (printf "%s.user-%d.%s" .Values.name (.Values.user_id | int) .Values.domain) .Values.deployment_url }}
   labels:
-    platform.centml.ai/deployment_id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment_id: "{{ .Values.deployment_id | int }}"
   name: "{{ .Values.name }}"
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
   ports:
     - name: ssh
       port: {{ .Values.exposed_port }}
       targetPort: {{ .Values.container_port }}
   selector:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
   type: LoadBalancer

@@ -49,9 +49,12 @@ import (
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
+	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
 	jobdeployment "github.com/NVIDIA/ccluster/catalogs/deployments/job_deployment"
 	namespacebase "github.com/NVIDIA/ccluster/catalogs/namespace_base"
+	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
+	persistentvolume "github.com/NVIDIA/ccluster/catalogs/resources/persistent_volume"
 )
 
 // Component is one chart: its directory relative to the repository root, which is also
@@ -89,6 +92,11 @@ var All = []Component{
 
 	// deployments: the tenant workload charts.
 	{computedeployment.Chart, computedeployment.Values{}},
+	{dynamodeployment.Chart, dynamodeployment.Values{}},
 	{inferencedeployment.Chart, inferencedeployment.Values{}},
 	{jobdeployment.Chart, jobdeployment.Values{}},
+
+	// resources: cluster and tenant resources the workloads use.
+	{kaigpuqueues.Chart, kaigpuqueues.Values{}},
+	{persistentvolume.Chart, persistentvolume.Values{}},
 }

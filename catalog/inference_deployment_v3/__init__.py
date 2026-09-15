@@ -26,11 +26,10 @@ LINUX_PATH_MAX = 4096
 # Kernel pseudo-filesystems / device nodes; shadowing them with a file mount is incoherent.
 CONFIG_FILES_FORBIDDEN_MOUNT_ROOTS: tuple[str, ...] = ("/proc", "/sys", "/dev")
 
-# UTF-8 bytes. Bound on raw content so base64(content) stays well below Linux
-# MAX_ARG_STRLEN (131072 bytes) — ArgoCD passes config_file.content_base64 as a
-# single --set-string argv element to helm; exceeding the kernel limit fails the
-# whole sync with `fork/exec helm: argument list too long`. 64 KiB raw -> ~86 KiB
-# base64, leaving ~45 KiB headroom for the other helm params on the same exec.
+# UTF-8 bytes. content_base64 travels inline in the ArgoCD Application spec
+# (spec.source.helm.values) and lands in a ConfigMap: K8s caps a ConfigMap object
+# at 1 MiB and the Application manifest must clear the same etcd/api-server order
+# of limits; 64 KiB raw (~86 KiB base64) keeps both far below their caps.
 CONFIG_FILE_CONTENT_MAX_BYTES = 64 * 1024
 
 # Ports the Istio sidecar / HPA monitoring already bind on every v3 pod.
@@ -69,8 +68,8 @@ class ImagePullSecret(BaseModel):
     username: str
     password: str
 
-    # Base64 encoded versions to avoid shell variable expansion issues
-    # (e.g., $oauthtoken being interpreted as an environment variable)
+    # Base64-encoded on the wire; the image-pull Secret template b64decodes them.
+    # Retained for compatibility, including deployments pinned to older chart revisions.
     username_base64: str = ""
     password_base64: str = ""
 
@@ -80,11 +79,11 @@ class ImagePullSecret(BaseModel):
 
     @model_validator(mode="after")
     def _encode_credentials(self) -> Self:
-        """Create Base64 encoded versions of username and password.
+        """Populate the base64 shadow fields for username and password.
 
-        This is needed because ArgoCD may pass Helm parameters through shell,
-        causing special characters like $ to be interpreted as variables.
-        The Helm template uses b64dec to decode these values.
+        Deployments pinned to old chart revisions render credentials from these
+        fields (their templates b64dec them), so both stay populated for
+        compatibility until pinned revisions are retired (#3998).
         """
         self.username_base64 = self.base64_encode(self.username)
         self.password_base64 = self.base64_encode(self.password)
@@ -104,10 +103,9 @@ class HPA(BaseModel):
     # Then everything is configured the same way, with no special cases
     # in the chart. Using a huge value essentially disables autoscaling.
     #
-    # We use 2^53 (max float64 safe integer) instead of 2^63-1 because
-    # ArgoCD passes Helm values via --set, which coerces numbers through
-    # float64. Values above 2^53 lose precision, and 2^63-1 rounds to
-    # 2^63 which overflows int64 in Go.
+    # We use 2^53 (max float64 safe integer) instead of 2^63-1 because Helm
+    # decodes the values through float64. Values above 2^53 lose precision, and
+    # 2^63-1 rounds to 2^63 which overflows int64 in Go.
     average_value: int = 2**53
 
     # KEDA ScaledObject cooldown in seconds. Controls how long KEDA waits
@@ -201,7 +199,7 @@ class ConfigFileMount(BaseModel):
     @field_validator("content")
     @classmethod
     def validate_content_size(cls, v: str) -> str:
-        # Pydantic max_length counts Unicode characters; the helm/exec wire limit is bytes.
+        # Pydantic max_length counts Unicode characters; the ConfigMap size bound is on bytes.
         n = len(v.encode("utf-8"))
         if n > CONFIG_FILE_CONTENT_MAX_BYTES:
             raise ValueError(f"content must be at most {CONFIG_FILE_CONTENT_MAX_BYTES} UTF-8 bytes (got {n})")
@@ -221,12 +219,11 @@ class ConfigFileMount(BaseModel):
         return self
 
 
-# TODO(#3571): drop the subclass + content_base64 + ConfigMap b64dec once
-# helm.values replaces --set; user content won't need ASCII-safe encoding for strvals.
 class ConfigFileMountValues(ConfigFileMount):
-    # Helm template's b64dec consumes this; base helm_params flattens it onto the
-    # wire automatically. The API response schema is the parent ConfigFileMount, so
-    # FastAPI strips this field on serialization.
+    # The chart mounts this as ConfigMap binaryData, which k8s decodes verbatim into the
+    # file, so the base64 payload is load-bearing (it preserves the content byte-for-byte).
+    # helm_values_yaml() emits it on the wire; the API response schema is the parent
+    # ConfigFileMount, so FastAPI strips this field on serialization.
     content_base64: str = ""
 
     @model_validator(mode="after")
@@ -236,10 +233,9 @@ class ConfigFileMountValues(ConfigFileMount):
 
     @field_serializer("content")
     def _serialize_content(self, value: str, info) -> str:
-        # Drop the raw payload from the helm wire only. helm strvals breaks on { } [ ]
-        # in --set-string values (PR #3656 testing reproduced this); the chart consumes
-        # only content_base64 so an empty wire value is harmless. by_alias=True is set
-        # exclusively by HelmValues.helm_params; DB persistence and API responses use
+        # Drop the raw payload from the helm wire only. The chart consumes only
+        # content_base64, so an empty wire value is harmless. by_alias=True is set by
+        # HelmValues.helm_values_yaml(); DB persistence and API responses use
         # by_alias=False and see the original content.
         return "" if info.by_alias else value
 
@@ -280,9 +276,6 @@ class InferenceDeploymentValues(DeploymentBaseHelmValues):
 
     # HorizontalPodAutoscaler config
     hpa: HPA
-
-    # Initial replicas is the number of replicas to start with.
-    initial_replicas: int = 1
 
     healthcheck: Optional[str] = "/"
     command: Optional[list[str]] = None
@@ -336,4 +329,4 @@ class InferenceDeploymentValues(DeploymentBaseHelmValues):
 
 class InferenceDeploymentConfig(BaseAppConfig):
     values: InferenceDeploymentValues
-    app_path: str = "catalog/inference_deployment_v3"
+    app_path: str = "catalog/src/catalog/inference_deployment_v3"

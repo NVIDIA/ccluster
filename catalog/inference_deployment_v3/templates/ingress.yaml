@@ -4,7 +4,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: acme-ca
     {{- if .Values.endpoint_certificate_authority }}
-    nginx.ingress.kubernetes.io/auth-tls-secret: user-{{ .Values.user_id }}/{{ .Values.name }}-ca-secret
+    nginx.ingress.kubernetes.io/auth-tls-secret: user-{{ .Values.user_id | int }}/{{ .Values.name }}-ca-secret
     nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
     {{- end }}
     # Use default to HTTP to make it backward compatible with the existing catalog fields
@@ -13,7 +13,7 @@ metadata:
     # internal FQDN so the sidecar can match the VirtualService.  Without this,
     # nginx forwards the ingress domain as Host and Istio resets the connection —
     # fatal for gRPC (no :authority match) and a latent risk for HTTP.
-    nginx.ingress.kubernetes.io/upstream-vhost: {{ .Values.name }}.user-{{ .Values.user_id }}.svc.cluster.local
+    nginx.ingress.kubernetes.io/upstream-vhost: {{ .Values.name }}.user-{{ .Values.user_id | int }}.svc.cluster.local
     # The default read timeout (response silence) is 60 seconds, but this causes issues with 
     # non-streaming LLM completions that take longer than a minute. Setting to 15 minutes for now.
     # This also is used for models with long context to start responding.
@@ -30,9 +30,9 @@ metadata:
     {{- end}}
   generation: 1
   labels:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
   name: "{{ .Values.name }}"
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
   ingressClassName: nginx
   rules:

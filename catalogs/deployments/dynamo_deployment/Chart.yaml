@@ -1,0 +1,6 @@
+apiVersion: v2
+name: deployments_dynamo_deployment
+description: An inference service on NVIDIA Dynamo - a DynamoGraphDeployment with a Frontend and vLLM workers, aggregated and KEDA-scaled or disaggregated into fixed prefill and decode pools
+type: application
+version: 0.1.0
+appVersion: "1.4.0"

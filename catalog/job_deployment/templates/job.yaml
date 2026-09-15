@@ -1,36 +1,45 @@
+{{- $volumeNameByClaim := dict }}
+{{- range $index, $mount := .Values.volume_mounts }}
+{{- if not (hasKey $volumeNameByClaim $mount.name) }}
+{{- $_ := set $volumeNameByClaim $mount.name (printf "external-volume-%d" $index) }}
+{{- end }}
+{{- end }}
 {{- template "setExtraConfigFiles" . }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   annotations:
     argocd.argoproj.io/sync-options: Replace=true
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-    platform.centml.ai/user-id: "{{ .Values.user_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+    platform.centml.ai/user-id: "{{ .Values.user_id | int }}"
   labels:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
     platform.centml.ai/workload_type: job
+    {{- if .Values.kai_queue }}
+    kai.scheduler/queue: {{ .Values.kai_queue | quote }}
+    {{- end }}
   name: "{{ .Values.name }}"
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
-  backoffLimit: {{ .Values.backoff_limit }}
+  backoffLimit: {{ .Values.backoff_limit | int }}
   ttlSecondsAfterFinished: 7200
   {{- if .Values.active_deadline_seconds }}
-  activeDeadlineSeconds: {{ .Values.active_deadline_seconds }}
+  activeDeadlineSeconds: {{ .Values.active_deadline_seconds | int }}
   {{- end }}
   {{- if .Values.completions }}
-  completions: {{ .Values.completions }}
+  completions: {{ .Values.completions | int }}
   {{- end }}
   {{- if .Values.parallelism }}
-  parallelism: {{ .Values.parallelism }}
+  parallelism: {{ .Values.parallelism | int }}
   {{- end }}
   completionMode: Indexed
   template:
     metadata:
       annotations:
         sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
         platform.centml.ai/revision-number: "1"
-        platform.centml.ai/user-id: "{{ .Values.user_id }}"
+        platform.centml.ai/user-id: "{{ .Values.user_id | int }}"
         {{- if not .Values.enable_logging }}
         platform.centml.ai/log-exclude: "true"
         {{- end }}
@@ -40,9 +49,13 @@ spec:
         {{- end }}
         {{- end }}
       labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
         platform.centml.ai/revision-number: "1"
         platform.centml.ai/workload_type: job
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kai_queue }}
+        kai.scheduler/queue: {{ .Values.kai_queue | quote }}
+        {{- end }}
         {{- if .Values.user_annotations }}
         {{- range $key, $value := .Values.user_annotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
@@ -52,6 +65,9 @@ spec:
       {{- if .Values.scheduler_name }}
       schedulerName: {{ .Values.scheduler_name }}
       {{- end }}
+      {{- if .Values.priority_class_name }}
+      priorityClassName: {{ .Values.priority_class_name | quote }}
+      {{- end }}
       restartPolicy: Never
       affinity:
         nodeAffinity:
@@ -59,7 +75,7 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                 {{- range $key, $value := .Values.node_affinity_labels }}
-                - key: "{{ $key }}"
+                - key: {{ $key | quote }}
                   operator: In
                   values:
                     - {{ $value | quote }}
@@ -81,10 +97,10 @@ spec:
           {{- end }}
           env:
             - name: "JOB_COMPLETIONS"
-              value: "{{ .Values.completions }}"
+              value: "{{ .Values.completions | int }}"
             {{- range $key, $value := .Values.env_vars }}
-            - name: "{{ $key }}"
-              value: "{{ $value }}"
+            - name: {{ $key | quote }}
+              value: {{ $value | quote }}
             {{- end }}
           resources:
             limits:
@@ -98,6 +114,11 @@ spec:
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
+            {{- range $mount := .Values.volume_mounts }}
+            - mountPath: {{ $mount.mount_path | quote }}
+              name: {{ get $volumeNameByClaim $mount.name }}
+              readOnly: {{ $mount.read_only }}
+            {{- end }}
             # See _helpers.tpl for instructions on how to define extraConfigFiles.
             # subPath/mountPath are quoted: a filename like "true" or "123" passes the
             # API regex but would otherwise render as a YAML bool/number and be
@@ -123,6 +144,15 @@ spec:
             medium: Memory
             sizeLimit: {{ default "512Mi" .Values.dev_shm_size }}
           name: dshm
+        {{- $renderedClaims := dict }}
+        {{- range $mount := .Values.volume_mounts }}
+        {{- if not (hasKey $renderedClaims $mount.name) }}
+        {{- $_ := set $renderedClaims $mount.name true }}
+        - name: {{ get $volumeNameByClaim $mount.name }}
+          persistentVolumeClaim:
+            claimName: {{ $mount.name | quote }}
+        {{- end }}
+        {{- end }}
         # See _helpers.tpl for instructions on how to define extraConfigFiles
         {{- range .ExtraConfigFiles }}
         - name: {{ .configMapName }}

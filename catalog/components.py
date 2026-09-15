@@ -1,12 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-import yaml
 from pydantic import (
     BaseModel,
     ByteSize,
@@ -167,52 +165,17 @@ class SecurityContext(BaseModel):
     for volumes and any files created in that volume will be this GID `fs_group`."""
 
 
-# HelmValues is a base class that provides a method to convert the Pydantic model to a list
-# of dictionaries that can be used as Helm parameters in Argo CD. It also provides a method
-# to convert the Pydantic model to YAML for the values.yaml file.
 class HelmValues(BaseModel):
-    def _flatten_yaml(self, d: Any, parent_key: str = "", sep: str = ".") -> dict[str, Any]:
-        if isinstance(d, dict):
-            return self._flatten_yaml_dict(d=d, parent_key=parent_key, sep=sep)
-        elif isinstance(d, (list, tuple)):
-            return self._flatten_yaml_list(d=d, parent_key=parent_key, sep=sep)
-        else:
-            return {parent_key: d}
+    def helm_values_yaml(self) -> str:
+        """Serialize to a JSON string for the ArgoCD helm.values field.
 
-    def _flatten_yaml_dict(self, d: dict[str, Any], parent_key="", sep=".") -> dict[str, Any]:
-        flat_dict = {}
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            flat_dict.update(self._flatten_yaml(d=v, parent_key=new_key, sep=sep))
-        return flat_dict
-
-    def _flatten_yaml_list(self, d: list | tuple, parent_key="", sep=".") -> dict[str, Any]:
-        flat_dict = {}
-        for i, v in enumerate(d):
-            new_key = f"{parent_key}[{i}]"
-            flat_dict.update(self._flatten_yaml(d=v, parent_key=new_key, sep=sep))
-        return flat_dict
-
-    def helm_params(self) -> list[dict[str, str | bool | None]]:
-        # JSON is a subset of YAML
-        yaml_content = yaml.safe_load(self.model_dump_json(by_alias=True))
-        flat_dict = self._flatten_yaml(yaml_content)
-        params = []
-        for k, v in flat_dict.items():
-            # https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/
-            # We force Argo CD to parse everything that's a string as a string.
-            # We need forceString to make sure argo do not parse password as number etc.
-            params.append(
-                {
-                    "name": k,
-                    "value": str(v) if v is not None else None,
-                    "forceString": isinstance(v, str),
-                }
-            )
-        return params
-
-    def yaml(self):
-        return yaml.dump(self.model_dump(by_alias=True))
+        JSON is a subset of YAML, so Helm/ArgoCD consume it directly, and its
+        unconditional string quoting keeps number-like values (zero-padded ids,
+        "1e-5", octal-looking file modes) from being coerced to numbers by Helm's
+        Go YAML parser. by_alias runs the Pydantic field_serializers (CPU -> "2",
+        memory -> "4000Mi").
+        """
+        return self.model_dump_json(by_alias=True)
 
 
 # DevShm provides the fields for dev_shm_size, and a method to set the default value for
@@ -302,27 +265,28 @@ class CommonJobSpec(BaseModel):
     """Specifies the security context."""
 
 
-# DeploymentBaseHelmValues is a base class that provides the common fields for deployment values.
-# Specifically, it provides the fields for dev_shm_size and resources. It also provides a method
-# to set the default value for dev_shm_size if it is not provided.
-class DeploymentBaseHelmValues(DevShm, ResourceRequirements, HelmValues):
+# DeploymentSharedHelmValues contains deployment-wide fields that are not owned by
+# any particular pod or worker pool. Most charts have one homogeneous workload and
+# continue to use DeploymentBaseHelmValues below; multi-pool charts can inherit this
+# narrower base and place resources/dev_shm_size on their component values instead.
+class DeploymentSharedHelmValues(HelmValues):
     user_annotations: dict[str, str] | None = None
     # Scheduler name injected into pod spec, defaulting to "kai-scheduler" for
     # GPU bin-packing. Set to "" to fall back to the cluster default scheduler.
     scheduler_name: Optional[str] = "kai-scheduler"
+    # Leaf queue name for label kai.scheduler/queue. Unset keeps pods on the
+    # chart default-queue (unlimited). Set to org-{organization_id} when org
+    # Queue CRs exist.
+    kai_queue: Optional[str] = None
+    # Kubernetes PriorityClass name on the pod spec. Omit to leave unset.
+    priority_class_name: Optional[str] = None
 
-    def helm_params(self) -> list[dict[str, str | bool | None]]:
-        # Dots in user_annotations keys are the K8s annotation separator but ALSO
-        # Helm --set's nesting separator. Escape them at emit time so Helm parses
-        # them as literal characters. We do this here (not at model construction)
-        # so the DB preserves the user's raw keys — round-trips via GET/PUT and
-        # deployment clone return what the user originally typed.
-        if not self.user_annotations:
-            return super().helm_params()
-        escaped = self.model_copy(
-            update={"user_annotations": {re.escape(k): v for k, v in self.user_annotations.items()}}
-        )
-        return HelmValues.helm_params(escaped)
+
+# DeploymentBaseHelmValues is the legacy homogeneous-workload base. It provides
+# dev_shm_size and resources in addition to the deployment-wide shared fields, and
+# defaults dev_shm_size from the single workload's requested memory.
+class DeploymentBaseHelmValues(DevShm, ResourceRequirements, DeploymentSharedHelmValues):
+    pass
 
 
 class BaseAppConfig(BaseModel):

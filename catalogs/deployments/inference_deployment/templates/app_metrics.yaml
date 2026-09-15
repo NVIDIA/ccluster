@@ -43,7 +43,7 @@ spec:
       platform.centml.ai/sm: custom-metrics-{{ .Values.deploymentId }}
   endpoints:
     - port: metrics
-      path: {{ $m.path | default "/metrics" }}
+      path: {{ $m.path | default "/metrics" | quote }}
       interval: 15s
       scheme: https
       # Force HTTP/1.1 to dodge a known transport-layer fragility specific to

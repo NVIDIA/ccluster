@@ -76,14 +76,18 @@ module-wide builds, tests and lint. A compile error here also breaks controller-
 See [the catalog design](../DESIGN.md#the-typed-catalog-and-what-it-does-not-guarantee)
 for validation boundaries and why deployment choices belong to callers.
 
-There are two catalogs and one standalone chart. `catalogs/cluster_base/` wraps upstream
-platform charts, so each `Values` nests the upstream values under the chart's key.
-`catalogs/deployments/` holds the tenant workload charts written here
-(`inference_deployment`, `compute_deployment`, `job_deployment`); their `Values` is the
-chart's own top-level document with camelCase keys, the shared pod-level fields come from
-embedding `deployments.Workload`, and every `Values` implements `Validate()`.
-`catalogs/namespace_base/` is the per-tenant namespace baseline those workloads assume is
-installed first; it takes no values. These charts derive everything namespace-scoped from
+There are three catalogs and one standalone chart. `catalogs/cluster_base/` wraps
+upstream platform charts, so each `Values` nests the upstream values under the chart's
+key. `catalogs/deployments/` holds the tenant workload charts written here
+(`inference_deployment`, `compute_deployment`, `job_deployment`, `dynamo_deployment`);
+their `Values` is the chart's own top-level document with camelCase keys, the pod-level
+fields most of them share come from embedding `deployments.Workload`, the autoscaling
+and rollout types live in the `deployments` package, and every `Values` implements
+`Validate()`. `catalogs/resources/` holds the resources those workloads reference:
+`kai_gpu_queues` (the KAI scheduler quota tree the `kaiQueue` value joins) and
+`persistent_volume` (a claim the `volumeMounts` value mounts). `catalogs/namespace_base/`
+is the per-tenant namespace baseline the workloads assume is installed first; it takes
+no values. These charts derive everything namespace-scoped from
 the release namespace, which Argo CD sets to the component's `namespace`; they take no
 tenant identifier. Render one locally with
 `helm template <name> catalogs/<path> -n <namespace> -f <values>`.
@@ -120,6 +124,7 @@ Generated directories, deleted and rebuilt on each run:
 - `python/src/ccluster/v1alpha1/`
 - `python/src/ccluster/catalogs/cluster_base/`
 - `python/src/ccluster/catalogs/deployments/`
+- `python/src/ccluster/catalogs/resources/`
 - `python/src/ccluster/catalogs/namespace_base/`
 
 Hand-written files are `python/src/ccluster/__init__.py`,

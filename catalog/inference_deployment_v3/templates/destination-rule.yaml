@@ -10,14 +10,14 @@
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
-  name: {{ .Values.name }}
-  namespace: user-{{ .Values.user_id }}
+  name: {{ .Values.name | quote }}
+  namespace: user-{{ .Values.user_id | int }}
   labels:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
 spec:
   # Must point to ClusterIP Service, not ExternalName.
   # Istio 1.21+: DestinationRule cannot apply to ExternalName services.
-  host: {{ .Values.name }}.user-{{ .Values.user_id }}.svc.cluster.local
+  host: {{ .Values.name }}.user-{{ .Values.user_id | int }}.svc.cluster.local
   {{- if .Values.session_affinity }}
   trafficPolicy:
     loadBalancer:

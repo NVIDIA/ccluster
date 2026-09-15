@@ -1,10 +1,11 @@
+{{- if not .Values.home_pvc_name }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   labels:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
   name: "{{ .Values.name }}"
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -13,3 +14,4 @@ spec:
       storage:
         "{{ max 100 (mul .Values.resources.requests.accelerator_count 100)}}Gi"
   storageClassName: "{{ .Values.storage_class_name }}"
+{{- end }}

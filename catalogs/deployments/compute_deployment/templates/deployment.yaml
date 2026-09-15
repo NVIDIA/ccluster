@@ -1,3 +1,12 @@
+{{- /* The home claim is the chart's own unless homePvcName supplies one; every other
+       claim in volumeMounts gets one pod volume however many times it is mounted. */}}
+{{- $homeClaimName := default .Values.name .Values.homePvcName }}
+{{- $volumeNameByClaim := dict $homeClaimName "compute-volume" }}
+{{- range $index, $mount := .Values.volumeMounts }}
+{{- if not (hasKey $volumeNameByClaim $mount.name) }}
+{{- $_ := set $volumeNameByClaim $mount.name (printf "external-volume-%d" $index) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,6 +19,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
+  # The home volume and any volumeMounts are ReadWriteOnce; a RollingUpdate would try to
+  # schedule the new pod before the old one releases the claim and get stuck attaching.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
@@ -19,6 +32,9 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+        {{- with .Values.revisionNumber }}
+        platform.centml.ai/revision-number: "{{ . | int64 }}"
+        {{- end }}
         {{- if not .Values.enableLogging }}
         platform.centml.ai/log-exclude: "true"
         {{- end }}
@@ -29,7 +45,14 @@ spec:
         {{- end }}
       labels:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+        {{- with .Values.revisionNumber }}
+        platform.centml.ai/revision-number: "{{ . | int64 }}"
+        {{- end }}
         platform.centml.ai/workload_type: compute
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kaiQueue }}
+        kai.scheduler/queue: {{ .Values.kaiQueue | quote }}
+        {{- end }}
         {{- if .Values.userAnnotations }}
         {{- range $key, $value := .Values.userAnnotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
@@ -39,16 +62,19 @@ spec:
       {{- if .Values.schedulerName }}
       schedulerName: {{ .Values.schedulerName }}
       {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName | quote }}
+      {{- end }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                 {{- range $key, $value := .Values.nodeAffinityLabels }}
-                - key: "{{ $key }}"
+                - key: {{ $key | quote }}
                   operator: In
                   values:
-                    - {{ $value }}
+                    - {{ $value | quote }}
                 {{- end }}
       initContainers:
         - name: ssh-launcher-init
@@ -65,12 +91,12 @@ spec:
           - name: "CCLUSTER_SSH_ADDR"
             value: ":{{ .Values.containerPort }}"
           - name: "CCLUSTER_SSH_HOST_KEY_DIR"
-            value: "/home/.ccluster/ssh"
+            value: "/home/.ccluster/ssh{{ if .Values.homePvcName }}/{{ .Values.deploymentId }}{{ end }}"
           - name: "CCLUSTER_SSH_WORKDIR"
             value: "/home"
           {{- range $key, $value := .Values.envVars }}
-          - name: "{{ $key }}"
-            value: "{{ $value }}"
+          - name: {{ $key | quote }}
+            value: {{ $value | quote }}
           {{- end }}
 
           # if the customer has provided a private key, we need to mount it into the container
@@ -83,13 +109,13 @@ spec:
           # if the customer has provided a github username, we need to set it as an env var
           {{- if .Values.sshGithubUsername }}
           - name: "SSH_GITHUB_USERNAME"
-            value: "{{ .Values.sshGithubUsername }}"
+            value: {{ .Values.sshGithubUsername | quote }}
           {{- end }}
 
           # if  the customer has provided a username we need to set it as an env var
           {{- if .Values.sshUsername }}
           - name: "SSH_USERNAME"
-            value: "{{ .Values.sshUsername }}"
+            value: {{ .Values.sshUsername | quote }}
           {{- end }}
 
           # if the customer has provided a password we need to load the secret into an env var
@@ -105,6 +131,11 @@ spec:
           command:
             - /ccluster/compute-ssh/compute-ssh
           name: user-container
+          # A compute deployment is an interactive box; keep its SSH identity
+          # consistent instead of inheriting an arbitrary image's USER.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
           ports:
             - containerPort: {{ .Values.containerPort }}
               protocol: TCP
@@ -133,6 +164,11 @@ spec:
               name: compute-volume
             - mountPath: /dev/shm
               name: dshm
+          {{- range $mount := .Values.volumeMounts }}
+            - mountPath: {{ $mount.mountPath | quote }}
+              name: {{ get $volumeNameByClaim $mount.name }}
+              readOnly: {{ $mount.readOnly | default false }}
+          {{- end }}
           {{- if .Values.sshPublicKey }}
             # note we can't overlay mounts unfortunately
             - mountPath: /authorized_keys
@@ -165,11 +201,20 @@ spec:
           emptyDir: {}
         - name: compute-volume
           persistentVolumeClaim:
-            claimName: "{{ .Values.name }}"
+            claimName: {{ $homeClaimName | quote }}
         - emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.devShmSize }}
           name: dshm
+      {{- $renderedClaims := dict $homeClaimName true }}
+      {{- range $mount := .Values.volumeMounts }}
+      {{- if not (hasKey $renderedClaims $mount.name) }}
+      {{- $_ := set $renderedClaims $mount.name true }}
+        - name: {{ get $volumeNameByClaim $mount.name }}
+          persistentVolumeClaim:
+            claimName: {{ $mount.name | quote }}
+      {{- end }}
+      {{- end }}
       {{- if .Values.sshPublicKey }}
         - name: authorized-keys
           configMap:

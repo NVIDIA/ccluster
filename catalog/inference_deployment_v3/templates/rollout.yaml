@@ -6,8 +6,8 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: {{ .Values.name }}
-  namespace: user-{{ .Values.user_id }}
+  name: {{ .Values.name | quote }}
+  namespace: user-{{ .Values.user_id | int }}
   annotations:
     {{- if .Values.plan_yaml }}
     platform.centml.ai/plan-yaml-hash: "{{ .Values.plan_yaml | sha256sum | trunc 8 }}"
@@ -35,7 +35,7 @@ spec:
   # template's labels.
   selector:
     matchLabels:
-      platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+      platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
 
   # if set to true, the rollout will be paused
   paused: {{ .Values.rollout_paused }}
@@ -44,9 +44,9 @@ spec:
   template:
     metadata:
       annotations:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-        platform.centml.ai/revision-number: "{{ .Values.revision_number }}"      
-        platform.centml.ai/user-id: "{{ .Values.user_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+        platform.centml.ai/revision-number: "{{ .Values.revision_number | int }}"
+        platform.centml.ai/user-id: "{{ .Values.user_id | int }}"
         {{- if not .Values.enable_logging }}
         platform.centml.ai/log-exclude: "true"
         {{- end }}
@@ -64,9 +64,13 @@ spec:
             inclusionRegexps:
             - ".*downstream_rq.*"
       labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-        platform.centml.ai/revision-number: "{{ .Values.revision_number }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+        platform.centml.ai/revision-number: "{{ .Values.revision_number | int }}"
         platform.centml.ai/custom_metrics: enabled
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kai_queue }}
+        kai.scheduler/queue: {{ .Values.kai_queue | quote }}
+        {{- end }}
         {{- if .Values.user_annotations }}
         {{- range $key, $value := .Values.user_annotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
@@ -75,6 +79,9 @@ spec:
     spec:
       {{- if .Values.scheduler_name }}
       schedulerName: {{ .Values.scheduler_name }}
+      {{- end }}
+      {{- if .Values.priority_class_name }}
+      priorityClassName: {{ .Values.priority_class_name | quote }}
       {{- end }}
       # Security is enforced at namespace level via PSA "baseline".
       securityContext:
@@ -92,10 +99,10 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                   {{- range $key, $value := .Values.node_affinity_labels }}
-                  - key: {{ $key }}
+                  - key: {{ $key | quote }}
                     operator: In
                     values:
-                      - {{ $value }}
+                      - {{ $value | quote }}
                   {{- end }}
       containers:
         - image: "{{ .Values.image_url }}"
@@ -103,13 +110,13 @@ spec:
           {{- if .Values.command }}
           command: 
             {{- range .Values.command }}
-            - {{ . }}
+            - {{ . | quote }}
             {{- end }}
           {{- end }}
           {{- if .Values.command_args }}
           args:
             {{- range .Values.command_args }}
-            - {{ . }}
+            - {{ . | quote }}
             {{- end }}
           {{- end }}
           env:
@@ -120,12 +127,12 @@ spec:
               value: /tmp
             {{- end }}
             {{- range $key, $value := .Values.env_vars }}
-            - name: {{ $key }}
-              value: "{{ $value }}"
+            - name: {{ $key | quote }}
+              value: {{ $value | quote }}
             {{- end }}
             {{- if .Values.hf_token }}
             - name: HF_TOKEN
-              value: "{{ .Values.hf_token }}"
+              value: {{ .Values.hf_token | quote }}
             {{- end }}
           ports:
             - containerPort: {{ .Values.container_port }}              
@@ -139,7 +146,7 @@ spec:
             successThreshold: 1	
             {{- if .Values.healthcheck }}
             httpGet:
-              path: {{ .Values.healthcheck }}
+              path: {{ .Values.healthcheck | quote }}
               port: {{ .Values.container_port }}
             {{- else }}
             # TCP socket check for gRPC or when no healthcheck path is specified
@@ -220,7 +227,7 @@ spec:
       # See: https://github.com/argoproj/argo-rollouts/blob/master/pkg/apis/rollouts/v1alpha1/types.go
       # Note: values must be unquoted integers so argo-rollouts treats them as absolute pod counts,
       # not percentages (quoted strings are interpreted as percentages by argo-rollouts).
-      maxSurge: {{ .Values.rollout_strategy.max_surge }}
+      maxSurge: {{ .Values.rollout_strategy.max_surge | int }}
 
   # MaxUnavailable The maximum number of pods that can be unavailable during the update.
       # Value can be an absolute number (ex: 5) or a percentage of total pods at the start of update (ex: 10%).
@@ -236,4 +243,4 @@ spec:
       # See: https://github.com/argoproj/argo-rollouts/blob/master/pkg/apis/rollouts/v1alpha1/types.go
       # Note: values must be unquoted integers so argo-rollouts treats them as absolute pod counts,
       # not percentages (quoted strings are interpreted as percentages by argo-rollouts).
-      maxUnavailable: {{ .Values.rollout_strategy.max_unavailable }}
+      maxUnavailable: {{ .Values.rollout_strategy.max_unavailable | int }}

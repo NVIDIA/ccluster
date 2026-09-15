@@ -3,7 +3,7 @@
   {{- $extraConfigFiles := list -}}
   {{- if .Values.config_file -}}
     {{- $entry := dict
-          "configMapName"        (printf "inference-config-%v-r%v" .Values.deployment_id .Values.revision_number)
+          "configMapName"        (printf "inference-config-%v-r%v" (.Values.deployment_id | int) (.Values.revision_number | int))
           "volumeMountMountPath" (printf "%s/%s" .Values.config_file.mount_path .Values.config_file.filename)
           "volumeMountSubPath"   .Values.config_file.filename
           "volumeMountReadOnly"  "true"

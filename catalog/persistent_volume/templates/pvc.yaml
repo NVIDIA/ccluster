@@ -1,0 +1,31 @@
+{{- $backend := required "backend is required" .Values.backend }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    platform.centml.ai/volume-id: "{{ .Values.volume_id | int }}"
+    platform.centml.ai/volume-name: "{{ .Values.name }}"
+  # Id-derived, never the user-chosen name: volume ids are globally unique, so the PVC
+  # name cannot collide across users/orgs by construction (CCL-142)
+  name: vol-{{ .Values.volume_id | int }}
+  namespace: user-{{ .Values.user_id | int }}
+spec:
+  accessModes:
+    - ReadWriteMany
+{{- if eq $backend "object" }}
+  volumeMode: Filesystem
+  resources:
+    requests:
+      # Mountpoint ignores capacity, but Kubernetes requires a request.
+      storage: 1Gi
+  # An empty StorageClass keeps this claim on the statically defined PV.
+  storageClassName: ""
+  volumeName: vol-{{ .Values.volume_id | int }}
+{{- else }}
+  resources:
+    requests:
+      storage: "{{ .Values.size_gb | int }}Gi"
+  # Immediate classes bind after this PVC is created. WaitForFirstConsumer classes
+  # intentionally stay Pending until an attached workload creates the first consumer.
+  storageClassName: "{{ .Values.storage_class_name }}"
+{{- end }}

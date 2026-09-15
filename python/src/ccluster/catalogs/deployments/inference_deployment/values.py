@@ -60,7 +60,7 @@ class ConfigFile(BaseModel):
 
 class HPA(BaseModel):
     """
-    HPA bounds the KEDA ScaledObject that scales the Rollout.
+    HPA bounds the KEDA ScaledObject that scales the workers.
     """
 
     model_config = ConfigDict(
@@ -69,9 +69,9 @@ class HPA(BaseModel):
     )
     min_replicas: Annotated[int | None, Field(alias="minReplicas")] = None
     """
-    MinReplicas is the lower bound. 0 enables scale-to-zero, which needs the
-    cluster's Prometheus to scrape nginx ingress controller metrics; without them
-    the deployment never wakes. The chart ships 1.
+    MinReplicas is the lower bound. The chart ships 1. For inference_deployment, 0
+    enables scale-to-zero, which needs the cluster's Prometheus to scrape nginx
+    ingress controller metrics; dynamo_deployment does not support 0.
     """
     max_replicas: Annotated[int | None, Field(alias="maxReplicas")] = None
     """
@@ -165,7 +165,7 @@ class Resources(BaseModel):
 
 class RolloutStrategy(BaseModel):
     """
-    RolloutStrategy bounds the Rollout's canary steps, as absolute pod counts.
+    RolloutStrategy bounds a rolling update, as absolute pod counts.
     """
 
     model_config = ConfigDict(
@@ -262,6 +262,16 @@ class Values(BaseModel):
     """
     SchedulerName is the pod's scheduler. The chart ships kai-scheduler, which
     bin-packs GPUs; an explicit "" falls back to the cluster's default scheduler.
+    """
+    kai_queue: Annotated[str | None, Field(alias="kaiQueue")] = None
+    """
+    KaiQueue is the KAI scheduler queue the pods are labelled kai.scheduler/queue
+    with, one of the leaf queues catalogs/resources/kai_gpu_queues creates. Unset
+    leaves the pods on the scheduler's default queue.
+    """
+    priority_class_name: Annotated[str | None, Field(alias="priorityClassName")] = None
+    """
+    PriorityClassName is the pod's PriorityClass. Unset leaves it to the cluster.
     """
     enable_logging: Annotated[bool | None, Field(alias="enableLogging")] = None
     """

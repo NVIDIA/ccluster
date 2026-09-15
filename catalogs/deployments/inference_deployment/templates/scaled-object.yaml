@@ -4,12 +4,12 @@ metadata:
   name: "{{ .Values.name }}-scaledobject"
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ .Values.name }}
+    app: {{ .Values.name | quote }}
 spec:
   scaleTargetRef:
     apiVersion: argoproj.io/v1alpha1
     kind: Rollout
-    name: {{ .Values.name }}
+    name: {{ .Values.name | quote }}
   minReplicaCount: {{ .Values.hpa.minReplicas | int }}
   maxReplicaCount: {{ .Values.hpa.maxReplicas | int }}
   # Both cooldowns are driven by the same hpa.cooldownPeriod.

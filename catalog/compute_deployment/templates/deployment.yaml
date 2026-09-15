@@ -1,26 +1,49 @@
+{{- $homeClaimName := default .Values.name .Values.home_pvc_name }}
+{{- $volumeNameByClaim := dict $homeClaimName "compute-volume" }}
+{{- range $index, $mount := .Values.volume_mounts }}
+{{- if not (hasKey $volumeNameByClaim $mount.name) }}
+{{- $_ := set $volumeNameByClaim $mount.name (printf "external-volume-%d" $index) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-    platform.centml.ai/user-id: "{{ .Values.user_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+    platform.centml.ai/user-id: "{{ .Values.user_id | int }}"
   labels:
-    platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+    platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
     platform.centml.ai/workload_type: compute
   name: "{{ .Values.name }}"
-  namespace: user-{{ .Values.user_id }}
+  namespace: user-{{ .Values.user_id | int }}
 spec:
   replicas: 1
+  # Home volume (and any additional volume_mounts) are ReadWriteOnce; RollingUpdate would try to
+  # schedule the new pod before the old one releases the PVC, leaving it stuck unable to attach.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
         platform.centml.ai/workload_type: compute
   template:
     metadata:
       annotations:
         sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-        platform.centml.ai/user-id: "{{ .Values.user_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+        platform.centml.ai/user-id: "{{ .Values.user_id | int }}"
+        {{- /*
+        Guarded on key presence so a chart bump alone never restarts a running workload.
+        ArgoCD stores helm.values as a literal string written at the last API push, so a
+        deployment untouched since this annotation was introduced has no revision_number
+        key at all -- re-rendering it leaves the pod template byte-identical and nothing
+        is recreated. The revision metadata appears on the next push that already restarts the
+        workload (create, update, or rollout), where the API always supplies the key.
+        Test key presence, not truthiness: legacy values omit the key rather than null it.
+        */}}
+        {{- if hasKey .Values "revision_number" }}
+        platform.centml.ai/revision-number: "{{ .Values.revision_number | int }}"
+        {{- end }}
         {{- if not .Values.enable_logging }}
         platform.centml.ai/log-exclude: "true"
         {{- end }}
@@ -30,18 +53,28 @@ spec:
         {{- end }}
         {{- end }}
       labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+        platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
+        {{- if hasKey .Values "revision_number" }}
+        platform.centml.ai/revision-number: "{{ .Values.revision_number | int }}"
+        {{- end }}
         platform.centml.ai/workload_type: compute
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kai_queue }}
+        kai.scheduler/queue: {{ .Values.kai_queue | quote }}
+        {{- end }}
         {{- if .Values.user_annotations }}
         {{- range $key, $value := .Values.user_annotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
         {{- end }}
         {{- end }}
       name: "{{ .Values.name }}"
-      namespace: user-{{ .Values.user_id }}
+      namespace: user-{{ .Values.user_id | int }}
     spec:
       {{- if .Values.scheduler_name }}
       schedulerName: {{ .Values.scheduler_name }}
+      {{- end }}
+      {{- if .Values.priority_class_name }}
+      priorityClassName: {{ .Values.priority_class_name | quote }}
       {{- end }}
       affinity:
         nodeAffinity:
@@ -49,10 +82,10 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                 {{- range $key, $value := .Values.node_affinity_labels }}
-                - key: "{{ $key }}"
+                - key: {{ $key | quote }}
                   operator: In
                   values:
-                    - {{ $value }}
+                    - {{ $value | quote }}
                 {{- end }}
       initContainers:
         - name: ssh-launcher-init
@@ -69,12 +102,12 @@ spec:
           - name: "CCLUSTER_SSH_ADDR"
             value: ":{{ .Values.container_port }}"
           - name: "CCLUSTER_SSH_HOST_KEY_DIR"
-            value: "/home/.ccluster/ssh"
+            value: "/home/.ccluster/ssh{{ if .Values.home_pvc_name }}/{{ .Values.deployment_id | int }}{{ end }}"
           - name: "CCLUSTER_SSH_WORKDIR"
             value: "/home"
           {{- range $key, $value := .Values.env_vars }}
-          - name: "{{ $key }}"
-            value: "{{ $value }}"
+          - name: {{ $key | quote }}
+            value: {{ $value | quote }}
           {{- end }}
 
           # if the customer has provided a private key, we need to mount it into the container
@@ -87,13 +120,13 @@ spec:
           # if the customer has provided a github username, we need to set it as an env var
           {{- if .Values.ssh_github_username }}
           - name: "SSH_GITHUB_USERNAME"
-            value: "{{ .Values.ssh_github_username }}"
+            value: {{ .Values.ssh_github_username | quote }}
           {{- end }}
 
           # if  the customer has provided a username we need to set it as an env var
           {{- if .Values.ssh_username }}
           - name: "SSH_USERNAME"
-            value: "{{ .Values.ssh_username }}"
+            value: {{ .Values.ssh_username | quote }}
           {{- end }}
 
           # if the customer has provided a password we need to load the secret into an env var
@@ -102,13 +135,18 @@ spec:
             valueFrom:
               secretKeyRef:
                 key: ssh_password
-                name: ssh-password-{{ .Values.deployment_id }}
+                name: ssh-password-{{ .Values.deployment_id | int }}
           {{- end }}
 
           image: "{{ .Values.image_url }}"
           command:
             - /ccluster/compute-ssh/compute-ssh
           name: user-container
+          # A compute deployment is an interactive box; keep its SSH identity
+          # consistent instead of inheriting an arbitrary image's USER.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
           ports:
             - containerPort: {{ .Values.container_port }}
               protocol: TCP
@@ -129,6 +167,11 @@ spec:
               name: compute-volume
             - mountPath: /dev/shm
               name: dshm
+          {{- range $mount := .Values.volume_mounts }}
+            - mountPath: {{ $mount.mount_path | quote }}
+              name: {{ get $volumeNameByClaim $mount.name }}
+              readOnly: {{ $mount.read_only }}
+          {{- end }}
           {{- if .Values.ssh_public_key }}
             # note we can't overlay mounts unfortunately
             - mountPath: /authorized_keys
@@ -161,13 +204,22 @@ spec:
           emptyDir: {}
         - name: compute-volume
           persistentVolumeClaim:
-            claimName: "{{ .Values.name }}"
+            claimName: {{ $homeClaimName | quote }}
         - emptyDir:
             medium: Memory
             sizeLimit: {{ default "512Mi" .Values.dev_shm_size }}
           name: dshm
+      {{- $renderedClaims := dict $homeClaimName true }}
+      {{- range $mount := .Values.volume_mounts }}
+      {{- if not (hasKey $renderedClaims $mount.name) }}
+      {{- $_ := set $renderedClaims $mount.name true }}
+        - name: {{ get $volumeNameByClaim $mount.name }}
+          persistentVolumeClaim:
+            claimName: {{ $mount.name | quote }}
+      {{- end }}
+      {{- end }}
       {{- if .Values.ssh_public_key }}
         - name: authorized-keys
           configMap:
-            name: authorized-keys-{{ .Values.deployment_id }}
+            name: authorized-keys-{{ .Values.deployment_id | int }}
       {{- end }}

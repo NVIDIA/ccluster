@@ -1,0 +1,39 @@
+# -------------------------------------------------------------------
+# Required service identifiers
+# -------------------------------------------------------------------
+name: test-dynamo
+user_id: 1340
+deployment_id: 1732
+image_url: "nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.4.0"
+container_port: 8000
+request_plane: tcp
+domain: "127.0.0.1.sslip.io"
+revision_number: 1
+model: "Qwen/Qwen3-0.6B"
+scheduler_name: kai-scheduler
+kai_queue: org-7
+# Aggregated rendering always supplies hpa; fixed = min == max. Mirror that here so
+# the chart tests exercise the DGDSA / ScaledObject / ServiceMonitor path.
+hpa:
+  min_replicas: 1
+  max_replicas: 1
+extra_argv: []
+backend_protocol: HTTP
+rollout_strategy:
+    max_surge: 0
+    max_unavailable: 1
+env_vars: {}
+worker_pool:
+  node_affinity_labels:
+    platform.centml.ai/instance-type: "small"
+  resources:
+    limits:
+      cpu: "1"
+      memory: "500Mi"
+      accelerator_key: "nvidia.com/gpu"
+      accelerator_count: 1
+    requests:
+      cpu: "1"
+      memory: "250Mi"
+      accelerator_key: "nvidia.com/gpu"
+      accelerator_count: 1

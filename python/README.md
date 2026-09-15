@@ -3,8 +3,8 @@
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
 every chart in the catalog, plus a small client that registers clusters with the control
 plane and deploys component sets onto them. The models are **generated**: nothing in `ccluster/v1alpha1/`,
-`ccluster/catalogs/cluster_base/`, `ccluster/catalogs/deployments/` or
-`ccluster/catalogs/namespace_base/` is written by hand.
+`ccluster/catalogs/cluster_base/`, `ccluster/catalogs/deployments/`,
+`ccluster/catalogs/resources/` or `ccluster/catalogs/namespace_base/` is written by hand.
 
 ```bash
 uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py

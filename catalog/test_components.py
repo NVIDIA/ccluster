@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import yaml
 from pydantic import ValidationError
 
 from catalog.components import (
     DeploymentBaseHelmValues,
-    HelmValues,
+    PersistentVolumeClaimToMount,
     ResourceLimitsRequests,
     Resources,
     cpu_resource_str,
@@ -23,6 +23,7 @@ from catalog.components import (
 )
 from catalog.compute_deployment import ComputeDeploymentValues
 from catalog.cserve_deployment_v3 import CServeV3InferenceDeploymentValues
+from catalog.dynamo_deployment import DynamoDeploymentValues, DynamoWorkerPoolValues
 from catalog.inference_deployment_v3 import (
     CONFIG_FILE_CONTENT_MAX_BYTES,
     CONFIGMAP_KEY_MAX_LENGTH,
@@ -31,13 +32,21 @@ from catalog.inference_deployment_v3 import (
     BackendProtocol,
     ConfigFileMount,
     ConfigFileMountValues,
+    ImagePullSecret,
     InferenceDeploymentValues,
     MetricsConfig,
     RolloutStrategy,
 )
 from catalog.job_deployment import JobDeploymentValues
+from catalog.persistent_volume import (
+    FilesystemPersistentVolumeValues,
+    ObjectPersistentVolumeValues,
+    PersistentVolumeConfig,
+    PersistentVolumeValues,
+)
 
 _HELM_BIN = shutil.which("helm")
+COMPONENT_TYPE_LABEL = "ccluster.nvidia.com/component-type"
 
 
 class TestHelperFunctions(unittest.TestCase):
@@ -93,68 +102,6 @@ class ResourceLimitsRequestsTest(unittest.TestCase):
         self.assertEqual(resource_limits_requests.limits.cpu, 1000)
         self.assertEqual(resource_limits_requests.requests.memory, 1024)
         self.assertEqual(resource_limits_requests.limits.accelerator_count, 2)
-
-
-class HelmValuesTest(unittest.TestCase):
-    def setUp(self):
-        self.helm_values = HelmValues()
-
-    def test_flatten_yaml(self):
-        nested_dict = {"parent": {"child1": "value1", "child2": "value2"}}
-        expected_flat_dict = {"parent.child1": "value1", "parent.child2": "value2"}
-        flat_dict = self.helm_values._flatten_yaml(nested_dict)
-        self.assertEqual(flat_dict, expected_flat_dict)
-
-    def test_flatten_yaml_does_not_escape_dots(self):
-        """
-        _flatten_yaml_dict must NOT touch the characters inside keys. Callers
-        such as `get_hardware_specifications_v2` pre-escape node_affinity_labels
-        keys at the API boundary (`re.escape(...)`); if flatten added a second
-        layer of escaping the result would be `\\\\.` which Helm --set parses as
-        literal `\\` then nesting `.`, breaking the rendered key. Regression
-        guard for the bug found while debugging PR #3646.
-        """
-        # Already-escaped key from a re.escape caller upstream
-        pre_escaped = {"node_affinity_labels": {r"platform\.centml\.ai/instance\-type": "small"}}
-        flat = self.helm_values._flatten_yaml(pre_escaped)
-        self.assertEqual(
-            flat,
-            {r"node_affinity_labels.platform\.centml\.ai/instance\-type": "small"},
-        )
-        # Plain key with dot - flatten still leaves it literal (no auto-escape)
-        plain = {"a.b": "v"}
-        self.assertEqual(self.helm_values._flatten_yaml(plain), {"a.b": "v"})
-
-    @patch("yaml.safe_load")
-    def test_helm_params(self, mock_safe_load):
-        # Mocking the JSON-to-YAML conversion
-        mock_safe_load.return_value = {
-            "key1": "value1",
-            "key2": {"key3": "value3"},
-            "key4": None,
-            "key5": "123",
-            "key6": 123,
-            "key7": [{"key8": 4}, {"key9": "5"}],
-        }
-        expected_params = [
-            {"name": "key1", "value": "value1", "forceString": True},
-            {"name": "key2.key3", "value": "value3", "forceString": True},
-            {"name": "key4", "value": None, "forceString": False},
-            {"name": "key5", "value": "123", "forceString": True},
-            {"name": "key6", "value": "123", "forceString": False},
-            {"name": "key7[0].key8", "value": "4", "forceString": False},
-            {"name": "key7[1].key9", "value": "5", "forceString": True},
-        ]
-
-        params = self.helm_values.helm_params()
-        self.assertEqual(params, expected_params)
-
-    @patch("yaml.dump")
-    def test_yaml(self, mock_yaml_dump):
-        # Mocking the Pydantic model's YAML serialization
-        mock_yaml_dump.return_value = "key1: value1\nkey2:\n  key3: value3\n"
-        yaml_output = self.helm_values.yaml()
-        self.assertEqual(yaml_output, "key1: value1\nkey2:\n  key3: value3\n")
 
 
 class TestDeploymentBaseHelmValues(unittest.TestCase):
@@ -239,298 +186,135 @@ class TestDeploymentBaseHelmValues(unittest.TestCase):
         serialized = deployment_values.model_dump()
         self.assertIsNone(serialized["supplemental_group_ids"])
 
-    def test_helm_params(self):
-        """Test that helm_params method returns the correct list of parameters."""
-        resources = ResourceLimitsRequests(
-            limits=Resources(
-                cpu=2000,
-                memory=4000,
-                accelerator_key="nvidia.com/gpu",
-                gpus=1,
-                accelerator_count=2,
-            ),
-            requests=Resources(
-                cpu=1000,
-                memory=1000,
-                gpus=2,
-                accelerator_key="nvidia.com/gpu",
-                infiniband_count=2,
-            ),
-        )
-        deployment_values = DeploymentBaseHelmValues(dev_shm_size=500, resources=resources)
-        params = deployment_values.helm_params()
-        expected_params = [
-            {"name": "dev_shm_size", "value": "500Mi", "forceString": True},
-            {"name": "resources.limits.cpu", "value": "2", "forceString": True},
-            {"name": "resources.limits.gpus", "value": "1", "forceString": False},
-            {"name": "resources.limits.memory", "value": "4000Mi", "forceString": True},
-            {
-                "name": "resources.limits.accelerator_key",
-                "value": "nvidia.com/gpu",
-                "forceString": True,
-            },
-            {
-                "name": "resources.limits.accelerator_count",
-                "value": "2",
-                "forceString": False,
-            },
-            {
-                "name": "resources.limits.infiniband_key",
-                "value": "nvidia.com/ib",
-                "forceString": True,
-            },
-            {
-                "name": "resources.limits.infiniband_count",
-                "value": "0",
-                "forceString": False,
-            },
-            {"name": "resources.requests.cpu", "value": "1", "forceString": True},
-            {"name": "resources.requests.gpus", "value": "2", "forceString": False},
-            {
-                "name": "resources.requests.memory",
-                "value": "1000Mi",
-                "forceString": True,
-            },
-            {
-                "name": "resources.requests.accelerator_key",
-                "value": "nvidia.com/gpu",
-                "forceString": True,
-            },
-            {
-                "name": "resources.requests.accelerator_count",
-                "value": "2",
-                "forceString": False,
-            },
-            {
-                "name": "resources.requests.infiniband_key",
-                "value": "nvidia.com/ib",
-                "forceString": True,
-            },
-            {
-                "name": "resources.requests.infiniband_count",
-                "value": "2",
-                "forceString": False,
-            },
-            {"name": "supplemental_group_ids", "value": None, "forceString": False},
-            {"name": "user_annotations", "value": None, "forceString": False},
-            {"name": "scheduler_name", "value": "kai-scheduler", "forceString": True},
-        ]
-        self.assertEqual(len(params), len(expected_params))
-        for param in expected_params:
-            self.assertIn(param, params)
 
-    def test_user_annotations_escaped_in_helm_params_only(self):
-        """
-        Dotted keys in user_annotations must be escaped for Helm --set, but the
-        model's own field must keep the raw keys so DB round-trips (clone, GET/PUT)
-        return the user's original input.
-        """
-        resources = ResourceLimitsRequests(
-            limits=Resources(cpu=2000, memory=4000, accelerator_count=1),
-            requests=Resources(cpu=1000, memory=1000, accelerator_count=0),
-        )
-        values = DeploymentBaseHelmValues(
-            dev_shm_size=500,
-            resources=resources,
-            user_annotations={"balsfa.dfan": "v", "team": "infra"},
+class TestPersistentVolumeValues(unittest.TestCase):
+    def _values(self) -> FilesystemPersistentVolumeValues:
+        return FilesystemPersistentVolumeValues(
+            user_id=42, volume_id=1001, name="my-volume", size_gb=250, storage_class_name="longhorn"
         )
 
-        # Field unchanged after helm_params()
-        params = values.helm_params()
-        self.assertEqual(values.user_annotations, {"balsfa.dfan": "v", "team": "infra"})
-
-        names = {p["name"]: p["value"] for p in params}
-        self.assertEqual(names.get("user_annotations.balsfa\\.dfan"), "v")
-        self.assertEqual(names.get("user_annotations.team"), "infra")
-        # Pre-escape regression guard: no double-backslash
-        self.assertNotIn("user_annotations.balsfa\\\\.dfan", names)
-
-    def test_user_annotations_none_or_empty_no_escape_call(self):
-        """None / empty user_annotations should not break helm_params()."""
-        resources = ResourceLimitsRequests(
-            limits=Resources(cpu=2000, memory=4000, accelerator_count=1),
-            requests=Resources(cpu=1000, memory=1000, accelerator_count=0),
+    def test_helm_values_yaml_keeps_scalar_types(self):
+        values = json.loads(self._values().helm_values_yaml())
+        self.assertEqual(
+            values,
+            {
+                "user_id": 42,
+                "volume_id": 1001,
+                "name": "my-volume",
+                "backend": "filesystem",
+                "size_gb": 250,
+                "storage_class_name": "longhorn",
+            },
         )
-        for ua in (None, {}):
-            values = DeploymentBaseHelmValues(dev_shm_size=500, resources=resources, user_annotations=ua)
-            # Should not raise; downstream Helm/ArgoCD handles the empty/None case.
-            values.helm_params()
 
-
-class TestJobDeploymentTemplate(unittest.TestCase):
-    def test_indexed_completion_and_total_completions_env_are_always_rendered(self):
-        template_path = Path(__file__).parent / "job_deployment/templates/job.yaml"
-        template = template_path.read_text()
-
-        completion_mode_block = "  completionMode: Indexed"
-        env_block = """          env:
-            - name: "JOB_COMPLETIONS"
-              value: "{{ .Values.completions }}"
-            {{- range $key, $value := .Values.env_vars }}"""
-
-        self.assertIn(completion_mode_block, template)
-        self.assertIn(env_block, template)
-
-    def test_job_lifecycle_options_are_rendered(self):
-        template_path = Path(__file__).parent / "job_deployment/templates/job.yaml"
-        template = template_path.read_text()
-
-        self.assertIn("  backoffLimit: {{ .Values.backoff_limit }}", template)
-        self.assertIn("  ttlSecondsAfterFinished: 7200", template)
-        self.assertIn("  {{- if .Values.active_deadline_seconds }}", template)
-        self.assertIn("  activeDeadlineSeconds: {{ .Values.active_deadline_seconds }}", template)
-
-    def test_user_annotations_render_as_pod_annotations_and_labels(self):
-        template_path = Path(__file__).parent / "job_deployment/templates/job.yaml"
-        template = template_path.read_text()
-
-        annotation_block = """      annotations:
-        sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-        platform.centml.ai/revision-number: "1"
-        platform.centml.ai/user-id: "{{ .Values.user_id }}"
-        {{- if not .Values.enable_logging }}
-        platform.centml.ai/log-exclude: "true"
-        {{- end }}
-        {{- if .Values.user_annotations }}
-        {{- range $key, $value := .Values.user_annotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}"""
-        label_block = """      labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
-        platform.centml.ai/revision-number: "1"
-        platform.centml.ai/workload_type: job
-        {{- if .Values.user_annotations }}
-        {{- range $key, $value := .Values.user_annotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}"""
-
-        self.assertIn(annotation_block, template)
-        self.assertIn(label_block, template)
-
-    def test_config_file_volume_wiring_is_rendered(self):
-        template_path = Path(__file__).parent / "job_deployment/templates/job.yaml"
-        template = template_path.read_text()
-
-        self.assertIn('{{- template "setExtraConfigFiles" . }}', template)
-
-        volume_mount_block = """            {{- range .ExtraConfigFiles }}
-            - name: {{ .configMapName }}
-              readOnly: {{ .volumeMountReadOnly }}
-              subPath: {{ .volumeMountSubPath | quote }}
-              mountPath: {{ .volumeMountMountPath | quote }}
-            {{- end }}"""
-        volume_block = """        {{- range .ExtraConfigFiles }}
-        - name: {{ .configMapName }}
-          configMap:
-            name: {{ .configMapName }}
-        {{- end }}"""
-
-        self.assertIn(volume_mount_block, template)
-        self.assertIn(volume_block, template)
+    def test_app_path(self):
+        config = PersistentVolumeConfig(values=self._values())
+        self.assertEqual(config.app_path, "catalog/src/catalog/persistent_volume")
 
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
-class TestComputeDeploymentHelmTemplate(unittest.TestCase):
-    CHART_PATH = Path(__file__).resolve().parent /"compute_deployment"
+class TestPersistentVolumeHelmTemplate(unittest.TestCase):
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "persistent_volume"
 
-    def _values(self, image_pull_secret=None) -> dict:
-        resources = {
-            "cpu": "1",
-            "memory": "1Gi",
-            "accelerator_count": 0,
-            "accelerator_key": "nvidia.com/gpu",
-        }
-        return {
+    def _render(self, values: PersistentVolumeValues) -> list[dict]:
+        return _parse_rendered_docs(_helm_template(self.CHART_PATH, values.helm_values_yaml()))
+
+    def _object_values(self, **overrides) -> ObjectPersistentVolumeValues:
+        values = {
             "user_id": 42,
-            "deployment_id": 100,
-            "name": "compute-probe",
-            "image_url": "ubuntu:24.04",
-            "ssh_injector_image": "registry.local/compute-ssh-launcher:test",
-            "image_pull_secret": image_pull_secret,
-            "domain": "centml.ai",
-            "container_port": 2222,
-            "exposed_port": 22,
-            "node_affinity_labels": {"zone": "a"},
-            "resources": {"limits": resources, "requests": resources},
-            "storage_class_name": "standard",
-            "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-            "enable_logging": True,
+            "volume_id": 1001,
+            "name": "my-volume",
+            "bucket": "models-bucket",
+            "region": "us-west-2",
         }
-
-    def _render_dict(self, values_dict: dict) -> list[dict]:
-        assert _HELM_BIN is not None
-        helm_bin: str = _HELM_BIN
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-            yaml.safe_dump(values_dict, f)
-            values_path = f.name
-        try:
-            result = subprocess.run(
-                [helm_bin, "template", "probe", str(self.CHART_PATH), "-f", values_path],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        finally:
-            os.unlink(values_path)
-        return [d for d in yaml.safe_load_all(result.stdout.replace("\t", " ")) if d]
+        values.update(overrides)
+        return ObjectPersistentVolumeValues(**values)
 
     def _find(self, docs: list[dict], kind: str, name: str) -> dict:
         matches = [d for d in docs if d.get("kind") == kind and d.get("metadata", {}).get("name") == name]
         self.assertEqual(len(matches), 1, f"expected exactly one {kind}/{name}, found {len(matches)}")
         return matches[0]
 
-    def test_compute_deployment_renders_ssh_launcher_injection(self):
-        docs = self._render_dict(self._values())
-        deployment = self._find(docs, "Deployment", "compute-probe")
-        pod_spec = deployment["spec"]["template"]["spec"]
-
-        init_container = pod_spec["initContainers"][0]
-        self.assertEqual(init_container["name"], "ssh-launcher-init")
-        self.assertEqual(init_container["image"], "registry.local/compute-ssh-launcher:test")
-        self.assertEqual(init_container["command"], ["/compute-ssh", "install", "/ssh-bin/compute-ssh"])
-
-        user_container = pod_spec["containers"][0]
-        self.assertEqual(user_container["name"], "user-container")
-        self.assertEqual(user_container["command"], ["/ccluster/compute-ssh/compute-ssh"])
-        self.assertIn({"containerPort": 2222, "protocol": "TCP"}, user_container["ports"])
-
-        env = {entry["name"]: entry["value"] for entry in user_container["env"] if "value" in entry}
-        self.assertEqual(env["CCLUSTER_SSH_ADDR"], ":2222")
-        self.assertEqual(env["CCLUSTER_SSH_HOST_KEY_DIR"], "/home/.ccluster/ssh")
-        self.assertEqual(env["CCLUSTER_SSH_WORKDIR"], "/home")
-        self.assertEqual(env["SSH_PUBLIC_KEY_FILE"], "/authorized_keys")
-
-        mount_names = {mount["name"]: mount["mountPath"] for mount in user_container["volumeMounts"]}
-        self.assertEqual(mount_names["ssh-launcher"], "/ccluster/compute-ssh")
-        self.assertEqual(mount_names["compute-volume"], "/home")
-        self.assertEqual(mount_names["authorized-keys"], "/authorized_keys")
-
-        volume_names = {volume["name"] for volume in pod_spec["volumes"]}
-        self.assertIn("ssh-launcher", volume_names)
-        self.assertIn("compute-volume", volume_names)
-
-    def test_compute_image_pull_secret_renders_when_configured(self):
-        docs = self._render_dict(
-            self._values(
-                image_pull_secret={
-                    "server": "registry.example.com",
-                    "username": "user",
-                    "password": "pass",
-                    "username_base64": "dXNlcg==",
-                    "password_base64": "cGFzcw==",
-                }
-            )
+    def test_renders_single_rwx_pvc_with_id_derived_name(self):
+        values = FilesystemPersistentVolumeValues(
+            user_id=42, volume_id=1001, name="my-volume", size_gb=250, storage_class_name="longhorn"
         )
-        deployment = self._find(docs, "Deployment", "compute-probe")
-        image_pull_secret_names = [item["name"] for item in deployment["spec"]["template"]["spec"]["imagePullSecrets"]]
-        self.assertIn("ecr-image-pull", image_pull_secret_names)
-        self.assertIn("compute-probe-image-pull-secret", image_pull_secret_names)
+        docs = self._render(values)
 
-        secret = self._find(docs, "Secret", "compute-probe-image-pull-secret")
-        self.assertEqual(secret["type"], "kubernetes.io/dockerconfigjson")
+        # The chart renders exactly one object: the PVC, named from the volume id (never the
+        # user-chosen name)
+        self.assertEqual(len(docs), 1)
+        pvc = self._find(docs, "PersistentVolumeClaim", "vol-1001")
+        self.assertEqual(pvc["metadata"]["namespace"], "user-42")
+        self.assertEqual(pvc["metadata"]["labels"]["platform.centml.ai/volume-id"], "1001")
+        self.assertEqual(pvc["metadata"]["labels"]["platform.centml.ai/volume-name"], "my-volume")
+        self.assertEqual(pvc["spec"]["accessModes"], ["ReadWriteMany"])
+        self.assertEqual(pvc["spec"]["resources"]["requests"]["storage"], "250Gi")
+        self.assertEqual(pvc["spec"]["storageClassName"], "longhorn")
+
+    def test_storage_class_rendered_verbatim(self):
+        values = FilesystemPersistentVolumeValues(
+            user_id=42, volume_id=1001, name="my-volume", size_gb=100, storage_class_name="custom.class-01"
+        )
+        docs = self._render(values)
+        pvc = self._find(docs, "PersistentVolumeClaim", "vol-1001")
+        self.assertEqual(pvc["spec"]["storageClassName"], "custom.class-01")
+
+    def test_large_ids_render_as_integers(self):
+        # helm.values arrives as JSON, so ids land in Go as float64; without `| int`
+        # anything >= 1e6 would render in scientific notation (vol-1.000002e+06).
+        values = FilesystemPersistentVolumeValues(
+            user_id=1000013, volume_id=1000002, name="my-volume", size_gb=250, storage_class_name="longhorn"
+        )
+        docs = self._render(values)
+        pvc = self._find(docs, "PersistentVolumeClaim", "vol-1000002")
+        self.assertEqual(pvc["metadata"]["namespace"], "user-1000013")
+        self.assertEqual(pvc["metadata"]["labels"]["platform.centml.ai/volume-id"], "1000002")
+
+    def test_renders_static_s3_pv_and_pvc(self):
+        docs = self._render(self._object_values())
+
+        self.assertEqual(len(docs), 2)
+        pv = self._find(docs, "PersistentVolume", "vol-1001")
+        pvc = self._find(docs, "PersistentVolumeClaim", "vol-1001")
+
+        self.assertEqual(pv["metadata"]["labels"]["platform.centml.ai/volume-id"], "1001")
+        self.assertEqual(pv["metadata"]["labels"]["platform.centml.ai/volume-name"], "my-volume")
+        self.assertEqual(pv["spec"]["accessModes"], ["ReadWriteMany"])
+        self.assertEqual(pv["spec"]["capacity"]["storage"], "1Gi")
+        self.assertEqual(pv["spec"]["claimRef"], {"name": "vol-1001", "namespace": "user-42"})
+        self.assertEqual(pv["spec"]["persistentVolumeReclaimPolicy"], "Retain")
+        self.assertEqual(pv["spec"]["storageClassName"], "")
+        self.assertEqual(pv["spec"]["volumeMode"], "Filesystem")
+        self.assertEqual(pv["spec"]["mountOptions"], ["region us-west-2"])
+        self.assertEqual(
+            pv["spec"]["csi"],
+            {
+                "driver": "s3.csi.aws.com",
+                "volumeAttributes": {
+                    "authenticationSource": "driver",
+                    "bucketName": "models-bucket",
+                },
+                "volumeHandle": "vol-1001",
+            },
+        )
+
+        self.assertEqual(pvc["metadata"]["namespace"], "user-42")
+        self.assertEqual(pvc["spec"]["accessModes"], ["ReadWriteMany"])
+        self.assertEqual(pvc["spec"]["resources"]["requests"]["storage"], "1Gi")
+        self.assertEqual(pvc["spec"]["storageClassName"], "")
+        self.assertEqual(pvc["spec"]["volumeMode"], "Filesystem")
+        self.assertEqual(pvc["spec"]["volumeName"], "vol-1001")
+        self.assertFalse(any(doc.get("kind") == "StorageClass" for doc in docs))
+
+    def test_renders_prefix_and_volume_read_only_as_mount_options(self):
+        docs = self._render(self._object_values(prefix="models/v1/", read_only=True))
+
+        pv = self._find(docs, "PersistentVolume", "vol-1001")
+        self.assertEqual(
+            pv["spec"]["mountOptions"],
+            ["region us-west-2", "prefix models/v1/", "read-only"],
+        )
 
 
 class TestRolloutStrategy(unittest.TestCase):
@@ -555,6 +339,127 @@ class TestRolloutStrategy(unittest.TestCase):
         rs = RolloutStrategy()
         self.assertEqual(rs.max_surge, 0)
         self.assertEqual(rs.max_unavailable, 1)
+
+
+class TestHelmValuesYaml(unittest.TestCase):
+    def test_basic_serialization(self):
+        """helm_values_yaml() produces the JSON document Helm parses, with correct values."""
+        resources = ResourceLimitsRequests(
+            limits=Resources(cpu=2000, memory=4000, accelerator_count=1, accelerator_key="nvidia.com/gpu"),
+            requests=Resources(cpu=1000, memory=1000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+        )
+        values = DeploymentBaseHelmValues(dev_shm_size=500, resources=resources)
+        yaml_str = values.helm_values_yaml()
+        parsed = json.loads(yaml_str)
+
+        self.assertEqual(parsed["dev_shm_size"], "500Mi")
+        self.assertEqual(parsed["resources"]["limits"]["cpu"], "2")
+        self.assertEqual(parsed["resources"]["limits"]["memory"], "4000Mi")
+        self.assertEqual(parsed["resources"]["requests"]["cpu"], "1")
+
+    def test_none_values_rendered_as_null(self):
+        """None values are rendered as null (Helm treats them identically to absent)."""
+        resources = ResourceLimitsRequests(
+            limits=Resources(cpu=1000, memory=1000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+            requests=Resources(cpu=500, memory=500, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+        )
+        values = DeploymentBaseHelmValues(dev_shm_size=None, resources=resources)
+        yaml_str = values.helm_values_yaml()
+        parsed = json.loads(yaml_str)
+
+        self.assertIsNone(parsed["supplemental_group_ids"])
+
+    def test_string_types_preserved(self):
+        """Strings that look like numbers stay as strings in the serialized document."""
+        resources = ResourceLimitsRequests(
+            limits=Resources(cpu=16000, memory=32000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+            requests=Resources(cpu=8000, memory=16000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+        )
+        values = DeploymentBaseHelmValues(dev_shm_size=500, resources=resources)
+        yaml_str = values.helm_values_yaml()
+        parsed = json.loads(yaml_str)
+
+        # CPU "16" should remain a string, not become int 16
+        self.assertIsInstance(parsed["resources"]["limits"]["cpu"], str)
+        self.assertEqual(parsed["resources"]["limits"]["cpu"], "16")
+
+    def test_number_like_string_env_vars_survive_as_strings(self):
+        """Number-like env values (zero-padded ids, "1e-5", octal modes) must stay strings.
+
+        Helm parses helm.values through a Go YAML->JSON parser that coerces bare
+        number-like scalars to numbers; the serializer must keep them quoted. Parsing
+        the output as JSON mirrors exactly what Helm sees, so a PyYAML roundtrip (which
+        re-reads its own quoting) would not catch the coercion this guards against.
+        """
+        from catalog.inference_deployment_v3 import InferenceDeploymentValues
+
+        env_vars = {
+            "MONTH": "08",
+            "POSTAL_CODE": "01890",
+            "ACCOUNT_ID": "012345678901",
+            "FILE_MODE": "00640",
+            "LEARNING_RATE": "1e-5",
+            "CHECKSUM": "0e462097431906509019562988736854",
+        }
+        instance = InferenceDeploymentValues(
+            user_id=1,
+            deployment_id=1,
+            name="test",
+            image_url="test-image",
+            domain="test.com",
+            container_port=8080,
+            hpa={"metric_name": "test_metric"},
+            revision_number=1,
+            node_affinity_labels={},
+            env_vars=env_vars,
+            resources=ResourceLimitsRequests(
+                limits=Resources(cpu=1000, memory=1000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+                requests=Resources(cpu=500, memory=500, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+            ),
+        )
+
+        parsed = json.loads(instance.helm_values_yaml())
+
+        self.assertEqual(parsed["env_vars"], env_vars)
+        for key in env_vars:
+            self.assertIsInstance(parsed["env_vars"][key], str)
+
+    def test_image_pull_secret_plain_fields_in_yaml(self):
+        """helm_values_yaml() includes plain image_pull_secret fields with $ preserved."""
+        from catalog.inference_deployment_v3 import InferenceDeploymentValues
+
+        instance = InferenceDeploymentValues(
+            user_id=1,
+            deployment_id=1,
+            name="test",
+            image_url="test-image",
+            domain="test.com",
+            container_port=8080,
+            hpa={"metric_name": "test_metric"},
+            revision_number=1,
+            node_affinity_labels={},
+            image_pull_secret={
+                "server": "nvcr.io",
+                "username": "$oauthtoken",
+                "password": "secret-key-123",
+            },
+            resources=ResourceLimitsRequests(
+                limits=Resources(cpu=1000, memory=1000, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+                requests=Resources(cpu=500, memory=500, accelerator_count=0, accelerator_key="nvidia.com/gpu"),
+            ),
+        )
+
+        yaml_str = instance.helm_values_yaml()
+        parsed = json.loads(yaml_str)
+
+        secret = parsed["image_pull_secret"]
+        self.assertEqual(secret["server"], "nvcr.io")
+        self.assertEqual(secret["username"], "$oauthtoken")
+        self.assertEqual(secret["password"], "secret-key-123")
+        # The *_base64 shadow stays on the wire: charts pinned via chart_revision
+        # still b64dec these fields (removal tracked in #3998).
+        self.assertEqual(base64.b64decode(secret["username_base64"]).decode(), "$oauthtoken")
+        self.assertEqual(base64.b64decode(secret["password_base64"]).decode(), "secret-key-123")
 
 
 class TestHPA(unittest.TestCase):
@@ -628,21 +533,17 @@ class TestInferenceDeploymentValuesSessionAffinity(unittest.TestCase):
         vals = _make_inference_values()
         self.assertFalse(vals.session_affinity)
 
-    def test_session_affinity_false_in_helm_params(self):
+    def test_session_affinity_false_in_helm_values(self):
         # False value is required so Helm's {{- if .Values.session_affinity }}
         # evaluates to false and skips the DestinationRule template entirely.
         vals = _make_inference_values()
-        params = vals.helm_params()
-        sa = [p for p in params if p["name"] == "session_affinity"]
-        self.assertEqual(len(sa), 1)
-        self.assertEqual(sa[0]["value"], "False")
+        values = json.loads(vals.helm_values_yaml())
+        self.assertIs(values["session_affinity"], False)
 
-    def test_session_affinity_true_in_helm_params(self):
+    def test_session_affinity_true_in_helm_values(self):
         vals = _make_inference_values(session_affinity=True)
-        params = vals.helm_params()
-        sa = [p for p in params if p["name"] == "session_affinity"]
-        self.assertEqual(len(sa), 1)
-        self.assertEqual(sa[0]["value"], "True")
+        values = json.loads(vals.helm_values_yaml())
+        self.assertIs(values["session_affinity"], True)
 
     def test_backward_compat_missing_session_affinity_in_json(self):
         # Old app_config JSONB records (written before session_affinity existed)
@@ -757,7 +658,7 @@ class TestInferenceValuesMetricsPassthrough(unittest.TestCase):
         self.assertEqual(vals.metrics.path, "/custom")
 
 
-class TestConfigFileMountValues(unittest.TestCase):
+class TestConfigFileMount(unittest.TestCase):
     VALID = {
         "filename": "config.yaml",
         "mount_path": "/etc/engine",
@@ -765,7 +666,7 @@ class TestConfigFileMountValues(unittest.TestCase):
     }
 
     def test_valid_entry(self):
-        cf = ConfigFileMountValues(**self.VALID)
+        cf = ConfigFileMount(**self.VALID)
         self.assertEqual(cf.filename, "config.yaml")
         self.assertEqual(cf.mount_path, "/etc/engine")
         self.assertEqual(cf.content, "engine: vllm\n")
@@ -773,43 +674,43 @@ class TestConfigFileMountValues(unittest.TestCase):
     def test_content_empty_raises(self):
         # Empty content is almost always user error — they forgot to paste.
         with self.assertRaises(ValidationError):
-            ConfigFileMountValues(**{**self.VALID, "content": ""})
+            ConfigFileMount(**{**self.VALID, "content": ""})
 
     def test_filename_empty_raises(self):
         with self.assertRaises(ValidationError):
-            ConfigFileMountValues(**{**self.VALID, "filename": ""})
+            ConfigFileMount(**{**self.VALID, "filename": ""})
 
     def test_filename_with_slash_raises(self):
         with self.assertRaises(ValidationError):
-            ConfigFileMountValues(**{**self.VALID, "filename": "dir/config.yaml"})
+            ConfigFileMount(**{**self.VALID, "filename": "dir/config.yaml"})
 
     def test_filename_non_ascii_raises(self):
         with self.assertRaises(ValidationError):
-            ConfigFileMountValues(**{**self.VALID, "filename": "配置.yaml"})
+            ConfigFileMount(**{**self.VALID, "filename": "配置.yaml"})
 
     def test_filename_too_long_raises(self):
         with self.assertRaises(ValidationError):
-            ConfigFileMountValues(**{**self.VALID, "filename": "a" * (CONFIGMAP_KEY_MAX_LENGTH + 1)})
+            ConfigFileMount(**{**self.VALID, "filename": "a" * (CONFIGMAP_KEY_MAX_LENGTH + 1)})
 
     def test_filename_at_max_length_ok(self):
-        ConfigFileMountValues(**{**self.VALID, "filename": "a" * CONFIGMAP_KEY_MAX_LENGTH})
+        ConfigFileMount(**{**self.VALID, "filename": "a" * CONFIGMAP_KEY_MAX_LENGTH})
 
     def test_filename_dotdir_rejected(self):
         # K8s hasChDirPrefix rejects ".", "..", and anything starting with "..".
         for bad in (".", "..", "..config", "..hidden.yaml"):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
-                ConfigFileMountValues(**{**self.VALID, "filename": bad})
+                ConfigFileMount(**{**self.VALID, "filename": bad})
 
     def test_filename_single_dot_prefix_allowed(self):
-        ConfigFileMountValues(**{**self.VALID, "filename": ".env"})
+        ConfigFileMount(**{**self.VALID, "filename": ".env"})
 
     def test_mount_path_relative_raises(self):
         with self.assertRaisesRegex(ValidationError, "absolute path"):
-            ConfigFileMountValues(**{**self.VALID, "mount_path": "etc/engine"})
+            ConfigFileMount(**{**self.VALID, "mount_path": "etc/engine"})
 
     def test_mount_path_root_raises(self):
         with self.assertRaisesRegex(ValidationError, "root"):
-            ConfigFileMountValues(**{**self.VALID, "mount_path": "/"})
+            ConfigFileMount(**{**self.VALID, "mount_path": "/"})
 
     def test_mount_path_forbidden_roots_raise(self):
         for bad in ("/proc", "/proc/1", "/sys/fs", "/dev", "/dev/null"):
@@ -817,60 +718,64 @@ class TestConfigFileMountValues(unittest.TestCase):
                 self.subTest(bad=bad),
                 self.assertRaisesRegex(ValidationError, "must not be under"),
             ):
-                ConfigFileMountValues(**{**self.VALID, "mount_path": bad})
+                ConfigFileMount(**{**self.VALID, "mount_path": bad})
 
     def test_mount_path_prefix_not_component_is_ok(self):
         # "/devtmp" must not be rejected as if it were under "/dev".
-        cf = ConfigFileMountValues(**{**self.VALID, "mount_path": "/devtmp"})
+        cf = ConfigFileMount(**{**self.VALID, "mount_path": "/devtmp"})
         self.assertEqual(cf.mount_path, "/devtmp")
 
     def test_mount_path_is_normalized(self):
-        cf = ConfigFileMountValues(**{**self.VALID, "mount_path": "/etc//engine/"})
+        cf = ConfigFileMount(**{**self.VALID, "mount_path": "/etc//engine/"})
         self.assertEqual(cf.mount_path, "/etc/engine")
+
+    def test_double_leading_slash_representation_is_preserved(self):
+        cf = ConfigFileMount(**{**self.VALID, "mount_path": "//etc/engine"})
+        self.assertEqual(cf.mount_path, "//etc/engine")
 
     def test_content_at_max_bytes_ok(self):
         content = "x" * CONFIG_FILE_CONTENT_MAX_BYTES
-        cf = ConfigFileMountValues(**{**self.VALID, "content": content})
+        cf = ConfigFileMount(**{**self.VALID, "content": content})
         self.assertEqual(len(cf.content.encode("utf-8")), CONFIG_FILE_CONTENT_MAX_BYTES)
 
     def test_content_over_max_bytes_raises(self):
         with self.assertRaisesRegex(ValidationError, "at most"):
-            ConfigFileMountValues(**{**self.VALID, "content": "x" * (CONFIG_FILE_CONTENT_MAX_BYTES + 1)})
+            ConfigFileMount(**{**self.VALID, "content": "x" * (CONFIG_FILE_CONTENT_MAX_BYTES + 1)})
 
     def test_content_utf8_byte_counting(self):
         # Each '中' is 3 UTF-8 bytes; the cap is bytes, not characters.
         max_chars = CONFIG_FILE_CONTENT_MAX_BYTES // 3
-        ConfigFileMountValues(**{**self.VALID, "content": "中" * max_chars})  # OK
+        ConfigFileMount(**{**self.VALID, "content": "中" * max_chars})  # OK
         with self.assertRaisesRegex(ValidationError, "at most"):
-            ConfigFileMountValues(**{**self.VALID, "content": "中" * (max_chars + 1)})
+            ConfigFileMount(**{**self.VALID, "content": "中" * (max_chars + 1)})
 
     def test_mount_path_with_dotdot_rejected(self):
         # '..' segments would let "/etc/../proc/foo" slip past forbidden-roots check.
         for bad in ("/etc/../proc/kmsg", "/var/../../etc", "/foo/.."):
             with self.subTest(bad=bad), self.assertRaisesRegex(ValidationError, "'..'"):
-                ConfigFileMountValues(**{**self.VALID, "mount_path": bad})
+                ConfigFileMount(**{**self.VALID, "mount_path": bad})
 
     def test_mount_path_with_dotdot_segment_substring_allowed(self):
         # '/foo/..bar' contains '..' as part of a name, not as a path segment.
-        cf = ConfigFileMountValues(**{**self.VALID, "mount_path": "/foo/..bar"})
+        cf = ConfigFileMount(**{**self.VALID, "mount_path": "/foo/..bar"})
         self.assertEqual(cf.mount_path, "/foo/..bar")
 
     def test_combined_path_within_limit_ok(self):
         # mount_path + '/' + filename must fit Linux PATH_MAX.
         filename = "a" * 100
         mount_path = "/" + "x" * (LINUX_PATH_MAX - len(filename) - 2)
-        ConfigFileMountValues(**{**self.VALID, "filename": filename, "mount_path": mount_path})
+        ConfigFileMount(**{**self.VALID, "filename": filename, "mount_path": mount_path})
 
     def test_combined_path_over_limit_raises(self):
         filename = "a" * 100
         mount_path = "/" + "x" * (LINUX_PATH_MAX - len(filename))  # 1 over the limit after concat
         with self.assertRaisesRegex(ValidationError, "at most"):
-            ConfigFileMountValues(**{**self.VALID, "filename": filename, "mount_path": mount_path})
+            ConfigFileMount(**{**self.VALID, "filename": filename, "mount_path": mount_path})
 
     def test_mount_path_multibyte_over_path_max_raises(self):
         # PATH_MAX is bytes; each '中' is 3 UTF-8 bytes, so 2000 of them = 6000 bytes > 4096.
         with self.assertRaisesRegex(ValidationError, "at most"):
-            ConfigFileMountValues(**{**self.VALID, "mount_path": "/" + "中" * 2000})
+            ConfigFileMount(**{**self.VALID, "mount_path": "/" + "中" * 2000})
 
     def test_combined_path_multibyte_byte_counting(self):
         # mount_path uses 1365 multibyte chars = 4095 bytes; filename 1 char = 1 byte;
@@ -882,19 +787,7 @@ class TestConfigFileMountValues(unittest.TestCase):
         # combined_bytes = 4093 + 1 + len(filename); we want 4097 -> filename = 3
         filename = "abc"
         with self.assertRaisesRegex(ValidationError, "at most"):
-            ConfigFileMountValues(**{**self.VALID, "filename": filename, "mount_path": mount_path})
-
-    def test_content_base64_populated_and_decodable(self):
-        cf = ConfigFileMountValues(**self.VALID)
-        self.assertEqual(base64.b64decode(cf.content_base64).decode("utf-8"), cf.content)
-        self.assertIn("content_base64", cf.model_dump())
-
-    def test_api_schema_strips_content_base64(self):
-        # The API response_model is the parent ConfigFileMount; constructing it from
-        # the subclass' dump must drop content_base64 (FastAPI's serialization path).
-        cf = ConfigFileMountValues(**self.VALID)
-        api_view = ConfigFileMount.model_validate(cf.model_dump())
-        self.assertNotIn("content_base64", api_view.model_dump())
+            ConfigFileMount(**{**self.VALID, "filename": filename, "mount_path": mount_path})
 
 
 class TestInferenceValuesConfigFile(unittest.TestCase):
@@ -909,42 +802,280 @@ class TestInferenceValuesConfigFile(unittest.TestCase):
         vals = _make_inference_values(config_file=cf)
         self.assertEqual(vals.config_file.content, self.SAMPLE)
 
-    def test_helm_params_emits_base64_and_empties_raw_content(self):
+    def test_helm_values_carry_content_base64_shadow(self):
         vals = _make_inference_values(
             config_file=ConfigFileMountValues(filename="config.yaml", mount_path="/etc/engine", content=self.SAMPLE)
         )
-        params = {p["name"]: p["value"] for p in vals.helm_params()}
-        self.assertEqual(params["config_file.filename"], "config.yaml")
-        self.assertEqual(params["config_file.mount_path"], "/etc/engine")
-        # raw content is blanked on the helm wire (strvals can't parse { } [ ] in --set-string);
-        # chart consumes content_base64 instead.
-        self.assertEqual(params["config_file.content"], "")
-        self.assertEqual(
-            base64.b64decode(params["config_file.content_base64"]).decode("utf-8"),
-            self.SAMPLE,
-        )
+        config_file = json.loads(vals.helm_values_yaml())["config_file"]
+        self.assertEqual(config_file["filename"], "config.yaml")
+        self.assertEqual(config_file["mount_path"], "/etc/engine")
+        # by_alias blanks raw content on the wire; charts (incl. chart_revision-pinned
+        # ones) consume content_base64 — removal tracked in #3998.
+        self.assertEqual(config_file["content"], "")
+        self.assertEqual(base64.b64decode(config_file["content_base64"]).decode("utf-8"), self.SAMPLE)
 
-    def test_helm_params_idempotent_across_round_trips(self):
-        # DB load -> instance rebuild -> validator re-runs -> content_base64 re-derived.
+    def test_helm_values_idempotent_across_round_trips(self):
+        # DB load -> instance rebuild -> validator re-derives content_base64.
         original = _make_inference_values(
             config_file=ConfigFileMountValues(filename="a.yaml", mount_path="/etc/x", content=self.SAMPLE)
         )
         rebuilt = InferenceDeploymentValues(**original.model_dump(mode="json"))
-        params = {p["name"]: p["value"] for p in rebuilt.helm_params()}
-        self.assertEqual(
-            base64.b64decode(params["config_file.content_base64"]).decode("utf-8"),
-            self.SAMPLE,
-        )
+        config_file = json.loads(rebuilt.helm_values_yaml())["config_file"]
+        self.assertEqual(base64.b64decode(config_file["content_base64"]).decode("utf-8"), self.SAMPLE)
 
-    def test_no_config_file_emits_no_content_param(self):
+    def test_no_config_file_emits_null_config_file(self):
         vals = _make_inference_values()
-        params = {p["name"]: p["value"] for p in vals.helm_params()}
-        self.assertNotIn("config_file.content_base64", params)
+        values = json.loads(vals.helm_values_yaml())
+        self.assertIsNone(values["config_file"])
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestInferenceV3HelmTemplateNumberLikeEnvVars(unittest.TestCase):
+    """End-to-end guard: number-like env values survive helm_values_yaml() -> Helm render.
+
+    Writes the production helm.values serialization (not a re-dumped dict) to the values
+    file, so a Go-parser coercion of a bare number-like scalar would surface as a changed
+    env value in the rendered Rollout.
+    """
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
+
+    ENV_VARS = {
+        "MONTH": "08",
+        "POSTAL_CODE": "01890",
+        "ACCOUNT_ID": "012345678901",
+        "FILE_MODE": "00640",
+        "LEARNING_RATE": "1e-5",
+        "CHECKSUM": "0e462097431906509019562988736854",
+    }
+
+    def _render(self, values_yaml: str) -> str:
+        assert _HELM_BIN is not None
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(values_yaml)
+            values_path = f.name
+        try:
+            result = subprocess.run(
+                [_HELM_BIN, "template", "probe", str(self.CHART_PATH), "-f", values_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            os.unlink(values_path)
+        return result.stdout
+
+    def test_number_like_env_values_render_verbatim(self):
+        vals = _make_inference_values(env_vars=self.ENV_VARS)
+        raw = self._render(vals.helm_values_yaml())
+
+        # The rendered Rollout carries pre-existing trailing tabs (Go YAML tolerates them,
+        # PyYAML does not); strip trailing whitespace per line before parsing. Env values are
+        # quoted, so whitespace outside the quotes is insignificant.
+        cleaned = "\n".join(line.rstrip() for line in raw.splitlines())
+        rollout = next(doc for doc in yaml.safe_load_all(cleaned) if doc and doc.get("kind") == "Rollout")
+        containers = rollout["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+
+        for key, expected in self.ENV_VARS.items():
+            self.assertEqual(env[key], expected)
+
+    def test_pod_template_has_standardized_component_type_label(self):
+        raw = self._render(_make_inference_values().helm_values_yaml())
+        cleaned = "\n".join(line.rstrip() for line in raw.splitlines())
+        rollout = next(doc for doc in yaml.safe_load_all(cleaned) if doc and doc.get("kind") == "Rollout")
+
+        self.assertEqual(
+            rollout["spec"]["template"]["metadata"]["labels"][COMPONENT_TYPE_LABEL],
+            "user-container",
+        )
+        self.assertNotIn(COMPONENT_TYPE_LABEL, rollout["spec"]["selector"]["matchLabels"])
+
+
+def _helm_template(chart_path: Path, values_yaml: str) -> str:
+    """Render the production helm_values_yaml() string through `helm template`."""
+    assert _HELM_BIN is not None
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write(values_yaml)
+        values_path = f.name
+    try:
+        result = subprocess.run(
+            [_HELM_BIN, "template", "probe", str(chart_path), "-f", values_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        os.unlink(values_path)
+    return result.stdout
+
+
+def _parse_rendered_docs(raw: str) -> list[dict]:
+    """Parse rendered manifests; strips the pre-existing trailing tabs PyYAML rejects."""
+    cleaned = "\n".join(line.rstrip() for line in raw.splitlines())
+    return [doc for doc in yaml.safe_load_all(cleaned) if doc]
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestInferenceV3HelmTemplateSpecialCharValues(unittest.TestCase):
+    """End-to-end guard for the chart's `| quote` hardening: hostile env values and
+    command args reach the container verbatim through helm_values_yaml() ->
+    `helm template`. The `| quote` on each value is what lets an embedded double
+    quote render as valid YAML."""
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
+
+    def _rollout_container(self, values_yaml: str) -> dict:
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, values_yaml))
+        rollout = next(doc for doc in docs if doc.get("kind") == "Rollout")
+        containers = rollout["spec"]["template"]["spec"]["containers"]
+        return next(c for c in containers if c["name"] == "user-container")
+
+    def test_hostile_env_values_render_verbatim(self):
+        env_vars = {
+            "QUOTED": 'value with "double quotes" inside',
+            "MIXED": 'it\'s a "complex" value',
+            "SINGLE_QUOTE": "it's",
+            "CONFIG": '{"key": "value", "nested": {"a": 1}}',
+            "BRACKETS": "[1, 2, 3]",
+            "COMMAS": "a,b,c",
+            "TOKEN": "$ecret*value&more|pipe",
+            "GLOB": "*|?",
+        }
+        container = self._rollout_container(_make_inference_values(env_vars=env_vars).helm_values_yaml())
+        env = {e["name"]: e["value"] for e in container["env"]}
+        for key, expected in env_vars.items():
+            with self.subTest(key=key):
+                self.assertEqual(env[key], expected)
+
+    def test_yaml_bool_env_values_render_verbatim(self):
+        # go-yaml (Helm) resolves y/n/Y/N/yes/no/on/off/true/false to booleans; the JSON
+        # serializer's quoting keeps them strings so they reach the container verbatim.
+        bool_words = ["y", "n", "Y", "N", "yes", "no", "on", "off", "true", "false"]
+        env_vars = {f"BOOLY_{i}": v for i, v in enumerate(bool_words)}
+        container = self._rollout_container(_make_inference_values(env_vars=env_vars).helm_values_yaml())
+        env = {e["name"]: e["value"] for e in container["env"]}
+        for key, expected in env_vars.items():
+            with self.subTest(key=key):
+                self.assertEqual(env[key], expected)
+
+    def test_bool_like_env_key_stays_string(self):
+        # The env var NAME is also `| quote`d: a key like YES/true would otherwise render as a
+        # YAML bool and the apiserver rejects a non-string EnvVar.name.
+        env_vars = {"YES": "a", "true": "b", "NORMAL": "c"}
+        container = self._rollout_container(_make_inference_values(env_vars=env_vars).helm_values_yaml())
+        names = {e["name"] for e in container["env"]}
+        for key in env_vars:
+            with self.subTest(key=key):
+                self.assertIn(key, names)
+                self.assertIsInstance(key, str)
+
+    def test_bool_like_name_and_image_render_as_strings(self):
+        # metadata.name and the container image are `| quote`d, so a value like "true" stays a
+        # string instead of a YAML bool the apiserver rejects.
+        docs = _parse_rendered_docs(
+            _helm_template(self.CHART_PATH, _make_inference_values(name="true", image_url="true").helm_values_yaml())
+        )
+        rollout = next(doc for doc in docs if doc.get("kind") == "Rollout")
+        self.assertIsInstance(rollout["metadata"]["name"], str)
+        self.assertEqual(rollout["metadata"]["name"], "true")
+        image = rollout["spec"]["template"]["spec"]["containers"][0]["image"]
+        self.assertIsInstance(image, str)
+        self.assertEqual(image, "true")
+
+    def test_node_affinity_coercion_prone_labels_render_as_strings(self):
+        # node_affinity keys/values render as `| quote`d scalars, so coercion-prone labels
+        # (bool/number-like) stay strings and a reserved indicator like `@` doesn't break the
+        # render. These are platform-derived today, but the quoting keeps the manifest type-valid.
+        labels = {"true": "false", "123": "456", "flag": "yes", "@indicator": "@val"}
+        docs = _parse_rendered_docs(
+            _helm_template(self.CHART_PATH, _make_inference_values(node_affinity_labels=labels).helm_values_yaml())
+        )
+        rollout = next(doc for doc in docs if doc.get("kind") == "Rollout")
+        terms = rollout["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
+            "requiredDuringSchedulingIgnoredDuringExecution"
+        ]["nodeSelectorTerms"][0]["matchExpressions"]
+        rendered = {expr["key"]: expr["values"][0] for expr in terms}
+        for key, value in labels.items():
+            with self.subTest(key=key):
+                self.assertIn(key, rendered)
+                self.assertIsInstance(key, str)
+                self.assertEqual(rendered[key], value)
+
+    def test_hostile_hf_token_renders_verbatim(self):
+        # hf_token renders the dedicated HF_TOKEN env var; it must go through | quote like
+        # env_vars do, or a token containing a quote breaks the render and a newline corrupts.
+        for token in ['ab"cd', "line\nbreak", "hf_normalToken123"]:
+            with self.subTest(token=token):
+                container = self._rollout_container(_make_inference_values(hf_token=token).helm_values_yaml())
+                env = {e["name"]: e["value"] for e in container["env"]}
+                self.assertEqual(env["HF_TOKEN"], token)
+
+    def test_hostile_command_args_render_verbatim(self):
+        command_args = [
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--hf-overrides",
+            '{"torch_dtype": "float16", "generation_config": {"max_length": 512}}',
+            'echo "already quoted"',
+            "*",
+            "|",
+            "{}<>?:{}|()_+***",
+            "find /data -name '*.txt' | grep foo && echo done",
+        ]
+        vals = _make_inference_values(command=["bash"], command_args=command_args)
+        container = self._rollout_container(vals.helm_values_yaml())
+        self.assertEqual(container["command"], ["bash"])
+        self.assertEqual(container["args"], command_args)
+
+    def test_tritonserver_args_render_verbatim(self):
+        triton_args = [
+            "--model-repository=/registry",
+            "--load-model=*",
+            "--model-control-mode=explicit",
+            "--http-port=8000",
+            "--http-thread-count=128",
+            "--http-header-forward-pattern=.*",
+            "--grpc-port=8001",
+            "--pinned-memory-pool-byte-size=2147483648",
+            "--cuda-memory-pool-byte-size=0:8589934592",
+            "--backend-config=python,shm-default-byte-size=4194304",
+            "--backend-config=python,shm-growth-byte-size=2097152",
+            "--backend-config=python,default-max-batch-size=256",
+            "--metrics-config=summary_latencies=true",
+            "--metrics-config=histogram_latencies=false",
+            "--metrics-port=8002",
+        ]
+        vals = _make_inference_values(command=["tritonserver"], command_args=triton_args)
+        container = self._rollout_container(vals.helm_values_yaml())
+        self.assertEqual(container["command"], ["tritonserver"])
+        self.assertEqual(container["args"], triton_args)
+
+    def test_bool_like_name_renders_string_labels_on_scaled_object_and_pdb(self):
+        # ScaledObject and PDB carry an `app: <name>` label value; `| quote` keeps a
+        # name like "true" a string instead of a YAML bool the apiserver rejects.
+        docs = _parse_rendered_docs(
+            _helm_template(self.CHART_PATH, _make_inference_values(name="true").helm_values_yaml())
+        )
+        for kind in ["ScaledObject", "PodDisruptionBudget"]:
+            with self.subTest(kind=kind):
+                doc = next(d for d in docs if d.get("kind") == kind)
+                label = doc["metadata"]["labels"]["app"]
+                self.assertIsInstance(label, str)
+                self.assertEqual(label, "true")
+
+    def test_hostile_healthcheck_path_renders_verbatim(self):
+        # healthcheck is an unconstrained user string; `| quote` keeps a bool-like value a
+        # string and a value containing `: ` from being parsed as a YAML mapping.
+        for path in ["/health: bad", "true", "\t/v1/health/ready"]:
+            with self.subTest(path=path):
+                container = self._rollout_container(_make_inference_values(healthcheck=path).helm_values_yaml())
+                self.assertEqual(container["readinessProbe"]["httpGet"]["path"], path)
 
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
 class TestInferenceV3HelmTemplateConfigFile(unittest.TestCase):
-    CHART_PATH = Path(__file__).resolve().parent /"inference_deployment_v3"
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
 
     def _values(self, config_file):
         resources_one = {
@@ -1021,7 +1152,7 @@ class TestInferenceV3HelmTemplateConfigFile(unittest.TestCase):
         )
 
     def test_config_file_renders_single_configmap(self):
-        # The `|-` block chomp strips the final newline; rstrip the expected to match.
+        # binaryData preserves the payload byte-for-byte, trailing newline included.
         content = "engine: vllm\nport: 8000\n"
         raw = self._render_raw(self._values(config_file=self._config_file_fixture(content)))
         cms = self._extract_configmaps(raw)
@@ -1029,14 +1160,32 @@ class TestInferenceV3HelmTemplateConfigFile(unittest.TestCase):
         cm = cms[0]
         self.assertEqual(cm["metadata"]["name"], "inference-config-100-r1")
         self.assertEqual(cm["metadata"]["namespace"], "user-42")
-        self.assertEqual(cm["data"]["config.yaml"], content.rstrip("\n"))
+        self.assertEqual(base64.b64decode(cm["binaryData"]["config.yaml"]).decode(), content)
 
-    def test_special_chars_roundtrip_via_base64(self):
+    def test_special_chars_roundtrip(self):
         content = 'engine: vllm\nhf_overrides: {"architectures":["X"]}\nstop: ["\n\n", "###"]\n'
         raw = self._render_raw(self._values(config_file=self._config_file_fixture(content)))
         cms = self._extract_configmaps(raw)
         self.assertEqual(len(cms), 1)
-        self.assertEqual(cms[0]["data"]["config.yaml"], content.rstrip("\n"))
+        self.assertEqual(base64.b64decode(cms[0]["binaryData"]["config.yaml"]).decode(), content)
+
+    def test_trailing_whitespace_preserved_byte_for_byte(self):
+        # binaryData decodes the payload verbatim, so any trailing-newline shape survives.
+        for content in ["one trailing\n", "no trailing newline", "many\n\n\n", "trailing spaces   \n", "tab\tend\n"]:
+            with self.subTest(content=content):
+                raw = self._render_raw(self._values(config_file=self._config_file_fixture(content)))
+                cms = self._extract_configmaps(raw)
+                self.assertEqual(base64.b64decode(cms[0]["binaryData"]["config.yaml"]).decode(), content)
+
+    def test_numeric_base64_payload_stays_string(self):
+        # Some content encodes to an all-digit base64 ("Ӎ4" -> "0400"); the binaryData value must
+        # render as a quoted string, or the apiserver rejects it ("cannot unmarshal number into
+        # ...binaryData of type []uint8").
+        raw = self._render_raw(self._values(config_file=self._config_file_fixture("Ӎ4")))
+        cms = self._extract_configmaps(raw)
+        value = cms[0]["binaryData"]["config.yaml"]
+        self.assertIsInstance(value, str)
+        self.assertEqual(base64.b64decode(value).decode(), "Ӎ4")
 
     def test_scalar_looking_filename_stays_a_string(self):
         # "true" passes the filename regex but must not render as a YAML bool:
@@ -1045,8 +1194,21 @@ class TestInferenceV3HelmTemplateConfigFile(unittest.TestCase):
         raw = self._render_raw(self._values(config_file=cf))
         cms = self._extract_configmaps(raw)
         self.assertEqual(len(cms), 1)
-        self.assertEqual(list(cms[0]["data"].keys()), ["true"])
+        self.assertEqual(list(cms[0]["binaryData"].keys()), ["true"])
         self.assertIn('subPath: "true"', raw)
+
+    def test_seven_digit_ids_render_as_decimal_integers(self):
+        # Helm parses helm.values numbers into float64; a bare {{ .Values.user_id }}
+        # renders integers with >= 7 significant digits in scientific notation
+        # (30000001 -> "3.0000001e+07"), corrupting namespace/resource names.
+        # The templates pin `| int` on id interpolations; this guards them.
+        values = self._values(config_file=None)
+        values["user_id"] = 30000001
+        values["deployment_id"] = 10000002
+        raw = self._render_raw(values)
+        self.assertNotIn("e+0", raw)
+        self.assertIn("user-30000001", raw)
+        self.assertIn("10000002", raw)
 
 
 def _make_job_values(**overrides):
@@ -1074,47 +1236,41 @@ class TestJobValuesConfigFile(unittest.TestCase):
         vals = _make_job_values(config_file=cf)
         self.assertEqual(vals.config_file.content, self.SAMPLE)
 
-    def test_helm_params_emits_base64_and_empties_raw_content(self):
+    def test_helm_values_carry_content_base64_shadow(self):
         vals = _make_job_values(
             config_file=ConfigFileMountValues(filename="config.yaml", mount_path="/etc/job", content=self.SAMPLE)
         )
-        params = {p["name"]: p["value"] for p in vals.helm_params()}
-        self.assertEqual(params["config_file.filename"], "config.yaml")
-        self.assertEqual(params["config_file.mount_path"], "/etc/job")
-        # raw content is blanked on the helm wire (strvals can't parse { } [ ] in --set-string);
-        # chart consumes content_base64 instead.
-        self.assertEqual(params["config_file.content"], "")
-        self.assertEqual(
-            base64.b64decode(params["config_file.content_base64"]).decode("utf-8"),
-            self.SAMPLE,
-        )
+        config_file = json.loads(vals.helm_values_yaml())["config_file"]
+        self.assertEqual(config_file["filename"], "config.yaml")
+        self.assertEqual(config_file["mount_path"], "/etc/job")
+        # by_alias blanks raw content on the wire; charts (incl. chart_revision-pinned
+        # ones) consume content_base64 — removal tracked in #3998.
+        self.assertEqual(config_file["content"], "")
+        self.assertEqual(base64.b64decode(config_file["content_base64"]).decode("utf-8"), self.SAMPLE)
 
-    def test_helm_params_idempotent_across_round_trips(self):
-        # DB load -> instance rebuild -> validator re-runs -> content_base64 re-derived.
+    def test_helm_values_idempotent_across_round_trips(self):
+        # DB load -> instance rebuild -> validator re-derives content_base64.
         original = _make_job_values(
             config_file=ConfigFileMountValues(filename="a.yaml", mount_path="/etc/x", content=self.SAMPLE)
         )
         rebuilt = JobDeploymentValues(**original.model_dump(mode="json"))
-        params = {p["name"]: p["value"] for p in rebuilt.helm_params()}
-        self.assertEqual(
-            base64.b64decode(params["config_file.content_base64"]).decode("utf-8"),
-            self.SAMPLE,
-        )
+        config_file = json.loads(rebuilt.helm_values_yaml())["config_file"]
+        self.assertEqual(base64.b64decode(config_file["content_base64"]).decode("utf-8"), self.SAMPLE)
 
-    def test_no_config_file_emits_no_content_param(self):
+    def test_no_config_file_emits_null_config_file(self):
         vals = _make_job_values()
-        params = {p["name"]: p["value"] for p in vals.helm_params()}
-        self.assertNotIn("config_file.content_base64", params)
+        values = json.loads(vals.helm_values_yaml())
+        self.assertIsNone(values["config_file"])
 
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
-class TestJobDeploymentHelmTemplateConfigFile(unittest.TestCase):
-    CHART_PATH = Path(__file__).resolve().parent /"job_deployment"
+class TestJobDeploymentHelmTemplate(unittest.TestCase):
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "job_deployment"
 
-    def _values(self, config_file) -> dict:
+    def _values(self, config_file=None, **overrides) -> dict:
         # Render from the real values-model dump so the test exercises the exact
         # JobDeploymentValues -> chart contract (defaults included).
-        return _make_job_values(config_file=config_file).model_dump(mode="json")
+        return _make_job_values(config_file=config_file, **overrides).model_dump(mode="json")
 
     def _render_raw(self, values: dict) -> str:
         # @skipUnless guarantees _HELM_BIN is set; local copy narrows for mypy.
@@ -1155,15 +1311,84 @@ class TestJobDeploymentHelmTemplateConfigFile(unittest.TestCase):
                 docs.append(parsed)
         return docs
 
-    def _config_file_fixture(self, content: str) -> ConfigFileMountValues:
+    def _config_file_fixture(self, content: str) -> ConfigFileMount:
         return ConfigFileMountValues(filename="config.yaml", mount_path="/etc/job", content=content)
 
     def test_no_config_file_emits_no_configmap(self):
         raw = self._render_raw(self._values(config_file=None))
         self.assertEqual(self._extract_kind(raw, "ConfigMap"), [])
 
+    def test_pod_template_has_standardized_component_type_label(self):
+        raw = self._render_raw(self._values(config_file=None))
+        jobs = self._extract_kind(raw, "Job")
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            jobs[0]["spec"]["template"]["metadata"]["labels"][COMPONENT_TYPE_LABEL],
+            "user-container",
+        )
+
+    def test_kai_queue_on_job_and_pod_template(self):
+        raw = self._render_raw(_make_job_values(kai_queue="org-7").model_dump(mode="json"))
+        job = self._extract_kind(raw, "Job")[0]
+        self.assertEqual(job["metadata"]["labels"]["kai.scheduler/queue"], "org-7")
+        self.assertEqual(job["spec"]["template"]["metadata"]["labels"]["kai.scheduler/queue"], "org-7")
+        self.assertEqual(job["spec"]["template"]["spec"]["schedulerName"], "kai-scheduler")
+
+    def test_priority_class_rendered_when_set(self):
+        raw = self._render_raw(_make_job_values(priority_class_name="experiment").model_dump(mode="json"))
+        job = self._extract_kind(raw, "Job")[0]
+        self.assertEqual(job["spec"]["template"]["spec"]["priorityClassName"], "experiment")
+
+    def test_priority_class_omitted_when_unset(self):
+        raw = self._render_raw(_make_job_values().model_dump(mode="json"))
+        job = self._extract_kind(raw, "Job")[0]
+        self.assertNotIn("priorityClassName", job["spec"]["template"]["spec"])
+
+    def test_kai_queue_omitted_when_unset(self):
+        raw = self._render_raw(self._values(config_file=None))
+        job = self._extract_kind(raw, "Job")[0]
+        self.assertNotIn("kai.scheduler/queue", job["metadata"].get("labels", {}))
+        self.assertNotIn("kai.scheduler/queue", job["spec"]["template"]["metadata"]["labels"])
+
+    def test_parallel_job_pod_template_mounts_existing_pvcs(self):
+        volume_mounts = [
+            PersistentVolumeClaimToMount(name="vol-123", mount_path="/data", read_only=False),
+            PersistentVolumeClaimToMount(name="vol-123", mount_path="/models", read_only=True),
+        ]
+        raw = self._render_raw(
+            self._values(
+                config_file=self._config_file_fixture("batch: 32\n"),
+                volume_mounts=volume_mounts,
+                completions=4,
+                parallelism=2,
+            )
+        )
+        jobs = self._extract_kind(raw, "Job")
+        self.assertEqual(len(jobs), 1)
+        job_spec = jobs[0]["spec"]
+        self.assertEqual(job_spec["completions"], 4)
+        self.assertEqual(job_spec["parallelism"], 2)
+
+        pod_spec = job_spec["template"]["spec"]
+        mounts = {mount["mountPath"]: mount for mount in pod_spec["containers"][0]["volumeMounts"]}
+        volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+
+        self.assertEqual(set(mounts), {"/dev/shm", "/data", "/models", "/etc/job/config.yaml"})
+        self.assertEqual(mounts["/dev/shm"]["name"], "dshm")
+        self.assertEqual(mounts["/data"]["name"], "external-volume-0")
+        self.assertFalse(mounts["/data"]["readOnly"])
+        self.assertEqual(mounts["/models"]["name"], "external-volume-0")
+        self.assertTrue(mounts["/models"]["readOnly"])
+        self.assertEqual(mounts["/etc/job/config.yaml"]["name"], "job-config-100")
+        self.assertEqual(mounts["/etc/job/config.yaml"]["subPath"], "config.yaml")
+        self.assertTrue(mounts["/etc/job/config.yaml"]["readOnly"])
+        self.assertEqual(set(volumes), {"dshm", "external-volume-0", "job-config-100"})
+        self.assertEqual(volumes["dshm"]["emptyDir"]["medium"], "Memory")
+        self.assertEqual(volumes["external-volume-0"]["persistentVolumeClaim"]["claimName"], "vol-123")
+        self.assertEqual(volumes["job-config-100"]["configMap"]["name"], "job-config-100")
+
     def test_config_file_renders_single_configmap(self):
-        # The `|-` block chomp strips the final newline; rstrip the expected to match.
+        # binaryData preserves the payload byte-for-byte, trailing newline included.
         content = "batch: 32\nepochs: 10\n"
         raw = self._render_raw(self._values(config_file=self._config_file_fixture(content)))
         cms = self._extract_kind(raw, "ConfigMap")
@@ -1171,14 +1396,14 @@ class TestJobDeploymentHelmTemplateConfigFile(unittest.TestCase):
         cm = cms[0]
         self.assertEqual(cm["metadata"]["name"], "job-config-100")
         self.assertEqual(cm["metadata"]["namespace"], "user-42")
-        self.assertEqual(cm["data"]["config.yaml"], content.rstrip("\n"))
+        self.assertEqual(base64.b64decode(cm["binaryData"]["config.yaml"]).decode(), content)
 
-    def test_special_chars_roundtrip_via_base64(self):
+    def test_special_chars_roundtrip(self):
         content = 'batch: 32\nhf_overrides: {"architectures":["X"]}\nstop: ["\n\n", "###"]\n'
         raw = self._render_raw(self._values(config_file=self._config_file_fixture(content)))
         cms = self._extract_kind(raw, "ConfigMap")
         self.assertEqual(len(cms), 1)
-        self.assertEqual(cms[0]["data"]["config.yaml"], content.rstrip("\n"))
+        self.assertEqual(base64.b64decode(cms[0]["binaryData"]["config.yaml"]).decode(), content)
 
     def test_pod_spec_mounts_config_file(self):
         raw = self._render_raw(self._values(config_file=self._config_file_fixture("batch: 32\n")))
@@ -1214,7 +1439,7 @@ class TestJobDeploymentHelmTemplateConfigFile(unittest.TestCase):
 
         cms = self._extract_kind(raw, "ConfigMap")
         self.assertEqual(len(cms), 1)
-        self.assertEqual(list(cms[0]["data"].keys()), ["true"])
+        self.assertEqual(list(cms[0]["binaryData"].keys()), ["true"])
 
         jobs = self._extract_kind(raw, "Job")
         mounts = jobs[0]["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
@@ -1225,12 +1450,44 @@ class TestJobDeploymentHelmTemplateConfigFile(unittest.TestCase):
 
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestJobDeploymentHelmTemplateSpecialCharEnvVars(unittest.TestCase):
+    """job.yaml renders env values as `value: {{ $value | quote }}`, so embedded double
+    quotes survive helm_values_yaml() -> `helm template` verbatim in the rendered Job."""
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "job_deployment"
+
+    def test_env_vars_with_embedded_double_quotes_render_verbatim(self):
+        env_vars = {
+            "QUOTED": 'value with "double quotes" inside',
+            "MIXED": 'it\'s a "complex" value',
+        }
+        vals = _make_job_values(env_vars=env_vars)
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        job = next(doc for doc in docs if doc.get("kind") == "Job")
+        containers = job["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+        for key, expected in env_vars.items():
+            with self.subTest(key=key):
+                self.assertEqual(env[key], expected)
+
+    def test_hostile_env_key_renders_verbatim(self):
+        # EnvVar names are user-controlled; `| quote` escapes an embedded double quote.
+        env_vars = {'A"B': "v"}
+        vals = _make_job_values(env_vars=env_vars)
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        job = next(doc for doc in docs if doc.get("kind") == "Job")
+        containers = job["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+        self.assertEqual(env['A"B'], "v")
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
 class TestInferenceV3HelmTemplateAppMetrics(unittest.TestCase):
     """app_metrics.yaml renders Service + ServiceMonitor when metrics is set,
     and is gracefully skipped when absent (legacy revisions persisted before
     the field existed)."""
 
-    CHART_PATH = Path(__file__).resolve().parent /"inference_deployment_v3"
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
 
     def _render_dict(self, values_dict: dict) -> list[dict]:
         assert _HELM_BIN is not None
@@ -1279,6 +1536,12 @@ class TestInferenceV3HelmTemplateAppMetrics(unittest.TestCase):
         rendered = self._render(_make_inference_values())
         sm = self._find(rendered, kind="ServiceMonitor", name="test-deploy-app-metrics")
         self.assertEqual(sm["spec"]["endpoints"][0]["path"], "/metrics")
+
+    def test_rollout_retains_one_kubernetes_revision(self):
+        rendered = self._render(_make_inference_values())
+        rollout = self._find(rendered, kind="Rollout", name="test-deploy")
+
+        self.assertEqual(rollout["spec"]["revisionHistoryLimit"], 1)
 
     def test_service_selector_uses_only_deployment_id(self):
         rendered = self._render(self._vals_with_metrics())
@@ -1347,7 +1610,7 @@ class TestCServeV3DoesNotRenderAppMetrics(unittest.TestCase):
     .Values.metrics.port = container_port).
     """
 
-    CHART_PATH = Path(__file__).resolve().parent /"cserve_deployment_v3"
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "cserve_deployment_v3"
 
     def _values(self, **overrides):
         resources_one = {
@@ -1412,6 +1675,16 @@ class TestCServeV3DoesNotRenderAppMetrics(unittest.TestCase):
         sm = self._find(rendered, kind="ServiceMonitor", name="test-cserve-app-metrics")
         self.assertIsNone(sm, "cserve_v3 must not render the per-deployment app-metrics ServiceMonitor")
 
+    def test_pod_template_has_standardized_component_type_label(self):
+        rendered = self._render_cserve_v3()
+        rollout = self._find(rendered, kind="Rollout", name="test-cserve")
+        self.assertIsNotNone(rollout)
+        self.assertEqual(
+            rollout["spec"]["template"]["metadata"]["labels"][COMPONENT_TYPE_LABEL],
+            "user-container",
+        )
+        self.assertNotIn(COMPONENT_TYPE_LABEL, rollout["spec"]["selector"]["matchLabels"])
+
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
 class TestInferenceV3HelmTemplateIngress(unittest.TestCase):
@@ -1420,7 +1693,7 @@ class TestInferenceV3HelmTemplateIngress(unittest.TestCase):
     match any VirtualService and resets the connection — fatal for gRPC/HTTP2
     which relies on :authority for routing, and a latent risk for HTTP."""
 
-    CHART_PATH = Path(__file__).resolve().parent /"inference_deployment_v3"
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
 
     def _render(self, vals: InferenceDeploymentValues) -> list[dict]:
         assert _HELM_BIN is not None
@@ -1477,7 +1750,7 @@ class TestInferenceV3HelmTemplateIngress(unittest.TestCase):
 
 @unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
 class TestInferenceV3HelmTemplateSchedulerName(unittest.TestCase):
-    CHART_PATH = Path(__file__).resolve().parent /"inference_deployment_v3"
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
 
     def _render(self, vals: InferenceDeploymentValues) -> list[dict]:
         assert _HELM_BIN is not None
@@ -1511,6 +1784,26 @@ class TestInferenceV3HelmTemplateSchedulerName(unittest.TestCase):
         vals = _make_inference_values(scheduler_name=None)
         rollout = self._rollout(self._render(vals))
         self.assertNotIn("schedulerName", rollout["spec"]["template"]["spec"])
+
+    def test_kai_queue_on_pod_template(self):
+        vals = _make_inference_values(kai_queue="org-7")
+        template = self._rollout(self._render(vals))["spec"]["template"]
+        self.assertEqual(template["metadata"]["labels"]["kai.scheduler/queue"], "org-7")
+
+    def test_priority_class_rendered_when_set(self):
+        vals = _make_inference_values(priority_class_name="experiment")
+        template = self._rollout(self._render(vals))["spec"]["template"]
+        self.assertEqual(template["spec"]["priorityClassName"], "experiment")
+
+    def test_priority_class_omitted_when_unset(self):
+        vals = _make_inference_values()
+        template = self._rollout(self._render(vals))["spec"]["template"]
+        self.assertNotIn("priorityClassName", template["spec"])
+
+    def test_kai_queue_omitted_when_unset(self):
+        vals = _make_inference_values()
+        template = self._rollout(self._render(vals))["spec"]["template"]
+        self.assertNotIn("kai.scheduler/queue", template["metadata"]["labels"])
 
 
 class ComputeDeploymentValuesBackwardCompatTest(unittest.TestCase):
@@ -1548,6 +1841,664 @@ class ComputeDeploymentValuesBackwardCompatTest(unittest.TestCase):
         dumped = values.model_dump()
         self.assertNotIn("jupyter_token", dumped)
         self.assertNotIn("jupyter_port", dumped)
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestComputeHelmTemplateImagePullSecret(unittest.TestCase):
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "compute_deployment"
+
+    def _values(self) -> dict:
+        resources_one = {
+            "cpu": "1",
+            "memory": "1Gi",
+            "accelerator_count": 1,
+            "accelerator_key": "nvidia.com/gpu",
+        }
+        return {
+            "user_id": 42,
+            "deployment_id": 100,
+            "name": "probe",
+            "image_url": "nginx:latest",
+            "domain": "centml.ai",
+            "container_port": 2222,
+            "exposed_port": 22,
+            "node_affinity_labels": {"zone": "a"},
+            "storage_class_name": "standard",
+            "resources": {"limits": resources_one, "requests": resources_one},
+            # Real model dump so the base64 shadow the chart b64decs is present.
+            "image_pull_secret": ImagePullSecret(
+                server="registry.example.com", username="robot$user", password="p@ss$word!"
+            ).model_dump(mode="json"),
+        }
+
+    def test_image_pull_secret_renders_dockerconfigjson(self) -> None:
+        assert _HELM_BIN is not None
+        helm_bin: str = _HELM_BIN
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(self._values(), f)
+            values_path = f.name
+        try:
+            result = subprocess.run(
+                [helm_bin, "template", "probe", str(self.CHART_PATH), "-f", values_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            os.unlink(values_path)
+
+        secrets = [
+            yaml.safe_load(doc)
+            for doc in result.stdout.split("\n---\n")
+            if "\nkind: Secret" in doc and "dockerconfigjson" in doc
+        ]
+        self.assertEqual(len(secrets), 1)
+        docker_config = json.loads(base64.b64decode(secrets[0]["data"][".dockerconfigjson"]))
+        auth = docker_config["auths"]["registry.example.com"]
+        self.assertEqual(auth["username"], "robot$user")
+        self.assertEqual(auth["password"], "p@ss$word!")
+
+    def test_kai_queue_on_pod_template(self) -> None:
+        assert _HELM_BIN is not None
+        values = self._values()
+        values["kai_queue"] = "org-7"
+        values["priority_class_name"] = "experiment"
+        values["scheduler_name"] = "kai-scheduler"
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(values, f)
+            values_path = f.name
+        try:
+            result = subprocess.run(
+                [_HELM_BIN, "template", "probe", str(self.CHART_PATH), "-f", values_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            os.unlink(values_path)
+        deployments = [yaml.safe_load(doc) for doc in result.stdout.split("\n---\n") if "\nkind: Deployment" in doc]
+        self.assertEqual(len(deployments), 1)
+        template = deployments[0]["spec"]["template"]
+        self.assertEqual(template["metadata"]["labels"]["kai.scheduler/queue"], "org-7")
+        self.assertEqual(template["spec"]["priorityClassName"], "experiment")
+        self.assertEqual(template["spec"]["schedulerName"], "kai-scheduler")
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestHelmTemplateImagePullSecretHostileCreds(unittest.TestCase):
+    """Credentials containing `"` / `\\` must produce a Secret whose
+    .dockerconfigjson is valid JSON with the exact username/password; the
+    templates build the config via `dict | toJson`, which JSON-escapes
+    both fields.
+    """
+
+    SERVER = "registry.example.com"
+    # `"` and `\` break unescaped JSON; `$oauthtoken` is the common nvcr.io user
+    # that motivated the base64 wire-decoding, exercised alongside the hostile pair.
+    CREDS = [('rob"ot\\user', 'p@ss"wo\\rd'), ("$oauthtoken", "secret-key-123")]
+
+    def _docker_config(self, chart_path: Path, values_yaml: str) -> dict:
+        raw = _helm_template(chart_path, values_yaml)
+        secrets = [
+            yaml.safe_load(doc) for doc in raw.split("\n---\n") if "\nkind: Secret" in doc and "dockerconfigjson" in doc
+        ]
+        self.assertEqual(len(secrets), 1)
+        # json.loads doubles as the valid-JSON assertion for the rendered payload.
+        return json.loads(base64.b64decode(secrets[0]["data"][".dockerconfigjson"]))
+
+    def _assert_roundtrip(self, docker_config: dict, username: str, password: str) -> None:
+        auth = docker_config["auths"][self.SERVER]
+        self.assertEqual(auth["username"], username)
+        self.assertEqual(auth["password"], password)
+        self.assertEqual(base64.b64decode(auth["auth"]).decode(), f"{username}:{password}")
+
+    def test_inference_v3(self):
+        for username, password in self.CREDS:
+            with self.subTest(username=username):
+                vals = _make_inference_values(
+                    image_pull_secret=ImagePullSecret(
+                        server=self.SERVER, username=username, password=password
+                    ).model_dump(mode="json"),
+                )
+                chart = Path(__file__).resolve().parents[2] / "src" / "catalog" / "inference_deployment_v3"
+                self._assert_roundtrip(self._docker_config(chart, vals.helm_values_yaml()), username, password)
+
+    def test_compute(self):
+        for username, password in self.CREDS:
+            with self.subTest(username=username):
+                vals = ComputeDeploymentValues(
+                    user_id=42,
+                    deployment_id=100,
+                    name="probe",
+                    image_url="nginx:latest",
+                    domain="centml.ai",
+                    container_port=2222,
+                    exposed_port=22,
+                    node_affinity_labels={"zone": "a"},
+                    storage_class_name="standard",
+                    ssh_public_key="ssh-ed25519 AAAA",
+                    resources=_make_resources(),
+                    image_pull_secret=ImagePullSecret(
+                        server=self.SERVER, username=username, password=password
+                    ).model_dump(mode="json"),
+                )
+                chart = Path(__file__).resolve().parents[2] / "src" / "catalog" / "compute_deployment"
+                self._assert_roundtrip(self._docker_config(chart, vals.helm_values_yaml()), username, password)
+
+    def test_dynamo(self):
+        for username, password in self.CREDS:
+            with self.subTest(username=username):
+                vals = DynamoDeploymentValues(
+                    user_id=42,
+                    deployment_id=100,
+                    name="test-dynamo",
+                    image_url="nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1",
+                    domain="centml.ai",
+                    revision_number=1,
+                    model="Qwen/Qwen3-0.6B",
+                    worker_pool=DynamoWorkerPoolValues(
+                        node_affinity_labels={"platform.centml.ai/instance-type": "small"},
+                        resources=_make_resources(),
+                    ),
+                    image_pull_secret=ImagePullSecret(
+                        server=self.SERVER, username=username, password=password
+                    ).model_dump(mode="json"),
+                )
+                chart = Path(__file__).resolve().parents[2] / "src" / "catalog" / "dynamo_deployment"
+                self._assert_roundtrip(self._docker_config(chart, vals.helm_values_yaml()), username, password)
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestComputeDeploymentHelmTemplate(unittest.TestCase):
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "compute_deployment"
+
+    def _values(self, image_pull_secret=None, revision_number: int | None = None) -> dict:
+        resources = {
+            "cpu": "1",
+            "memory": "1Gi",
+            "accelerator_count": 0,
+            "accelerator_key": "nvidia.com/gpu",
+        }
+        values = {
+            "user_id": 42,
+            "deployment_id": 100,
+            "name": "compute-probe",
+            "image_url": "ubuntu:24.04",
+            "ssh_injector_image": "registry.local/compute-ssh-launcher:test",
+            "image_pull_secret": image_pull_secret,
+            "domain": "centml.ai",
+            "container_port": 2222,
+            "exposed_port": 22,
+            "node_affinity_labels": {"zone": "a"},
+            "resources": {"limits": resources, "requests": resources},
+            "storage_class_name": "standard",
+            "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
+            "enable_logging": True,
+        }
+        if revision_number is not None:
+            values["revision_number"] = revision_number
+        return values
+
+    def _render_dict(self, values_dict: dict) -> list[dict]:
+        assert _HELM_BIN is not None
+        helm_bin: str = _HELM_BIN
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(values_dict, f)
+            values_path = f.name
+        try:
+            result = subprocess.run(
+                [helm_bin, "template", "probe", str(self.CHART_PATH), "-f", values_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            os.unlink(values_path)
+        return [d for d in yaml.safe_load_all(result.stdout.replace("\t", " ")) if d]
+
+    def _find(self, docs: list[dict], kind: str, name: str) -> dict:
+        matches = [d for d in docs if d.get("kind") == kind and d.get("metadata", {}).get("name") == name]
+        self.assertEqual(len(matches), 1, f"expected exactly one {kind}/{name}, found {len(matches)}")
+        return matches[0]
+
+    def test_compute_deployment_renders_ssh_launcher_injection(self):
+        docs = self._render_dict(self._values())
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        pod_spec = deployment["spec"]["template"]["spec"]
+
+        init_container = pod_spec["initContainers"][0]
+        self.assertEqual(init_container["name"], "ssh-launcher-init")
+        self.assertEqual(init_container["image"], "registry.local/compute-ssh-launcher:test")
+        self.assertEqual(init_container["command"], ["/compute-ssh", "install", "/ssh-bin/compute-ssh"])
+
+        user_container = pod_spec["containers"][0]
+        self.assertEqual(user_container["name"], "user-container")
+        self.assertEqual(user_container["command"], ["/ccluster/compute-ssh/compute-ssh"])
+        self.assertEqual(user_container["securityContext"], {"runAsUser": 0, "runAsGroup": 0})
+        self.assertIn({"containerPort": 2222, "protocol": "TCP"}, user_container["ports"])
+
+        env = {entry["name"]: entry["value"] for entry in user_container["env"] if "value" in entry}
+        self.assertEqual(env["CCLUSTER_SSH_ADDR"], ":2222")
+        self.assertEqual(env["CCLUSTER_SSH_HOST_KEY_DIR"], "/home/.ccluster/ssh")
+        self.assertEqual(env["CCLUSTER_SSH_WORKDIR"], "/home")
+        self.assertEqual(env["SSH_PUBLIC_KEY_FILE"], "/authorized_keys")
+
+        mount_names = {mount["name"]: mount["mountPath"] for mount in user_container["volumeMounts"]}
+        self.assertEqual(mount_names["ssh-launcher"], "/ccluster/compute-ssh")
+        self.assertEqual(mount_names["compute-volume"], "/home")
+        self.assertEqual(mount_names["authorized-keys"], "/authorized_keys")
+
+        volume_names = {volume["name"] for volume in pod_spec["volumes"]}
+        self.assertIn("ssh-launcher", volume_names)
+        self.assertIn("compute-volume", volume_names)
+
+        compute_volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "compute-volume")
+        self.assertEqual(compute_volume["persistentVolumeClaim"]["claimName"], "compute-probe")
+        self._find(docs, "PersistentVolumeClaim", "compute-probe")
+
+    def test_existing_home_pvc_is_mounted_without_creating_pvc(self):
+        values = self._values()
+        values["home_pvc_name"] = "vol-123"
+
+        docs = self._render_dict(values)
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        pod_spec = deployment["spec"]["template"]["spec"]
+        user_container = pod_spec["containers"][0]
+        env = {entry["name"]: entry["value"] for entry in user_container["env"] if "value" in entry}
+        compute_volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "compute-volume")
+        home_mounts = [mount for mount in user_container["volumeMounts"] if mount["mountPath"] == "/home"]
+
+        self.assertEqual(compute_volume["persistentVolumeClaim"]["claimName"], "vol-123")
+        self.assertEqual(len(home_mounts), 1)
+        self.assertEqual(env["CCLUSTER_SSH_HOST_KEY_DIR"], "/home/.ccluster/ssh/100")
+        self.assertFalse(any(doc["kind"] == "PersistentVolumeClaim" for doc in docs))
+
+    def test_existing_pvcs_mount_at_user_paths(self):
+        values = self._values()
+        values["volume_mounts"] = [
+            {"name": "vol-123", "mount_path": "/data", "read_only": False},
+            {"name": "vol-456", "mount_path": "/models", "read_only": True},
+        ]
+
+        docs = self._render_dict(values)
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        pod_spec = deployment["spec"]["template"]["spec"]
+        user_container = pod_spec["containers"][0]
+        mounts = {mount["mountPath"]: mount for mount in user_container["volumeMounts"]}
+        volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+
+        self.assertEqual(mounts["/data"]["readOnly"], False)
+        self.assertEqual(mounts["/models"]["readOnly"], True)
+        self.assertEqual(volumes[mounts["/data"]["name"]]["persistentVolumeClaim"]["claimName"], "vol-123")
+        self.assertEqual(volumes[mounts["/models"]["name"]]["persistentVolumeClaim"]["claimName"], "vol-456")
+        self._find(docs, "PersistentVolumeClaim", "compute-probe")
+
+    def test_one_existing_pvc_mounts_at_multiple_paths(self):
+        values = self._values()
+        values["volume_mounts"] = [
+            {"name": "vol-123", "mount_path": "/data", "read_only": False},
+            {"name": "vol-123", "mount_path": "/models", "read_only": True},
+        ]
+
+        docs = self._render_dict(values)
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        pod_spec = deployment["spec"]["template"]["spec"]
+        user_container = pod_spec["containers"][0]
+        mounts = {mount["mountPath"]: mount for mount in user_container["volumeMounts"]}
+        external_volumes = [volume for volume in pod_spec["volumes"] if volume["name"].startswith("external-volume-")]
+
+        self.assertEqual(mounts["/data"]["name"], "external-volume-0")
+        self.assertFalse(mounts["/data"]["readOnly"])
+        self.assertEqual(mounts["/models"]["name"], "external-volume-0")
+        self.assertTrue(mounts["/models"]["readOnly"])
+        self.assertEqual(
+            external_volumes,
+            [{"name": "external-volume-0", "persistentVolumeClaim": {"claimName": "vol-123"}}],
+        )
+
+    def test_home_pvc_reuses_compute_volume_at_another_path(self):
+        values = self._values()
+        values["home_pvc_name"] = "vol-123"
+        values["volume_mounts"] = [
+            {"name": "vol-123", "mount_path": "/data", "read_only": False},
+        ]
+
+        docs = self._render_dict(values)
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        pod_spec = deployment["spec"]["template"]["spec"]
+        mounts = {mount["mountPath"]: mount for mount in pod_spec["containers"][0]["volumeMounts"]}
+        pvc_volumes = [volume for volume in pod_spec["volumes"] if "persistentVolumeClaim" in volume]
+
+        self.assertEqual(mounts["/home"]["name"], "compute-volume")
+        self.assertEqual(mounts["/data"]["name"], "compute-volume")
+        self.assertEqual(
+            pvc_volumes,
+            [{"name": "compute-volume", "persistentVolumeClaim": {"claimName": "vol-123"}}],
+        )
+
+    def test_pod_template_has_standardized_component_type_label(self):
+        docs = self._render_dict(self._values())
+        deployment = self._find(docs, "Deployment", "compute-probe")
+
+        self.assertEqual(
+            deployment["spec"]["template"]["metadata"]["labels"][COMPONENT_TYPE_LABEL],
+            "user-container",
+        )
+        self.assertNotIn(COMPONENT_TYPE_LABEL, deployment["spec"]["selector"]["matchLabels"])
+
+    def test_legacy_compute_without_revision_number_has_no_revision_metadata(self):
+        docs = self._render_dict(self._values())
+        deployment = self._find(docs, "Deployment", "compute-probe")
+
+        pod_metadata = deployment["spec"]["template"]["metadata"]
+        annotations = pod_metadata["annotations"]
+        labels = pod_metadata["labels"]
+        self.assertNotIn("platform.centml.ai/revision-number", annotations)
+        self.assertNotIn("platform.centml.ai/revision-number", labels)
+        self.assertNotIn("platform.centml.ai/revision-number", deployment["spec"]["selector"]["matchLabels"])
+
+    def test_compute_revision_number_is_added_to_pod_metadata(self):
+        for revision_number in (1, 2):
+            with self.subTest(revision_number=revision_number):
+                docs = self._render_dict(self._values(revision_number=revision_number))
+                deployment = self._find(docs, "Deployment", "compute-probe")
+
+                pod_metadata = deployment["spec"]["template"]["metadata"]
+                annotations = pod_metadata["annotations"]
+                labels = pod_metadata["labels"]
+                self.assertEqual(annotations["platform.centml.ai/revision-number"], str(revision_number))
+                self.assertEqual(labels["platform.centml.ai/revision-number"], str(revision_number))
+                self.assertNotIn("platform.centml.ai/revision-number", deployment["spec"]["selector"]["matchLabels"])
+
+    def test_compute_image_pull_secret_renders_when_configured(self):
+        docs = self._render_dict(
+            self._values(
+                image_pull_secret={
+                    "server": "registry.example.com",
+                    "username": "user",
+                    "password": "pass",
+                    "username_base64": "dXNlcg==",
+                    "password_base64": "cGFzcw==",
+                }
+            )
+        )
+        deployment = self._find(docs, "Deployment", "compute-probe")
+        image_pull_secret_names = [item["name"] for item in deployment["spec"]["template"]["spec"]["imagePullSecrets"]]
+        self.assertIn("ecr-image-pull", image_pull_secret_names)
+        self.assertIn("compute-probe-image-pull-secret", image_pull_secret_names)
+
+        secret = self._find(docs, "Secret", "compute-probe-image-pull-secret")
+        self.assertEqual(secret["type"], "kubernetes.io/dockerconfigjson")
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestComputeHelmTemplateSpecialCharEnvVars(unittest.TestCase):
+    """deployment.yaml renders env values as `value: {{ $value | quote }}`, so embedded
+    double quotes survive helm_values_yaml() -> `helm template` verbatim in the
+    rendered Deployment."""
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "compute_deployment"
+
+    def test_env_vars_with_embedded_double_quotes_render_verbatim(self):
+        env_vars = {
+            "QUOTED": 'value with "double quotes" inside',
+            "MIXED": 'it\'s a "complex" value',
+        }
+        vals = ComputeDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="probe",
+            image_url="nginx:latest",
+            domain="centml.ai",
+            container_port=2222,
+            exposed_port=22,
+            node_affinity_labels={"zone": "a"},
+            storage_class_name="standard",
+            ssh_public_key="ssh-ed25519 AAAA",
+            env_vars=env_vars,
+            resources=_make_resources(),
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        deployment = next(doc for doc in docs if doc.get("kind") == "Deployment")
+        containers = deployment["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+        for key, expected in env_vars.items():
+            with self.subTest(key=key):
+                self.assertEqual(env[key], expected)
+
+    def test_ssh_username_fields_render_verbatim(self):
+        # ssh_username / ssh_github_username are user-supplied and render as dedicated env
+        # vars with | quote; a value with a double quote must not break the render.
+        vals = ComputeDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="probe",
+            image_url="nginx:latest",
+            domain="centml.ai",
+            container_port=2222,
+            exposed_port=22,
+            node_affinity_labels={"zone": "a"},
+            storage_class_name="standard",
+            ssh_username='us"er',
+            ssh_github_username='gh"user',
+            resources=_make_resources(),
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        deployment = next(doc for doc in docs if doc.get("kind") == "Deployment")
+        containers = deployment["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+        self.assertEqual(env["SSH_USERNAME"], 'us"er')
+        self.assertEqual(env["SSH_GITHUB_USERNAME"], 'gh"user')
+
+    def test_hostile_env_key_renders_verbatim(self):
+        # EnvVar names are user-controlled; `| quote` escapes an embedded double quote.
+        env_vars = {'A"B': "v"}
+        vals = ComputeDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="probe",
+            image_url="nginx:latest",
+            domain="centml.ai",
+            container_port=2222,
+            exposed_port=22,
+            node_affinity_labels={"zone": "a"},
+            storage_class_name="standard",
+            ssh_public_key="ssh-ed25519 AAAA",
+            env_vars=env_vars,
+            resources=_make_resources(),
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        deployment = next(doc for doc in docs if doc.get("kind") == "Deployment")
+        containers = deployment["spec"]["template"]["spec"]["containers"]
+        env = {e["name"]: e["value"] for c in containers for e in c.get("env", [])}
+        self.assertEqual(env['A"B'], "v")
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestComputeHelmTemplateSshPasswordSecret(unittest.TestCase):
+    """ssh-password.secret.yaml renders `ssh_password: {{ .Values.ssh_password | b64enc | quote }}`;
+    the `| quote` keeps an all-digit base64 encoding a string instead of a YAML number
+    the apiserver rejects in Secret.data."""
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "compute_deployment"
+
+    def test_all_digit_base64_ssh_password_stays_string(self):
+        # "Ӎ4" (U+04CD + "4") base64-encodes to "0400", which unquoted parses as a number.
+        vals = ComputeDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="probe",
+            image_url="nginx:latest",
+            domain="centml.ai",
+            container_port=2222,
+            exposed_port=22,
+            node_affinity_labels={"zone": "a"},
+            storage_class_name="standard",
+            ssh_password="Ӎ4",
+            resources=_make_resources(),
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        secret = next(d for d in docs if d.get("kind") == "Secret" and d["metadata"]["name"] == "ssh-password-100")
+        value = secret["data"]["ssh_password"]
+        self.assertIsInstance(value, str)
+        self.assertEqual(value, "0400")
+
+
+@unittest.skipUnless(_HELM_BIN, "helm binary not available in this environment")
+class TestDynamoHelmTemplateSpecialCharValues(unittest.TestCase):
+    """Hostile worker arguments and env values render as literal strings."""
+
+    CHART_PATH = Path(__file__).resolve().parents[2] / "src" / "catalog" / "dynamo_deployment"
+
+    def test_hostile_worker_values_render_as_literal_argv(self):
+        model = "Qwen/$(touch-not-executed)\n---\nkind: ConfigMap"
+        served_model_name = "served $(touch /tmp/not-executed)\nsecurityContext:\n  privileged: true"
+        hostile_argv = "line\n---\nkind: ConfigMap\nsecurityContext:\n  privileged: true"
+        extra_argv = [
+            "--max-model-len",
+            "8192",
+            "--override-generation-config",
+            '{"temperature": 0.1}',
+            "$DYN_MODEL",
+            "*",
+            ";",
+            "$(id)",
+            hostile_argv,
+        ]
+        vals = DynamoDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="test-dynamo",
+            image_url="nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1",
+            domain="centml.ai",
+            revision_number=1,
+            model=model,
+            served_model_name=served_model_name,
+            extra_argv=extra_argv,
+            worker_pool=DynamoWorkerPoolValues(
+                node_affinity_labels={"platform.centml.ai/instance-type": "small"},
+                resources=_make_resources(),
+            ),
+        )
+
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        dgd = next(doc for doc in docs if doc.get("kind") == "DynamoGraphDeployment")
+        worker = next(component for component in dgd["spec"]["components"] if component["name"] == "VllmDecodeWorker")
+        container = next(
+            candidate for candidate in worker["podTemplate"]["spec"]["containers"] if candidate["name"] == "main"
+        )
+
+        self.assertEqual(container["command"], ["python3"])
+        self.assertEqual(
+            container["args"],
+            [
+                "-m",
+                "dynamo.vllm",
+                "--model",
+                model,
+                "--kv-events-config",
+                '{"publisher":"zmq","topic":"kv-events","endpoint":"tcp://*:20080","enable_kv_cache_events":true}',
+                "--served-model-name",
+                served_model_name,
+                "--max-model-len",
+                "8192",
+                "--override-generation-config",
+                '{"temperature": 0.1}',
+                "$DYN_MODEL",
+                "*",
+                ";",
+                "$(id)",
+                hostile_argv,
+                "--runner",
+                "generate",
+                "--tensor-parallel-size",
+                "1",
+            ],
+        )
+        self.assertNotIn("securityContext", container)
+        self.assertNotIn("ConfigMap", [doc["kind"] for doc in docs])
+
+    def test_missing_model_fails_loudly(self):
+        vals = DynamoDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="test-dynamo",
+            image_url="nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1",
+            domain="centml.ai",
+            revision_number=1,
+            model="Qwen/Qwen3-0.6B",
+            worker_pool=DynamoWorkerPoolValues(
+                node_affinity_labels={"platform.centml.ai/instance-type": "small"},
+                resources=_make_resources(),
+            ),
+        )
+
+        for model_state in ("missing", "null", "empty"):
+            with self.subTest(model_state=model_state):
+                values = json.loads(vals.helm_values_yaml())
+                if model_state == "missing":
+                    values.pop("model")
+                else:
+                    values["model"] = None if model_state == "null" else ""
+
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    _helm_template(self.CHART_PATH, json.dumps(values))
+
+                self.assertIn("model is required", raised.exception.stderr)
+
+    def test_env_vars_with_embedded_double_quotes_render_verbatim(self):
+        env_vars = {
+            "QUOTED": 'value with "double quotes" inside',
+            "MIXED": 'it\'s a "complex" value',
+            "MY-FLAG": "kubernetes-name-with-dash",
+            "my.flag": "kubernetes-name-with-dot",
+        }
+        vals = DynamoDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="test-dynamo",
+            image_url="nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1",
+            domain="centml.ai",
+            revision_number=1,
+            model="Qwen/Qwen3-0.6B",
+            worker_pool=DynamoWorkerPoolValues(
+                node_affinity_labels={"platform.centml.ai/instance-type": "small"},
+                resources=_make_resources(),
+            ),
+            env_vars=env_vars,
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        dgd = next(doc for doc in docs if doc.get("kind") == "DynamoGraphDeployment")
+        components = {c["name"]: c for c in dgd["spec"]["components"]}
+        self.assertEqual(set(components), {"Frontend", "VllmDecodeWorker"})
+        for component_name, component in components.items():
+            containers = component["podTemplate"]["spec"]["containers"]
+            env = {e["name"]: e.get("value") for c in containers for e in c.get("env", [])}
+            for key, expected in env_vars.items():
+                with self.subTest(component=component_name, key=key):
+                    self.assertEqual(env[key], expected)
+
+    def test_bool_like_name_renders_string_label_on_scaled_object(self):
+        # The ScaledObject carries an `app: <name>` label value; `| quote` keeps a
+        # name like "true" a string instead of a YAML bool the apiserver rejects.
+        vals = DynamoDeploymentValues(
+            user_id=42,
+            deployment_id=100,
+            name="true",
+            image_url="nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.2.1",
+            domain="centml.ai",
+            revision_number=1,
+            model="Qwen/Qwen3-0.6B",
+            worker_pool=DynamoWorkerPoolValues(
+                node_affinity_labels={"platform.centml.ai/instance-type": "small"},
+                resources=_make_resources(),
+            ),
+        )
+        docs = _parse_rendered_docs(_helm_template(self.CHART_PATH, vals.helm_values_yaml()))
+        scaled_object = next(doc for doc in docs if doc.get("kind") == "ScaledObject")
+        label = scaled_object["metadata"]["labels"]["app"]
+        self.assertIsInstance(label, str)
+        self.assertEqual(label, "true")
 
 
 if __name__ == "__main__":

@@ -20,10 +20,10 @@ import pytest
 from pydantic import ValidationError
 
 from ccluster import catalogs
-from ccluster.catalogs import cluster_base, deployments
+from ccluster.catalogs import cluster_base, deployments, namespace_base, resources
 from ccluster.catalogs.cluster_base import gpu_operator, teleport_kube_agent
-from ccluster.catalogs import namespace_base
 from ccluster.catalogs.deployments import inference_deployment
+from ccluster.catalogs.resources import kai_gpu_queues
 
 
 @pytest.mark.parametrize("name", cluster_base.__all__)
@@ -42,6 +42,21 @@ def test_deployment_package_shape(name):
     assert pkg.CHART == f"catalogs/deployments/{name}"
     for exported in pkg.__all__:
         assert hasattr(pkg, exported)
+
+
+@pytest.mark.parametrize("name", resources.__all__)
+def test_resource_package_shape(name):
+    pkg = importlib.import_module(f"ccluster.catalogs.resources.{name}")
+    assert pkg.CHART == f"catalogs/resources/{name}"
+    for exported in pkg.__all__:
+        assert hasattr(pkg, exported)
+
+
+def test_kai_gpu_queues_leaves():
+    values = kai_gpu_queues.Values(queues=[kai_gpu_queues.Queue(name="org-7", gpu_quota=8)])
+    assert catalogs.entry(kai_gpu_queues.CHART, "kai-scheduler", values)["values"] == {
+        "queues": [{"name": "org-7", "gpuQuota": 8}]
+    }
 
 
 def test_namespace_base_takes_no_values():

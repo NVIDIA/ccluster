@@ -57,4 +57,4 @@ class CServeV3InferenceDeploymentValues(InferenceDeploymentValues, DeploymentInp
 
 class CServeV3InferenceDeploymentConfig(BaseAppConfig):
     values: CServeV3InferenceDeploymentValues
-    app_path: str = "catalog/cserve_deployment_v3"
+    app_path: str = "catalog/src/catalog/cserve_deployment_v3"

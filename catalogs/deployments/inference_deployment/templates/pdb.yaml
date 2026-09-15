@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.name }}-pdb
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ .Values.name }}
+    app: {{ .Values.name | quote }}
 spec:
   # Disruption budget based on replica count:
   # - 2 replicas: allow 50% disruption (maxUnavailable: 50%)

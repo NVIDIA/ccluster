@@ -1,3 +1,10 @@
+{{- /* One pod volume per distinct claim, however many times it is mounted. */}}
+{{- $volumeNameByClaim := dict }}
+{{- range $index, $mount := .Values.volumeMounts }}
+{{- if not (hasKey $volumeNameByClaim $mount.name) }}
+{{- $_ := set $volumeNameByClaim $mount.name (printf "external-volume-%d" $index) }}
+{{- end }}
+{{- end }}
 {{- template "setExtraConfigFiles" . }}
 apiVersion: batch/v1
 kind: Job
@@ -8,6 +15,9 @@ metadata:
   labels:
     platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
     platform.centml.ai/workload_type: job
+    {{- if .Values.kaiQueue }}
+    kai.scheduler/queue: {{ .Values.kaiQueue | quote }}
+    {{- end }}
   name: "{{ .Values.name }}"
   namespace: {{ .Release.Namespace }}
 spec:
@@ -37,6 +47,10 @@ spec:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
         platform.centml.ai/revision-number: "1"
         platform.centml.ai/workload_type: job
+        ccluster.nvidia.com/component-type: user-container
+        {{- if .Values.kaiQueue }}
+        kai.scheduler/queue: {{ .Values.kaiQueue | quote }}
+        {{- end }}
         {{- if .Values.userAnnotations }}
         {{- range $key, $value := .Values.userAnnotations }}
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
@@ -46,6 +60,9 @@ spec:
       {{- if .Values.schedulerName }}
       schedulerName: {{ .Values.schedulerName }}
       {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName | quote }}
+      {{- end }}
       restartPolicy: Never
       affinity:
         nodeAffinity:
@@ -53,7 +70,7 @@ spec:
             nodeSelectorTerms:
               - matchExpressions:
                 {{- range $key, $value := .Values.nodeAffinityLabels }}
-                - key: "{{ $key }}"
+                - key: {{ $key | quote }}
                   operator: In
                   values:
                     - {{ $value | quote }}
@@ -77,8 +94,8 @@ spec:
             - name: "JOB_COMPLETIONS"
               value: "{{ .Values.completions | int }}"
             {{- range $key, $value := .Values.envVars }}
-            - name: "{{ $key }}"
-              value: "{{ $value }}"
+            - name: {{ $key | quote }}
+              value: {{ $value | quote }}
             {{- end }}
           resources:
             limits:
@@ -100,6 +117,11 @@ spec:
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
+            {{- range $mount := .Values.volumeMounts }}
+            - mountPath: {{ $mount.mountPath | quote }}
+              name: {{ get $volumeNameByClaim $mount.name }}
+              readOnly: {{ $mount.readOnly | default false }}
+            {{- end }}
             # See _helpers.tpl for instructions on how to define extraConfigFiles.
             # subPath/mountPath are quoted: a filename like "true" or "123" passes the
             # API regex but would otherwise render as a YAML bool/number and be
@@ -125,6 +147,15 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.devShmSize }}
           name: dshm
+        {{- $renderedClaims := dict }}
+        {{- range $mount := .Values.volumeMounts }}
+        {{- if not (hasKey $renderedClaims $mount.name) }}
+        {{- $_ := set $renderedClaims $mount.name true }}
+        - name: {{ get $volumeNameByClaim $mount.name }}
+          persistentVolumeClaim:
+            claimName: {{ $mount.name | quote }}
+        {{- end }}
+        {{- end }}
         # See _helpers.tpl for instructions on how to define extraConfigFiles
         {{- range .ExtraConfigFiles }}
         - name: {{ .configMapName }}

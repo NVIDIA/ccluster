@@ -1,13 +1,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: "compute-deployment-{{ .Values.deployment_id }}"
-  namespace: "user-{{ .Values.user_id }}"
+  name: "compute-deployment-{{ .Values.deployment_id | int }}"
+  namespace: "user-{{ .Values.user_id | int }}"
 spec:
   # This policy applies to this specific compute deployment
   podSelector:
     matchLabels:
-      platform.centml.ai/deployment-id: "{{ .Values.deployment_id }}"
+      platform.centml.ai/deployment-id: "{{ .Values.deployment_id | int }}"
 
   policyTypes:
     - Ingress

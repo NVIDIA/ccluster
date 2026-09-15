@@ -3,7 +3,9 @@
 
 from typing import Dict, List, Optional
 
-from catalog.components import BaseAppConfig, DeploymentBaseHelmValues
+from pydantic import Field
+
+from catalog.components import BaseAppConfig, DeploymentBaseHelmValues, PersistentVolumeClaimToMount
 from catalog.inference_deployment_v3 import ConfigFileMountValues, ImagePullSecret
 
 
@@ -24,8 +26,9 @@ class JobDeploymentValues(DeploymentBaseHelmValues):
     active_deadline_seconds: Optional[int] = None
     enable_logging: bool = True
     config_file: Optional[ConfigFileMountValues] = None
+    volume_mounts: list[PersistentVolumeClaimToMount] = Field(default_factory=list)
 
 
 class JobDeploymentConfig(BaseAppConfig):
     values: JobDeploymentValues
-    app_path: str = "catalog/job_deployment"
+    app_path: str = "catalog/src/catalog/job_deployment"

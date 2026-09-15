@@ -1,0 +1,9 @@
+# Chart defaults for catalogs/resources/kai_gpu_queues. See component.go for the schema.
+
+# The parent of every leaf queue. It is unlimited; leaves cap their own GPUs.
+rootQueue: ccluster-root
+# The quota and limit that mean "no cap", for the root queue and for CPU and memory.
+unlimitedQuota: -1
+# Leaf queues, each {name, gpuQuota}. gpuQuota is both quota and limit (a hard cap);
+# 0 is none and -1 is unlimited.
+queues: []

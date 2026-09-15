@@ -65,6 +65,14 @@ type Workload struct {
 	// bin-packs GPUs; an explicit "" falls back to the cluster's default scheduler.
 	SchedulerName *string `json:"schedulerName,omitempty"`
 
+	// KaiQueue is the KAI scheduler queue the pods are labelled kai.scheduler/queue
+	// with, one of the leaf queues catalogs/resources/kai_gpu_queues creates. Unset
+	// leaves the pods on the scheduler's default queue.
+	KaiQueue *string `json:"kaiQueue,omitempty"`
+
+	// PriorityClassName is the pod's PriorityClass. Unset leaves it to the cluster.
+	PriorityClassName *string `json:"priorityClassName,omitempty"`
+
 	// EnableLogging ships the container's logs to the cluster's log pipeline. The
 	// chart ships true; false marks the pod platform.centml.ai/log-exclude.
 	EnableLogging *bool `json:"enableLogging,omitempty"`
@@ -132,6 +140,37 @@ func (r Resources) validate(prefix string) error {
 			ErrInvalidValue, prefix, *r.AcceleratorCount)
 	}
 	return nil
+}
+
+// VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
+// does not own the claim; catalogs/resources/persistent_volume creates one.
+type VolumeMount struct {
+	// Name is the claim's name in the release namespace. Required.
+	Name string `json:"name"`
+
+	// MountPath is the absolute directory it is mounted at. Required.
+	MountPath string `json:"mountPath"`
+
+	// ReadOnly mounts it read-only in this container. The chart ships false.
+	ReadOnly *bool `json:"readOnly,omitempty"`
+}
+
+// ValidateVolumeMounts reports mounts missing a claim name or a mount path, and
+// mount paths that are not absolute.
+func ValidateVolumeMounts(mounts []VolumeMount) error {
+	var errs []error
+	for i, m := range mounts {
+		prefix := fmt.Sprintf("volumeMounts[%d]", i)
+		errs = append(errs, MissingError(Missing(
+			Field{prefix + ".name", m.Name},
+			Field{prefix + ".mountPath", m.MountPath},
+		)))
+		if m.MountPath != "" && m.MountPath[0] != '/' {
+			errs = append(errs, fmt.Errorf("%w: %s.mountPath %q is not absolute",
+				ErrInvalidValue, prefix, m.MountPath))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ImagePullSecret is a registry credential the chart turns into a dockerconfigjson

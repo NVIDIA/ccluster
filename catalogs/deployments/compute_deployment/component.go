@@ -52,9 +52,20 @@ type Values struct {
 	// Required.
 	ExposedPort int32 `json:"exposedPort"`
 
-	// StorageClassName provisions the home volume. Its size is 100Gi per requested
-	// accelerator, and at least 100Gi. Required.
+	// RevisionNumber is this deployment's revision. It labels the pod, so bumping it
+	// recreates the pod. Unset, no revision label is rendered.
+	RevisionNumber *int64 `json:"revisionNumber,omitempty"`
+
+	// StorageClassName provisions the home volume, unless HomePVCName supplies one.
+	// Its size is 100Gi per requested accelerator, and at least 100Gi. Required.
 	StorageClassName string `json:"storageClassName"`
+
+	// HomePVCName mounts an existing claim at /home instead of the chart creating one.
+	// The SSH host keys then live under a per-deployment directory on it.
+	HomePVCName *string `json:"homePvcName,omitempty"`
+
+	// VolumeMounts are additional existing claims mounted into the container.
+	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
 
 	// SSHInjectorImage carries the compute-ssh launcher that an init container copies
 	// into the pod. Required.
@@ -94,6 +105,11 @@ func (v Values) Validate() error {
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},
 			deployments.Field{Name: "sshInjectorImage", Value: v.SSHInjectorImage},
 		)),
+		deployments.ValidateVolumeMounts(v.VolumeMounts),
+	}
+	if v.RevisionNumber != nil && *v.RevisionNumber < 0 {
+		errs = append(errs, fmt.Errorf("%w: revisionNumber %d is negative",
+			deployments.ErrInvalidValue, *v.RevisionNumber))
 	}
 	for _, port := range []struct {
 		name  string

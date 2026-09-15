@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plan-config-{{ .Values.deployment_id | int }}
+  namespace: user-{{ .Values.user_id | int }}
+data:
+  plan.yaml: |-
+  {{ .Values.plan_yaml | nindent 4 }}
