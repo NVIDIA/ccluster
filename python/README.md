@@ -130,9 +130,9 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 
 | Python | Source | Via |
 | --- | --- | --- |
-| `ccluster/v1alpha1/<kind>.py` (`<Kind>Spec`, `<Kind>Status` and their nested types) | `config/crd/bases/*.yaml`, the CRD's `spec` and `status` schemas | `yq` → JSON Schema → datamodel-code-generator |
+| `ccluster/v1alpha1/<kind>.py` (`<Kind>Spec`, `<Kind>Status` and their nested types) | `config/crd/bases/*.yaml`, the CRD's `spec` and `status` schemas | `hack/pyschema` → JSON Schema → datamodel-code-generator |
 | `ccluster/catalogs/<catalog>/<chart>/__init__.py` (`Values` and friends, `CHART`) | `catalogs/<catalog>/<chart>/component.go`, via `catalogs/components.All` | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator, `CHART` appended by the Makefile |
-| `ccluster/v1alpha1/__init__.py` (`Kind`, `CCLComponentSet`, `CCLInfraPlane`) | the CRD kinds | `hack/crd-python-init.py`: one `Kind` member and one `CustomResource[Spec, Status]` subclass per kind |
+| `ccluster/v1alpha1/__init__.py` (`Kind`, `CCLComponentSet`, `CCLInfraPlane`) | the CRD kinds | `hack/pyschema`: one `Kind` member and one `CustomResource[Spec, Status]` subclass per kind |
 | `ccluster/v1alpha1/base.py` (`ObjectMeta`, `CustomResource`) | hand-written | the generic envelope template the concrete kinds specialise |
 
 The CRD models carry controller-gen's constraints (name patterns, length and item bounds)

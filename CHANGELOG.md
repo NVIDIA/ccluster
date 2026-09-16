@@ -32,8 +32,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ### Changed
 - `ccluster-py` models a CRD's `spec` and `status` only: `CCLInfraPlaneSpec`,
   `CCLInfraPlaneStatus`, `CCLComponentSetSpec`, `CCLComponentSetStatus` and their nested
-  types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema with `yq`
-  and datamodel-code-generator, constraints and docstrings included. `ccluster.v1alpha1.base` is a
+  types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema by
+  `hack/pyschema` and datamodel-code-generator, constraints and docstrings included. `ccluster.v1alpha1.base` is a
   hand-written generic `CustomResource[Spec, Status]` template with a small `ObjectMeta`;
   `ccluster.v1alpha1` itself is generated from the CRD kinds with the `Kind` enum and one
   concrete `CustomResource` per kind (`CCLComponentSet`, `CCLInfraPlane`), which

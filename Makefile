@@ -621,46 +621,21 @@ python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as
 ##@ Python
 
 # python/ is a Pydantic rendering of the CRDs' spec and status and of the catalog's typed
-# values. Two inputs, one generator: for every CRD under config/crd/bases, yq lifts the
-# spec schema (root, titled <Kind>Spec) and the status schema ($defs, titled <Kind>Status)
-# into one JSON Schema per kind and version; hack/pyschema reflects every chart's Go Values
-# into one JSON Schema per chart. datamodel-code-generator turns each document into Python:
-# <version>/<kind>.py for a CRD, <chart path>/__init__.py for a chart, the latter with a
-# CHART constant appended. Catalog directories carry no __init__.py (namespace packages).
-# A version directory holds the hand-written base.py (the generic CustomResource template
-# and ObjectMeta), the generated <kind>.py modules, and a generated __init__.py that
-# declares the Kind enum and one concrete CustomResource per kind, written by
-# hack/crd-python-init.py from the CRD kinds. Generated files are rebuilt on each run.
+# values, generated in two steps. hack/pyschema writes one JSON Schema per CRD kind and
+# version (spec at the root, status in definitions) and one per chart (reflected from the
+# chart's Go Values), plus each API version package's __init__.py: the Kind enum and one
+# concrete CustomResource per kind over the hand-written template in <version>/base.py.
+# datamodel-code-generator then turns each schema into Python: <version>/<kind>.py for a
+# CRD, <chart path>/__init__.py for a chart, the latter with a CHART constant appended.
+# Catalog directories carry no __init__.py (namespace packages). Generated files are
+# rebuilt on each run; see hack/pyschema/main.go.
 PYSCHEMA_DIR ?= dist/pyschema
 PYTHON_PKG ?= python/src/ccluster
 CRD_DIR ?= config/crd/bases
 
 .PHONY: python-generate
-python-generate: manifests uv yq ## Regenerate python/ from the CRDs and the catalog Go types.
-	@for crd in $(CRD_DIR)/*.yaml; do \
-		kind=$$("$(YQ)" '.spec.names.kind' "$$crd" | tr '[:upper:]' '[:lower:]'); \
-		for version in $$("$(YQ)" '.spec.versions[].name' "$$crd"); do \
-			rm -f "$(PYTHON_PKG)/$$version/$$kind.py"; \
-		done; \
-	done
-	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)"
-	@for crd in $(CRD_DIR)/*.yaml; do \
-		kind=$$("$(YQ)" '.spec.names.kind' "$$crd"); \
-		for version in $$("$(YQ)" '.spec.versions[].name' "$$crd"); do \
-			out="$(PYSCHEMA_DIR)/$$version/$$(echo "$$kind" | tr '[:upper:]' '[:lower:]').json"; \
-			mkdir -p "$$(dirname "$$out")"; \
-			echo "$$crd ($$version) -> $$out"; \
-			KIND="$$kind" VERSION="$$version" "$(YQ)" -o=json --from-file hack/crd-python-schema.yq "$$crd" > "$$out"; \
-		done; \
-	done
-	@for dir in "$(PYSCHEMA_DIR)"/*/; do \
-		version="$$(basename "$$dir")"; \
-		[ "$$version" = catalogs ] && continue; \
-		kinds=$$(cat $(CRD_DIR)/*.yaml | "$(YQ)" -N 'select(.spec.versions[].name == "'"$$version"'") | .spec.names.kind'); \
-		echo "$$version kinds ($$(echo $$kinds)) -> $(PYTHON_PKG)/$$version/__init__.py"; \
-		python3 hack/crd-python-init.py --version "$$version" --out "$(PYTHON_PKG)/$$version/__init__.py" \
-			--header hack/boilerplate.py.txt $$kinds; \
-	done
+python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalog Go types.
+	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)" --crds "$(CRD_DIR)"
 	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
 		rel="$${schema#$(PYSCHEMA_DIR)/}"; pkg="$${rel%.json}"; \
 		case "$$pkg" in \

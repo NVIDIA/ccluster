@@ -14,19 +14,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// pyschema is the catalog half of `make python-generate`: for every chart registered in
-// catalogs/components.All it reflects the chart's Go Values type into a JSON Schema
-// document, <out>/<chart path>.json, with the Go doc comments as descriptions.
-// datamodel-code-generator then turns each document into the chart's Python package; the
-// Makefile drives that half and appends the CHART constant.
+// pyschema is the first half of `make python-generate`. It writes what
+// datamodel-code-generator turns into the ccluster-py package:
 //
-// The CRD models are not produced here. Their spec and status schemas already exist in
-// config/crd/bases, written by controller-gen, and the Makefile extracts them with yq and
-// feeds them to the same generator. Nothing here reads or shapes them.
+//   - for every CRD under --crds and every version it serves, <out>/<version>/<kind>.json:
+//     the kind's spec schema at the root, titled <Kind>Spec, and its status schema under
+//     definitions, titled <Kind>Status. Spec and status are the only parts that differ
+//     between kinds, so they are the only parts generated;
+//   - for every chart in catalogs/components.All, <out>/<chart path>.json, reflected from
+//     the chart's Go Values type with its doc comments;
+//   - for every API version, <python>/<version>/__init__.py: the Kind enum and one concrete
+//     CustomResource[<Kind>Spec, <Kind>Status] per kind, specialising the hand-written
+//     template in <python>/<version>/base.py. It is a fixed template filled with kind names,
+//     not a translation.
 //
-// There is no list of charts here: the registry is the catalog's own. The Python
-// directories the charts generate into are deleted before every run, so a removed chart
-// disappears from Python too.
+// Nothing here lists kinds or charts: kinds come from the CRD files, charts from the
+// catalog's registry, so adding either needs no change to this tool. The generated Python
+// files (<version>/<kind>.py, <version>/__init__.py, the chart packages) are deleted
+// before each run so removed kinds and charts disappear from the package.
 package main
 
 import (
@@ -36,8 +41,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/invopop/jsonschema"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/NVIDIA/ccluster/catalogs/components"
 )
@@ -49,17 +59,151 @@ const modulePath = "github.com/NVIDIA/ccluster"
 func main() {
 	out := flag.String("out", "dist/pyschema", "directory to write the JSON schemas into")
 	python := flag.String("python", "python/src/ccluster",
-		"the Python package whose generated chart packages are deleted before the schemas are written")
+		"the Python package whose generated files are rebuilt")
 	repo := flag.String("repo", ".", "repository root, holding catalogs/")
+	crds := flag.String("crds", "config/crd/bases", "directory holding the CRD manifests")
+	header := flag.String("header", "hack/boilerplate.py.txt", "file header for generated Python")
 	flag.Parse()
 
-	if err := run(*repo, *out, *python); err != nil {
+	if err := run(*repo, *out, *python, *crds, *header); err != nil {
 		fmt.Fprintln(os.Stderr, "pyschema:", err)
 		os.Exit(1)
 	}
 }
 
-func run(repo, out, python string) error {
+func run(repo, out, python, crds, headerFile string) error {
+	header, err := os.ReadFile(headerFile)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(out); err != nil {
+		return err
+	}
+	if err := writeCRDs(out, python, crds, string(header)); err != nil {
+		return fmt.Errorf("CRDs: %w", err)
+	}
+	if err := writeCharts(repo, out, python); err != nil {
+		return fmt.Errorf("charts: %w", err)
+	}
+	return nil
+}
+
+// writeCRDs writes one schema per kind and version and one __init__.py per version.
+func writeCRDs(out, python, dir, header string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no CRDs under %s; run `make manifests` first", dir)
+	}
+
+	group := ""
+	kinds := map[string][]string{} // version -> kinds
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := yaml.Unmarshal(raw, &crd); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+		kind := crd.Spec.Names.Kind
+		if group == "" {
+			group = crd.Spec.Group
+		} else if group != crd.Spec.Group {
+			return fmt.Errorf("%s: group %s differs from %s", file, crd.Spec.Group, group)
+		}
+
+		for _, version := range crd.Spec.Versions {
+			if version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
+				return fmt.Errorf("%s: version %s has no schema", kind, version.Name)
+			}
+			props := version.Schema.OpenAPIV3Schema.Properties
+			spec, ok := props["spec"]
+			if !ok {
+				return fmt.Errorf("%s %s: no spec", kind, version.Name)
+			}
+			status, ok := props["status"]
+			if !ok {
+				return fmt.Errorf("%s %s: no status", kind, version.Name)
+			}
+			spec.Title = kind + "Spec"
+			status.Title = kind + "Status"
+			spec.Definitions = apiextensionsv1.JSONSchemaDefinitions{kind + "Status": status}
+
+			module := strings.ToLower(kind)
+			// Rebuild the kind's module from scratch; base.py in the same directory is
+			// hand-written and stays.
+			if err := os.Remove(filepath.Join(python, version.Name, module+".py")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := writeJSON(filepath.Join(out, version.Name, module+".json"), spec); err != nil {
+				return err
+			}
+			kinds[version.Name] = append(kinds[version.Name], kind)
+		}
+	}
+
+	for version, names := range kinds {
+		sort.Strings(names)
+		file := filepath.Join(python, version, "__init__.py")
+		if err := os.WriteFile(file, []byte(renderInit(header, group, version, names)), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// renderInit is the __init__.py of one API version package: the Kind enum and one
+// concrete CustomResource per kind, over the hand-written template in base.py.
+func renderInit(header, group, version string, kinds []string) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(header, "\n"))
+	fmt.Fprintf(&b, "\n\n\"\"\"The %s/%s kinds: one concrete CustomResource per CRD, and the Kind\n"+
+		"enum naming them. The template is in .base; each kind's Spec and Status are in its\n"+
+		"own module.\"\"\"\n\n", group, version)
+	b.WriteString("from enum import Enum\nfrom typing import Literal\n\n")
+	b.WriteString("from .base import API_VERSION, CustomResource, ObjectMeta\n")
+	for _, kind := range kinds {
+		fmt.Fprintf(&b, "from .%s import %sSpec, %sStatus\n", strings.ToLower(kind), kind, kind)
+	}
+	exports := append(append([]string{"API_VERSION"}, kinds...), "CustomResource", "Kind", "ObjectMeta")
+	b.WriteString("\n__all__ = [\n")
+	for _, name := range exports {
+		fmt.Fprintf(&b, "    %q,\n", name)
+	}
+	b.WriteString("]\n\n\n")
+	b.WriteString("class Kind(str, Enum):\n")
+	fmt.Fprintf(&b, "    \"\"\"The kinds of %s/%s, as they appear on the wire.\"\"\"\n\n", group, version)
+	for _, kind := range kinds {
+		fmt.Fprintf(&b, "    %s = %q\n", enumMember(kind), kind)
+	}
+	for _, kind := range kinds {
+		fmt.Fprintf(&b, "\n\nclass %s(CustomResource[%sSpec, %sStatus]):\n", kind, kind, kind)
+		fmt.Fprintf(&b, "    \"\"\"A %s object; see %sSpec and %sStatus for its contents.\"\"\"\n\n", kind, kind, kind)
+		fmt.Fprintf(&b, "    kind: Literal[Kind.%s] = Kind.%s\n", enumMember(kind), enumMember(kind))
+	}
+	return b.String()
+}
+
+var (
+	acronymBoundary = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+	wordBoundary    = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+)
+
+// enumMember turns a CamelCase kind into an UPPER_SNAKE enum member:
+// CCLComponentSet -> CCL_COMPONENT_SET.
+func enumMember(kind string) string {
+	s := acronymBoundary.ReplaceAllString(kind, "${1}_${2}")
+	s = wordBoundary.ReplaceAllString(s, "${1}_${2}")
+	return strings.ToUpper(s)
+}
+
+// writeCharts reflects every registered chart's Values into a schema, after deleting the
+// Python directories the charts generate into so removed charts disappear.
+func writeCharts(repo, out, python string) error {
 	reflector := jsonschema.Reflector{
 		// No $id: these are documents of ours, not published schemas.
 		Anonymous: true,
@@ -74,19 +218,14 @@ func run(repo, out, python string) error {
 		return err
 	}
 
-	// Rebuild from scratch so nothing stale survives: the schema directory and the
-	// catalog directories the charts live in. A chart directly under catalogs/ is its
-	// own directory; catalogs/__init__.py is hand-written and stays.
-	dirs := []string{out}
+	// A chart directly under catalogs/ is its own directory; a chart in a catalog shares
+	// the catalog directory. catalogs/__init__.py is hand-written and stays.
 	for _, c := range components.All {
 		dir := c.Chart
 		if parent := path.Dir(c.Chart); parent != "catalogs" {
 			dir = parent
 		}
-		dirs = append(dirs, filepath.Join(python, filepath.FromSlash(dir)))
-	}
-	for _, dir := range dirs {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := os.RemoveAll(filepath.Join(python, filepath.FromSlash(dir))); err != nil {
 			return err
 		}
 	}

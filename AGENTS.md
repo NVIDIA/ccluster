@@ -14,7 +14,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components, `deployments/` tenant workloads, `resources/` the queues and volumes they use. |
-| `hack/pyschema/` → `python/` | Chart values schema generator → Pydantic package; CRD models come from the CRDs via the Makefile. |
+| `hack/pyschema/` → `python/` | CRD spec/status and chart values → JSON Schema → Pydantic package. |
 | `examples/` | Hand-written example CRs. |
 
 ## Read for your task

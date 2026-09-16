@@ -115,17 +115,19 @@ When adding or changing a component:
 
 ## Python generation
 
-`make python-generate` builds the `ccluster-py` package from two inputs with one generator:
+`make python-generate` builds the `ccluster-py` package from two inputs. `hack/pyschema`
+writes the JSON Schema for both, plus each API version package's `__init__.py`;
+`datamodel-code-generator` writes everything else.
 
-- **CRDs.** For every CRD under `config/crd/bases`, `yq` lifts the `spec` schema (as the
-  document root, titled `<Kind>Spec`) and the `status` schema (under `$defs`, titled
-  `<Kind>Status`) into one JSON Schema per kind and version. Only spec and status are
+- **CRDs.** For every CRD under `config/crd/bases`, `hack/pyschema` lifts the `spec`
+  schema (as the document root, titled `<Kind>Spec`) and the `status` schema (under
+  `definitions`, titled `<Kind>Status`) into one JSON Schema per kind and version. Only spec and status are
   generated: they are the parts that differ between kinds. The envelope (`apiVersion`,
   `kind`, `metadata`) is the same for every Kubernetes object, so it is one hand-written
   generic template, `CustomResource[Spec, Status]` with `ObjectMeta`, in
   `python/src/ccluster/v1alpha1/base.py`. The package's `__init__.py` is generated from the
-  CRD kinds by `hack/crd-python-init.py`: the `Kind` enum and one concrete
-  `CustomResource` per kind. Adding a CRD needs no Python change.
+  CRD kinds by `hack/pyschema` too: the `Kind` enum and one concrete `CustomResource` per
+  kind. Adding a CRD needs no Python change.
   Nested class names come from `+kubebuilder:title` markers on the Go types, which
   controller-gen writes into the CRD and the generator uses as class names.
 - **Charts.** `hack/pyschema` reflects every `Values` in `catalogs/components.All` into one
