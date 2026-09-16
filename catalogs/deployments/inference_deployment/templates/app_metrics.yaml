@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 # Per-deployment user-application metrics scrape (vs. the sidecar/system
 # scrape in service_monitor.yaml). sampleLimit below caps cardinality so a
 # runaway high-cardinality user metric cannot blow up the cluster

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Deploy overlay for ccluster-cp-operator, which runs in the control-plane cluster.
 # Built by `make build-installer-cp` into dist/install-cp.yaml, the input
 # `make helm-generate` turns into charts/cp/chart.

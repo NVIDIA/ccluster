@@ -1,5 +1,8 @@
 # CCluster
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Main](https://github.com/NVIDIA/ccluster/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/NVIDIA/ccluster/actions/workflows/main.yml)
+
 **An efficiency-focused, Kubernetes-native platform for managing the end-to-end AI lifecycle across distributed, multi-cloud GPU infrastructure.**
 
 CCluster aims to give AI teams a single control plane for their GPU fleet — provisioning clusters, deploying and scaling workloads, and running the full model lifecycle (inference, fine-tuning, batch jobs, and training) across clouds and regions, while keeping expensive accelerators as busy and as cost-effective as possible.

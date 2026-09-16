@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Chart defaults for catalogs/deployments/inference_deployment. The values a chart cannot
 # be installed without (name, deploymentId, imageUrl, domain, containerPort, resources)
 # have no default; see component.go for the whole schema.

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # A hand-written Argo CD Application, deliberately without the operator's ownership
 # labels, whose only fault is a destination cluster scoped to a different project.
 apiVersion: argoproj.io/v1alpha1

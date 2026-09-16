@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Image URLs to use for all building/pushing image targets. The two operators
 # ship as separate images, built from the same Dockerfile via --build-arg CMD.
 #
@@ -167,6 +169,10 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
+
+.PHONY: check-headers
+check-headers: ## Fail if a tracked source file lacks the SPDX license header.
+	hack/check-headers.sh
 
 ##@ Build
 

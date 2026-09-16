@@ -1,8 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
 name: cluster_base_prometheus_adapter
+description: Prometheus Adapter - exposes Prometheus metrics through the custom and external metrics APIs
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/prometheus_adapter
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
 
 dependencies:
   - name: prometheus-adapter

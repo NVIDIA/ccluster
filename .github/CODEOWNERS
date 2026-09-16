@@ -6,16 +6,23 @@
 # Default owners for everything in the repo
 *                           @NVIDIA/ccluster-dev
 
-# Python catalog package
-/catalog/                   @NVIDIA/ccluster-dev
+# Operators and their API
+/api/                       @NVIDIA/ccluster-dev
+/cmd/                       @NVIDIA/ccluster-dev
+/internal/                  @NVIDIA/ccluster-dev
+/config/                    @NVIDIA/ccluster-dev
+/charts/                    @NVIDIA/ccluster-dev
 
-# Helm chart assets
-/catalog/**/templates/      @NVIDIA/ccluster-dev
-/catalog/**/Chart.yaml      @NVIDIA/ccluster-dev
-/catalog/**/values.yaml     @NVIDIA/ccluster-dev
+# Helm chart catalog and its typed values
+/catalogs/                  @NVIDIA/ccluster-dev
+
+# Python package and its generator
+/python/                    @NVIDIA/ccluster-dev
+/hack/pyschema/             @NVIDIA/ccluster-dev
 
 # Repo metadata & community-health files
 /.github/                   @NVIDIA/ccluster-dev
 /LICENSE                    @NVIDIA/ccluster-dev
 /SECURITY.md                @NVIDIA/ccluster-dev
 /MAINTAINERS.md             @NVIDIA/ccluster-dev
+/THIRD_PARTY_NOTICES.md     @NVIDIA/ccluster-dev

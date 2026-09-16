@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Cut a release from a GitHub Release. Create the release in the GitHub UI (or with
 # `gh release create`) against a tag vX.Y.Z; publishing it fires this workflow with the
 # tag checked out. Nothing in the tree is bumped: VERSION=${tag#v} is stamped into the

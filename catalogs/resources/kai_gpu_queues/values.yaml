@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Chart defaults for catalogs/resources/kai_gpu_queues. See component.go for the schema.
 
 # The parent of every leaf queue. It is unlimited; leaves cap their own GPUs.

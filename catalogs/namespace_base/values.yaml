@@ -1,2 +1,4 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # catalogs/namespace_base takes no values: everything it creates is named
 # after, or scoped to, the release namespace.

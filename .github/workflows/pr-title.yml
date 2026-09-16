@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Enforce Conventional Commits format on the PR title.
 # Because merges are squash-only and configured to use PR_TITLE + PR_BODY as the
 # commit message, the PR title becomes the commit subject on main — so we lint it
