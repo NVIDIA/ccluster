@@ -7,6 +7,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-09-16
+
 ### Added
 - `catalogs/deployments/`, `catalogs/resources/` and `catalogs/namespace_base/`: the
   tenant charts ported from the legacy Python catalog, one version of each and without
@@ -30,24 +32,21 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `python/examples/create_component_set.py` drives both from the command line.
 
 ### Changed
-- `CCLClient.register_infraplane` and `unregister_infraplane` are renamed
-  `create_infraplane` and `delete_infraplane`, matching `create_component_set` and
-  `delete_component_set`. `python/examples/register_infraplane.py` is now
-  `create_infraplane.py`.
+- `CCLClient.register_cluster` and `unregister_cluster` are renamed
+  `create_infraplane` and `delete_infraplane`, after the `CCLInfraPlane` they create and
+  remove and matching `create_component_set` and `delete_component_set`.
+  `python/examples/register_cluster.py` is now `create_infraplane.py`.
 - `ccluster-py` models a CRD's `spec` and `status` only: `CCLInfraPlaneSpec`,
   `CCLInfraPlaneStatus`, `CCLComponentSetSpec`, `CCLComponentSetStatus` and their nested
   types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema by
-  `hack/pyschema` and datamodel-code-generator, constraints and docstrings included. `ccluster.v1alpha1.base` is a
-  hand-written generic `CustomResource[Spec, Status]` template with a small `ObjectMeta`;
-  `ccluster.v1alpha1` itself is generated from the CRD kinds with the `Kind` enum and one
-  concrete `CustomResource` per kind (`CCLComponentSet`, `CCLInfraPlane`), which
-  `CCLClient.create_infraplane` and `create_component_set` build and return. `hack/pyschema` now reflects chart `Values` only and shapes no Python; the
-  chart packages are written by the generator with `CHART` appended, and the catalog and
-  version directories are namespace packages.
-- `CCLClient.register_cluster` and `unregister_cluster` are renamed
-  `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
-  create and remove. `python/examples/register_cluster.py` is now
-  `register_infraplane.py`.
+  `hack/pyschema` and datamodel-code-generator, constraints and docstrings included.
+  `ccluster.v1alpha1.base` is a hand-written generic `CustomResource[Spec, Status]`
+  template with a small `ObjectMeta`; `ccluster.v1alpha1` itself is generated from the
+  CRD kinds with the `Kind` enum and one concrete `CustomResource` per kind
+  (`CCLComponentSet`, `CCLInfraPlane`), which `CCLClient.create_infraplane` and
+  `create_component_set` build and return. `hack/pyschema` now reflects chart `Values`
+  only and shapes no Python; the chart packages are written by the generator with
+  `CHART` appended, and the catalog and version directories are namespace packages.
 
 ## [0.0.2] - 2026-09-11
 
@@ -175,6 +174,7 @@ Template for future releases:
 ### Security
 -->
 
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/NVIDIA/ccluster/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/NVIDIA/ccluster/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/NVIDIA/ccluster/releases/tag/v0.0.1
