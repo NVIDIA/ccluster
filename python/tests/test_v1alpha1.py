@@ -21,7 +21,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from ccluster.v1alpha1.base import CCLComponentSet, CCLInfraPlane, ObjectMeta
+from ccluster.v1alpha1.base import CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
 from ccluster.v1alpha1.cclcomponentset import (
     CCLComponentSetSpec,
     CCLComponentSetStatus,
@@ -61,10 +61,10 @@ def test_api_version_and_kind_are_fixed():
     )
     out = dump(obj)
     assert out["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
-    assert out["kind"] == "CCLInfraPlane"
+    assert out["kind"] == Kind.CCL_INFRA_PLANE == "CCLInfraPlane"
     assert "status" not in out
     with pytest.raises(ValidationError):
-        CCLInfraPlane.model_validate({**out, "kind": "CCLComponentSet"})
+        CCLInfraPlane.model_validate({**out, "kind": Kind.CCL_COMPONENT_SET})
 
 
 def test_objects_read_back_from_the_server_validate():
@@ -72,7 +72,7 @@ def test_objects_read_back_from_the_server_validate():
     obj = CCLInfraPlane.model_validate(
         {
             "apiVersion": "ccluster.nvidia.com/v1alpha1",
-            "kind": "CCLInfraPlane",
+            "kind": Kind.CCL_INFRA_PLANE,
             "metadata": {"name": "edge-1", "namespace": "tenant", "uid": "u-1", "resourceVersion": "7"},
             "spec": {"clusterCredentialsRef": {"name": "creds"}},
             "status": {"conditions": [{"type": "Available", "status": "True", "reason": "R", "message": "", "lastTransitionTime": "2026-09-16T00:00:00Z"}]},

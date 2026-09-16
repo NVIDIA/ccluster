@@ -20,6 +20,7 @@ Kubernetes object shares - apiVersion, kind and metadata - so a caller can build
 read back a whole object with types. Adding a kind means adding one class here.
 """
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,9 +28,20 @@ from pydantic import BaseModel, ConfigDict, Field
 from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec, CCLComponentSetStatus
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, CCLInfraPlaneStatus
 
-__all__ = ["API_VERSION", "CCLComponentSet", "CCLInfraPlane", "ObjectMeta"]
+__all__ = ["API_VERSION", "CCLComponentSet", "CCLInfraPlane", "Kind", "ObjectMeta"]
 
 API_VERSION = "ccluster.nvidia.com/v1alpha1"
+
+
+class Kind(str, Enum):
+    """The kinds of this API version, as they appear on the wire.
+
+    A str subclass, so a member compares equal to and serializes as its name; use it
+    wherever a kind is named rather than spelling the string out.
+    """
+
+    CCL_COMPONENT_SET = "CCLComponentSet"
+    CCL_INFRA_PLANE = "CCLInfraPlane"
 
 
 class ObjectMeta(BaseModel):
@@ -54,7 +66,7 @@ class CCLComponentSet(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     api_version: Literal["ccluster.nvidia.com/v1alpha1"] = Field(API_VERSION, alias="apiVersion")
-    kind: Literal["CCLComponentSet"] = "CCLComponentSet"
+    kind: Literal[Kind.CCL_COMPONENT_SET] = Kind.CCL_COMPONENT_SET
     metadata: ObjectMeta
     spec: CCLComponentSetSpec
     status: CCLComponentSetStatus | None = None
@@ -66,7 +78,7 @@ class CCLInfraPlane(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     api_version: Literal["ccluster.nvidia.com/v1alpha1"] = Field(API_VERSION, alias="apiVersion")
-    kind: Literal["CCLInfraPlane"] = "CCLInfraPlane"
+    kind: Literal[Kind.CCL_INFRA_PLANE] = Kind.CCL_INFRA_PLANE
     metadata: ObjectMeta
     spec: CCLInfraPlaneSpec
     status: CCLInfraPlaneStatus | None = None

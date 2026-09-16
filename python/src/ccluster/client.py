@@ -30,7 +30,7 @@ from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
-from ccluster.v1alpha1.base import API_VERSION, CCLComponentSet, CCLInfraPlane, ObjectMeta
+from ccluster.v1alpha1.base import API_VERSION, CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
 from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec, ComponentSpec
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, LocalObjectReference
 
@@ -99,10 +99,10 @@ class CCLClient:
         self._namespaces = resources.get(api_version="v1", kind="Namespace")
         self._secrets = resources.get(api_version="v1", kind="Secret")
         self._infra_planes = resources.get(
-            api_version=API_VERSION, kind="CCLInfraPlane"
+            api_version=API_VERSION, kind=Kind.CCL_INFRA_PLANE.value
         )
         self._component_sets = resources.get(
-            api_version=API_VERSION, kind="CCLComponentSet"
+            api_version=API_VERSION, kind=Kind.CCL_COMPONENT_SET.value
         )
         self._ensure_namespace()
 
