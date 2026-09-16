@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # A single-component keda CCLComponentSet whose operator replica count is a parameter, so a
 # values change can be applied over an existing deployment.
 apiVersion: ccluster.nvidia.com/v1alpha1

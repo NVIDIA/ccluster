@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Registers the cluster the control plane itself runs in as an Argo CD cluster, under a
 # name of its own. This exercises the whole CCLInfraPlane path without needing a second
 # cluster to point at.

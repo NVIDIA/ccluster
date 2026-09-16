@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # This rule is not used by the project ccluster itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #

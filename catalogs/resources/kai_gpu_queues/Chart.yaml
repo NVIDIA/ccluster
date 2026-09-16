@@ -1,6 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
 name: resources_kai_gpu_queues
 description: KAI scheduler GPU quota queues - one root queue and a leaf per tenant with a hard GPU cap
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/resources/kai_gpu_queues
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md

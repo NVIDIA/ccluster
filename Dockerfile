@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Build the manager binary.
 #
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the build, so under

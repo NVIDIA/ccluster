@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 {{/* Frontend Service auto-created by the Dynamo operator follows the convention
      `${dgd-name}-frontend`. Centralize the lookup here so ingress/service templates
      stay in sync with any future operator naming change. */}}

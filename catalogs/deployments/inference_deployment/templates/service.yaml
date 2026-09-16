@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 # Unfortunately, we need to use external name services like this for istio since nginx will use
 # the raw pod ips and the istio mesh isn't ip aware like this (it's service aware).
 apiVersion: v1

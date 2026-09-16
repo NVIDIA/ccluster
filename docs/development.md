@@ -157,6 +157,24 @@ Hand-written: `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`
 explicit `False` while omitting unset values. See [Python usage](../python/README.md). CI
 regenerates and fails on any drift.
 
+## License headers
+
+Every hand-written source file starts with the two SPDX lines, in the file's comment
+syntax:
+
+```
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+```
+
+Go uses a `/* */` block before the package clause, Python, shell, YAML, TOML, Makefile
+and Dockerfile use `#` lines (after any shebang), and catalog Helm templates use a
+`{{- /* */ -}}` comment so nothing reaches the rendered output. Generated Go and Python
+get the header from `hack/boilerplate.go.txt` and `hack/boilerplate.py.txt`; generated
+CRDs, cp RBAC and operator chart templates carry none and are excluded from the check.
+`make check-headers` runs `hack/check-headers.sh` over every tracked file and is a
+required check on pull requests.
+
 ## Cluster operations
 
 Use the [README](../README.md#local-development) for initial setup. `make init`, `build`,

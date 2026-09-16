@@ -1,5 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
 name: cluster_base_final_stack
+description: Cluster baseline glue - ClusterIssuers, SPIFFE IDs and the OIDC discovery ingress applied once every other cluster_base component is up
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/final_stack
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md

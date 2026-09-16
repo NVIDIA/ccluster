@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 {{/*
 The Dynamo operator auto-creates per-component Services (e.g. `${name}-frontend`)
 in the same namespace as the DynamoGraphDeployment. We expose the Frontend service

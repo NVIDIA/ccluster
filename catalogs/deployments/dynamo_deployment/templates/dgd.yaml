@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 {{- $_ := required "model is required" .Values.model }}
 apiVersion: nvidia.com/v1beta1
 kind: DynamoGraphDeployment

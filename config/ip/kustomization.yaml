@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Deploy overlay for ccluster-ip-operator, which runs in an infra-plane cluster.
 # Built by `make build-installer-ip` into dist/install-ip.yaml, the input
 # `make helm-generate` turns into charts/ip/chart.

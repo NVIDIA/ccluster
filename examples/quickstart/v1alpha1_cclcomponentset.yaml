@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Deploys two catalog components onto the cluster registered by
 # v1alpha1_cclinfraplane.yaml, in order. Apply that sample first: it creates the
 # ccluster-quickstart namespace this lives in, and this stays Validated=False until the

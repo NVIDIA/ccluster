@@ -1,4 +1,8 @@
 {{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+{{- /*
 Scrapes the Dynamo Frontend's native Prometheus metrics (dynamo_frontend_*) into the
 cluster Prometheus so the KEDA ScaledObject (scaled-object.yaml) can query active
 Frontend requests for the decode worker.

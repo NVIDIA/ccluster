@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Pieces shared by both operators. Every resource here is name-prefixed and
 # namespaced by the overlay that includes it (config/cp or config/ip), so one
 # copy serves both without collisions.

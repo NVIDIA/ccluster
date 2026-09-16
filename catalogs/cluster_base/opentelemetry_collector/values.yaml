@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 opentelemetry-collector:
   # Both fields are required by chart 0.130.2 — the upstream removed
   # the defaults to force callers to pick image + mode deliberately.

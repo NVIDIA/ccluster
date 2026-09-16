@@ -31,6 +31,7 @@ changed.
 | `config/`, `api/`, RBAC markers | `make helm-generate && git status --short charts/` (must be clean) and `make helm-lint` |
 | `api/`, `config/crd/`, `catalogs/**/*.go`, `hack/pyschema/`, `python/` | `make python-generate && git status --short python/` (must be clean) and `make python-test` |
 | `test/e2e/` | `make test-e2e` when feasible; say so in the PR if not run |
+| any new file | `make check-headers` (SPDX license header, see [Development](../../../docs/development.md#license-headers)) |
 
 `make python-build` dirties `python/pyproject.toml` with the local version. Do not commit
 that change: run `git checkout python/pyproject.toml` first.

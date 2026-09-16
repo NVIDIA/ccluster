@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 external-dns:
   # Switch `provider.name` to your DNS provider (aws, google, cloudflare, …)
   # and supply the matching credentials/IRSA via globals + serviceAccount.

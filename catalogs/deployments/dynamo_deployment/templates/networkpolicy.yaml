@@ -1,3 +1,7 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
 # The base namespace `namespace-default` NetworkPolicy denies egress to all
 # private (RFC1918) networks except a small allowlist (DNS, istiod, ingress).
 # Dynamo workloads need three extra cross-namespace destinations:
