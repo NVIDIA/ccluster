@@ -38,7 +38,8 @@ tests pass):
 - The operator never installs Argo CD.
 - Catalog packages: no mirror of the API types, pointer optionals with `omitempty`,
   non-pointer required fields without `omitempty`, snake_case directories, a new
-  component added to `hack/pyschema/main.go` as well as `cluster_base.go`.
+  component registered in `catalogs/components/components.go` (and, for `cluster_base`,
+  in `cluster_base.go`); `hack/pyschema` itself is not edited per chart or per CRD.
 - CRDs: minimal spec surface, nothing that duplicates metadata or an operator flag,
   `metav1.Condition` for status.
 - Leader election IDs and the `-cp` / `-ip` split are untouched.

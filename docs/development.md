@@ -115,42 +115,47 @@ When adding or changing a component:
 
 ## Python generation
 
-`make python-generate` builds the `ccluster-py` package from two inputs. `hack/pyschema`
-writes the JSON Schema for both, plus each API version package's `__init__.py`;
-`datamodel-code-generator` writes everything else.
+`make python-generate` builds the `ccluster-py` package in two steps. `hack/pyschema`, a Go
+program, writes JSON Schema for everything the package is generated from, plus one small
+Python file per API version; `datamodel-code-generator` turns each schema into a Pydantic
+module. Nothing in `hack/pyschema` lists kinds or charts, so adding a CRD or a chart needs
+no change to it.
 
-- **CRDs.** For every CRD under `config/crd/bases`, `hack/pyschema` lifts the `spec`
-  schema (as the document root, titled `<Kind>Spec`) and the `status` schema (under
-  `definitions`, titled `<Kind>Status`) into one JSON Schema per kind and version. Only spec and status are
-  generated: they are the parts that differ between kinds. The envelope (`apiVersion`,
-  `kind`, `metadata`) is the same for every Kubernetes object, so it is one hand-written
-  generic template, `CustomResource[Spec, Status]` with `ObjectMeta`, in
-  `python/src/ccluster/v1alpha1/base.py`. The package's `__init__.py` is generated from the
-  CRD kinds by `hack/pyschema` too: the `Kind` enum and one concrete `CustomResource` per
-  kind. Adding a CRD needs no Python change.
-  Nested class names come from `+kubebuilder:title` markers on the Go types, which
-  controller-gen writes into the CRD and the generator uses as class names.
-- **Charts.** `hack/pyschema` reflects every `Values` in `catalogs/components.All` into one
-  JSON Schema per chart with `invopop/jsonschema`, Go doc comments included, and writes
-  nothing else.
+What pyschema writes:
 
-`datamodel-code-generator` then turns each document into Python: `<version>/<kind>.py` for
-a CRD, `<chart path>/__init__.py` for a chart, with a `CHART` constant appended by the
-Makefile. Adding a CRD or a chart needs no change to the generator.
+- **CRD kinds.** For every CRD under `config/crd/bases` and every version it serves, one
+  schema per kind: the `spec` schema at the document root, titled `<Kind>Spec`, and the
+  `status` schema under `definitions`, titled `<Kind>Status`. Only spec and status are
+  generated, because they are the parts that differ between kinds; the schemas are
+  controller-gen's, so their constraints and docstrings reach Pydantic. Nested class names
+  come from `+kubebuilder:title` markers on the Go types (`ComponentSpec`,
+  `LocalObjectReference`), which controller-gen writes into the CRD and the generator uses.
+- **The version package.** `python/src/ccluster/<version>/__init__.py`: the `Kind` enum and
+  one concrete `CustomResource[<Kind>Spec, <Kind>Status]` per kind, with `kind` narrowed to
+  its name. This specialises the hand-written template in `<version>/base.py`, which holds
+  `API_VERSION`, `ObjectMeta` (name, namespace, labels, annotations; server-managed fields
+  are kept on read) and the generic `CustomResource` with the fixed `apiVersion`. The
+  envelope is the same for every Kubernetes object, so it is written once.
+- **Charts.** For every chart in `catalogs/components.All`, one schema reflected from the
+  chart's Go `Values` with `invopop/jsonschema`, Go doc comments included.
 
-Generated directories, deleted and rebuilt on each run:
+`datamodel-code-generator` then writes `<version>/<kind>.py` for a CRD and
+`<chart path>/__init__.py` for a chart; the Makefile appends the `CHART` constant to the
+latter. Catalog directories (`cluster_base`, `deployments`, `resources`) carry no
+`__init__.py` and are namespace packages.
+
+Generated, deleted and rebuilt on each run:
 
 - `python/src/ccluster/<version>/<kind>.py` and `<version>/__init__.py` (currently `v1alpha1`)
 - `python/src/ccluster/catalogs/<catalog>/<chart>/` and `python/src/ccluster/catalogs/<chart>/`
 
-The version and catalog directories carry no `__init__.py`; they are namespace packages, so
-imports name the module: `from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec`.
-Hand-written files are `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`,
-`python/src/ccluster/v1alpha1/base.py`, `python/src/ccluster/catalogs/__init__.py`,
-`python/pyproject.toml`, `python/README.md` and `python/tests/`. Generator changes belong in `hack/pyschema/` or the Makefile recipe, not in
-emitted modules. Optional fields default to `None`; consumers use `exclude_none=True` to
-retain explicit `False` while omitting unset values. See
-[Python usage](../python/README.md). CI regenerates and checks for drift.
+Hand-written: `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`,
+`python/src/ccluster/<version>/base.py`, `python/src/ccluster/catalogs/__init__.py`,
+`python/pyproject.toml`, `python/README.md` and `python/tests/`. Generator changes belong in
+`hack/pyschema/` or the Makefile recipe, never in emitted modules. Optional fields default to
+`None`; consumers dump with `mode="json", by_alias=True, exclude_none=True` to keep an
+explicit `False` while omitting unset values. See [Python usage](../python/README.md). CI
+regenerates and fails on any drift.
 
 ## Cluster operations
 

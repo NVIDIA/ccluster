@@ -2,8 +2,9 @@
 
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
 every chart in the catalog, plus a small client that registers clusters with the control
-plane and deploys component sets onto them. The models are **generated**: nothing under `ccluster/v1alpha1/` other than `base.py`, or
-under `ccluster/catalogs/` other than its `__init__.py`, is written by hand.
+plane and deploys component sets onto them. The models are **generated**: nothing under
+`ccluster/v1alpha1/` other than `base.py`, or under `ccluster/catalogs/` other than its
+`__init__.py`, is written by hand.
 
 ```bash
 uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py
@@ -55,7 +56,10 @@ cluster-secret shape (`server`, and a `config` carrying the bearer token and the
 `CCLInfraPlane` pointing at it; `unregister_infraplane` deletes the Secret and the CCLInfraPlane, the
 CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
 leaves the namespace. Everything is server-side applied under the `ccluster-py` field
-manager, so re-registering a cluster rotates its token in place.
+manager, so re-registering a cluster rotates its token in place. Both `register_infraplane`
+and `create_component_set` return the applied object, a `CCLInfraPlane` or
+`CCLComponentSet`, with the metadata the server filled in and the status the operator has
+written so far.
 
 ```python
 from ccluster.client import CCLClient
@@ -131,9 +135,9 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 | Python | Source | Via |
 | --- | --- | --- |
 | `ccluster/v1alpha1/<kind>.py` (`<Kind>Spec`, `<Kind>Status` and their nested types) | `config/crd/bases/*.yaml`, the CRD's `spec` and `status` schemas | `hack/pyschema` → JSON Schema → datamodel-code-generator |
-| `ccluster/catalogs/<catalog>/<chart>/__init__.py` (`Values` and friends, `CHART`) | `catalogs/<catalog>/<chart>/component.go`, via `catalogs/components.All` | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator, `CHART` appended by the Makefile |
 | `ccluster/v1alpha1/__init__.py` (`Kind`, `CCLComponentSet`, `CCLInfraPlane`) | the CRD kinds | `hack/pyschema`: one `Kind` member and one `CustomResource[Spec, Status]` subclass per kind |
-| `ccluster/v1alpha1/base.py` (`ObjectMeta`, `CustomResource`) | hand-written | the generic envelope template the concrete kinds specialise |
+| `ccluster/v1alpha1/base.py` (`API_VERSION`, `ObjectMeta`, `CustomResource`) | hand-written | the generic envelope template the concrete kinds specialise |
+| `ccluster/catalogs/<catalog>/<chart>/__init__.py` (`Values` and friends, `CHART`) | `catalogs/<catalog>/<chart>/component.go`, via `catalogs/components.All` | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator; `CHART` appended by the Makefile |
 
 The CRD models carry controller-gen's constraints (name patterns, length and item bounds)
 and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart
@@ -150,5 +154,5 @@ make python-test
 ```
 
 CI regenerates and fails on any diff, so edit the Go types or the CRD markers, regenerate,
-and commit the result. Adding a chart to `catalogs/` means adding it to the table in
-`hack/pyschema/main.go` too.
+and commit the result. A new CRD is picked up from `config/crd/bases`; a new chart from
+`catalogs/components/components.go`. Neither needs a change to `hack/pyschema`.
