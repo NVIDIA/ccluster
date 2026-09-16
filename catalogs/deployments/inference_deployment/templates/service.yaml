@@ -1,0 +1,28 @@
+# Unfortunately, we need to use external name services like this for istio since nginx will use
+# the raw pod ips and the istio mesh isn't ip aware like this (it's service aware).
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    name: "{{ .Values.name }}"
+    namespace: {{ .Release.Namespace }}
+spec:
+    type: ClusterIP
+    selector:
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    ports:
+        - name: container-port
+          port: {{ .Values.containerPort }}
+          targetPort: {{ .Values.containerPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        platform.centml.ai/deployment_id: "{{ .Values.deploymentId }}"
+    name: "{{ .Values.name }}-istio-friendly"
+    namespace: {{ .Release.Namespace }}
+spec:
+    type: ExternalName
+    externalName: "{{ .Values.name }}.{{ .Release.Namespace }}.svc.cluster.local"

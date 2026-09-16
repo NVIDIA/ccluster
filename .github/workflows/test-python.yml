@@ -12,7 +12,7 @@ on:
       - 'api/**'
       - 'config/crd/**'
       - 'catalogs/**/*.go'
-      - 'hack/pyschema/**'
+      - 'hack/**'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'

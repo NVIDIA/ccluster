@@ -1,0 +1,14 @@
+{{- with .Values.configFile }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-config-{{ $.Values.deploymentId }}-r{{ $.Values.revisionNumber | int64 }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    platform.centml.ai/deployment-id: {{ $.Values.deploymentId | quote }}
+# binaryData carries the content base64-encoded, which Kubernetes decodes verbatim into
+# the file, so it survives byte-for-byte, trailing newlines included. The filename is
+# quoted so one like "true" or "123" stays a string map key.
+binaryData:
+  {{ .filename | quote }}: {{ .content | b64enc | quote }}
+{{- end }}

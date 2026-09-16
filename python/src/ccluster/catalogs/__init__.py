@@ -14,16 +14,18 @@
 
 """The Helm chart catalog, as typed values.
 
-Each chart under ccluster.catalogs.cluster_base has a Values model and a CHART path,
-generated from the Go package beside the chart. entry() turns one of those into the
-ComponentEntry fields of a CCLComponentSet component, as catalogs.Entry does in Go.
+Each chart under ccluster.catalogs.cluster_base, ccluster.catalogs.deployments and
+ccluster.catalogs.resources, and ccluster.catalogs.namespace_base itself, has a Values
+model and a CHART path, generated from the Go package beside the chart. entry()
+turns one of those into the ComponentEntry fields of a CCLComponentSet component, as
+catalogs.Entry does in Go.
 """
 
 from typing import Any
 
 from pydantic import BaseModel
 
-from ccluster.v1alpha1 import ComponentSpec, LocalObjectReference
+from ccluster.v1alpha1.cclcomponentset import ComponentSpec, LocalObjectReference
 
 __all__ = ["component", "entry"]
 
@@ -31,15 +33,17 @@ __all__ = ["component", "entry"]
 def entry(chart: str, namespace: str, values: BaseModel | None) -> dict[str, Any]:
     """Return the chart, namespace and values fields of a component.
 
-    values is dumped by alias with None fields left out, which is the shape Helm
+    values is dumped as JSON by alias with None fields left out, so an enum becomes
+    its string and a Values with one still serializes. That is the shape Helm
     expects and the shape the Go catalog produces. An empty result is dropped rather
     than stored: the operator omits the Application's helm block when values is unset,
-    and an empty object would defeat that. The required values of a chart (only
-    teleport-kube-agent has any) are checked when its Values is constructed.
+    and an empty object would defeat that. A chart's required values are checked when
+    its Values is constructed; the finer rules the Go Validate methods apply (port
+    ranges, mount paths, replica bounds) are not mirrored here.
     """
     out: dict[str, Any] = {"chart": chart, "namespace": namespace}
     if values is not None:
-        dumped = values.model_dump(by_alias=True, exclude_none=True)
+        dumped = values.model_dump(mode="json", by_alias=True, exclude_none=True)
         if dumped:
             out["values"] = dumped
     return out

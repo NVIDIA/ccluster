@@ -1,0 +1,57 @@
+{{- /*
+Scrapes the Dynamo Frontend's native Prometheus metrics (dynamo_frontend_*) into the
+cluster Prometheus so the KEDA ScaledObject (scaled-object.yaml) can query active
+Frontend requests for the decode worker.
+
+Mirrors inference_deployment's service_monitor.yaml (a Service + ServiceMonitor) so it rides the
+same, proven Prometheus discovery path. A constant `deployment_id` label is projected
+onto every series so the ScaledObject queries isolate this deployment.
+
+Metrics port depends on backendProtocol. In HTTP mode the Frontend serves /metrics on
+containerPort (the `http` listener) alongside the OpenAI API. In GRPC mode that listener
+serves gRPC, and Dynamo's HTTP metrics/health endpoint moves to `--grpc-metrics-port`
+(kserveGrpcMetricsPort, 8788) — see dgd.yaml. Targeting the wrong port would
+make Prometheus scrape gRPC as HTTP and every KEDA query resolve to zero, so we select the
+port by protocol. targetPort is numeric (the metrics listener is not always a declared
+containerPort); the Service selector pins to the standardized frontend component-type
+plus our deployment-id label so only the Frontend pod is scraped.
+*/ -}}
+{{- $metricsPort := .Values.containerPort | int -}}
+{{- if eq (.Values.backendProtocol | default "HTTP") "GRPC" -}}
+{{- $metricsPort = .Values.kserveGrpcMetricsPort | int -}}
+{{- end -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name }}-frontend-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    app.kubernetes.io/name: {{ .Values.name }}-frontend-metrics
+spec:
+  selector:
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    ccluster.nvidia.com/component-type: frontend
+  ports:
+    - name: metrics
+      port: {{ $metricsPort }}
+      targetPort: {{ $metricsPort }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.name }}-frontend-metrics
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+      app.kubernetes.io/name: {{ .Values.name }}-frontend-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      metricRelabelings:
+        - targetLabel: deployment_id
+          replacement: "{{ .Values.deploymentId }}"
+          action: replace

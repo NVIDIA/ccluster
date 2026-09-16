@@ -1,0 +1,38 @@
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: {{ .Values.rootQueue | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ccluster
+    platform.centml.ai/gpu-quota: "true"
+spec:
+  resources:
+    cpu:
+      {{- include "kaiGpuQueues.unlimited" . | nindent 6 }}
+    gpu:
+      {{- include "kaiGpuQueues.unlimited" . | nindent 6 }}
+    memory:
+      {{- include "kaiGpuQueues.unlimited" . | nindent 6 }}
+{{- range .Values.queues }}
+---
+{{/* A retired tenant stays listed at gpuQuota 0 rather than being removed, so the
+     queue is not deleted from under its remaining pods. */}}
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: {{ .name | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ccluster
+    platform.centml.ai/gpu-quota: "true"
+spec:
+  parentQueue: {{ $.Values.rootQueue | quote }}
+  resources:
+    cpu:
+      {{- include "kaiGpuQueues.unlimited" $ | nindent 6 }}
+    gpu:
+      quota: {{ .gpuQuota | int }}
+      limit: {{ .gpuQuota | int }}
+      overQuotaWeight: 1
+    memory:
+      {{- include "kaiGpuQueues.unlimited" $ | nindent 6 }}
+{{- end }}

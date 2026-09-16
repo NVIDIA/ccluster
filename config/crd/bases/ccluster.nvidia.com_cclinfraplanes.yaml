@@ -69,9 +69,11 @@ spec:
                     type: string
                 required:
                 - name
+                title: LocalObjectReference
                 type: object
             required:
             - clusterCredentialsRef
+            title: CCLInfraPlaneSpec
             type: object
           status:
             description: status defines the observed state of CCLInfraPlane
@@ -150,6 +152,7 @@ spec:
                   were computed from.
                 format: int64
                 type: integer
+            title: CCLInfraPlaneStatus
             type: object
         required:
         - spec

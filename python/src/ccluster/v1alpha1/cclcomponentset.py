@@ -22,19 +22,12 @@ from typing import Annotated, Any
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
-class ConditionStatus(Enum):
-    """
-    status of the condition, one of True, False, Unknown.
-    """
-
-    true = "True"
-    false = "False"
-    unknown = "Unknown"
-
-
 class LocalObjectReference(BaseModel):
     """
-    LocalObjectReference references an object in the same namespace as the referring object. The kind of the target is fixed by the field that uses it.
+    infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
+    in the same namespace as this CCLComponentSet, and must already be Available -
+    that is, its cluster credentials have been mirrored into the Argo CD namespace,
+    which is what lets the generated Application address the cluster by name.
     """
 
     model_config = ConfigDict(
@@ -43,32 +36,6 @@ class LocalObjectReference(BaseModel):
     name: Annotated[str, Field(max_length=253, min_length=1)]
     """
     name is the name of the referenced object.
-    """
-
-
-class ObjectMeta(BaseModel):
-    """
-    ObjectMeta is the metadata a client sets on an object. The fields the API server manages (uid, resourceVersion, generation, ...) are not modelled.
-    """
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    annotations: dict[str, str] | None = None
-    """
-    annotations are arbitrary string keys and values that tools can read and set.
-    """
-    labels: dict[str, str] | None = None
-    """
-    labels are string keys and values that can be used to organize and categorize objects.
-    """
-    name: Annotated[str | None, Field(max_length=253)] = None
-    """
-    name is the object's name. Unique within its namespace.
-    """
-    namespace: Annotated[str | None, Field(max_length=63)] = None
-    """
-    namespace is the object's namespace.
     """
 
 
@@ -88,7 +55,9 @@ class ComponentSpec(BaseModel):
     operator itself is configured (--catalog-repo-url and --catalog-revision), so
     every component of every CCLComponentSet deploys from the same catalog.
     """
-    infra_plane_ref: Annotated[LocalObjectReference, Field(alias="infraPlaneRef")]
+    infra_plane_ref: Annotated[
+        LocalObjectReference, Field(alias="infraPlaneRef", title="LocalObjectReference")
+    ]
     """
     infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
     in the same namespace as this CCLComponentSet, and must already be Available -
@@ -111,11 +80,43 @@ class ComponentSpec(BaseModel):
     namespace is where the chart is installed on the target cluster. It is created
     if it does not exist.
     """
-    values: dict[str, Any] | None = None
+    values: Any | None = None
     """
     values overrides the chart's defaults. It is passed to Helm verbatim; the
     operator does not interpret or validate it against the chart.
     """
+
+
+class CCLComponentSetSpec(BaseModel):
+    """
+    spec defines the desired state of CCLComponentSet
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    components: Annotated[list[ComponentSpec], Field(max_length=50, min_length=1)]
+    """
+    components are rolled out in the order given: the operator withholds a
+    component's Argo CD Application until every component before it reports both
+    Healthy and Synced. There is no timeout on that wait - a component that never
+    becomes healthy stalls everything after it, which the Progressing condition
+    reports.
+
+    Ordering is positional rather than a dependsOn field because nothing yet needs to
+    express a graph. When that changes, the list order stays a valid topological
+    order, so adding dependencies will not invalidate existing objects.
+    """
+
+
+class Status(Enum):
+    """
+    status of the condition, one of True, False, Unknown.
+    """
+
+    true = "True"
+    false = "False"
+    unknown = "Unknown"
 
 
 class Condition(BaseModel):
@@ -159,7 +160,7 @@ class Condition(BaseModel):
     The value should be a CamelCase string.
     This field may not be empty.
     """
-    status: ConditionStatus
+    status: Status
     """
     status of the condition, one of True, False, Unknown.
     """
@@ -172,28 +173,6 @@ class Condition(BaseModel):
     ]
     """
     type of condition in CamelCase or in foo.example.com/CamelCase.
-    """
-
-
-class CCLComponentSetSpec(BaseModel):
-    """
-    spec defines the desired state of CCLComponentSet
-    """
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    components: Annotated[list[ComponentSpec], Field(max_length=50, min_length=1)]
-    """
-    components are rolled out in the order given: the operator withholds a
-    component's Argo CD Application until every component before it reports both
-    Healthy and Synced. There is no timeout on that wait - a component that never
-    becomes healthy stalls everything after it, which the Progressing condition
-    reports.
-
-    Ordering is positional rather than a dependsOn field because nothing yet needs to
-    express a graph. When that changes, the list order stays a valid topological
-    order, so adding dependencies will not invalidate existing objects.
     """
 
 
@@ -222,48 +201,4 @@ class CCLComponentSetStatus(BaseModel):
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
     observedGeneration is the .metadata.generation the conditions were computed from.
-    """
-
-
-class CCLComponentSet(BaseModel):
-    """
-    CCLComponentSet is the Schema for the cclcomponentsets API.
-
-    It describes a bundle of Helm charts from the ccluster catalog, each with its own
-    values and its own destination cluster, rolled out in a fixed order. The operator does
-    not install anything itself: it creates one Argo CD Application per component, in
-    order, and Argo CD does the work.
-    """
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    api_version: Annotated[str | None, Field(alias="apiVersion")] = (
-        "ccluster.nvidia.com/v1alpha1"
-    )
-    """
-    APIVersion defines the versioned schema of this representation of an object.
-    Servers should convert recognized schemas to the latest internal value, and
-    may reject unrecognized values.
-    More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-    """
-    kind: str | None = "CCLComponentSet"
-    """
-    Kind is a string value representing the REST resource this object represents.
-    Servers may infer this from the endpoint the client submits requests to.
-    Cannot be updated.
-    In CamelCase.
-    More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-    """
-    metadata: ObjectMeta | None = None
-    """
-    metadata is a standard object metadata
-    """
-    spec: CCLComponentSetSpec
-    """
-    spec defines the desired state of CCLComponentSet
-    """
-    status: CCLComponentSetStatus | None = None
-    """
-    status defines the observed state of CCLComponentSet
     """

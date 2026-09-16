@@ -56,6 +56,7 @@ type ComponentEntry struct {
 }
 
 // ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
+// +kubebuilder:title=ComponentSpec
 type ComponentSpec struct {
 	// name identifies the component within this CCLComponentSet. It is templated into
 	// the generated Argo CD Application's name, so it has to be DNS-1123.
@@ -79,6 +80,7 @@ type ComponentSpec struct {
 }
 
 // CCLComponentSetSpec defines the desired state of CCLComponentSet
+// +kubebuilder:title=CCLComponentSetSpec
 type CCLComponentSetSpec struct {
 	// components are rolled out in the order given: the operator withholds a
 	// component's Argo CD Application until every component before it reports both
@@ -99,6 +101,7 @@ type CCLComponentSetSpec struct {
 }
 
 // CCLComponentSetStatus defines the observed state of CCLComponentSet.
+// +kubebuilder:title=CCLComponentSetStatus
 type CCLComponentSetStatus struct {
 	// conditions represent the current state of the CCLComponentSet resource.
 	//

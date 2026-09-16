@@ -1,8 +1,0 @@
-{{- if .Values.ssh_public_key }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: "authorized-keys-{{ .Values.deployment_id }}"
-data:
-  authorized_keys: "{{ .Values.ssh_public_key }}"
-{{- end }}

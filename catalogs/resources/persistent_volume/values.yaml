@@ -1,0 +1,2 @@
+# catalogs/resources/persistent_volume has no defaults: volumeId, name and exactly one of
+# filesystem or object are required. See component.go for the schema.

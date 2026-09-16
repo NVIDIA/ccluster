@@ -100,7 +100,7 @@ stay isolated the same way they are in production. Docker must be running first.
 
 ```bash
 make init    # create both kind clusters (idempotent)
-make build   # manifests, CRDs, deepcopy, both binaries, both images, both charts
+make build   # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
 make load    # build each operator image and load it into its own cluster
 make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
 ```
@@ -147,8 +147,10 @@ generation, [Testing](docs/testing.md) for test selection, and
   [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the
   control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA
   GPU Operator / drivers on the cluster.
-- **Local development:** [kind](https://kind.sigs.k8s.io/) and Docker. `make init` creates
-  both development clusters; `make build load deploy` builds, loads and installs into them.
+- **Local development:** [kind](https://kind.sigs.k8s.io/), Docker and
+  [uv](https://docs.astral.sh/uv/), which `make build` uses to regenerate the Python
+  models. `make init` creates both development clusters; `make build load deploy` builds,
+  loads and installs into them.
 
 ## Releases
 
@@ -189,7 +191,7 @@ CCluster is early and evolving quickly — contributions, ideas, and feedback on
 - Development quickstart:
 
 ```bash
-make build          # manifests, CRDs, deepcopy, both binaries, both images, both charts
+make build          # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
 make test           # envtest suites for both control-plane controllers
 make helm-generate  # regenerate the charts from config/; CI fails on any drift
 ```

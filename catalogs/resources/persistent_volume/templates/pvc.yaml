@@ -1,0 +1,37 @@
+{{- if and .Values.filesystem .Values.object }}
+{{- fail "filesystem and object are mutually exclusive" }}
+{{- end }}
+{{- if not (or .Values.filesystem .Values.object) }}
+{{- fail "one of filesystem or object is required" }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    platform.centml.ai/volume-id: {{ .Values.volumeId | quote }}
+    platform.centml.ai/volume-name: {{ .Values.name | quote }}
+  # Named after the id, not the user-chosen name, so two volumes in one namespace cannot
+  # collide however they are named.
+  name: vol-{{ .Values.volumeId }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+{{- with .Values.object }}
+  volumeMode: Filesystem
+  resources:
+    requests:
+      # Mountpoint ignores capacity, but Kubernetes requires a request.
+      storage: 1Gi
+  # An empty StorageClass keeps this claim on the statically defined PV.
+  storageClassName: ""
+  volumeName: vol-{{ $.Values.volumeId }}
+{{- end }}
+{{- with .Values.filesystem }}
+  resources:
+    requests:
+      storage: "{{ .sizeGb | int64 }}Gi"
+  # Immediate classes bind after this PVC is created. WaitForFirstConsumer classes
+  # intentionally stay Pending until an attached workload creates the first consumer.
+  storageClassName: {{ .storageClassName | quote }}
+{{- end }}

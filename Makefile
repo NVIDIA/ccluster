@@ -175,7 +175,7 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 # does not touch a cluster - `kind load docker-image` and `make deploy-{cp,ip}` are
 # still separate, per the rule that every cluster-touching target is suffixed.
 .PHONY: build
-build: build-cp build-ip docker-build helm-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images and both charts.
+build: build-cp build-ip docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images, both charts and the Python models.
 
 .PHONY: build-cp
 build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
@@ -620,21 +620,28 @@ python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as
 
 ##@ Python
 
-# python/ is a Pydantic rendering of the CRDs and the catalog's typed values, generated
-# in two steps: hack/pyschema writes JSON Schema for each (plus the package __init__.py
-# files), then datamodel-code-generator turns every schema into a module beside its
-# __init__.py. It is run per file rather than over the directory because directory mode
-# rewrites every __init__.py on the way through, and hack/pyschema owns those.
-# The generated subpackages are deleted and rebuilt on each run; see hack/pyschema/main.go.
+# python/ is a Pydantic rendering of the CRDs' spec and status and of the catalog's typed
+# values, generated in two steps. hack/pyschema writes one JSON Schema per CRD kind and
+# version (spec at the root, status in definitions) and one per chart (reflected from the
+# chart's Go Values), plus each API version package's __init__.py: the Kind enum and one
+# concrete CustomResource per kind over the hand-written template in <version>/base.py.
+# datamodel-code-generator then turns each schema into Python: <version>/<kind>.py for a
+# CRD, <chart path>/__init__.py for a chart, the latter with a CHART constant appended.
+# Catalog directories carry no __init__.py (namespace packages). Generated files are
+# rebuilt on each run; see hack/pyschema/main.go.
 PYSCHEMA_DIR ?= dist/pyschema
 PYTHON_PKG ?= python/src/ccluster
+CRD_DIR ?= config/crd/bases
 
 .PHONY: python-generate
 python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalog Go types.
-	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)"
+	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)" --crds "$(CRD_DIR)"
 	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
-		rel="$${schema#$(PYSCHEMA_DIR)/}"; \
-		out="$(PYTHON_PKG)/$${rel%.json}.py"; \
+		rel="$${schema#$(PYSCHEMA_DIR)/}"; pkg="$${rel%.json}"; \
+		case "$$pkg" in \
+			catalogs/*) out="$(PYTHON_PKG)/$$pkg/__init__.py";; \
+			*) out="$(PYTHON_PKG)/$$pkg.py";; \
+		esac; \
 		echo "$$schema -> $$out"; \
 		"$(UV)" tool run --from "datamodel-code-generator==$(DATAMODEL_CODEGEN_VERSION)" \
 			datamodel-codegen \
@@ -646,6 +653,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 			--collapse-root-models --use-double-quotes --disable-timestamp \
 			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
 			|| exit 1; \
+		case "$$pkg" in catalogs/*) printf '\n\n# CHART is the chart directory, relative to the root of the catalog repository.\nCHART = "%s"\n' "$$pkg" >> "$$out";; esac; \
 	done
 
 .PHONY: python-test

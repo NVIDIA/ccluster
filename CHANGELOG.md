@@ -8,6 +8,19 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
+- `catalogs/deployments/`, `catalogs/resources/` and `catalogs/namespace_base/`: the
+  tenant charts ported from the legacy Python catalog, one version of each and without
+  the cserve variants. `inference_deployment` (from `inference_deployment_v3`),
+  `compute_deployment`, `job_deployment` and `dynamo_deployment` are the workloads;
+  `kai_gpu_queues` and `persistent_volume` are the GPU quota queues and tenant volumes
+  they reference through `kaiQueue` and `volumeMounts`; `namespace_base` is the
+  namespace baseline they assume. Each pairs a Helm chart with a Go package (`Values`,
+  `Validate`, `New`) and generated Pydantic models under `ccluster.catalogs`. The charts
+  take camelCase values, scope everything to the release namespace instead of a user id,
+  and read plain values in place of the base64 fields the Argo CD `--set` path needed.
+- `catalogs/components`: the registry of every chart in the catalog. Adding a chart is
+  now a directory with a `component.go`, one line in `components.go` and
+  `make python-generate`; a test fails when the list and the tree disagree.
 - `CCLClient.create_component_set(name, components)` and
   `CCLClient.delete_component_set(name)` in `ccluster-py`. `create_component_set`
   server-side applies a `CCLComponentSet` in the client's namespace from a list of
@@ -17,6 +30,20 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `python/examples/create_component_set.py` drives both from the command line.
 
 ### Changed
+- `CCLClient.register_infraplane` and `unregister_infraplane` are renamed
+  `create_infraplane` and `delete_infraplane`, matching `create_component_set` and
+  `delete_component_set`. `python/examples/register_infraplane.py` is now
+  `create_infraplane.py`.
+- `ccluster-py` models a CRD's `spec` and `status` only: `CCLInfraPlaneSpec`,
+  `CCLInfraPlaneStatus`, `CCLComponentSetSpec`, `CCLComponentSetStatus` and their nested
+  types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema by
+  `hack/pyschema` and datamodel-code-generator, constraints and docstrings included. `ccluster.v1alpha1.base` is a
+  hand-written generic `CustomResource[Spec, Status]` template with a small `ObjectMeta`;
+  `ccluster.v1alpha1` itself is generated from the CRD kinds with the `Kind` enum and one
+  concrete `CustomResource` per kind (`CCLComponentSet`, `CCLInfraPlane`), which
+  `CCLClient.create_infraplane` and `create_component_set` build and return. `hack/pyschema` now reflects chart `Values` only and shapes no Python; the
+  chart packages are written by the generator with `CHART` appended, and the catalog and
+  version directories are namespace packages.
 - `CCLClient.register_cluster` and `unregister_cluster` are renamed
   `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
   create and remove. `python/examples/register_cluster.py` is now

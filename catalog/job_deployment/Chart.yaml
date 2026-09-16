@@ -1,8 +1,0 @@
-apiVersion: v2
-name: job-deployment
-description: CentML Job Deployment
-type: application
-
-version: 1.0.0
-
-appVersion: "1.0.0"

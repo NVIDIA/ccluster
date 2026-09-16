@@ -22,19 +22,21 @@ from typing import Annotated
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
-class ConditionStatus(Enum):
-    """
-    status of the condition, one of True, False, Unknown.
-    """
-
-    true = "True"
-    false = "False"
-    unknown = "Unknown"
-
-
 class LocalObjectReference(BaseModel):
     """
-    LocalObjectReference references an object in the same namespace as the referring object. The kind of the target is fixed by the field that uses it.
+    clusterCredentialsRef references a Secret in the same namespace as this
+    CCLInfraPlane that holds the credentials for the infra-plane cluster's API
+    server.
+
+    Its data is copied verbatim into a Secret in the Argo CD namespace, named
+    after this CCLInfraPlane and labelled "argocd.argoproj.io/secret-type:
+    cluster". The operator does not interpret the data, so the referenced Secret
+    must already carry Argo CD's cluster-secret keys - "server" and "config".
+
+    The exception is "name", which Argo CD displays as the cluster name: the
+    operator always sets it to this CCLInfraPlane's name, overwriting whatever the
+    referenced Secret holds. See
+    https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
     """
 
     model_config = ConfigDict(
@@ -43,32 +45,6 @@ class LocalObjectReference(BaseModel):
     name: Annotated[str, Field(max_length=253, min_length=1)]
     """
     name is the name of the referenced object.
-    """
-
-
-class ObjectMeta(BaseModel):
-    """
-    ObjectMeta is the metadata a client sets on an object. The fields the API server manages (uid, resourceVersion, generation, ...) are not modelled.
-    """
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    annotations: dict[str, str] | None = None
-    """
-    annotations are arbitrary string keys and values that tools can read and set.
-    """
-    labels: dict[str, str] | None = None
-    """
-    labels are string keys and values that can be used to organize and categorize objects.
-    """
-    name: Annotated[str | None, Field(max_length=253)] = None
-    """
-    name is the object's name. Unique within its namespace.
-    """
-    namespace: Annotated[str | None, Field(max_length=63)] = None
-    """
-    namespace is the object's namespace.
     """
 
 
@@ -81,7 +57,8 @@ class CCLInfraPlaneSpec(BaseModel):
         populate_by_name=True,
     )
     cluster_credentials_ref: Annotated[
-        LocalObjectReference, Field(alias="clusterCredentialsRef")
+        LocalObjectReference,
+        Field(alias="clusterCredentialsRef", title="LocalObjectReference"),
     ]
     """
     clusterCredentialsRef references a Secret in the same namespace as this
@@ -98,6 +75,16 @@ class CCLInfraPlaneSpec(BaseModel):
     referenced Secret holds. See
     https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
     """
+
+
+class Status(Enum):
+    """
+    status of the condition, one of True, False, Unknown.
+    """
+
+    true = "True"
+    false = "False"
+    unknown = "Unknown"
 
 
 class Condition(BaseModel):
@@ -141,7 +128,7 @@ class Condition(BaseModel):
     The value should be a CamelCase string.
     This field may not be empty.
     """
-    status: ConditionStatus
+    status: Status
     """
     status of the condition, one of True, False, Unknown.
     """
@@ -180,43 +167,4 @@ class CCLInfraPlaneStatus(BaseModel):
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
     observedGeneration is the .metadata.generation the conditions were computed from.
-    """
-
-
-class CCLInfraPlane(BaseModel):
-    """
-    CCLInfraPlane is the Schema for the cclinfraplanes API
-    """
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    api_version: Annotated[str | None, Field(alias="apiVersion")] = (
-        "ccluster.nvidia.com/v1alpha1"
-    )
-    """
-    APIVersion defines the versioned schema of this representation of an object.
-    Servers should convert recognized schemas to the latest internal value, and
-    may reject unrecognized values.
-    More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-    """
-    kind: str | None = "CCLInfraPlane"
-    """
-    Kind is a string value representing the REST resource this object represents.
-    Servers may infer this from the endpoint the client submits requests to.
-    Cannot be updated.
-    In CamelCase.
-    More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-    """
-    metadata: ObjectMeta | None = None
-    """
-    metadata is a standard object metadata
-    """
-    spec: CCLInfraPlaneSpec
-    """
-    spec defines the desired state of CCLInfraPlane
-    """
-    status: CCLInfraPlaneStatus | None = None
-    """
-    status defines the observed state of CCLInfraPlane
     """

@@ -1,0 +1,16 @@
+{{/*
+The Dynamo operator auto-creates per-component Services (e.g. `${name}-frontend`)
+in the same namespace as the DynamoGraphDeployment. We expose the Frontend service
+to nginx-ingress via an istio-friendly ExternalName service so the same
+ingress + envoy sidecar pattern as inference_deployment works unchanged.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+    name: "{{ .Values.name }}-istio-friendly"
+    namespace: {{ .Release.Namespace }}
+spec:
+    type: ExternalName
+    externalName: "{{ include "dynamo.frontendServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local"

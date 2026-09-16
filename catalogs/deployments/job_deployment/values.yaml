@@ -1,0 +1,13 @@
+# Chart defaults for catalogs/deployments/job_deployment. The values a chart cannot be
+# installed without (name, deploymentId, imageUrl, resources) have no default; see
+# component.go for the whole schema.
+
+# Pod scheduler. kai-scheduler bin-packs GPUs; set to "" for the cluster default.
+schedulerName: kai-scheduler
+# Size of the /dev/shm tmpfs, as a Kubernetes quantity.
+devShmSize: 512Mi
+# Ship container logs to the cluster's log pipeline.
+enableLogging: true
+completions: 1
+parallelism: 1
+backoffLimit: 3

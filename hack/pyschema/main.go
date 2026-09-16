@@ -14,38 +14,36 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// pyschema is the first half of `make python-generate`.
+// pyschema is the first half of `make python-generate`. It writes what
+// datamodel-code-generator turns into the ccluster-py package:
 //
-// It writes JSON Schema documents for everything the Python package under python/ is
-// generated from, and the hand-shaped parts of that package which the code generator
-// cannot produce:
+//   - for every CRD under --crds and every version it serves, <out>/<version>/<kind>.json:
+//     the kind's spec schema at the root and its status schema under definitions. Spec and
+//     status are the only parts that differ between kinds, so they are the only parts
+//     generated. Their class names are the schemas' titles, which controller-gen writes
+//     from +kubebuilder:title markers on the Go types; every name in the Python package
+//     therefore comes from a Go declaration, and this tool invents none;
+//   - for every chart in catalogs/components.All, <out>/<chart path>.json, reflected from
+//     the chart's Go Values type with its doc comments;
+//   - for every API version, <python>/<version>/__init__.py: the Kind enum and one concrete
+//     CustomResource[<Kind>Spec, <Kind>Status] per kind, specialising the hand-written
+//     template in <python>/<version>/base.py. It is a fixed template filled with kind names,
+//     not a translation.
 //
-//   - one schema per CRD, lifted from the openAPIV3Schema in config/crd/bases/, into
-//     <out>/v1alpha1/<kind>.json;
-//   - one schema per catalog component, reflected from that component's Go Values type,
-//     into <out>/<chart path>/values.json;
-//   - the __init__.py of every generated Python package, which re-exports the generated
-//     classes and, for a component, carries the chart path as CHART.
-//
-// datamodel-code-generator then turns each schema into a Pydantic module next to its
-// __init__.py. The Makefile drives that second half, so the tool and its version are
-// pinned there and not here.
-//
-// The Python tree under --python that this tool owns (v1alpha1/ and catalogs/cluster_base/)
-// is deleted and rebuilt on every run, so a component removed from the table below
-// disappears from Python too. Everything else in the package is hand-written.
+// Nothing here lists kinds or charts: kinds come from the CRD files, charts from the
+// catalog's registry, so adding either needs no change to this tool. The generated Python
+// files (<version>/<kind>.py, <version>/__init__.py, the chart packages) are deleted
+// before each run so removed kinds and charts disappear from the package.
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -53,291 +51,183 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
 
-	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
-	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
-	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
-	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
-	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
-	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
-	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
-	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
-	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
-	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
-	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
+	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
-// modulePath is the Go module, which invopop/jsonschema needs to match the comments
-// it parses out of the source tree to the types it reflects.
+// modulePath is the Go module, which invopop/jsonschema needs to match the comments it
+// parses out of the source tree to the types it reflects.
 const modulePath = "github.com/NVIDIA/ccluster"
-
-// component is one catalog chart: its path in the repository, which is also its
-// directory in the Python package, and the zero value of its Values type.
-type component struct {
-	chart  string
-	values any
-}
-
-// components is the catalog as Python sees it. Adding a chart to catalogs/ means adding
-// it here too, as catalogs/cluster_base/cluster_base.go does for the sample rollout.
-var components = []component{
-	{argorollouts.Chart, argorollouts.Values{}},
-	{certmanager.Chart, certmanager.Values{}},
-	{externaldns.Chart, externaldns.Values{}},
-	{finalstack.Chart, finalstack.Values{}},
-	{fluentbit.Chart, fluentbit.Values{}},
-	{gpuoperator.Chart, gpuoperator.Values{}},
-	{ingressnginx.Chart, ingressnginx.Values{}},
-	{istio.Chart, istio.Values{}},
-	{keda.Chart, keda.Values{}},
-	{kubeprometheusstack.Chart, kubeprometheusstack.Values{}},
-	{longhorn.Chart, longhorn.Values{}},
-	{metricsserver.Chart, metricsserver.Values{}},
-	{networkoperator.Chart, networkoperator.Values{}},
-	{otelcollector.Chart, otelcollector.Values{}},
-	{prometheusadapter.Chart, prometheusadapter.Values{}},
-	{spire.Chart, spire.Values{}},
-	{spirecrds.Chart, spirecrds.Values{}},
-	{teleportkubeagent.Chart, teleportkubeagent.Values{}},
-}
-
-// crdTypes names the nested schemas of each CRD, which the CRD itself does not do:
-// controller-gen inlines every Go type, so the openAPIV3Schema only knows property
-// names. Each named node is hoisted into the document's $defs under its Go type name,
-// which the code generator uses as the class name; without this it would invent Spec,
-// Status, Component and Status1. Paths are JSON paths under the root, with "[]" for an
-// array's items. The order is the order the names are re-exported from the package's
-// __init__.py.
-//
-// controller-gen also drops a type's own doc comment in favour of the field's, so the
-// class docstring would repeat the field docstring. description restores the type's
-// comment where the two differ; left empty, the field's description is used for both.
-//
-// A path missing here still generates - under the generator's derived name - so a new
-// field never breaks the build. It just gets a worse class name until it is added.
-var crdTypes = map[string][]crdType{
-	"CCLComponentSet": {
-		{path: "spec", name: "CCLComponentSetSpec"},
-		{path: "spec.components[]", name: "ComponentSpec"},
-		{path: "spec.components[].infraPlaneRef", name: "LocalObjectReference",
-			description: localObjectReferenceDoc},
-		{path: "status", name: "CCLComponentSetStatus"},
-		{path: "status.conditions[]", name: "Condition"},
-		{path: "status.conditions[].status", name: "ConditionStatus"},
-	},
-	"CCLInfraPlane": {
-		{path: "spec", name: "CCLInfraPlaneSpec"},
-		{path: "spec.clusterCredentialsRef", name: "LocalObjectReference",
-			description: localObjectReferenceDoc},
-		{path: "status", name: "CCLInfraPlaneStatus"},
-		{path: "status.conditions[]", name: "Condition"},
-		{path: "status.conditions[].status", name: "ConditionStatus"},
-	},
-}
-
-type crdType struct {
-	path, name, description string
-}
-
-// localObjectReferenceDoc is the doc comment of api/v1alpha1.LocalObjectReference.
-const localObjectReferenceDoc = "LocalObjectReference references an object in the same " +
-	"namespace as the referring object. The kind of the target is fixed by the field " +
-	"that uses it."
-
-// objectMeta replaces the CRD's `metadata: {type: object}`. It is the one place this
-// export adds shape the CRD does not have: the API server validates metadata against
-// the built-in ObjectMeta rather than the CRD schema, so controller-gen leaves it
-// opaque, and an opaque dict is not useful to a client that has to set a name.
-// Only the fields a client writes are here.
-var objectMeta = map[string]any{
-	"type": "object",
-	"description": "ObjectMeta is the metadata a client sets on an object. " +
-		"The fields the API server manages (uid, resourceVersion, generation, ...) " +
-		"are not modelled.",
-	"properties": map[string]any{
-		"name": map[string]any{
-			"type": "string", "maxLength": 253,
-			"description": "name is the object's name. Unique within its namespace.",
-		},
-		"namespace": map[string]any{
-			"type": "string", "maxLength": 63,
-			"description": "namespace is the object's namespace.",
-		},
-		"labels": map[string]any{
-			"type": "object", "additionalProperties": map[string]any{"type": "string"},
-			"description": "labels are string keys and values that can be used to " +
-				"organize and categorize objects.",
-		},
-		"annotations": map[string]any{
-			"type": "object", "additionalProperties": map[string]any{"type": "string"},
-			"description": "annotations are arbitrary string keys and values that " +
-				"tools can read and set.",
-		},
-	},
-}
 
 func main() {
 	out := flag.String("out", "dist/pyschema", "directory to write the JSON schemas into")
 	python := flag.String("python", "python/src/ccluster",
-		"the Python package whose generated subpackages are rebuilt")
-	repo := flag.String("repo", ".", "repository root, holding config/ and catalogs/")
-	header := flag.String("header", "hack/boilerplate.py.txt",
-		"file header for the generated Python")
+		"the Python package whose generated files are rebuilt")
+	repo := flag.String("repo", ".", "repository root, holding catalogs/")
+	crds := flag.String("crds", "config/crd/bases", "directory holding the CRD manifests")
+	header := flag.String("header", "hack/boilerplate.py.txt", "file header for generated Python")
 	flag.Parse()
 
-	if err := run(*repo, *out, *python, *header); err != nil {
+	if err := run(*repo, *out, *python, *crds, *header); err != nil {
 		fmt.Fprintln(os.Stderr, "pyschema:", err)
 		os.Exit(1)
 	}
 }
 
-func run(repo, out, python, headerFile string) error {
+func run(repo, out, python, crds, headerFile string) error {
 	header, err := os.ReadFile(headerFile)
 	if err != nil {
 		return err
 	}
-
-	// Rebuild the generated subpackages from scratch so nothing stale survives.
-	for _, dir := range []string{out, filepath.Join(python, "v1alpha1"),
-		filepath.Join(python, "catalogs", "cluster_base")} {
-		if err := os.RemoveAll(dir); err != nil {
-			return err
-		}
+	if err := os.RemoveAll(out); err != nil {
+		return err
 	}
-
-	if err := writeCRDs(repo, out, python, header); err != nil {
+	if err := writeCRDs(out, python, crds, string(header)); err != nil {
 		return fmt.Errorf("CRDs: %w", err)
 	}
-	if err := writeComponents(repo, out, python, header); err != nil {
-		return fmt.Errorf("catalog: %w", err)
+	if err := writeCharts(repo, out, python); err != nil {
+		return fmt.Errorf("charts: %w", err)
 	}
 	return nil
 }
 
-// writeCRDs lifts the openAPIV3Schema out of every CRD under config/crd/bases and
-// writes it as JSON Schema, with its nested types hoisted into $defs under their Go names.
-func writeCRDs(repo, out, python string, header []byte) error {
-	files, err := filepath.Glob(filepath.Join(repo, "config", "crd", "bases", "*.yaml"))
+// writeCRDs writes one schema per kind and version and one __init__.py per version.
+func writeCRDs(out, python, dir, header string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
-		return errors.New("no CRDs under config/crd/bases; run `make manifests` first")
+		return fmt.Errorf("no CRDs under %s; run `make manifests` first", dir)
 	}
 
-	// The re-exports of v1alpha1/__init__.py: kind first, then its nested types, with
-	// the types shared between kinds (Condition, LocalObjectReference, ObjectMeta)
-	// imported from the first module that defines them.
-	var (
-		modules  []string
-		exports  = map[string][]string{}
-		exported = map[string]bool{}
-	)
+	group := ""
+	kinds := map[string][]apiKind{} // version -> kinds
 	for _, file := range files {
-		var crd apiextensionsv1.CustomResourceDefinition
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			return err
 		}
+		var crd apiextensionsv1.CustomResourceDefinition
 		if err := yaml.Unmarshal(raw, &crd); err != nil {
 			return fmt.Errorf("%s: %w", file, err)
 		}
 		kind := crd.Spec.Names.Kind
-		if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil {
-			return fmt.Errorf("%s: expected exactly one version with a schema", kind)
+		if group == "" {
+			group = crd.Spec.Group
+		} else if group != crd.Spec.Group {
+			return fmt.Errorf("%s: group %s differs from %s", file, crd.Spec.Group, group)
 		}
-		version := crd.Spec.Versions[0]
 
-		schema, err := toGeneric(version.Schema.OpenAPIV3Schema)
-		if err != nil {
+		for _, version := range crd.Spec.Versions {
+			if version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
+				return fmt.Errorf("%s: version %s has no schema", kind, version.Name)
+			}
+			props := version.Schema.OpenAPIV3Schema.Properties
+			spec, ok := props["spec"]
+			if !ok {
+				return fmt.Errorf("%s %s: no spec", kind, version.Name)
+			}
+			status, ok := props["status"]
+			if !ok {
+				return fmt.Errorf("%s %s: no status", kind, version.Name)
+			}
+			// The class names come from the schemas' titles, not from a naming rule
+			// here: a type without a title marker gets a field-derived name from the
+			// generator, so refuse the two we import by name.
+			for field, title := range map[string]string{"spec": spec.Title, "status": status.Title} {
+				if title == "" {
+					return fmt.Errorf("%s %s: %s has no title; add +kubebuilder:title to its Go type",
+						kind, version.Name, field)
+				}
+			}
+			spec.Definitions = apiextensionsv1.JSONSchemaDefinitions{status.Title: status}
+
+			module := strings.ToLower(kind)
+			// Rebuild the kind's module from scratch; base.py in the same directory is
+			// hand-written and stays.
+			if err := os.Remove(filepath.Join(python, version.Name, module+".py")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err := writeJSON(filepath.Join(out, version.Name, module+".json"), spec); err != nil {
+				return err
+			}
+			kinds[version.Name] = append(kinds[version.Name], apiKind{
+				Kind: kind, Spec: spec.Title, Status: status.Title,
+			})
+		}
+	}
+
+	for version, names := range kinds {
+		sort.Slice(names, func(i, j int) bool { return names[i].Kind < names[j].Kind })
+		file := filepath.Join(python, version, "__init__.py")
+		if err := os.WriteFile(file, []byte(renderInit(header, group, version, names)), 0o644); err != nil {
 			return err
 		}
-		schema["title"] = kind
-		props := schema["properties"].(map[string]any)
-		props["apiVersion"].(map[string]any)["default"] = crd.Spec.Group + "/" + version.Name
-		props["kind"].(map[string]any)["default"] = kind
-		// values is x-kubernetes-preserve-unknown-fields with no type. Helm, and Argo
-		// CD's valuesObject, only accept a map there, so tell Python that much.
-		if values, err := descend(schema, "spec.components[].values"); err == nil {
-			values["type"] = "object"
-		}
-
-		// Hoist the named types into $defs, leaving a $ref (plus the field's own
-		// description, which the generator turns into the field docstring) in place.
-		// Deeper paths first: hoisting "spec" moves its children into $defs with it,
-		// and a $ref cannot be descended.
-		defs := map[string]any{"ObjectMeta": objectMeta}
-		props["metadata"] = map[string]any{
-			"$ref": "#/$defs/ObjectMeta", "description": "metadata is a standard object metadata",
-		}
-		types := crdTypes[kind]
-		for i := len(types) - 1; i >= 0; i-- {
-			t := types[i]
-			node, err := descend(schema, t.path)
-			if err != nil {
-				return fmt.Errorf("%s: %w", kind, err)
-			}
-			hoisted := maps.Clone(node)
-			fieldDescription, _ := node["description"].(string)
-			if t.description != "" {
-				hoisted["description"] = t.description
-			}
-			defs[t.name] = hoisted
-			clear(node)
-			node["$ref"] = "#/$defs/" + t.name
-			if fieldDescription != "" {
-				node["description"] = fieldDescription
-			}
-		}
-		schema["$defs"] = defs
-
-		titles := []string{kind, "ObjectMeta"}
-		for _, t := range types {
-			titles = append(titles, t.name)
-		}
-
-		module := strings.ToLower(kind)
-		if err := writeJSON(filepath.Join(out, "v1alpha1", module+".json"), schema); err != nil {
-			return err
-		}
-		modules = append(modules, module)
-		for _, t := range titles {
-			if !exported[t] {
-				exported[t] = true
-				exports[module] = append(exports[module], t)
-			}
-		}
 	}
-
-	var b bytes.Buffer
-	b.Write(header)
-	b.WriteString("\"\"\"The ccluster.nvidia.com/v1alpha1 API, generated from the CRDs.\"\"\"\n\n")
-	for _, module := range modules {
-		writeImport(&b, "."+module, exports[module])
-	}
-	b.WriteString("\n")
-	var all []string
-	for _, module := range modules {
-		all = append(all, exports[module]...)
-	}
-	writeAll(&b, all)
-	return writeFile(filepath.Join(python, "v1alpha1", "__init__.py"), b.Bytes())
+	return nil
 }
 
-// writeComponents reflects every component's Values into a schema and writes the
-// component's __init__.py alongside where the generator will put values.py.
-func writeComponents(repo, out, python string, header []byte) error {
+// apiKind is one CRD kind and the class names of its spec and status, as titled in the CRD.
+type apiKind struct {
+	Kind, Spec, Status string
+}
+
+// renderInit is the __init__.py of one API version package: the Kind enum and one
+// concrete CustomResource per kind, over the hand-written template in base.py.
+func renderInit(header, group, version string, kinds []apiKind) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(header, "\n"))
+	fmt.Fprintf(&b, "\n\n\"\"\"The %s/%s kinds: one concrete CustomResource per CRD, and the Kind\n"+
+		"enum naming them. The template is in .base; each kind's Spec and Status are in its\n"+
+		"own module.\"\"\"\n\n", group, version)
+	b.WriteString("from enum import Enum\nfrom typing import Literal\n\n")
+	b.WriteString("from .base import API_VERSION, CustomResource, ObjectMeta\n")
+	exports := make([]string, 0, len(kinds)+4)
+	exports = append(exports, "API_VERSION")
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "from .%s import %s, %s\n", strings.ToLower(k.Kind), k.Spec, k.Status)
+		exports = append(exports, k.Kind)
+	}
+	exports = append(exports, "CustomResource", "Kind", "ObjectMeta")
+	b.WriteString("\n__all__ = [\n")
+	for _, name := range exports {
+		fmt.Fprintf(&b, "    %q,\n", name)
+	}
+	b.WriteString("]\n\n\n")
+	b.WriteString("class Kind(str, Enum):\n")
+	fmt.Fprintf(&b, "    \"\"\"The kinds of %s/%s, as they appear on the wire.\"\"\"\n\n", group, version)
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "    %s = %q\n", enumMember(k.Kind), k.Kind)
+	}
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "\n\nclass %s(CustomResource[%s, %s]):\n", k.Kind, k.Spec, k.Status)
+		fmt.Fprintf(&b, "    \"\"\"A %s object; see %s and %s for its contents.\"\"\"\n\n", k.Kind, k.Spec, k.Status)
+		fmt.Fprintf(&b, "    kind: Literal[Kind.%s] = Kind.%s\n", enumMember(k.Kind), enumMember(k.Kind))
+	}
+	return b.String()
+}
+
+var (
+	acronymBoundary = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+	wordBoundary    = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+)
+
+// enumMember turns a CamelCase kind into an UPPER_SNAKE enum member:
+// CCLComponentSet -> CCL_COMPONENT_SET.
+func enumMember(kind string) string {
+	s := acronymBoundary.ReplaceAllString(kind, "${1}_${2}")
+	s = wordBoundary.ReplaceAllString(s, "${1}_${2}")
+	return strings.ToUpper(s)
+}
+
+// writeCharts reflects every registered chart's Values into a schema, after deleting the
+// Python directories the charts generate into so removed charts disappear.
+func writeCharts(repo, out, python string) error {
 	reflector := jsonschema.Reflector{
 		// No $id: these are documents of ours, not published schemas.
 		Anonymous: true,
 		// Put Values itself at the root rather than behind a $ref, so the generator
-		// makes it a class named by the title instead of wrapping a RootModel around it.
+		// makes it a class named by the title instead of a RootModel.
 		ExpandedStruct: true,
 	}
 	// Go doc comments become descriptions, which the generator turns into docstrings.
@@ -347,99 +237,30 @@ func writeComponents(repo, out, python string, header []byte) error {
 		return err
 	}
 
-	var packages []string
-	for _, c := range components {
-		schema := reflector.Reflect(c.values)
-		if schema.Type != "object" {
-			return fmt.Errorf("%s: Values did not reflect to a struct schema", c.chart)
+	// A chart directly under catalogs/ is its own directory; a chart in a catalog shares
+	// the catalog directory. catalogs/__init__.py is hand-written and stays.
+	for _, c := range components.All {
+		dir := c.Chart
+		if parent := path.Dir(c.Chart); parent != "catalogs" {
+			dir = parent
 		}
-		schema.Title = "Values"
-		if err := writeJSON(filepath.Join(out, c.chart, "values.json"), schema); err != nil {
+		if err := os.RemoveAll(filepath.Join(python, filepath.FromSlash(dir))); err != nil {
 			return err
 		}
+	}
 
-		// The generator names a class after its $defs key, which is the Go type name.
-		names := []string{"Values"}
-		for name := range schema.Definitions {
-			names = append(names, name)
+	for _, c := range components.All {
+		s := reflector.Reflect(c.Values)
+		if s.Type != "object" {
+			return fmt.Errorf("%s: Values did not reflect to a struct schema", c.Chart)
 		}
-		sort.Strings(names)
-
-		var b bytes.Buffer
-		b.Write(header)
-		fmt.Fprintf(&b, "\"\"\"Values of the %s chart, generated from its Go package.\"\"\"\n\n", c.chart)
-		b.WriteString("from typing import Final\n\n")
-		writeImport(&b, ".values", names)
-		b.WriteString("\n")
-		writeAll(&b, append([]string{"CHART"}, names...))
-		b.WriteString("\n# CHART is the chart's directory, relative to the root of the catalog repository.\n")
-		fmt.Fprintf(&b, "CHART: Final = %q\n", c.chart)
-		if err := writeFile(filepath.Join(python, c.chart, "__init__.py"), b.Bytes()); err != nil {
-			return err
+		s.Title = "Values"
+		s.Description = fmt.Sprintf("Values of the %s chart, generated from its Go package.", c.Chart)
+		if err := writeJSON(filepath.Join(out, filepath.FromSlash(c.Chart)+".json"), s); err != nil {
+			return fmt.Errorf("%s: %w", c.Chart, err)
 		}
-		packages = append(packages, path.Base(c.chart))
 	}
-
-	var b bytes.Buffer
-	b.Write(header)
-	b.WriteString("\"\"\"The cluster_base catalog: one subpackage per chart, each with a Values\n" +
-		"model and its CHART path.\"\"\"\n\n")
-	fmt.Fprintf(&b, "from . import %s\n\n", strings.Join(packages, ", "))
-	writeAll(&b, packages)
-	return writeFile(filepath.Join(python, "catalogs", "cluster_base", "__init__.py"), b.Bytes())
-}
-
-// toGeneric round-trips a JSONSchemaProps through JSON so its nodes can be edited as
-// plain maps, which is what the path-based edits above need.
-func toGeneric(props *apiextensionsv1.JSONSchemaProps) (map[string]any, error) {
-	raw, err := json.Marshal(props)
-	if err != nil {
-		return nil, err
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		return nil, err
-	}
-	return schema, nil
-}
-
-// descend follows a dotted property path from an object schema, stepping into an
-// array's items for each "[]" suffix.
-func descend(schema map[string]any, p string) (map[string]any, error) {
-	node := schema
-	for seg := range strings.SplitSeq(p, ".") {
-		name, items := strings.CutSuffix(seg, "[]")
-		props, _ := node["properties"].(map[string]any)
-		next, ok := props[name].(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("no property %q on the way to %q", name, p)
-		}
-		if items {
-			if next, ok = next["items"].(map[string]any); !ok {
-				return nil, fmt.Errorf("%q is not an array on the way to %q", name, p)
-			}
-		}
-		node = next
-	}
-	return node, nil
-}
-
-// writeImport writes a from-import in the multi-line form black settles on, so the
-// hand-shaped files match the generated ones.
-func writeImport(b *bytes.Buffer, module string, names []string) {
-	fmt.Fprintf(b, "from %s import (\n", module)
-	for _, n := range names {
-		fmt.Fprintf(b, "    %s,\n", n)
-	}
-	b.WriteString(")\n")
-}
-
-func writeAll(b *bytes.Buffer, names []string) {
-	b.WriteString("__all__ = [\n")
-	for _, n := range names {
-		fmt.Fprintf(b, "    %q,\n", n)
-	}
-	b.WriteString("]\n")
+	return nil
 }
 
 func writeJSON(file string, v any) error {
@@ -447,12 +268,8 @@ func writeJSON(file string, v any) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(file, append(raw, '\n'))
-}
-
-func writeFile(file string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(file, data, 0o644)
+	return os.WriteFile(file, append(raw, '\n'), 0o644)
 }

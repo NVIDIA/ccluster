@@ -1,0 +1,6 @@
+apiVersion: v2
+name: deployments_inference_deployment
+description: An inference service - an Argo Rollout behind an nginx Ingress, autoscaled by KEDA, scraped by Prometheus
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,74 @@
+{{- if ne (.Values.servingMode | default "aggregated") "disaggregated" }}
+{{- /*
+KEDA ScaledObject for the aggregated Dynamo `VllmDecodeWorker`. Within aggregated
+mode it is always rendered: "fixed" is min == max (KEDA pins the count), so the
+DGDSA/KEDA ownership path stays uniform. Static disaggregated mode is excluded by
+the outer guard because its prefill/decode pools use literal replica counts.
+
+Unlike inference_deployment — which scales an Argo Rollout on the envoy in-flight metric —
+the Dynamo worker is out of the Istio mesh (no sidecar, so no envoy metric). We
+instead scale the DGDSA scale subresource on Dynamo's native Frontend metrics,
+scraped into Prometheus by service-monitor.yaml.
+
+hpa.minReplicas >= 1 (Values.Validate enforces it): Dynamo does not support
+scale-to-zero — at zero the frontend deregisters the model and requests 404 with no
+signal to scale back up. The active-request trigger below is inert when min == max or
+averageValue is left at the 2^53 default.
+*/ -}}
+{{- $cooldown := .Values.hpa.cooldownPeriod | int64 -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: "{{ .Values.name }}-scaledobject"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.name | quote }}
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+spec:
+  scaleTargetRef:
+    # The operator creates one DGDSA per component that opts in via
+    # `scalingAdapter: {}` (dgd.yaml), named `{dgd-name}-{component-name-lowercased}`.
+    # The DGDSA owns the worker's replicas through the Kubernetes scale subresource.
+    apiVersion: nvidia.com/v1beta1
+    kind: DynamoGraphDeploymentScalingAdapter
+    name: {{ .Values.name }}-vllmdecodeworker
+  minReplicaCount: {{ .Values.hpa.minReplicas | int }}
+  maxReplicaCount: {{ .Values.hpa.maxReplicas | int }}
+  # KEDA's cooldownPeriod / initialCooldownPeriod only govern scale-to-zero, which
+  # this path never does (min_replicas >= 1). They are kept for completeness, but the
+  # user-facing cooldown_period is applied where it actually takes effect for 1<->N:
+  # the HPA scale-down stabilization window under `advanced` below.
+  initialCooldownPeriod: {{ $cooldown }}
+  cooldownPeriod: {{ $cooldown }}
+  pollingInterval: 30
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # cooldown_period governs how long the HPA waits before scaling the worker
+          # down after load drops (N->1). Without this, KEDA's default 300s window
+          # applies and the user's cooldown_period would have no effect.
+          stabilizationWindowSeconds: {{ $cooldown }}
+  triggers:
+  # 1→N: `dynamo_frontend_active_requests` is the top-level gauge of requests
+  # currently handled by the Frontend, from HTTP handler entry until the response
+  # stream completes. It has no stage breakdown and is emitted for every router mode.
+  # The query sums its model-labeled series into one deployment-wide total.
+  # The router queue gauge is KV-only, so it is not a mode-independent scaling signal.
+  # KEDA uses AverageValue, dividing that total by the worker replica count and scaling
+  # toward `threshold` (= the requested `concurrency`).
+  - type: prometheus
+    metadata:
+      serverAddress: 'http://prometheus-op-kube-prometh-prometheus.prometheus.svc.cluster.local:9090'
+      metricName: "{{ .Values.name }}-frontend-active"
+      # KEDA multiplies the threshold by 1000 (millivalue), so it is capped at 2^53
+      # where a float64-decoded value is still exact; that cap also means "autoscaling
+      # disabled", which is the chart default.
+      threshold: {{ .Values.hpa.averageValue | int64 | quote }}
+      query: >-
+        sum(
+          dynamo_frontend_active_requests{
+            deployment_id="{{ .Values.deploymentId }}"
+          }
+        ) or on() vector(0)
+{{- end }}

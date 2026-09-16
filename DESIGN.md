@@ -71,7 +71,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. A placeholder: it registers no controllers yet. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components, each paired with a Go package describing that chart's values (§4). |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -241,10 +241,14 @@ from a typed, per-chart values struct.
 
 ### The typed catalog, and what it does not guarantee
 
-Each chart under `catalogs/cluster_base/` has a Go package alongside it declaring its values
-as typed structs, plus a `New(namespace, values)` that builds a `v1alpha1.ComponentEntry`
-from them — the API type itself, not a catalog-side mirror of it. A caller building a
-`CCLComponentSet` in Go gets compile-time checking of the values it sets.
+Each chart under `catalogs/` has a Go package
+alongside it declaring its values as typed structs, plus a `New(namespace, values)` that
+builds a `v1alpha1.ComponentEntry` from them — the API type itself, not a catalog-side
+mirror of it. A caller building a `CCLComponentSet` in Go gets compile-time checking of the
+values it sets. The `deployments` charts are written here rather than wrapped, so their
+values are the chart's own document, they validate what the chart cannot (required values,
+port and path rules), and they scope everything to the release namespace instead of
+carrying a tenant identifier: the namespace is the tenant.
 
 A component knows its chart directory and nothing else: its name, its namespace and its
 position in the rollout are all the caller's, because they are deployment choices rather

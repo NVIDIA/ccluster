@@ -15,23 +15,36 @@
 """The generated catalog values behave like their Go counterparts."""
 
 import importlib
+from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ccluster import catalogs
-from ccluster.catalogs import cluster_base
+from ccluster.catalogs import namespace_base
 from ccluster.catalogs.cluster_base import gpu_operator, teleport_kube_agent
+from ccluster.catalogs.deployments import inference_deployment
+from ccluster.catalogs.resources import kai_gpu_queues
+
+REPO = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("name", cluster_base.__all__)
-def test_component_package_shape(name):
-    pkg = importlib.import_module(f"ccluster.catalogs.cluster_base.{name}")
-    assert pkg.CHART == f"catalogs/cluster_base/{name}"
-    for exported in pkg.__all__:
-        assert hasattr(pkg, exported)
-    # Zero values mean "chart defaults": nothing is stored, as catalogs.Entry does in Go.
-    assert "values" not in catalogs.entry(pkg.CHART, "ns", pkg.Values())
+def chart_dirs():
+    """Every chart directory under catalogs/: the ones with a Go package beside the chart."""
+    return sorted(
+        str(chart.parent.relative_to(REPO)) for chart in (REPO / "catalogs").rglob("component.go")
+    )
+
+
+@pytest.mark.parametrize("chart", chart_dirs())
+def test_every_chart_has_a_generated_package(chart):
+    # catalogs/<catalog>/<chart> is generated as ccluster.catalogs.<catalog>.<chart>, a
+    # package with the chart's Values model and its CHART path. The catalog directories in
+    # between are namespace packages, so the packages are found by directory, not by
+    # walking ccluster.catalogs.
+    pkg = importlib.import_module("ccluster." + chart.replace("/", "."))
+    assert pkg.CHART == chart
+    assert issubclass(pkg.Values, BaseModel)
 
 
 def test_explicit_false_survives():

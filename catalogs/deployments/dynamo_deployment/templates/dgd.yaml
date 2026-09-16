@@ -1,0 +1,146 @@
+{{- $_ := required "model is required" .Values.model }}
+apiVersion: nvidia.com/v1beta1
+kind: DynamoGraphDeployment
+metadata:
+  name: {{ .Values.name | quote }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+  annotations:
+    platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
+spec:
+  components:
+    - name: Frontend
+      type: frontend
+      replicas: 1
+      podTemplate:
+        metadata:
+          annotations:
+            # Opt the Frontend out of the user namespace's Istio sidecar
+            # injection. The streaming response path (Worker → Frontend) is
+            # raw TCP on an OS-assigned ephemeral port (see requestPlane in
+            # values.yaml), which cannot be pre-declared for auto-mTLS.
+            sidecar.istio.io/inject: "false"
+            platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+            platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
+            {{- if not .Values.enableLogging }}
+            platform.centml.ai/log-exclude: "true"
+            {{- end }}
+            {{- if .Values.userAnnotations }}
+            {{- range $key, $value := .Values.userAnnotations }}
+            ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+          labels:
+            platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+            platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
+            ccluster.nvidia.com/component-type: frontend
+            {{- include "dynamo.kaiQueueLabel" .Values | nindent 12 }}
+            {{- if .Values.userAnnotations }}
+            {{- range $key, $value := .Values.userAnnotations }}
+            ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+        spec:
+          {{- include "dynamo.kaiPodScheduling" .Values | nindent 10 }}
+          containers:
+            - name: main
+              image: {{ .Values.imageUrl | quote }}
+              # Dynamo uses the same --http-port setting for its HTTP and
+              # KServe gRPC inference listeners. Pass it explicitly so a user
+              # env var cannot silently move the process away from the port
+              # declared below.
+              command: ["python3"]
+              args:
+                - "-m"
+                - "dynamo.frontend"
+                - "--http-port"
+                - {{ .Values.containerPort | int | quote }}
+                {{- if eq (.Values.backendProtocol | default "HTTP") "GRPC" }}
+                - "--kserve-grpc-server"
+                # Keep the dedicated API field authoritative over env_vars and
+                # reserve Dynamo's default HTTP metrics/health listener. The
+                # value is the chart's kserveGrpcMetricsPort, which the Go package's
+                # Validate keeps containerPort away from.
+                - "--grpc-metrics-port"
+                - {{ .Values.kserveGrpcMetricsPort | int | quote }}
+                {{- else }}
+                - "--no-kserve-grpc-server"
+                {{- end }}
+              # The operator Service exposes a fixed port 8000 and forwards to
+              # this named target port, so the container port may differ.
+              # The name `http` is a contract, not a label: the operator's
+              # Service targets `intstr.FromString("http")` (operator const
+              # DynamoContainerPortName, deploy/operator/internal/consts) —
+              # renaming it breaks Service → pod forwarding.
+              ports:
+                - name: http
+                  containerPort: {{ .Values.containerPort | int }}
+                  protocol: TCP
+              env:
+                # Frontend router mode. Default to kv (the aggregated +
+                # KV-router pattern); a caller-supplied env_vars entry wins.
+                # Emit exactly once so glibc's getenv (first match in environ[])
+                # cannot be shadowed by a duplicate user env entry.
+                - name: DYN_ROUTER_MODE
+                  # `| default dict` so an omitted/empty env_vars doesn't crash `index` on nil.
+                  value: {{ index (.Values.envVars | default dict) "DYN_ROUTER_MODE" | default "kv" | quote }}
+                {{- include "dynamo.runtimeEnv" . | nindent 16 }}
+                # Preserve the 1.2.1 router defaults explicitly for the 1.4 upgrade.
+                - name: DYN_ROUTER_QUEUE_THRESHOLD
+                  value: "4.0"
+                - name: DYN_DISABLE_FRONTEND_ADMIN_API
+                  value: "1"
+                - name: DYN_DISABLE_FRONTEND_NVEXT
+                  value: "1"
+                - name: DYN_VLLM_ENABLE_INFERENCE_V1_GENERATE
+                  value: "0"
+                {{- include "dynamo.userEnv" (dict "root" . "component" "frontend") | nindent 16 }}
+              {{- if .Values.hfToken }}
+              # The Frontend also fetches model/tokenizer metadata from Hugging Face during
+              # endpoint registration, so it needs the token too (gated models 401 otherwise).
+              # Consumed as an HF_TOKEN env var from the chart-owned Secret (secret.hf.yaml).
+              envFrom:
+                - secretRef:
+                    name: {{ .Values.name }}-hf-token
+              {{- end }}
+              {{- if eq (.Values.backendProtocol | default "HTTP") "GRPC" }}
+              # KServe gRPC does not expose the default HTTP health endpoints,
+              # so use TCP socket checks when its server is enabled.
+              livenessProbe:
+                tcpSocket:
+                  port: http
+              readinessProbe:
+                successThreshold: 1
+                tcpSocket:
+                  port: http
+              {{- end }}
+              # The Frontend is CPU-only; request a small slice so it can be
+              # scheduled even when no spare GPU capacity exists.
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: "1Gi"
+                requests:
+                  cpu: "500m"
+                  memory: "512Mi"
+          imagePullSecrets:
+            - name: ecr-image-pull
+            {{- if .Values.imagePullSecret }}
+            - name: {{ .Values.name }}-image-pull-secret
+            {{- end }}
+          # The Frontend is CPU-only, so it carries no GPU-type nodeAffinity
+          # (that is only for the workers). It keeps the dedicated_compute
+          # toleration so it can still schedule on an all-GPU-node cluster.
+          tolerations:
+            - effect: NoSchedule
+              key: dedicated_compute
+              operator: Equal
+              value: "true"
+
+    {{- if eq (.Values.servingMode | default "aggregated") "disaggregated" }}
+    {{- include "dynamo.disaggregatedWorker" (dict "root" . "pool" .Values.decodePool "role" "decode" "name" "VllmDecodeWorker") | nindent 4 }}
+    {{- include "dynamo.disaggregatedWorker" (dict "root" . "pool" .Values.prefillPool "role" "prefill" "name" "VllmPrefillWorker") | nindent 4 }}
+    {{- else }}
+    {{- include "dynamo.aggregatedWorker" . | nindent 4 }}
+    {{- end }}
