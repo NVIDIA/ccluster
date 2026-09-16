@@ -23,6 +23,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // CCLInfraPlaneSpec defines the desired state of CCLInfraPlane
+// +kubebuilder:title=CCLInfraPlaneSpec
 type CCLInfraPlaneSpec struct {
 	// clusterCredentialsRef references a Secret in the same namespace as this
 	// CCLInfraPlane that holds the credentials for the infra-plane cluster's API
@@ -42,6 +43,7 @@ type CCLInfraPlaneSpec struct {
 }
 
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.
+// +kubebuilder:title=CCLInfraPlaneStatus
 type CCLInfraPlaneStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file

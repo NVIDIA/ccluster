@@ -18,9 +18,11 @@ limitations under the License.
 // datamodel-code-generator turns into the ccluster-py package:
 //
 //   - for every CRD under --crds and every version it serves, <out>/<version>/<kind>.json:
-//     the kind's spec schema at the root, titled <Kind>Spec, and its status schema under
-//     definitions, titled <Kind>Status. Spec and status are the only parts that differ
-//     between kinds, so they are the only parts generated;
+//     the kind's spec schema at the root and its status schema under definitions. Spec and
+//     status are the only parts that differ between kinds, so they are the only parts
+//     generated. Their class names are the schemas' titles, which controller-gen writes
+//     from +kubebuilder:title markers on the Go types; every name in the Python package
+//     therefore comes from a Go declaration, and this tool invents none;
 //   - for every chart in catalogs/components.All, <out>/<chart path>.json, reflected from
 //     the chart's Go Values type with its doc comments;
 //   - for every API version, <python>/<version>/__init__.py: the Kind enum and one concrete
@@ -99,7 +101,7 @@ func writeCRDs(out, python, dir, header string) error {
 	}
 
 	group := ""
-	kinds := map[string][]string{} // version -> kinds
+	kinds := map[string][]apiKind{} // version -> kinds
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
@@ -129,9 +131,16 @@ func writeCRDs(out, python, dir, header string) error {
 			if !ok {
 				return fmt.Errorf("%s %s: no status", kind, version.Name)
 			}
-			spec.Title = kind + "Spec"
-			status.Title = kind + "Status"
-			spec.Definitions = apiextensionsv1.JSONSchemaDefinitions{kind + "Status": status}
+			// The class names come from the schemas' titles, not from a naming rule
+			// here: a type without a title marker gets a field-derived name from the
+			// generator, so refuse the two we import by name.
+			for field, title := range map[string]string{"spec": spec.Title, "status": status.Title} {
+				if title == "" {
+					return fmt.Errorf("%s %s: %s has no title; add +kubebuilder:title to its Go type",
+						kind, version.Name, field)
+				}
+			}
+			spec.Definitions = apiextensionsv1.JSONSchemaDefinitions{status.Title: status}
 
 			module := strings.ToLower(kind)
 			// Rebuild the kind's module from scratch; base.py in the same directory is
@@ -142,12 +151,14 @@ func writeCRDs(out, python, dir, header string) error {
 			if err := writeJSON(filepath.Join(out, version.Name, module+".json"), spec); err != nil {
 				return err
 			}
-			kinds[version.Name] = append(kinds[version.Name], kind)
+			kinds[version.Name] = append(kinds[version.Name], apiKind{
+				Kind: kind, Spec: spec.Title, Status: status.Title,
+			})
 		}
 	}
 
 	for version, names := range kinds {
-		sort.Strings(names)
+		sort.Slice(names, func(i, j int) bool { return names[i].Kind < names[j].Kind })
 		file := filepath.Join(python, version, "__init__.py")
 		if err := os.WriteFile(file, []byte(renderInit(header, group, version, names)), 0o644); err != nil {
 			return err
@@ -156,9 +167,14 @@ func writeCRDs(out, python, dir, header string) error {
 	return nil
 }
 
+// apiKind is one CRD kind and the class names of its spec and status, as titled in the CRD.
+type apiKind struct {
+	Kind, Spec, Status string
+}
+
 // renderInit is the __init__.py of one API version package: the Kind enum and one
 // concrete CustomResource per kind, over the hand-written template in base.py.
-func renderInit(header, group, version string, kinds []string) string {
+func renderInit(header, group, version string, kinds []apiKind) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(header, "\n"))
 	fmt.Fprintf(&b, "\n\n\"\"\"The %s/%s kinds: one concrete CustomResource per CRD, and the Kind\n"+
@@ -166,10 +182,13 @@ func renderInit(header, group, version string, kinds []string) string {
 		"own module.\"\"\"\n\n", group, version)
 	b.WriteString("from enum import Enum\nfrom typing import Literal\n\n")
 	b.WriteString("from .base import API_VERSION, CustomResource, ObjectMeta\n")
-	for _, kind := range kinds {
-		fmt.Fprintf(&b, "from .%s import %sSpec, %sStatus\n", strings.ToLower(kind), kind, kind)
+	exports := make([]string, 0, len(kinds)+4)
+	exports = append(exports, "API_VERSION")
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "from .%s import %s, %s\n", strings.ToLower(k.Kind), k.Spec, k.Status)
+		exports = append(exports, k.Kind)
 	}
-	exports := append(append([]string{"API_VERSION"}, kinds...), "CustomResource", "Kind", "ObjectMeta")
+	exports = append(exports, "CustomResource", "Kind", "ObjectMeta")
 	b.WriteString("\n__all__ = [\n")
 	for _, name := range exports {
 		fmt.Fprintf(&b, "    %q,\n", name)
@@ -177,13 +196,13 @@ func renderInit(header, group, version string, kinds []string) string {
 	b.WriteString("]\n\n\n")
 	b.WriteString("class Kind(str, Enum):\n")
 	fmt.Fprintf(&b, "    \"\"\"The kinds of %s/%s, as they appear on the wire.\"\"\"\n\n", group, version)
-	for _, kind := range kinds {
-		fmt.Fprintf(&b, "    %s = %q\n", enumMember(kind), kind)
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "    %s = %q\n", enumMember(k.Kind), k.Kind)
 	}
-	for _, kind := range kinds {
-		fmt.Fprintf(&b, "\n\nclass %s(CustomResource[%sSpec, %sStatus]):\n", kind, kind, kind)
-		fmt.Fprintf(&b, "    \"\"\"A %s object; see %sSpec and %sStatus for its contents.\"\"\"\n\n", kind, kind, kind)
-		fmt.Fprintf(&b, "    kind: Literal[Kind.%s] = Kind.%s\n", enumMember(kind), enumMember(kind))
+	for _, k := range kinds {
+		fmt.Fprintf(&b, "\n\nclass %s(CustomResource[%s, %s]):\n", k.Kind, k.Spec, k.Status)
+		fmt.Fprintf(&b, "    \"\"\"A %s object; see %s and %s for its contents.\"\"\"\n\n", k.Kind, k.Spec, k.Status)
+		fmt.Fprintf(&b, "    kind: Literal[Kind.%s] = Kind.%s\n", enumMember(k.Kind), enumMember(k.Kind))
 	}
 	return b.String()
 }
