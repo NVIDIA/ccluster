@@ -87,7 +87,7 @@ def main() -> None:
             ),
         ],
     )
-    print(f"created {component_set.metadata.namespace}/{component_set.metadata.name}")
+    print(f"created {component_set['metadata']['namespace']}/{component_set['metadata']['name']}")
 
 
 if __name__ == "__main__":

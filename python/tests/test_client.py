@@ -27,7 +27,6 @@ from ccluster import catalogs
 from ccluster import client as client_module
 from ccluster.catalogs.cluster_base import argo_rollouts, keda
 from ccluster.client import CCLClient
-from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane
 
 CA = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 
@@ -151,9 +150,9 @@ def test_register_infraplane_applies_secret_then_infra_plane(fake):
     }
     assert "status" not in infra_plane
 
-    assert isinstance(plane, CCLInfraPlane)
-    assert plane.metadata.name == "edge-1"
-    assert plane.spec.cluster_credentials_ref.name == "edge-1-credentials"
+    # The client hands back the applied object as the server holds it.
+    assert plane["metadata"]["name"] == "edge-1"
+    assert plane["spec"]["clusterCredentialsRef"]["name"] == "edge-1-credentials"
 
 
 def test_register_infraplane_defaults_to_in_cluster_credential_free(fake):
@@ -234,15 +233,15 @@ def test_create_component_set_applies_the_set(fake):
     }
     assert "status" not in body
 
-    assert isinstance(component_set, CCLComponentSet)
-    assert component_set.metadata.name == "local-base"
-    assert [x.name for x in component_set.spec.components] == ["argo-rollouts", "keda"]
-    assert component_set.spec.components[1].infra_plane_ref.name == "edge-1"
+    assert component_set["metadata"]["name"] == "local-base"
+    assert [x["name"] for x in component_set["spec"]["components"]] == ["argo-rollouts", "keda"]
+    assert component_set["spec"]["components"][1]["infraPlaneRef"]["name"] == "edge-1"
 
 
 def test_create_component_set_rejects_empty_components(fake):
     c, dyn = make_client(fake)
-    with pytest.raises(ValueError):
+    # minItems: 1 comes from the CRD, so Pydantic rejects it before any request is made.
+    with pytest.raises(ValidationError):
         c.create_component_set("local-base", [])
     assert dyn.applied == []
 

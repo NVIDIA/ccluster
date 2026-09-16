@@ -30,15 +30,9 @@ from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
-from ccluster.v1alpha1 import (
-    CCLComponentSet,
-    CCLComponentSetSpec,
-    CCLInfraPlane,
-    CCLInfraPlaneSpec,
-    ComponentSpec,
-)
+from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec, ComponentSpec
+from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, LocalObjectReference
 
-from ccluster.v1alpha1 import LocalObjectReference, ObjectMeta
 
 __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
 
@@ -131,7 +125,7 @@ class CCLClient:
         server: str | None = None,
         bearer_token: str | None = None,
         ca_cert: str | bytes | None = None,
-    ) -> CCLInfraPlane:
+    ) -> dict:
         """Register the cluster at server as the CCLInfraPlane called name.
 
         Creates (or updates) a Secret named "<name>-credentials" in Argo CD's
@@ -169,16 +163,12 @@ class CCLClient:
         )
         self._apply(self._secrets, secret)
 
-        plane = CCLInfraPlane(
-            metadata=ObjectMeta(name=name, namespace=self.namespace),
-            spec=CCLInfraPlaneSpec(
-                cluster_credentials_ref=LocalObjectReference(name=secret_name),
-            ),
+        return self._apply_cr(
+            self._infra_planes,
+            "CCLInfraPlane",
+            name,
+            CCLInfraPlaneSpec(cluster_credentials_ref=LocalObjectReference(name=secret_name)),
         )
-        applied = self._apply(
-            self._infra_planes, plane.model_dump(mode="json", by_alias=True, exclude_none=True)
-        )
-        return CCLInfraPlane.model_validate(applied.to_dict())
 
     def unregister_infraplane(self, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
@@ -190,9 +180,7 @@ class CCLClient:
         self._delete(self._infra_planes, name)
         self._delete(self._secrets, _credentials_secret_name(name))
 
-    def create_component_set(
-        self, name: str, components: list[ComponentSpec]
-    ) -> CCLComponentSet:
+    def create_component_set(self, name: str, components: list[ComponentSpec]) -> dict:
         """Create (or update) the CCLComponentSet called name.
 
         components deploy in list order, each onto the CCLInfraPlane its infraPlaneRef
@@ -204,20 +192,26 @@ class CCLClient:
         The call returns as soon as the object is applied; it does not wait for the
         operator to report ComponentsApplied.
         """
-        # The CRD requires at least one component; the models do not carry that bound
-        # (they are reflected from the Go types), so check it here rather than let the
-        # API server reject the apply.
-        if not components:
-            raise ValueError("a CCLComponentSet needs at least one component")
-        component_set = CCLComponentSet(
-            metadata=ObjectMeta(name=name, namespace=self.namespace),
-            spec=CCLComponentSetSpec(components=components),
+        return self._apply_cr(
+            self._component_sets, "CCLComponentSet", name, CCLComponentSetSpec(components=components)
         )
-        applied = self._apply(
-            self._component_sets,
-            component_set.model_dump(mode="json", by_alias=True, exclude_none=True),
-        )
-        return CCLComponentSet.model_validate(applied.to_dict())
+
+    def _apply_cr(self, resource, kind: str, name: str, spec: BaseModel) -> dict:
+        """Server-side apply one of this API's objects and return it as the server holds it.
+
+        The generated models cover a kind's spec and status, the only parts that differ
+        between kinds; the envelope (apiVersion, kind and metadata name and namespace) is
+        built here. The result is the applied object as a dict, metadata and status
+        included; validate obj["status"] with the kind's Status model for typed
+        conditions.
+        """
+        body = {
+            "apiVersion": _API_VERSION,
+            "kind": kind,
+            "metadata": {"name": name, "namespace": self.namespace},
+            "spec": spec.model_dump(mode="json", by_alias=True, exclude_none=True),
+        }
+        return self._apply(resource, body).to_dict()
 
     def delete_component_set(self, name: str) -> None:
         """Remove the CCLComponentSet called name.

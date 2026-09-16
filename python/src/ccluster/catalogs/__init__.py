@@ -25,7 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ccluster.v1alpha1 import ComponentSpec, LocalObjectReference
+from ccluster.v1alpha1.cclcomponentset import ComponentSpec, LocalObjectReference
 
 __all__ = ["component", "entry"]
 

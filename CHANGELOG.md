@@ -30,13 +30,15 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `python/examples/create_component_set.py` drives both from the command line.
 
 ### Changed
-- `make python-generate` reflects the Go API types and catalog `Values` straight into JSON
-  Schema and lets datamodel-code-generator write every Python package, including each
-  `__init__.py`; `hack/pyschema` no longer parses the CRDs or shapes any Python, and new
-  CRDs and charts need no generator change. Kubebuilder validation markers are no longer
-  mirrored into the Pydantic models; the API server enforces them. Catalog directories
-  (`cluster_base`, `deployments`, `resources`) are now namespace packages without an
-  `__all__`.
+- `ccluster-py` models a CRD's `spec` and `status` only: `CCLInfraPlaneSpec`,
+  `CCLInfraPlaneStatus`, `CCLComponentSetSpec`, `CCLComponentSetStatus` and their nested
+  types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema with `yq`
+  and datamodel-code-generator, constraints and docstrings included. The envelope
+  (`apiVersion`, `kind`, `metadata`) is a dict the caller or `CCLClient` writes;
+  `CCLClient.register_infraplane` and `create_component_set` return the applied object as
+  a dict. `hack/pyschema` now reflects chart `Values` only and shapes no Python; the
+  chart packages are written by the generator with `CHART` appended, and the catalog and
+  version directories are namespace packages.
 - `CCLClient.register_cluster` and `unregister_cluster` are renamed
   `register_infraplane` and `unregister_infraplane`, after the `CCLInfraPlane` they
   create and remove. `python/examples/register_cluster.py` is now

@@ -56,6 +56,7 @@ type ComponentEntry struct {
 }
 
 // ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
+// +kubebuilder:title=ComponentSpec
 type ComponentSpec struct {
 	// name identifies the component within this CCLComponentSet. It is templated into
 	// the generated Argo CD Application's name, so it has to be DNS-1123.

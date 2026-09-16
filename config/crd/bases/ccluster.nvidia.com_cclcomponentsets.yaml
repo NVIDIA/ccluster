@@ -94,6 +94,7 @@ spec:
                           type: string
                       required:
                       - name
+                      title: LocalObjectReference
                       type: object
                     name:
                       description: |-
@@ -121,6 +122,7 @@ spec:
                   - infraPlaneRef
                   - name
                   - namespace
+                  title: ComponentSpec
                   type: object
                 maxItems: 50
                 minItems: 1

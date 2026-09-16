@@ -1,0 +1,11 @@
+# Lift one version of a CRD into the JSON Schema document ccluster-py is generated from:
+# the spec schema at the root, titled <Kind>Spec, and the status schema under $defs,
+# titled <Kind>Status. Only spec and status are modelled; the envelope (apiVersion, kind,
+# metadata) is the same for every Kubernetes object and is built by the client.
+# KIND and VERSION arrive from the environment; see python-generate in the Makefile.
+.spec.versions[] | select(.name == strenv(VERSION))
+| .schema.openAPIV3Schema.properties as $p
+| $p.spec + {
+    "title": strenv(KIND) + "Spec",
+    "$defs": {(strenv(KIND) + "Status"): ($p.status + {"title": strenv(KIND) + "Status"})}
+  }

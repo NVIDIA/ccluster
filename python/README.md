@@ -2,9 +2,8 @@
 
 Pydantic v2 models for the `ccluster.nvidia.com/v1alpha1` API and for the typed values of
 every chart in the catalog, plus a small client that registers clusters with the control
-plane and deploys component sets onto them. The models are **generated**: nothing in `ccluster/v1alpha1/`,
-`ccluster/catalogs/cluster_base/`, `ccluster/catalogs/deployments/`,
-`ccluster/catalogs/resources/` or `ccluster/catalogs/namespace_base/` is written by hand.
+plane and deploys component sets onto them. The models are **generated**: nothing under `ccluster/v1alpha1/` or
+under `ccluster/catalogs/` other than its `__init__.py` is written by hand.
 
 ```bash
 uv add ccluster-py --path ../python   # or: pip install ./python; released: pip install ccluster-py
@@ -13,26 +12,34 @@ uv add ccluster-py --path ../python   # or: pip install ./python; released: pip 
 ```python
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import gpu_operator, keda
-from ccluster.v1alpha1 import CCLComponentSet, CCLComponentSetSpec, ObjectMeta
+from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec
 
-cs = CCLComponentSet(
-    metadata=ObjectMeta(name="local-base", namespace="ccluster-quickstart"),
-    spec=CCLComponentSetSpec(
-        components=[
-            catalogs.component("keda", "ccluster-local", keda.CHART, "keda"),
-            catalogs.component(
-                "gpu-operator", "ccluster-local", gpu_operator.CHART, "gpu-operator",
-                gpu_operator.Values(
-                    gpu_operator=gpu_operator.ChartValues(
-                        driver=gpu_operator.Toggle(enabled=False),
-                    ),
+spec = CCLComponentSetSpec(
+    components=[
+        catalogs.component("keda", "ccluster-local", keda.CHART, "keda"),
+        catalogs.component(
+            "gpu-operator", "ccluster-local", gpu_operator.CHART, "gpu-operator",
+            gpu_operator.Values(
+                gpu_operator=gpu_operator.ChartValues(
+                    driver=gpu_operator.Toggle(enabled=False),
                 ),
             ),
-        ]
-    ),
+        ),
+    ]
 )
-print(cs.model_dump(by_alias=True, exclude_none=True))   # kubectl apply -f this
+obj = {
+    "apiVersion": "ccluster.nvidia.com/v1alpha1",
+    "kind": "CCLComponentSet",
+    "metadata": {"name": "local-base", "namespace": "ccluster-quickstart"},
+    "spec": spec.model_dump(mode="json", by_alias=True, exclude_none=True),
+}
+print(obj)   # kubectl apply -f this
 ```
+
+The models cover a kind's `spec` and `status`, the two parts that differ between kinds.
+The envelope (`apiVersion`, `kind`, `metadata`) is the same for every Kubernetes object,
+so it is a dict the caller, or `CCLClient` below, writes; `metadata.name` and
+`metadata.namespace` are all a client sets there.
 
 Field names are snake_case with the wire name as the alias, so always dump with
 `by_alias=True, exclude_none=True`. `exclude_none` is what keeps an unset optional out of
@@ -123,14 +130,12 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 
 | Python | Source | Via |
 | --- | --- | --- |
-| `ccluster/v1alpha1/__init__.py` | `api/v1alpha1/*_types.go`, every kind in the runtime scheme | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator |
-| `ccluster/catalogs/<catalog>/<chart>/__init__.py` | `catalogs/<catalog>/<chart>/component.go` (`Values` and friends), via `catalogs/components.All` | the same, plus a `CHART` constant appended by the Makefile |
+| `ccluster/v1alpha1/<kind>.py` (`<Kind>Spec`, `<Kind>Status` and their nested types) | `config/crd/bases/*.yaml`, the CRD's `spec` and `status` schemas | `yq` → JSON Schema → datamodel-code-generator |
+| `ccluster/catalogs/<catalog>/<chart>/__init__.py` (`Values` and friends, `CHART`) | `catalogs/<catalog>/<chart>/component.go`, via `catalogs/components.All` | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator, `CHART` appended by the Makefile |
 
-Three things are added on the way from the Go types: `apiVersion` and `kind` get defaults,
-`metadata` becomes a small `ObjectMeta` (name, namespace, labels, annotations), and free-form
-values become `dict`. The models are reflected from the Go API types rather than lifted from
-the CRDs, so the kubebuilder validation markers (name patterns, length and item bounds) are
-not mirrored; the API server enforces them.
+The CRD models carry controller-gen's constraints (name patterns, length and item bounds)
+and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart
+values add nothing on the way from Go: optional scalars become `None` defaults.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
 (`entry`, `component`), `examples/` and `tests/` are hand-written.

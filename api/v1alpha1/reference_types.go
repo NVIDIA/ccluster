@@ -18,6 +18,7 @@ package v1alpha1
 
 // LocalObjectReference references an object in the same namespace as the referring
 // object. The kind of the target is fixed by the field that uses it.
+// +kubebuilder:title=LocalObjectReference
 type LocalObjectReference struct {
 	// name is the name of the referenced object.
 	// +required

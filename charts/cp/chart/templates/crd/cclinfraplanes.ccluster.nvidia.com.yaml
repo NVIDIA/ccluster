@@ -72,6 +72,7 @@ spec:
                     type: string
                 required:
                 - name
+                title: LocalObjectReference
                 type: object
             required:
             - clusterCredentialsRef
