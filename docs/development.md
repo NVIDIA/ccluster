@@ -121,10 +121,11 @@ When adding or changing a component:
   document root, titled `<Kind>Spec`) and the `status` schema (under `$defs`, titled
   `<Kind>Status`) into one JSON Schema per kind and version. Only spec and status are
   generated: they are the parts that differ between kinds. The envelope (`apiVersion`,
-  `kind`, `metadata`) is the same for every Kubernetes object, so the whole-object classes
-  (`CCLComponentSet`, `CCLInfraPlane`, `ObjectMeta`) are hand-written once in
-  `python/src/ccluster/v1alpha1/base.py`, composing the generated Spec and Status; adding
-  a kind means adding one such class there.
+  `kind`, `metadata`) is the same for every Kubernetes object, so it is one hand-written
+  generic template, `CustomResource[Spec, Status]` with `ObjectMeta`, in
+  `python/src/ccluster/v1alpha1/base.py`. The package's `__init__.py` is generated from the
+  CRD kinds by `hack/crd-python-init.py`: the `Kind` enum and one concrete
+  `CustomResource` per kind. Adding a CRD needs no Python change.
   Nested class names come from `+kubebuilder:title` markers on the Go types, which
   controller-gen writes into the CRD and the generator uses as class names.
 - **Charts.** `hack/pyschema` reflects every `Values` in `catalogs/components.All` into one
@@ -137,7 +138,7 @@ Makefile. Adding a CRD or a chart needs no change to the generator.
 
 Generated directories, deleted and rebuilt on each run:
 
-- `python/src/ccluster/<version>/<kind>.py` (currently `v1alpha1`)
+- `python/src/ccluster/<version>/<kind>.py` and `<version>/__init__.py` (currently `v1alpha1`)
 - `python/src/ccluster/catalogs/<catalog>/<chart>/` and `python/src/ccluster/catalogs/<chart>/`
 
 The version and catalog directories carry no `__init__.py`; they are namespace packages, so

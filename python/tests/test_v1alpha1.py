@@ -21,7 +21,9 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from ccluster.v1alpha1.base import CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
+from ccluster import v1alpha1
+from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
+from ccluster.v1alpha1.base import CustomResource
 from ccluster.v1alpha1.cclcomponentset import (
     CCLComponentSetSpec,
     CCLComponentSetStatus,
@@ -65,6 +67,19 @@ def test_api_version_and_kind_are_fixed():
     assert "status" not in out
     with pytest.raises(ValidationError):
         CCLInfraPlane.model_validate({**out, "kind": Kind.CCL_COMPONENT_SET})
+
+
+def test_every_generated_kind_is_declared():
+    # __init__.py is generated from the same CRD kinds as the <kind>.py modules: one Kind
+    # member and one concrete CustomResource per kind.
+    modules = {
+        p.stem for p in Path(v1alpha1.__file__).parent.glob("*.py") if p.stem not in ("__init__", "base")
+    }
+    assert {k.value.lower() for k in Kind} == modules
+    for kind in Kind:
+        cls = getattr(v1alpha1, kind.value)
+        assert issubclass(cls, CustomResource)
+        assert cls.model_fields["kind"].default is kind
 
 
 def test_objects_read_back_from_the_server_validate():

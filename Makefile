@@ -626,10 +626,11 @@ python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as
 # into one JSON Schema per kind and version; hack/pyschema reflects every chart's Go Values
 # into one JSON Schema per chart. datamodel-code-generator turns each document into Python:
 # <version>/<kind>.py for a CRD, <chart path>/__init__.py for a chart, the latter with a
-# CHART constant appended. The version and catalog directories carry no __init__.py
-# (namespace packages). Generated modules are deleted and rebuilt on each run; the
-# hand-written <version>/base.py, which assembles each kind's whole object from its Spec
-# and Status, stays.
+# CHART constant appended. Catalog directories carry no __init__.py (namespace packages).
+# A version directory holds the hand-written base.py (the generic CustomResource template
+# and ObjectMeta), the generated <kind>.py modules, and a generated __init__.py that
+# declares the Kind enum and one concrete CustomResource per kind, written by
+# hack/crd-python-init.py from the CRD kinds. Generated files are rebuilt on each run.
 PYSCHEMA_DIR ?= dist/pyschema
 PYTHON_PKG ?= python/src/ccluster
 CRD_DIR ?= config/crd/bases
@@ -651,6 +652,14 @@ python-generate: manifests uv yq ## Regenerate python/ from the CRDs and the cat
 			echo "$$crd ($$version) -> $$out"; \
 			KIND="$$kind" VERSION="$$version" "$(YQ)" -o=json --from-file hack/crd-python-schema.yq "$$crd" > "$$out"; \
 		done; \
+	done
+	@for dir in "$(PYSCHEMA_DIR)"/*/; do \
+		version="$$(basename "$$dir")"; \
+		[ "$$version" = catalogs ] && continue; \
+		kinds=$$(cat $(CRD_DIR)/*.yaml | "$(YQ)" -N 'select(.spec.versions[].name == "'"$$version"'") | .spec.names.kind'); \
+		echo "$$version kinds ($$(echo $$kinds)) -> $(PYTHON_PKG)/$$version/__init__.py"; \
+		python3 hack/crd-python-init.py --version "$$version" --out "$(PYTHON_PKG)/$$version/__init__.py" \
+			--header hack/boilerplate.py.txt $$kinds; \
 	done
 	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
 		rel="$${schema#$(PYSCHEMA_DIR)/}"; pkg="$${rel%.json}"; \

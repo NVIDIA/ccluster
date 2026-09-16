@@ -30,7 +30,7 @@ from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
-from ccluster.v1alpha1.base import API_VERSION, CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
+from ccluster.v1alpha1 import API_VERSION, CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
 from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec, ComponentSpec
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, LocalObjectReference
 

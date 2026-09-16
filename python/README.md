@@ -12,7 +12,7 @@ uv add ccluster-py --path ../python   # or: pip install ./python; released: pip 
 ```python
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import gpu_operator, keda
-from ccluster.v1alpha1.base import CCLComponentSet, ObjectMeta
+from ccluster.v1alpha1 import CCLComponentSet, ObjectMeta
 from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec
 
 cs = CCLComponentSet(
@@ -35,10 +35,11 @@ print(cs.model_dump(mode="json", by_alias=True, exclude_none=True))   # kubectl 
 ```
 
 Each kind's `Spec` and `Status`, the parts that differ between kinds, are generated from
-the CRD into `ccluster.v1alpha1.<kind>`. `ccluster.v1alpha1.base` is hand-written and adds
-the envelope every Kubernetes object shares: `ObjectMeta` (name, namespace, labels,
-annotations; server-managed fields are kept when reading back) and one class per kind with
-`apiVersion` and `kind` fixed.
+the CRD into `ccluster.v1alpha1.<kind>`. `ccluster.v1alpha1.base` is hand-written and holds
+what every kind shares: `ObjectMeta` (name, namespace, labels, annotations; server-managed
+fields are kept when reading back) and the generic `CustomResource[Spec, Status]` envelope
+with `apiVersion` fixed. `ccluster.v1alpha1` itself is generated from the CRD kinds: the
+`Kind` enum and one concrete `CustomResource` per kind, `kind` fixed to its name.
 
 Field names are snake_case with the wire name as the alias, so always dump with
 `by_alias=True, exclude_none=True`. `exclude_none` is what keeps an unset optional out of
@@ -131,7 +132,8 @@ has marked a set `ComponentsApplied` and when a deleted one has disappeared.
 | --- | --- | --- |
 | `ccluster/v1alpha1/<kind>.py` (`<Kind>Spec`, `<Kind>Status` and their nested types) | `config/crd/bases/*.yaml`, the CRD's `spec` and `status` schemas | `yq` → JSON Schema → datamodel-code-generator |
 | `ccluster/catalogs/<catalog>/<chart>/__init__.py` (`Values` and friends, `CHART`) | `catalogs/<catalog>/<chart>/component.go`, via `catalogs/components.All` | `hack/pyschema` (invopop/jsonschema reflection) → datamodel-code-generator, `CHART` appended by the Makefile |
-| `ccluster/v1alpha1/base.py` (`ObjectMeta`, `CCLComponentSet`, `CCLInfraPlane`) | hand-written | composes the generated Spec and Status of each kind |
+| `ccluster/v1alpha1/__init__.py` (`Kind`, `CCLComponentSet`, `CCLInfraPlane`) | the CRD kinds | `hack/crd-python-init.py`: one `Kind` member and one `CustomResource[Spec, Status]` subclass per kind |
+| `ccluster/v1alpha1/base.py` (`ObjectMeta`, `CustomResource`) | hand-written | the generic envelope template the concrete kinds specialise |
 
 The CRD models carry controller-gen's constraints (name patterns, length and item bounds)
 and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart

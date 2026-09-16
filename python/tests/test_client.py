@@ -27,7 +27,7 @@ from ccluster import catalogs
 from ccluster import client as client_module
 from ccluster.catalogs.cluster_base import argo_rollouts, keda
 from ccluster.client import CCLClient
-from ccluster.v1alpha1.base import CCLComponentSet, CCLInfraPlane, Kind
+from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane, Kind
 
 CA = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 
