@@ -47,16 +47,16 @@ Field names are snake_case with the wire name as the alias, so always dump with
 the values Helm sees while an explicit `False` stays in — the same distinction the Go
 catalog makes with pointer fields.
 
-## Registering a cluster
+## Creating an infra plane
 
 `CCLClient` writes into one namespace, given at construction and created then if it does
 not exist, and by default connects with the in-cluster configuration of the pod it runs
-in. `register_infraplane` creates a Secret named `<name>-credentials` in Argo CD's
+in. `create_infraplane` creates a Secret named `<name>-credentials` in Argo CD's
 cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
-`CCLInfraPlane` pointing at it; `unregister_infraplane` deletes the Secret and the CCLInfraPlane, the
+`CCLInfraPlane` pointing at it; `delete_infraplane` deletes the Secret and the CCLInfraPlane, the
 CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
 leaves the namespace. Everything is server-side applied under the `ccluster-py` field
-manager, so re-registering a cluster rotates its token in place. Both `register_infraplane`
+manager, so re-registering a cluster rotates its token in place. Both `create_infraplane`
 and `create_component_set` return the applied object, a `CCLInfraPlane` or
 `CCLComponentSet`, with the metadata the server filled in and the status the operator has
 written so far.
@@ -65,21 +65,21 @@ written so far.
 from ccluster.client import CCLClient
 
 client = CCLClient("tenant-a")   # in-cluster
-plane = client.register_infraplane(
+plane = client.create_infraplane(
     "edge-1",
     "https://10.0.0.1:6443",
     bearer_token=open("token").read(),
     ca_cert=open("ca.crt").read(),
 )
-client.unregister_infraplane("edge-1")
+client.delete_infraplane("edge-1")
 ```
 
 `server`, `bearer_token` and `ca_cert` are all optional. With none given,
-`register_infraplane` registers the cluster the operator itself runs in, credential-free —
+`create_infraplane` registers the cluster the operator itself runs in, credential-free —
 Argo CD's special-cased in-cluster address, no ServiceAccount or token needed:
 
 ```python
-plane = client.register_infraplane("ccluster-local")
+plane = client.create_infraplane("ccluster-local")
 ```
 
 From a workstation, pass a client built from your kubeconfig:
@@ -90,7 +90,7 @@ from kubernetes.config import new_client_from_config
 client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-`examples/register_infraplane.py` is the same as a command. The call returns once the
+`examples/create_infraplane.py` is the same as a command. The call returns once the
 objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
 has marked the plane `Available`.
 
@@ -110,7 +110,7 @@ from ccluster.catalogs.cluster_base import keda
 from ccluster.client import CCLClient
 
 client = CCLClient("tenant-a")
-client.register_infraplane("ccluster-local")
+client.create_infraplane("ccluster-local")
 cs = client.create_component_set(
     "local-base",
     [

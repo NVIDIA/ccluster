@@ -39,7 +39,7 @@ __all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
 
 
 # Server-side apply records, per field, which manager last set it. Applying under one
-# fixed name is what lets a later register_infraplane update the Secret this client wrote
+# fixed name is what lets a later create_infraplane update the Secret this client wrote
 # without conflicting with itself, and what marks the objects as ours in managedFields.
 _FIELD_MANAGER = "ccluster-py"
 
@@ -79,7 +79,7 @@ def _credentials_secret_name(cluster: str) -> str:
 
 
 class CCLClient:
-    """Register and unregister infra-plane clusters, and create and delete component
+    """Create and delete infra planes (cluster registrations) and component
     sets, in one namespace.
 
     namespace is where the CCLInfraPlanes, their credentials Secrets and the
@@ -119,14 +119,14 @@ class CCLClient:
                 self._namespaces, body=self._api.sanitize_for_serialization(namespace)
             )
 
-    def register_infraplane(
+    def create_infraplane(
         self,
         name: str,
         server: str | None = None,
         bearer_token: str | None = None,
         ca_cert: str | bytes | None = None,
     ) -> CCLInfraPlane:
-        """Register the cluster at server as the CCLInfraPlane called name.
+        """Create the CCLInfraPlane called name, registering the cluster at server.
 
         Creates (or updates) a Secret named "<name>-credentials" in Argo CD's
         cluster-secret shape, then a CCLInfraPlane pointing at it. ca_cert is the API
@@ -169,7 +169,7 @@ class CCLClient:
         )
         return CCLInfraPlane.model_validate(self._apply_object(self._infra_planes, plane))
 
-    def unregister_infraplane(self, name: str) -> None:
+    def delete_infraplane(self, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
 
         The CCLInfraPlane goes first so its finalizer can remove the mirrored Argo CD

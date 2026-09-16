@@ -30,6 +30,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   `python/examples/create_component_set.py` drives both from the command line.
 
 ### Changed
+- `CCLClient.register_infraplane` and `unregister_infraplane` are renamed
+  `create_infraplane` and `delete_infraplane`, matching `create_component_set` and
+  `delete_component_set`. `python/examples/register_infraplane.py` is now
+  `create_infraplane.py`.
 - `ccluster-py` models a CRD's `spec` and `status` only: `CCLInfraPlaneSpec`,
   `CCLInfraPlaneStatus`, `CCLComponentSetSpec`, `CCLComponentSetStatus` and their nested
   types, in `ccluster.v1alpha1.<kind>`, generated straight from the CRD schema by
@@ -37,7 +41,7 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   hand-written generic `CustomResource[Spec, Status]` template with a small `ObjectMeta`;
   `ccluster.v1alpha1` itself is generated from the CRD kinds with the `Kind` enum and one
   concrete `CustomResource` per kind (`CCLComponentSet`, `CCLInfraPlane`), which
-  `CCLClient.register_infraplane` and `create_component_set` build and return. `hack/pyschema` now reflects chart `Values` only and shapes no Python; the
+  `CCLClient.create_infraplane` and `create_component_set` build and return. `hack/pyschema` now reflects chart `Values` only and shapes no Python; the
   chart packages are written by the generator with `CHART` appended, and the catalog and
   version directories are namespace packages.
 - `CCLClient.register_cluster` and `unregister_cluster` are renamed

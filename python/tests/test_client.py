@@ -116,10 +116,10 @@ def test_constructing_leaves_an_existing_namespace_alone(fake, monkeypatch):
     assert dyn.created == []
 
 
-def test_register_infraplane_applies_secret_then_infra_plane(fake):
+def test_create_infraplane_applies_secret_then_infra_plane(fake):
     c, dyn = make_client(fake)
 
-    plane = c.register_infraplane("edge-1", "https://10.0.0.1:6443", "tok", CA)
+    plane = c.create_infraplane("edge-1", "https://10.0.0.1:6443", "tok", CA)
 
     kinds = [kind for kind, *_ in dyn.applied]
     assert kinds == ["Secret", Kind.CCL_INFRA_PLANE]
@@ -157,10 +157,10 @@ def test_register_infraplane_applies_secret_then_infra_plane(fake):
     assert plane.spec.cluster_credentials_ref.name == "edge-1-credentials"
 
 
-def test_register_infraplane_defaults_to_in_cluster_credential_free(fake):
+def test_create_infraplane_defaults_to_in_cluster_credential_free(fake):
     c, dyn = make_client(fake)
 
-    c.register_infraplane("edge-1")
+    c.create_infraplane("edge-1")
 
     secret = dyn.applied[0][2]
     assert secret["stringData"]["server"] == "https://kubernetes.default.svc"
@@ -169,26 +169,26 @@ def test_register_infraplane_defaults_to_in_cluster_credential_free(fake):
     }
 
 
-def test_register_infraplane_accepts_pem_bytes(fake):
+def test_create_infraplane_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
-    c.register_infraplane("edge-1", "https://10.0.0.1:6443", "tok", CA.encode())
+    c.create_infraplane("edge-1", "https://10.0.0.1:6443", "tok", CA.encode())
     config = json.loads(dyn.applied[0][2]["stringData"]["config"])
     assert config["tlsClientConfig"]["caData"] == base64.b64encode(CA.encode()).decode()
 
 
-def test_unregister_infraplane_deletes_infra_plane_before_secret(fake):
+def test_delete_infraplane_deletes_infra_plane_before_secret(fake):
     c, dyn = make_client(fake)
-    c.unregister_infraplane("edge-1")
+    c.delete_infraplane("edge-1")
     assert dyn.deleted == [
         (Kind.CCL_INFRA_PLANE, "edge-1", "tenant"),
         ("Secret", "edge-1-credentials", "tenant"),
     ]
 
 
-def test_unregister_infraplane_ignores_missing_objects(fake):
+def test_delete_infraplane_ignores_missing_objects(fake):
     c, dyn = make_client(fake)
     dyn.missing = {(Kind.CCL_INFRA_PLANE, "edge-1"), ("Secret", "edge-1-credentials")}
-    c.unregister_infraplane("edge-1")
+    c.delete_infraplane("edge-1")
     assert dyn.deleted == []
 
 
