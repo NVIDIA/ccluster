@@ -627,8 +627,9 @@ python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as
 # into one JSON Schema per chart. datamodel-code-generator turns each document into Python:
 # <version>/<kind>.py for a CRD, <chart path>/__init__.py for a chart, the latter with a
 # CHART constant appended. The version and catalog directories carry no __init__.py
-# (namespace packages). Generated directories are deleted and rebuilt on each run.
-# Neither TypeMeta nor ObjectMeta is modelled: the client owns the object envelope.
+# (namespace packages). Generated modules are deleted and rebuilt on each run; the
+# hand-written <version>/base.py, which assembles each kind's whole object from its Spec
+# and Status, stays.
 PYSCHEMA_DIR ?= dist/pyschema
 PYTHON_PKG ?= python/src/ccluster
 CRD_DIR ?= config/crd/bases
@@ -636,8 +637,9 @@ CRD_DIR ?= config/crd/bases
 .PHONY: python-generate
 python-generate: manifests uv yq ## Regenerate python/ from the CRDs and the catalog Go types.
 	@for crd in $(CRD_DIR)/*.yaml; do \
+		kind=$$("$(YQ)" '.spec.names.kind' "$$crd" | tr '[:upper:]' '[:lower:]'); \
 		for version in $$("$(YQ)" '.spec.versions[].name' "$$crd"); do \
-			rm -rf "$(PYTHON_PKG)/$$version"; \
+			rm -f "$(PYTHON_PKG)/$$version/$$kind.py"; \
 		done; \
 	done
 	go run ./hack/pyschema --out "$(PYSCHEMA_DIR)" --python "$(PYTHON_PKG)"

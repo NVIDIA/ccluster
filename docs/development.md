@@ -120,8 +120,11 @@ When adding or changing a component:
 - **CRDs.** For every CRD under `config/crd/bases`, `yq` lifts the `spec` schema (as the
   document root, titled `<Kind>Spec`) and the `status` schema (under `$defs`, titled
   `<Kind>Status`) into one JSON Schema per kind and version. Only spec and status are
-  modelled: they are the parts that differ between kinds. The envelope (`apiVersion`,
-  `kind`, `metadata`) is the same for every Kubernetes object and is built by the client.
+  generated: they are the parts that differ between kinds. The envelope (`apiVersion`,
+  `kind`, `metadata`) is the same for every Kubernetes object, so the whole-object classes
+  (`CCLComponentSet`, `CCLInfraPlane`, `ObjectMeta`) are hand-written once in
+  `python/src/ccluster/v1alpha1/base.py`, composing the generated Spec and Status; adding
+  a kind means adding one such class there.
   Nested class names come from `+kubebuilder:title` markers on the Go types, which
   controller-gen writes into the CRD and the generator uses as class names.
 - **Charts.** `hack/pyschema` reflects every `Values` in `catalogs/components.All` into one
@@ -134,14 +137,14 @@ Makefile. Adding a CRD or a chart needs no change to the generator.
 
 Generated directories, deleted and rebuilt on each run:
 
-- `python/src/ccluster/<version>/` (currently `v1alpha1`)
+- `python/src/ccluster/<version>/<kind>.py` (currently `v1alpha1`)
 - `python/src/ccluster/catalogs/<catalog>/<chart>/` and `python/src/ccluster/catalogs/<chart>/`
 
 The version and catalog directories carry no `__init__.py`; they are namespace packages, so
 imports name the module: `from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec`.
 Hand-written files are `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`,
-`python/src/ccluster/catalogs/__init__.py`, `python/pyproject.toml`, `python/README.md` and
-`python/tests/`. Generator changes belong in `hack/pyschema/` or the Makefile recipe, not in
+`python/src/ccluster/v1alpha1/base.py`, `python/src/ccluster/catalogs/__init__.py`,
+`python/pyproject.toml`, `python/README.md` and `python/tests/`. Generator changes belong in `hack/pyschema/` or the Makefile recipe, not in
 emitted modules. Optional fields default to `None`; consumers use `exclude_none=True` to
 retain explicit `False` while omitting unset values. See
 [Python usage](../python/README.md). CI regenerates and checks for drift.

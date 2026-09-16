@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The generated spec and status models accept the repository's examples unchanged."""
+"""The generated spec and status models, and the hand-written objects around them, accept
+the repository's examples unchanged."""
 
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from ccluster.v1alpha1.base import CCLComponentSet, CCLInfraPlane, ObjectMeta
 from ccluster.v1alpha1.cclcomponentset import (
     CCLComponentSetSpec,
     CCLComponentSetStatus,
@@ -27,6 +29,7 @@ from ccluster.v1alpha1.cclcomponentset import (
     LocalObjectReference,
 )
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, CCLInfraPlaneStatus
+from ccluster.v1alpha1.cclinfraplane import LocalObjectReference as InfraPlaneRef
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "quickstart"
 
@@ -36,17 +39,47 @@ def dump(model):
 
 
 @pytest.mark.parametrize(
-    ("file", "kind", "spec_model"),
+    ("file", "model"),
     [
-        ("v1alpha1_cclcomponentset.yaml", "CCLComponentSet", CCLComponentSetSpec),
-        ("v1alpha1_cclinfraplane.yaml", "CCLInfraPlane", CCLInfraPlaneSpec),
+        ("v1alpha1_cclcomponentset.yaml", CCLComponentSet),
+        ("v1alpha1_cclinfraplane.yaml", CCLInfraPlane),
     ],
 )
-def test_quickstart_example_spec_round_trips(file, kind, spec_model):
+def test_quickstart_example_round_trips(file, model):
     # The infra plane example also carries the Namespace and Secret it depends on.
+    kind = model.model_fields["kind"].default
     docs = yaml.safe_load_all((EXAMPLES / file).read_text())
     doc = next(d for d in docs if d["kind"] == kind)
-    assert dump(spec_model.model_validate(doc["spec"])) == doc["spec"]
+    assert dump(model.model_validate(doc)) == doc
+
+
+def test_api_version_and_kind_are_fixed():
+    obj = CCLInfraPlane(
+        metadata=ObjectMeta(name="edge-1", namespace="tenant"),
+        # Each generated module carries its own LocalObjectReference class.
+        spec=CCLInfraPlaneSpec(cluster_credentials_ref=InfraPlaneRef(name="creds")),
+    )
+    out = dump(obj)
+    assert out["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
+    assert out["kind"] == "CCLInfraPlane"
+    assert "status" not in out
+    with pytest.raises(ValidationError):
+        CCLInfraPlane.model_validate({**out, "kind": "CCLComponentSet"})
+
+
+def test_objects_read_back_from_the_server_validate():
+    # The server adds metadata it manages and the operator writes status; both survive.
+    obj = CCLInfraPlane.model_validate(
+        {
+            "apiVersion": "ccluster.nvidia.com/v1alpha1",
+            "kind": "CCLInfraPlane",
+            "metadata": {"name": "edge-1", "namespace": "tenant", "uid": "u-1", "resourceVersion": "7"},
+            "spec": {"clusterCredentialsRef": {"name": "creds"}},
+            "status": {"conditions": [{"type": "Available", "status": "True", "reason": "R", "message": "", "lastTransitionTime": "2026-09-16T00:00:00Z"}]},
+        }
+    )
+    assert obj.metadata.model_extra == {"uid": "u-1", "resourceVersion": "7"}
+    assert obj.status.conditions[0].type == "Available"
 
 
 def test_status_models_read_what_the_operator_writes():

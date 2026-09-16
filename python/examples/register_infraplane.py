@@ -69,7 +69,7 @@ def main() -> None:
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
         ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
     )
-    print(f"registered {plane['metadata']['namespace']}/{plane['metadata']['name']}")
+    print(f"registered {plane.metadata.namespace}/{plane.metadata.name}")
 
 
 if __name__ == "__main__":
