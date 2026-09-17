@@ -8,7 +8,8 @@ triaging issues, and stewarding the project's direction.
 
 | Name | GitHub handle | Role / Area | Affiliation |
 | --- | --- | --- | --- |
-| Anand Jayarajan | `@anandj91` | Lead maintainer | NVIDIA |
+| Anand Jayarajan | `@anandj91` | Maintainer | NVIDIA |
+| Xingtong Dong | `@xtdong96` | Maintainer | NVIDIA |
 
 Team handle for review routing: `@NVIDIA/ccluster-dev` (see [`.github/CODEOWNERS`](.github/CODEOWNERS)).
 
@@ -23,7 +24,7 @@ Team handle for review routing: `@NVIDIA/ccluster-dev` (see [`.github/CODEOWNERS
 
 - **General questions / help:** see [SUPPORT.md](SUPPORT.md).
 - **Security vulnerabilities:** do **not** open a public issue — follow [SECURITY.md](SECURITY.md).
-- **Maintainer non-response / disputes:** contact another maintainer listed above, or the lead maintainer.
+- **Maintainer non-response / disputes:** contact another maintainer listed above.
 
 ## Becoming a maintainer
 
