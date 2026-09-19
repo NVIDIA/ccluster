@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from ccluster import catalogs
 from ccluster import client as client_module
 from ccluster.catalogs.cluster_base import argo_rollouts, keda
-from ccluster.client import CCLClient
+from ccluster.client import CCLClient, component_set_current_conditions
 from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane, Kind
 
 CA = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
@@ -37,6 +37,7 @@ class FakeDynamicClient:
         self.deleted = []
         self.missing = set()
         self.component_set = None
+        self.infra_plane = None
         self.reads = []
         self.resources = SimpleNamespace(
             get=lambda api_version, kind: FakeResource(kind)
@@ -54,6 +55,8 @@ class FakeDynamicClient:
             )
         if resource.kind == Kind.CCL_COMPONENT_SET.value:
             return SimpleNamespace(to_dict=lambda: self.component_set)
+        if resource.kind == Kind.CCL_INFRA_PLANE.value:
+            return SimpleNamespace(to_dict=lambda: self.infra_plane)
         return SimpleNamespace(to_dict=lambda: {"metadata": {"name": name}})
 
     def create(self, resource, body):
@@ -190,6 +193,43 @@ def test_delete_infraplane_ignores_missing_objects(fake):
     assert dyn.deleted == []
 
 
+def test_get_infraplane_returns_the_plane_with_its_status(fake):
+    c, dyn = make_client(fake)
+    dyn.infra_plane = {
+        "apiVersion": "ccluster.nvidia.com/v1alpha1",
+        "kind": "CCLInfraPlane",
+        "metadata": {"name": "edge-1", "namespace": "tenant", "generation": 1},
+        "spec": {"clusterCredentialsRef": {"name": "edge-1-credentials"}},
+        "status": {
+            "conditions": [
+                {
+                    "type": "Available",
+                    "status": "True",
+                    "reason": "ClusterRegistered",
+                    "message": "Cluster secret mirrored",
+                    "lastTransitionTime": "2026-01-01T00:00:00Z",
+                    "observedGeneration": 1,
+                }
+            ]
+        },
+    }
+
+    plane = c.get_infraplane("edge-1")
+
+    assert isinstance(plane, CCLInfraPlane)
+    assert plane.spec.cluster_credentials_ref.name == "edge-1-credentials"
+    assert plane.status.conditions[0].type == "Available"
+    assert dyn.reads[-1] == (Kind.CCL_INFRA_PLANE, "edge-1", "tenant")
+
+
+def test_get_infraplane_raises_for_a_missing_plane(fake):
+    c, dyn = make_client(fake)
+    dyn.missing.add((Kind.CCL_INFRA_PLANE, "edge-1"))
+
+    with pytest.raises(NotFoundError):
+        c.get_infraplane("edge-1")
+
+
 def test_create_component_set_applies_the_set(fake):
     c, dyn = make_client(fake)
     components = [
@@ -317,6 +357,40 @@ VALIDATED = ("Validated", "True", "ComponentsAccepted")
 APPLIED = ("ComponentsApplied", "True", "ApplicationsCreated")
 SYNCING = ("Progressing", "True", "WaveSyncing")
 COMPLETE = ("Progressing", "False", "RolloutComplete")
+
+
+def test_current_conditions_key_by_type_and_keep_reason_and_message():
+    component_set = CCLComponentSet.model_validate(
+        component_set_body(VALIDATED, APPLIED, SYNCING)
+    )
+
+    conditions = component_set_current_conditions(component_set)
+
+    assert set(conditions) == {"Validated", "ComponentsApplied", "Progressing"}
+    assert conditions["Progressing"].reason == "WaveSyncing"
+    assert conditions["Progressing"].message == "message for WaveSyncing"
+
+
+def test_current_conditions_drop_an_older_generation():
+    body = component_set_body(
+        VALIDATED, APPLIED, COMPLETE, generation=2, observed_generation=2
+    )
+    for condition in body["status"]["conditions"]:
+        if condition["type"] == "Progressing":
+            condition["observedGeneration"] = 1
+    component_set = CCLComponentSet.model_validate(body)
+
+    conditions = component_set_current_conditions(component_set)
+
+    assert set(conditions) == {"Validated", "ComponentsApplied"}
+
+
+def test_current_conditions_are_empty_without_a_status():
+    component_set = CCLComponentSet.model_validate(
+        {**component_set_body(), "status": None}
+    )
+
+    assert component_set_current_conditions(component_set) == {}
 
 
 def test_is_component_set_finished_is_true_once_progressing_is_false(fake):

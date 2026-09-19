@@ -95,6 +95,7 @@ def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str
         if condition.observed_generation == generation
     }
 
+
 class CCLClient:
     """Create and delete infra planes (cluster registrations) and component
     sets, in one namespace.
