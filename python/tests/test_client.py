@@ -36,15 +36,24 @@ class FakeDynamicClient:
         self.applied = []
         self.deleted = []
         self.missing = set()
+        self.component_set = None
+        self.reads = []
         self.resources = SimpleNamespace(
             get=lambda api_version, kind: FakeResource(kind)
         )
 
-    def get(self, resource, name):
+    def get(self, resource, name, namespace=None):
+        self.reads.append((resource.kind, name, namespace))
+        if (resource.kind, name) in self.missing:
+            raise NotFoundError(
+                SimpleNamespace(status=404, reason="NotFound", body=b"{}", headers={})
+            )
         if resource.kind == "Namespace" and name not in self.namespaces:
             raise NotFoundError(
                 SimpleNamespace(status=404, reason="NotFound", body=b"{}", headers={})
             )
+        if resource.kind == Kind.CCL_COMPONENT_SET.value:
+            return SimpleNamespace(to_dict=lambda: self.component_set)
         return SimpleNamespace(to_dict=lambda: {"metadata": {"name": name}})
 
     def create(self, resource, body):
@@ -269,3 +278,114 @@ def test_defaults_to_in_cluster_config(fake, monkeypatch):
 def test_namespace_is_required(fake):
     with pytest.raises(TypeError):
         CCLClient(api_client=k8s.ApiClient())
+
+
+def component_set_body(*conditions, generation=1, observed_generation=1):
+    """A CCLComponentSet as the server returns it. conditions are (type, status, reason)."""
+    return {
+        "apiVersion": "ccluster.nvidia.com/v1alpha1",
+        "kind": "CCLComponentSet",
+        "metadata": {"name": "base", "namespace": "tenant", "generation": generation},
+        "spec": {
+            "components": [
+                {
+                    "name": "argo-rollouts",
+                    "infraPlaneRef": {"name": "plane"},
+                    "chart": argo_rollouts.CHART,
+                    "namespace": "argo-rollouts",
+                }
+            ]
+        },
+        "status": {
+            "observedGeneration": observed_generation,
+            "conditions": [
+                {
+                    "type": condition_type,
+                    "status": status,
+                    "reason": reason,
+                    "message": f"message for {reason}",
+                    "lastTransitionTime": "2026-01-01T00:00:00Z",
+                    "observedGeneration": observed_generation,
+                }
+                for condition_type, status, reason in conditions
+            ],
+        },
+    }
+
+
+VALIDATED = ("Validated", "True", "ComponentsAccepted")
+APPLIED = ("ComponentsApplied", "True", "ApplicationsCreated")
+SYNCING = ("Progressing", "True", "WaveSyncing")
+COMPLETE = ("Progressing", "False", "RolloutComplete")
+
+
+def test_is_component_set_finished_is_true_once_progressing_is_false(fake):
+    c, dyn = make_client(fake)
+    dyn.component_set = component_set_body(VALIDATED, APPLIED, COMPLETE)
+
+    assert c.is_component_set_finished("base") is True
+    assert dyn.reads[-1] == (Kind.CCL_COMPONENT_SET.value, "base", "tenant")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(component_set_body(VALIDATED, APPLIED, SYNCING), id="syncing"),
+        pytest.param(
+            component_set_body(VALIDATED, APPLIED, COMPLETE, generation=2, observed_generation=1),
+            id="stale-status",
+        ),
+        pytest.param(
+            component_set_body(("Validated", "False", "InfraPlaneNotReady")),
+            id="unavailable-plane",
+        ),
+        pytest.param({**component_set_body(), "status": None}, id="missing-status"),
+        pytest.param(component_set_body(VALIDATED), id="missing-progress"),
+    ],
+)
+def test_is_component_set_finished_rejects_incomplete_status(fake, body):
+    c, dyn = make_client(fake)
+    dyn.component_set = body
+
+    assert c.is_component_set_finished("base") is False
+
+
+@pytest.mark.parametrize("condition_type", ["Validated", "ComponentsApplied", "Progressing"])
+def test_is_component_set_finished_requires_current_conditions(fake, condition_type):
+    c, dyn = make_client(fake)
+    body = component_set_body(VALIDATED, APPLIED, COMPLETE, generation=2, observed_generation=2)
+    for condition in body["status"]["conditions"]:
+        if condition["type"] == condition_type:
+            condition["observedGeneration"] = 1
+    dyn.component_set = body
+
+    assert c.is_component_set_finished("base") is False
+
+
+@pytest.mark.parametrize("applied", [None, ("ComponentsApplied", "False", "ApplicationConflict")])
+def test_is_component_set_finished_requires_successful_application_writes(fake, applied):
+    c, dyn = make_client(fake)
+    conditions = [VALIDATED, COMPLETE]
+    if applied is not None:
+        conditions.append(applied)
+    dyn.component_set = component_set_body(*conditions)
+
+    assert c.is_component_set_finished("base") is False
+
+
+def test_is_component_set_finished_is_false_during_teardown(fake):
+    c, dyn = make_client(fake)
+    body = component_set_body(VALIDATED, APPLIED, COMPLETE)
+    body["metadata"]["deletionTimestamp"] = "2026-09-17T10:00:00Z"
+    body["metadata"]["finalizers"] = ["ccluster.nvidia.com/argocd-applications"]
+    dyn.component_set = body
+
+    assert c.is_component_set_finished("base") is False
+
+
+def test_is_component_set_finished_raises_for_a_missing_set(fake):
+    c, dyn = make_client(fake)
+    dyn.missing.add((Kind.CCL_COMPONENT_SET.value, "base"))
+
+    with pytest.raises(NotFoundError):
+        c.is_component_set_finished("base")
