@@ -4,7 +4,7 @@
 """A client for the control-plane operator's API.
 
 CCLClient registers infra-plane clusters with the control plane and removes them again,
-and creates and deletes the component sets deployed onto them. It writes into one
+and creates, polls and deletes the component sets deployed onto them. It writes into one
 namespace, fixed at construction, and by default connects with the in-cluster
 configuration of the pod it runs in.
 """
@@ -20,11 +20,21 @@ from kubernetes.dynamic.exceptions import NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
 from ccluster.v1alpha1 import API_VERSION, CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
-from ccluster.v1alpha1.cclcomponentset import CCLComponentSetSpec, ComponentSpec
+from ccluster.v1alpha1.cclcomponentset import (
+    CCLComponentSetSpec,
+    ComponentSpec,
+    Condition,
+    Status,
+)
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, LocalObjectReference
 
 
-__all__ = ["CCLClient", "ClusterConfig", "TLSClientConfig"]
+__all__ = [
+    "CCLClient",
+    "ClusterConfig",
+    "TLSClientConfig",
+    "component_set_current_conditions",
+]
 
 
 # Server-side apply records, per field, which manager last set it. Applying under one
@@ -67,6 +77,25 @@ def _credentials_secret_name(cluster: str) -> str:
     return f"{cluster}-credentials"
 
 
+def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str, Condition]:
+    """Return the conditions computed from the set's current generation, keyed by type.
+
+    The operator stamps the generation only on the conditions it writes, so after a
+    failed validation or apply the other types keep an older observedGeneration. Those
+    are dropped; what remains is what the operator concluded about the spec as it now
+    stands, and the reason and message behind it.
+    """
+    generation = getattr(component_set.metadata, "generation", None)
+    status = component_set.status
+    if generation is None or status is None or not status.conditions:
+        return {}
+    return {
+        condition.type: condition
+        for condition in status.conditions
+        if condition.observed_generation == generation
+    }
+
+
 class CCLClient:
     """Create and delete infra planes (cluster registrations) and component
     sets, in one namespace.
@@ -85,19 +114,19 @@ class CCLClient:
         self._api = api_client
         self._dynamic = DynamicClient(api_client)
         resources = self._dynamic.resources
-        self._namespaces = resources.get(api_version="v1", kind="Namespace")
-        self._secrets = resources.get(api_version="v1", kind="Secret")
-        self._infra_planes = resources.get(
+        self._namespace_gvr = resources.get(api_version="v1", kind="Namespace")
+        self._secret_gvr = resources.get(api_version="v1", kind="Secret")
+        self._infra_plane_gvr = resources.get(
             api_version=API_VERSION, kind=Kind.CCL_INFRA_PLANE.value
         )
-        self._component_sets = resources.get(
+        self._component_set_gvr = resources.get(
             api_version=API_VERSION, kind=Kind.CCL_COMPONENT_SET.value
         )
         self._ensure_namespace()
 
     def _ensure_namespace(self) -> None:
         try:
-            self._dynamic.get(self._namespaces, name=self.namespace)
+            self._dynamic.get(self._namespace_gvr, name=self.namespace)
         except NotFoundError:
             namespace = k8s.V1Namespace(
                 api_version="v1",
@@ -105,7 +134,7 @@ class CCLClient:
                 metadata=k8s.V1ObjectMeta(name=self.namespace),
             )
             self._dynamic.create(
-                self._namespaces, body=self._api.sanitize_for_serialization(namespace)
+                self._namespace_gvr, body=self._api.sanitize_for_serialization(namespace)
             )
 
     def create_infraplane(
@@ -150,13 +179,15 @@ class CCLClient:
                 ),
             },
         )
-        self._apply(self._secrets, secret)
+        self._apply(self._secret_gvr, secret)
 
         plane = CCLInfraPlane(
             metadata=ObjectMeta(name=name, namespace=self.namespace),
             spec=CCLInfraPlaneSpec(cluster_credentials_ref=LocalObjectReference(name=secret_name)),
         )
-        return CCLInfraPlane.model_validate(self._apply_object(self._infra_planes, plane))
+        return CCLInfraPlane.model_validate(
+            self._apply_object(self._infra_plane_gvr, plane)
+        )
 
     def delete_infraplane(self, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
@@ -165,8 +196,14 @@ class CCLClient:
         cluster Secret. Either object already being gone is not an error. The namespace
         is left in place.
         """
-        self._delete(self._infra_planes, name)
-        self._delete(self._secrets, _credentials_secret_name(name))
+        self._delete(self._infra_plane_gvr, name)
+        self._delete(self._secret_gvr, _credentials_secret_name(name))
+
+    def get_infraplane(self, name: str) -> CCLInfraPlane:
+        """Return the CCLInfraPlane called name, or raise NotFoundError."""
+        return CCLInfraPlane.model_validate(
+            self._get(self._infra_plane_gvr, name)
+        )
 
     def create_component_set(self, name: str, components: list[ComponentSpec]) -> CCLComponentSet:
         """Create (or update) the CCLComponentSet called name.
@@ -178,17 +215,50 @@ class CCLClient:
         calling again with a different list updates the set in place.
 
         The call returns as soon as the object is applied; it does not wait for the
-        operator to report ComponentsApplied.
+        rollout to finish. Poll is_component_set_finished to check convergence.
         """
         component_set = CCLComponentSet(
             metadata=ObjectMeta(name=name, namespace=self.namespace),
             spec=CCLComponentSetSpec(components=components),
         )
         return CCLComponentSet.model_validate(
-            self._apply_object(self._component_sets, component_set)
+            self._apply_object(self._component_set_gvr, component_set)
         )
 
-    def _apply_object(self, resource, obj: BaseModel) -> dict:
+    def is_component_set_finished(self, name: str) -> bool:
+        """Return whether the current generation is applied and reported converged.
+
+        Reads once. Returns False during deletion or unless validation, Application
+        writes and rollout completion are confirmed for this generation.
+        The caller controls polling and timeouts.
+        Raises kubernetes.dynamic.exceptions.NotFoundError if the set does not exist.
+
+        True means the operator has written every Application for this generation and
+        Argo CD reports them Healthy and Synced. That verdict is about each Application
+        as Argo CD last compared it, so shortly after an update it can still describe the
+        previous spec. Treat True as convergence, not as proof the newest values are live.
+        """
+        component_set = self.get_component_set(name)
+
+        # deletionTimestamp is server-managed metadata, retained by ObjectMeta's
+        # extra="allow". The finalizer never writes conditions, so a set being torn down
+        # still carries the ones its last generation finished with.
+        if getattr(component_set.metadata, "deletionTimestamp", None) is not None:
+            return False
+
+        conditions = component_set_current_conditions(component_set)
+        expected = {
+            "Validated": Status.true,
+            "ComponentsApplied": Status.true,
+            "Progressing": Status.false,
+        }
+        for condition_type, expected_status in expected.items():
+            condition = conditions.get(condition_type)
+            if condition is None or condition.status != expected_status:
+                return False
+        return True
+
+    def _apply_object(self, gvr, obj: BaseModel) -> dict:
         """Server-side apply one of this API's objects and return it as the server holds it.
 
         obj is a whole object from ccluster.v1alpha1.base; the returned dict carries the
@@ -196,7 +266,7 @@ class CCLClient:
         validates back into the same class.
         """
         body = obj.model_dump(mode="json", by_alias=True, exclude_none=True)
-        return self._apply(resource, body).to_dict()
+        return self._apply(gvr, body).to_dict()
 
     def delete_component_set(self, name: str) -> None:
         """Remove the CCLComponentSet called name.
@@ -206,19 +276,28 @@ class CCLClient:
         stays in Terminating until every chart is uninstalled. Already being gone is not
         an error. The referenced CCLInfraPlanes and the namespace are left in place.
         """
-        self._delete(self._component_sets, name)
+        self._delete(self._component_set_gvr, name)
 
-    def _apply(self, resource, body):
+    def get_component_set(self, name: str) -> CCLComponentSet:
+        """Return the CCLComponentSet called name, or raise NotFoundError."""
+        return CCLComponentSet.model_validate(
+            self._get(self._component_set_gvr, name)
+        )
+
+    def _apply(self, gvr, body):
         return self._dynamic.server_side_apply(
-            resource,
+            gvr,
             body=self._api.sanitize_for_serialization(body),
             namespace=self.namespace,
             field_manager=_FIELD_MANAGER,
             force_conflicts=True,
         )
 
-    def _delete(self, resource, name: str) -> None:
+    def _delete(self, gvr, name: str) -> None:
         try:
-            self._dynamic.delete(resource, name=name, namespace=self.namespace)
+            self._dynamic.delete(gvr, name=name, namespace=self.namespace)
         except NotFoundError:
             pass
+
+    def _get(self, gvr, name: str) -> dict:
+        return self._dynamic.get(gvr, name=name, namespace=self.namespace).to_dict()

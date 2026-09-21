@@ -107,7 +107,7 @@ Because the set is applied under the same `ccluster-py` field manager, calling
 ```python
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import keda
-from ccluster.client import CCLClient
+from ccluster.client import CCLClient, component_set_current_conditions
 
 client = CCLClient("tenant-a")
 client.create_infraplane("ccluster-local")
@@ -120,14 +120,43 @@ cs = client.create_component_set(
         ),
     ],
 )
+finished = client.is_component_set_finished("local-base")
 client.delete_component_set("local-base")
 ```
+
+`create_component_set` does not wait for rollout completion. Poll
+`is_component_set_finished` with a caller-defined timeout before deploying dependent sets.
+It reads once and requires `Validated=True`, `ComponentsApplied=True` and
+`Progressing=False` for the current generation. It returns `False` during deletion and
+raises `NotFoundError` for a missing set.
+
+`component_set_current_conditions` says why a set is not finished yet. It keys its
+conditions by type and drops the ones the operator computed from an older generation, so
+what is left is its verdict on the spec as it now stands — after a failed validation the
+other types still carry the previous generation's. `get_component_set` and
+`get_infraplane` read one object and return it as its model, or raise `NotFoundError`.
+
+```python
+if not client.is_component_set_finished("local-base"):
+    conditions = component_set_current_conditions(client.get_component_set("local-base"))
+    for condition in conditions.values():
+        print(condition.type, condition.status.value, condition.reason, condition.message)
+```
+
+A type is absent when the operator did not get far enough to write it: a set whose
+validation failed has no `Progressing` condition for this generation.
+
+`Progressing=False` reports Argo CD's health and sync verdict, which is about each
+Application as Argo CD last compared it. Shortly after an update that verdict can still
+be the previous spec's, so `True` means converged rather than proof that the newest values
+are live.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
 then uninstalls the set's charts in reverse order, one at a time, so the object stays in
 `Terminating` until the last one is gone; a missing set is not an error, and the referenced
-`CCLInfraPlane`s stay. `kubectl get cclcomponentset -n <namespace>` shows when the operator
-has marked a set `ComponentsApplied` and when a deleted one has disappeared.
+`CCLInfraPlane`s stay. `kubectl get cclcomponentset -n <namespace>` shows each set's
+`Progress` column, which carries the `Progressing` condition's reason, and when a deleted
+one has disappeared.
 `examples/create_component_set.py` is the same as a command.
 
 ## What is generated from what
