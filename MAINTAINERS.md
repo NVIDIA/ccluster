@@ -9,6 +9,7 @@ triaging issues, and stewarding the project's direction.
 | Name | GitHub handle | Role / Area | Affiliation |
 | --- | --- | --- | --- |
 | Anand Jayarajan | `@anandj91` | Maintainer | NVIDIA |
+| Fang Han | `@HanFa` | Maintainer | NVIDIA |
 | Xingtong Dong | `@xtdong96` | Maintainer | NVIDIA |
 
 Team handle for review routing: `@NVIDIA/ccluster-dev` (see [`.github/CODEOWNERS`](.github/CODEOWNERS)).
