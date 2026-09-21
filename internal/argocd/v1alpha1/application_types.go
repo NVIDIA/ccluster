@@ -170,7 +170,9 @@ type ApplicationHealthStatus struct {
 
 // ApplicationSyncStatus is the sync half of an Application's status.
 type ApplicationSyncStatus struct {
-	Status string `json:"status,omitempty"`
+	// status is the sync state. Argo CD's CRD requires it whenever status.sync is
+	// present, so it carries no omitempty.
+	Status string `json:"status"`
 }
 
 // ApplicationList contains a list of Application.

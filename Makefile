@@ -133,15 +133,16 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 # Set E2E_FULL=true (or use test-e2e-full) to run every e2e spec. The quick tier
 # (default) skips the specs labelled "full" - the ones that need real Argo CD: a real
 # rollout, multi-component ordered release, reverse teardown, drift/selfHeal correction,
-# a values change rolling forward, and the AppProject tenancy check. The full tier runs
-# everything: the suite always deploys without Argo CD first and runs the quick specs,
-# then the "with real Argo CD" container in test/e2e/e2e_test.go upgrades the release to
-# add Argo CD and runs the rest. So the full tier is a strict superset of the quick one.
+# a values change rolling forward, the field ownership contract with Argo CD, and the
+# AppProject tenancy check. The full tier runs everything: the suite always deploys
+# without Argo CD first and runs the quick specs, then the "with real Argo CD" container
+# in test/e2e/e2e_test.go upgrades the release to add Argo CD and runs the rest. So the
+# full tier is a strict superset of the quick one.
 E2E_FULL ?= false
 # go test kills the binary after 10m by default. The quick tier fits; the full tier does
 # not once the Argo CD and catalog images are pulled cold, as they are in CI, and the
 # panic that results looks like a hang in the last spec rather than a timeout.
-E2E_TIMEOUT ?= $(if $(filter true,$(E2E_FULL)),40m,20m)
+E2E_TIMEOUT ?= $(if $(filter true,$(E2E_FULL)),50m,20m)
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.

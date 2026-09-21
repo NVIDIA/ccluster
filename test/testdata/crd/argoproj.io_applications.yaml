@@ -27,12 +27,18 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
-      subresources:
-        status: {}
+      # Match Argo CD: status is an ordinary field. A status subresource would hide
+      # whole-object updates that accidentally drop status fields.
+      subresources: {}
       schema:
         openAPIV3Schema:
           type: object
           properties:
+            # Argo CD queues a requested sync here, outside status. Declared so a test
+            # can assert the operator's spec write leaves a pending one alone.
+            operation:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
             spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
@@ -45,6 +51,9 @@ spec:
               properties:
                 sync:
                   type: object
+                  # Argo CD writes more sync fields than the operator models; the
+                  # tests assert those survive a spec rewrite.
+                  x-kubernetes-preserve-unknown-fields: true
                   required: [status]
                   properties:
                     status:

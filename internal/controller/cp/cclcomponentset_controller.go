@@ -208,7 +208,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
-// CCLComponentSet's namespace and is Available.
+// CCLComponentSet's namespace and is Available for its current generation.
 //
 // An empty reason means every component resolved. A non-empty reason is a condition to
 // report, not an error to retry; a returned error is a genuine API failure.
@@ -238,9 +238,19 @@ func (r *CCLComponentSetReconciler) resolveInfraPlanes(
 			return "", "", err
 		}
 
+		// Neither case is an error: the CCLInfraPlane may simply not have been
+		// reconciled yet, and its watch brings us back when it is.
+		//
+		// They are reported apart because a plane whose status is behind its spec
+		// still prints Available=True - the printer column shows the condition as it
+		// stands - so calling it "not yet Available" sends whoever reads the status
+		// after a problem that is not there.
+		if infraPlane.Status.ObservedGeneration < infraPlane.Generation {
+			return reasonInfraPlaneNotReady, fmt.Sprintf(
+				"Component %q references CCLInfraPlane %q, whose status has not caught up "+
+					"with its spec", component.Name, name), nil
+		}
 		if !apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable) {
-			// Not an error: the CCLInfraPlane may simply not have been reconciled
-			// yet. Its watch brings us back when it is.
 			return reasonInfraPlaneNotReady, fmt.Sprintf(
 				"Component %q references CCLInfraPlane %q, which is not yet Available",
 				component.Name, name), nil

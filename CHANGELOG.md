@@ -17,6 +17,22 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - `component_set_current_conditions(component_set)` returns the conditions the operator
   computed from the object's current generation, keyed by type, so a caller can read the
   reason and message behind a rollout that has not finished.
+- A full-tier e2e spec covers the field ownership contract with Argo CD: Argo CD must not
+  write into the spec the operator owns, and the deployment history in its Application
+  status must survive a spec rewrite rather than restart.
+
+### Fixed
+- Application and AppProject reconciliation no longer deletes the Argo CD status and any
+  pending operation on the objects it manages: the managed spec is replaced with a patch
+  instead of a whole-object update. Explicit null Helm values survive a spec rewrite.
+- A CCLComponentSet waits for a referenced CCLInfraPlane whose status is still the
+  previous generation's, rather than trusting an `Available` condition computed for an
+  older spec. The status reports that separately from a plane that is not Available.
+- A write to an Application or AppProject built on a stale read is retried in place
+  instead of failing the reconcile. Neither object has a status subresource, so Argo CD's
+  own status writes move the resource version the operator's patch carries, and a read
+  from the informer cache can miss an object that already exists. Neither lost race
+  surfaces as a transient `ApplicationFailed` condition on the CCLComponentSet any more.
 
 ## [0.0.3] - 2026-09-16
 

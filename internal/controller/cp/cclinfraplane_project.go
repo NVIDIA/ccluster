@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -71,28 +72,39 @@ func (r *CCLInfraPlaneReconciler) projectSpec(namespace string) argocdv1alpha1.A
 	return spec
 }
 
-// reconcileProject creates or updates the AppProject for infraPlane's namespace.
-func (r *CCLInfraPlaneReconciler) reconcileProject(
+// createOrPatchProject writes the AppProject for infraPlane's namespace.
+//
+// Retried on a stale read like createOrPatchApplication. An AppProject has no status
+// subresource either, and Argo CD keeps JWT token records in its status.
+func (r *CCLInfraPlaneReconciler) createOrPatchProject(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 ) (controllerutil.OperationResult, error) {
-	project := &argocdv1alpha1.AppProject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      projectName(infraPlane.Namespace),
-			Namespace: r.ArgoCDNamespace,
-		},
-	}
+	result := controllerutil.OperationResultNone
 
-	return controllerutil.CreateOrUpdate(ctx, r.Client, project, func() error {
+	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
+		project := &argocdv1alpha1.AppProject{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      projectName(infraPlane.Namespace),
+				Namespace: r.ArgoCDNamespace,
+			},
+		}
+
+		if err := r.Get(ctx, client.ObjectKeyFromObject(project), project); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		before := project.DeepCopy()
 		if !projectOwner.ownedBy(project, infraPlane.Namespace) {
 			return errProjectConflict
 		}
 		projectOwner.stamp(project, infraPlane.Namespace)
-
-		// Owned outright: rebuilt every reconcile, so hand edits are reverted.
 		project.Spec = r.projectSpec(infraPlane.Namespace)
-		return nil
+
+		var err error
+		result, err = createOrPatchArgoCDObject(ctx, r.Client, before, project, project.Spec)
+		return err
 	})
+	return result, err
 }
 
 // deleteProjectIfUnused deletes the namespace's AppProject when infraPlane is the last

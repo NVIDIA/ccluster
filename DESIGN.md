@@ -224,10 +224,14 @@ Each component is one Helm chart on one cluster:
   of every `CCLComponentSet` deploys from one catalog at one revision. A chart edit is
   therefore invisible until it is *pushed* to that revision — Argo CD's repo-server clones
   the repository itself.
-- **`infraPlaneRef` is same-namespace**, and the CCLInfraPlane must already be `Available`,
-  because the Application addresses its destination **by name** and that name only exists
-  once the cluster Secret has been mirrored — and because `Available` is what guarantees
-  the namespace's AppProject exists for the Application to belong to.
+- **`infraPlaneRef` is same-namespace**, and the CCLInfraPlane must already be `Available`
+  *for its current generation*, because the Application addresses its destination **by
+  name** and that name only exists once the cluster Secret has been mirrored — and because
+  `Available` is what guarantees the namespace's AppProject exists for the Application to
+  belong to. The generation is part of it because a condition outlives the spec it was
+  computed for: a plane whose `clusterCredentialsRef` has just changed still reports the
+  previous spec's `Available` until its own controller catches up, and the cluster that
+  condition described is no longer the one the ref names.
 - **`values` passes through untouched.** It is `apiextensionsv1.JSON` with
   `x-kubernetes-preserve-unknown-fields`, forwarded as Argo CD's `helm.valuesObject` — so it
   travels as structured data rather than a marshalled YAML string. The operator neither
@@ -302,8 +306,27 @@ plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which delet
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
 unmanaged on the infra-plane cluster.
 
-`spec` is rebuilt from scratch on every reconcile, so hand edits are reverted rather than
-merged. Ownership uses the same annotation scheme as above, with
+`spec` is rebuilt from scratch on every reconcile and compared against the Application as
+read; one that reads back unchanged is not written at all. A write is a JSON Patch
+replacing `metadata` and `spec`, never an update of the whole object: both Argo CD types
+model only the fields the operator writes, so an update would send back an object missing
+Argo CD's `status`, any pending `operation`, and every spec field not declared. Replacing
+`/spec` still reverts hand edits rather than merging them, and explicit null Helm values
+survive. AppProject writes use the same mechanism, and its `status` — where Argo CD keeps
+JWT token records — is preserved the same way.
+
+That comparison sees only modelled fields, because that is all a read into a partial type
+returns. A hand edit that adds nothing but unmodelled spec fields is therefore cleared not
+when it is made, but the next time something the operator can see changes the object.
+Detecting it directly would need a second, unstructured read of every Application on every
+reconcile.
+
+The metadata resource version prevents overwriting concurrent ownership or finalizer
+changes. A write rejected because the read behind it was stale is retried in place rather
+than failed: neither Argo CD type has a status subresource, so Argo CD's own status writes
+move that version, and a cached read can also miss an object that already exists. Losing
+either race is routine rather than a fault to report. Ownership uses the same annotation
+scheme as above, with
 `ccluster.nvidia.com/componentset-{name,namespace}`; the name is also written as a *label*,
 which is what the controller selects on to find the Applications it has already released.
 An owner reference would be legal here, since both objects share a namespace, and is
@@ -348,6 +371,29 @@ Three properties follow:
   everything after it; the `Progressing` condition names it, which is the only way a stuck
   rollout is visible.
 
+`Healthy` and `Synced` are Argo CD's verdict on the Application **as Argo CD last compared
+it**, which is not always the spec the operator wants now. Right after the operator rewrites
+an Application, a verdict about the previous spec can still be standing, and the next
+component is released against it. Argo CD refreshes on the write, so the window is short,
+but it exists.
+
+Closing it by comparing `status.sync.comparedTo` against the desired spec does not work, and
+the two reasons pull in opposite directions:
+
+- Argo CD writes its status with a **merge patch**, so an explicit `null` in Helm values is
+  deleted on the way in. `comparedTo` can then never equal a desired spec that contains one,
+  and the rollout stops for good rather than briefly.
+- A read into the partial Argo CD types **drops every field they do not model**. An override
+  the operator has just removed — `helm.parameters`, say — is invisible on both sides of the
+  comparison, which reads as converged and releases the next component early.
+
+So the gap stays open, and the contract says what is actually observed: `RolloutComplete`
+means Argo CD reports every component `Healthy` and `Synced`, not that it has re-evaluated
+the newest spec. Closing it means tying the verdict to a sync the operator itself requested,
+rather than to any comparison of fields — which turns the operator from something that
+writes Applications and watches auto-sync into something that also initiates and tracks
+syncs. That is a change of shape, and it needs a real Argo CD e2e to land.
+
 Terminating Applications are excluded from this reasoning (`liveApplications`): one still
 holds its cascade finalizer while Argo CD uninstalls the chart, and counting it would let a
 pruned component hold the rollout open, or make a re-added one look already deployed.
@@ -384,7 +430,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | CRD | Condition | Meaning |
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
-| `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to an `Available` CCLInfraPlane. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
+| `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on; `False/RolloutComplete` when every component is healthy and synced. |
 

@@ -1365,6 +1365,109 @@ var _ = Describe("Manager", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
+			// The two halves of the field-ownership contract with Argo CD, which only a
+			// real Argo CD can settle. envtest's stand-in writes whatever the test tells
+			// it to, so it can show that the operator does not discard status, but never
+			// that Argo CD leaves spec alone or that its own records survive a rewrite.
+			//
+			// status.history is the case that does not heal: Argo CD rebuilds health,
+			// sync and resources after any write, but a dropped history stays dropped,
+			// and a rollback reads it.
+			It("should preserve the Application fields Argo CD owns across a spec rewrite", func() {
+				const componentSetName = "e2e-field-ownership"
+				const planeName = "e2e-field-ownership-plane"
+				const credentialsName = "e2e-field-ownership-plane-credentials"
+				applicationName := componentSetName + "-keda"
+
+				readApplication := func(g Gomega, jsonPath string) string {
+					out, err := utils.Run(exec.Command("kubectl", "get", "application",
+						applicationName, "-n", crNamespace, "-o", "jsonpath="+jsonPath))
+					g.Expect(err).NotTo(HaveOccurred())
+					return strings.TrimSpace(out)
+				}
+				// The spec is compared as re-encoded JSON so key order cannot make an
+				// unchanged spec look rewritten.
+				specJSON := func(g Gomega) string {
+					out, err := utils.Run(exec.Command("kubectl", "get", "application",
+						applicationName, "-n", crNamespace, "-o", "json"))
+					g.Expect(err).NotTo(HaveOccurred())
+					var application struct {
+						Spec map[string]any `json:"spec"`
+					}
+					g.Expect(json.Unmarshal([]byte(out), &application)).To(Succeed())
+					encoded, err := json.Marshal(application.Spec)
+					g.Expect(err).NotTo(HaveOccurred())
+					return string(encoded)
+				}
+				historyIDs := func(g Gomega) []string {
+					return strings.Fields(readApplication(g, "{.status.history[*].id}"))
+				}
+
+				By("registering the control-plane cluster with itself as an infra plane")
+				_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+					credentialsName,
+					"--from-literal=server=https://kubernetes.default.svc",
+					`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+					"-n", crNamespace))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+						credentialsName, "-n", crNamespace, "--ignore-not-found"))
+				})
+				applyCCLInfraPlane(planeName, credentialsName)
+				waitInfraPlaneAvailable(planeName)
+
+				By("deploying keda and letting Argo CD record the first sync")
+				applyKedaCCLComponentSet(componentSetName, planeName, 1)
+				Eventually(func(g Gomega) {
+					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					g.Expect(historyIDs(g)).To(HaveLen(1))
+				}, 8*time.Minute).Should(Succeed())
+
+				By("confirming Argo CD does not write into the spec the operator owns")
+				var before string
+				var reconciled string
+				Eventually(func(g Gomega) {
+					before = specJSON(g)
+					reconciled = readApplication(g, "{.status.reconciledAt}")
+					g.Expect(reconciled).NotTo(BeEmpty())
+				}, 2*time.Minute).Should(Succeed())
+
+				_, err = utils.Run(exec.Command("kubectl", "annotate", "application",
+					applicationName, "-n", crNamespace,
+					"argocd.argoproj.io/refresh=normal", "--overwrite"))
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(func(g Gomega) {
+					g.Expect(readApplication(g, "{.status.reconciledAt}")).NotTo(Equal(reconciled))
+				}, 5*time.Minute).Should(Succeed())
+				Expect(specJSON(Default)).To(Equal(before),
+					"Argo CD changed the spec, which the operator rewrites from scratch")
+
+				By("changing the values so the operator rewrites the Application")
+				applyKedaCCLComponentSet(componentSetName, planeName, 2)
+				Eventually(func(g Gomega) {
+					g.Expect(readApplication(g,
+						"{.spec.source.helm.valuesObject.keda.operator.replicaCount}")).To(Equal("2"))
+				}, 2*time.Minute).Should(Succeed())
+
+				By("confirming Argo CD's record of the earlier sync survived the rewrite")
+				Eventually(func(g Gomega) {
+					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					// A history that restarts at one entry means the rewrite took Argo
+					// CD's records with it and Argo CD started over.
+					g.Expect(len(historyIDs(g))).To(BeNumerically(">=", 2))
+				}, 8*time.Minute).Should(Succeed())
+
+				By("deleting the CCLComponentSet and CCLInfraPlane")
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset",
+					componentSetName, "-n", crNamespace, "--ignore-not-found",
+					"--wait=true", "--timeout=5m"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+					planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
 			// DESIGN.md "One AppProject per namespace": the project is the tenancy
 			// boundary, enforced by PermitOnlyProjectScopedClusters on the AppProject plus
 			// data.project on the mirrored cluster Secret. envtest asserts those fields

@@ -44,12 +44,17 @@ func componentSetWith(names ...string) *cclusternvidiacomv1alpha1.CCLComponentSe
 				Name:          name,
 				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
-					Chart:     "catalogs/cluster_base/" + name,
+					Chart:     testChart(name),
 					Namespace: name,
 				},
 			})
 	}
 	return componentSet
+}
+
+// testChart is the catalog path componentSetWith gives a component.
+func testChart(component string) string {
+	return "catalogs/cluster_base/" + component
 }
 
 // app builds an Application in the state Argo CD would report. A health of "" stands for
@@ -426,9 +431,9 @@ func TestRolloutStatus(t *testing.T) {
 // string concatenation. applicationName does no escaping, and neither the DNS-1123
 // pattern on component names nor the 63-character CEL rule on the CCLComponentSet name
 // prevents two different componentSets mapping onto one Application. The only thing that
-// stops the second one clobbering the first is the ownedBy check in reconcileApplication,
-// which reports errApplicationConflict. If this test is ever "simplified away", so is the
-// reason that check exists.
+// stops the second one clobbering the first is the ownedBy check in
+// createOrPatchApplication, which reports errApplicationConflict. If this test is ever
+// "simplified away", so is the reason that check exists.
 func TestApplicationNameCollidesAcrossComponentSets(t *testing.T) {
 	if applicationName("a-b", "c") != applicationName("a", "b-c") {
 		t.Fatal("expected the documented collision; if this now passes, the ownership " +

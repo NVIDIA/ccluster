@@ -8,6 +8,7 @@ package cp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,6 +17,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -102,11 +105,13 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				status = metav1.ConditionTrue
 			}
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-				Type:    conditionTypeAvailable,
-				Status:  status,
-				Reason:  reasonClusterSecretCreated,
-				Message: "set by the test",
+				Type:               conditionTypeAvailable,
+				Status:             status,
+				Reason:             reasonClusterSecretCreated,
+				Message:            "set by the test",
+				ObservedGeneration: infraPlane.Generation,
 			})
+			infraPlane.Status.ObservedGeneration = infraPlane.Generation
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 		}
 
@@ -184,15 +189,21 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		// setHealth stands in for Argo CD, which envtest does not run: it reports a
 		// health and sync status on an Application the operator created.
+		//
+		// It patches, because that is what Argo CD does. An update through the partial
+		// Argo CD type would also wipe every spec field that type does not model, and
+		// the Application CRD has no status subresource to stop it - so no test could
+		// set up a spec the operator does not fully describe.
 		setHealth := func(component, health, sync string) {
 			GinkgoHelper()
 
-			application := getApplication(component)
-			application.Status = &argocdv1alpha1.ApplicationStatus{
-				Health: argocdv1alpha1.ApplicationHealthStatus{Status: health},
-				Sync:   argocdv1alpha1.ApplicationSyncStatus{Status: sync},
-			}
-			Expect(k8sClient.Status().Update(ctx, application)).To(Succeed())
+			status, err := json.Marshal(map[string]any{"status": map[string]any{
+				"health": map[string]any{"status": health},
+				"sync":   map[string]any{"status": sync},
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Patch(ctx, getApplication(component),
+				client.RawPatch(types.MergePatchType, status))).To(Succeed())
 		}
 
 		// release drives the rollout forward: each component is reported healthy,
@@ -561,11 +572,13 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Get(ctx,
 				types.NamespacedName{Name: planeB, Namespace: namespace}, infraPlane)).To(Succeed())
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-				Type:    conditionTypeAvailable,
-				Status:  metav1.ConditionTrue,
-				Reason:  reasonClusterSecretCreated,
-				Message: "set by the test",
+				Type:               conditionTypeAvailable,
+				Status:             metav1.ConditionTrue,
+				Reason:             reasonClusterSecretCreated,
+				Message:            "set by the test",
+				ObservedGeneration: infraPlane.Generation,
 			})
+			infraPlane.Status.ObservedGeneration = infraPlane.Generation
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 
 			componentSet = reconcileAndGet()
@@ -576,6 +589,48 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			// second to follow.
 			Expect(applicationExists(firstComponent)).To(BeTrue())
 			Expect(applicationExists(secondComponent)).To(BeFalse())
+		})
+
+		// A plane whose status is still the previous generation's says nothing about the
+		// cluster its spec now names: the credentials it points at may not have been
+		// mirrored yet, so an Application written against it could address a cluster
+		// Argo CD does not know. Available alone does not settle that, because the
+		// condition outlives the spec it was computed for.
+		It("should wait for a CCLInfraPlane whose status is behind its spec", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			Expect(conditionOf(settle(), conditionTypeValidated).Status).
+				To(Equal(metav1.ConditionTrue))
+
+			By("rotating the plane's credentials without letting its controller catch up")
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			planeKey := types.NamespacedName{Name: planeA, Namespace: namespace}
+			Expect(k8sClient.Get(ctx, planeKey, infraPlane)).To(Succeed())
+			infraPlane.Spec.ClusterCredentialsRef.Name = planeA + "-rotated"
+			Expect(k8sClient.Update(ctx, infraPlane)).To(Succeed())
+
+			validated := conditionOf(reconcileAndGet(), conditionTypeValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotReady))
+			// Available still reads True here, and that is what kubectl prints, so the
+			// message must not blame the condition.
+			Expect(validated.Message).To(ContainSubstring("has not caught up with its spec"))
+
+			By("letting the plane's controller catch up")
+			Expect(k8sClient.Get(ctx, planeKey, infraPlane)).To(Succeed())
+			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeAvailable,
+				Status:             metav1.ConditionTrue,
+				Reason:             reasonClusterSecretCreated,
+				Message:            "set by the test",
+				ObservedGeneration: infraPlane.Generation,
+			})
+			infraPlane.Status.ObservedGeneration = infraPlane.Generation
+			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
+
+			Expect(conditionOf(reconcileAndGet(), conditionTypeValidated).Status).
+				To(Equal(metav1.ConditionTrue))
 		})
 
 		It("should report which component the rollout is waiting on", func() {
@@ -599,6 +654,191 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			progressing = conditionOf(componentSet, conditionTypeProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionFalse))
 			Expect(progressing.Reason).To(Equal(reasonRolloutComplete))
+		})
+
+		It("should preserve explicit null values when updating an Application", func() {
+			createInfraPlane(planeA, true)
+			spec := components()[:1]
+			spec[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"config":{"removeMe":1,"keep":2}}`)}
+			createComponentSet(spec)
+			componentSet := settle()
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{
+				Raw: []byte(`{"config":{"removeMe":null,"keep":2}}`),
+			}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			componentSet = reconcileAndGet()
+			Expect(string(getApplication(firstComponent).Spec.Source.Helm.ValuesObject.Raw)).
+				To(MatchJSON(string(componentSet.Spec.Components[0].Values.Raw)))
+
+			setHealth(firstComponent, argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced)
+			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		// The two halves of the write path. A read into the partial Argo CD type drops
+		// spec fields the operator does not model, so an edit that adds nothing else is
+		// invisible to the comparison and is not written back on its own. Once anything
+		// the operator can see does change, /spec is replaced rather than merged, and
+		// the invisible field goes with it.
+		It("should leave an unchanged Application alone and replace its whole spec when it changes", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			By("adding a spec field the operator does not model")
+			application := getApplication(firstComponent)
+			Expect(k8sClient.Patch(ctx, application, client.RawPatch(types.MergePatchType,
+				[]byte(`{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}`)))).To(Succeed())
+
+			version := getApplication(firstComponent).ResourceVersion
+			reconcileAndGet()
+			Expect(getApplication(firstComponent).ResourceVersion).To(Equal(version),
+				"an Application that reads back unchanged must not be rewritten")
+
+			By("drifting a modelled field, which the operator does see")
+			application = getApplication(firstComponent)
+			application.Spec.Source.Path = "catalogs/cluster_base/tampered"
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			reconcileAndGet()
+			restored := getApplication(firstComponent)
+			Expect(restored.Spec.Source.Path).To(Equal(components()[0].Chart))
+
+			raw := &unstructured.Unstructured{}
+			raw.SetGroupVersionKind(argocdv1alpha1.GroupVersion.WithKind("Application"))
+			Expect(k8sClient.Get(ctx, appKey(firstComponent), raw)).To(Succeed())
+			_, found, err := unstructured.NestedBool(raw.Object, "spec", "syncPolicy", "automated", "enabled")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(), "the operator owns the entire spec")
+
+			version = restored.ResourceVersion
+			reconcileAndGet()
+			Expect(getApplication(firstComponent).ResourceVersion).To(Equal(version))
+		})
+
+		It("should leave the status Argo CD owns alone when it rewrites an Application", func() {
+			// Read unstructured to assert fields absent from the partial Go type.
+			readApplication := func() *unstructured.Unstructured {
+				GinkgoHelper()
+
+				application := &unstructured.Unstructured{}
+				application.SetGroupVersionKind(
+					argocdv1alpha1.GroupVersion.WithKind("Application"))
+				Expect(k8sClient.Get(ctx, appKey(firstComponent), application)).To(Succeed())
+				return application
+			}
+
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+
+			By("Argo CD writing the status it owns")
+			application := readApplication()
+			Expect(unstructured.SetNestedMap(application.Object, map[string]any{
+				"health": map[string]any{"status": argocdv1alpha1.HealthStatusHealthy},
+				"sync": map[string]any{
+					"status":   argocdv1alpha1.SyncStatusSynced,
+					"revision": "abc123",
+				},
+				"operationState":      map[string]any{"phase": "Succeeded"},
+				"reconciledAt":        "2026-09-16T10:00:00Z",
+				"controllerNamespace": "argocd",
+			}, "status")).To(Succeed())
+			Expect(unstructured.SetNestedMap(application.Object, map[string]any{
+				"sync": map[string]any{"revision": "abc123"},
+			}, "operation")).To(Succeed())
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			By("the operator rewriting the Application because the component's values changed")
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{
+				Raw: []byte(`{"replicaCount":3}`),
+			}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			reconcileAndGet()
+
+			rewritten := readApplication()
+
+			values, found, err := unstructured.NestedFieldNoCopy(
+				rewritten.Object, "spec", "source", "helm", "valuesObject")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the operator did not write the new values")
+			Expect(values).To(Equal(map[string]any{"replicaCount": int64(3)}))
+
+			Expect(rewritten.Object["status"]).To(Equal(application.Object["status"]))
+			Expect(rewritten.Object["operation"]).To(Equal(application.Object["operation"]))
+		})
+
+		It("should reject a spec write after ownership changes concurrently", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+			application := getApplication(firstComponent)
+			Expect(componentSetOwner.ownedBy(application, componentSet)).To(BeTrue())
+			// The read used for ownership has completed, but the spec write has not.
+			concurrent := getApplication(firstComponent)
+			concurrent.Annotations[annotationComponentSetName] = "another-set"
+			Expect(k8sClient.Update(ctx, concurrent)).To(Succeed())
+			before := application.DeepCopy()
+			application.Spec.Source.Path = "must-not-be-written"
+			_, err := createOrPatchArgoCDObject(ctx, k8sClient, before, application, application.Spec)
+			Expect(apierrors.IsConflict(err)).To(BeTrue(), "stale metadata must not overwrite a new owner: %v", err)
+			restored := getApplication(firstComponent)
+			Expect(restored.Annotations).To(HaveKeyWithValue(annotationComponentSetName, "another-set"))
+			Expect(restored.Spec.Source.Path).To(Equal(components()[0].Chart))
+		})
+
+		It("should retry a spec write that loses a race with an Argo CD status update", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+
+			// Argo CD's status writes move the resource version, so a patch built on
+			// an earlier read loses. A rollout must not stall on that.
+			racing := &staleOnFirstWrite{Client: k8sClient}
+			retrying := &CCLComponentSetReconciler{
+				Client:          racing,
+				Scheme:          k8sClient.Scheme(),
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
+			}
+
+			component := componentSet.Spec.Components[0]
+			component.Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":5}`)}
+			op, err := retrying.createOrPatchApplication(ctx, componentSet, component, 1)
+
+			Expect(err).NotTo(HaveOccurred(), "the conflict reached the caller unretried")
+			Expect(op).To(Equal(controllerutil.OperationResultUpdated))
+			Expect(racing.patches).To(Equal(2), "the write was not attempted again")
+
+			written := getApplication(firstComponent)
+			Expect(written.Spec.Source.Helm.ValuesObject.Raw).To(MatchJSON(`{"replicaCount":5}`))
+		})
+
+		It("should retry a create the cache made look necessary", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+
+			// Not reconciled yet, so this is the create path. AlreadyExists is what a
+			// cache that has not seen the object produces, and it is not IsConflict.
+			racing := &staleOnFirstWrite{Client: k8sClient}
+			retrying := &CCLComponentSetReconciler{
+				Client:          racing,
+				Scheme:          k8sClient.Scheme(),
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
+			}
+
+			op, err := retrying.createOrPatchApplication(
+				ctx, componentSet, componentSet.Spec.Components[0], 1)
+
+			Expect(err).NotTo(HaveOccurred(), "the AlreadyExists reached the caller unretried")
+			Expect(op).To(Equal(controllerutil.OperationResultCreated))
+			Expect(racing.creates).To(Equal(2), "the create was not attempted again")
+			Expect(getApplication(firstComponent).Spec.Source.Path).To(Equal(components()[0].Chart))
 		})
 
 		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
@@ -737,3 +977,44 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		})
 	})
 })
+
+// applicationsResource names the resource the faked errors below are about.
+var applicationsResource = schema.GroupResource{
+	Group:    argocdv1alpha1.GroupVersion.Group,
+	Resource: "applications",
+}
+
+// staleOnFirstWrite rejects the first write of each kind the way the API server does when
+// the read behind it is stale: Conflict for a patch naming an old resource version,
+// AlreadyExists for a create the cache made look necessary. Later writes pass through.
+type staleOnFirstWrite struct {
+	client.Client
+	patches int
+	creates int
+}
+
+func (c *staleOnFirstWrite) Patch(
+	ctx context.Context,
+	obj client.Object,
+	patch client.Patch,
+	opts ...client.PatchOption,
+) error {
+	c.patches++
+	if c.patches == 1 {
+		return apierrors.NewConflict(applicationsResource, obj.GetName(),
+			errors.New("the object has been modified"))
+	}
+	return c.Client.Patch(ctx, obj, patch, opts...)
+}
+
+func (c *staleOnFirstWrite) Create(
+	ctx context.Context,
+	obj client.Object,
+	opts ...client.CreateOption,
+) error {
+	c.creates++
+	if c.creates == 1 {
+		return apierrors.NewAlreadyExists(applicationsResource, obj.GetName())
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
