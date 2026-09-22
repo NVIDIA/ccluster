@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,6 +37,10 @@ func applicationName(componentSetName, componentName string) string {
 }
 
 // healthy reports whether an Application has finished converging.
+//
+// This is Argo CD's verdict on the spec it last compared, which is not always the spec
+// the operator wants now. DESIGN.md explains why status.sync.comparedTo cannot close
+// that gap, and what would.
 func healthy(application *argocdv1alpha1.Application) bool {
 	return application.HealthStatus() == argocdv1alpha1.HealthStatusHealthy &&
 		application.SyncStatus() == argocdv1alpha1.SyncStatusSynced
@@ -103,51 +108,60 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	}
 }
 
-// reconcileApplication creates or updates the Application for one component.
-func (r *CCLComponentSetReconciler) reconcileApplication(
+// createOrPatchApplication brings one component's Application in line with the spec.
+//
+// Read and write are retried together when the read turns out to be stale. Reads come
+// from the informer cache, and an Application has no status subresource, so Argo CD's
+// status writes keep moving the resource version. Letting the lost race out would cost a
+// whole reconcile and a spurious ApplicationFailed.
+func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 	wave int,
 ) (controllerutil.OperationResult, error) {
-	application := &argocdv1alpha1.Application{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: applicationName(componentSet.Name, component.Name),
-			// Alongside the CCLComponentSet, not in the Argo CD namespace: Argo CD
-			// watches every namespace (the cp chart's application.namespaces), and
-			// the namespace's AppProject admits Applications from here.
-			Namespace: componentSet.Namespace,
-		},
-	}
+	result := controllerutil.OperationResultNone
 
-	return controllerutil.CreateOrUpdate(ctx, r.Client, application, func() error {
+	// DefaultBackoff, not DefaultRetry: the interval grows (10ms, 50ms, 250ms, 1250ms),
+	// which gives the informer time to catch up. DefaultRetry stays at 10ms.
+	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
+		// A fresh object every attempt: Get decodes into whatever it is given, so
+		// reusing the last one would leave its stamp behind for before to copy.
+		application := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: applicationName(componentSet.Name, component.Name),
+				// Alongside the CCLComponentSet, not in the Argo CD namespace: Argo CD
+				// watches every namespace (the cp chart's application.namespaces), and
+				// the namespace's AppProject admits Applications from here.
+				Namespace: componentSet.Namespace,
+			},
+		}
+
+		if err := r.Get(ctx, client.ObjectKeyFromObject(application), application); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		before := application.DeepCopy()
 		if !componentSetOwner.ownedBy(application, componentSet) {
 			return errApplicationConflict
 		}
 		componentSetOwner.stamp(application, componentSet)
 
-		// The back-reference as a label as well as annotations. stamp writes the
-		// annotations, which is what the ownership check reads; this is what
-		// listApplications selects on, and selecting is how the operator knows which
-		// components it has already released.
+		// listApplications uses this label to find the components already released.
 		application.Labels[labelComponentSetName] = componentSet.Name
 
-		// Position in the rollout. Nothing acts on it - it is a label so that
-		// `kubectl get applications -L ccluster.nvidia.com/wave` shows the order the
-		// operator is working through.
+		// Informational only: kubectl can display the rollout position with -L.
 		application.Labels[labelWave] = strconv.Itoa(wave)
 
-		// Without this an Application delete is non-cascading: Argo CD's record goes
-		// away and the chart stays installed and unmanaged on the infra-plane cluster.
-		if !controllerutil.ContainsFinalizer(application, argocdv1alpha1.ResourcesFinalizer) {
-			controllerutil.AddFinalizer(application, argocdv1alpha1.ResourcesFinalizer)
-		}
+		// Deleting the Application must also uninstall its chart.
+		controllerutil.AddFinalizer(application, argocdv1alpha1.ResourcesFinalizer)
 
-		// Owned outright: rebuilt from scratch every reconcile, so hand edits are
-		// reverted rather than merged.
 		application.Spec = r.applicationSpec(componentSet, component)
-		return nil
+
+		var err error
+		result, err = createOrPatchArgoCDObject(ctx, r.Client, before, application, application.Spec)
+		return err
 	})
+	return result, err
 }
 
 // reconcileApplications writes an Application for each of the first `released`
@@ -164,7 +178,7 @@ func (r *CCLComponentSetReconciler) reconcileApplications(
 	existing map[string]*argocdv1alpha1.Application,
 ) (changed bool, err error) {
 	for i, component := range componentSet.Spec.Components[:released] {
-		op, err := r.reconcileApplication(ctx, componentSet, component, i+1)
+		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
 		if err != nil {
 			return changed, err
 		}

@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -280,6 +281,37 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			restored := getProject(projectNamespacedName)
 			Expect(restored.Spec.SourceRepos).To(Equal([]string{repoURL}))
 			Expect(restored.Spec.PermitOnlyProjectScopedClusters).To(BeTrue())
+		})
+
+		// sourceRepos is modelled and namespaceResourceBlacklist is not, so only the
+		// first is visible to the comparison that decides whether to write. The write it
+		// triggers replaces the whole spec, taking the second with it, and leaves the
+		// status Argo CD owns in place - which a whole-object update would delete, since
+		// the operator's AppProject type has no status at all.
+		It("should replace the AppProject spec while preserving Argo CD status", func() {
+			settle()
+			project := getProject(projectNamespacedName)
+			Expect(k8sClient.Patch(ctx, project, client.RawPatch(types.MergePatchType, []byte(`{
+				"spec":{"sourceRepos":["*"],"namespaceResourceBlacklist":[{"group":"*","kind":"*"}]},
+				"status":{"jwtTokensByRole":{"reader":{"items":[{"id":"test-id","iat":1}]}}}
+			}`)))).To(Succeed())
+
+			reconcileAndGet()
+			raw := &unstructured.Unstructured{}
+			raw.SetGroupVersionKind(argocdv1alpha1.GroupVersion.WithKind("AppProject"))
+			Expect(k8sClient.Get(ctx, projectNamespacedName, raw)).To(Succeed())
+			_, found, err := unstructured.NestedFieldNoCopy(raw.Object, "spec", "namespaceResourceBlacklist")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+			Expect(getProject(projectNamespacedName).Spec.SourceRepos).To(Equal([]string{repoURL}))
+			tokens, found, err := unstructured.NestedSlice(raw.Object, "status", "jwtTokensByRole", "reader", "items")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(tokens).To(Equal([]any{map[string]any{"id": "test-id", "iat": int64(1)}}))
+
+			version := raw.GetResourceVersion()
+			reconcileAndGet()
+			Expect(getProject(projectNamespacedName).ResourceVersion).To(Equal(version))
 		})
 
 		// Argo CD refuses an AppProject that lists the Argo CD namespace itself in

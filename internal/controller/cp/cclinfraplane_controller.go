@@ -136,7 +136,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Patch(ctx, &infraPlane, client.MergeFrom(base)))
 	}
 
-	op, err := r.reconcileProject(ctx, &infraPlane)
+	op, err := r.createOrPatchProject(ctx, &infraPlane)
 	switch {
 	case apimeta.IsNoMatchError(err):
 		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator

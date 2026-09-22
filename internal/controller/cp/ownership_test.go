@@ -167,8 +167,8 @@ func TestStamp(t *testing.T) {
 	owner := ownerInfraPlane("plane-a", "default")
 
 	t.Run("initialises nil label and annotation maps", func(t *testing.T) {
-		// reconcileApplication writes into obj.Labels directly on the line after it
-		// calls stamp, so a stamp that stopped allocating would nil-map panic there.
+		// createOrPatchApplication writes into obj.Labels just after it calls stamp, so
+		// a stamp that stopped allocating would nil-map panic there.
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "plane-a"}}
 		infraPlaneOwner.stamp(secret, owner)
 

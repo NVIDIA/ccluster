@@ -6,7 +6,7 @@
 # charts/cp/chart/charts/argo-cd-*.tgz) and cannot be copied into CRDDirectoryPaths. The
 # schema is left open: the tests only need the object stored and read back.
 #
-# No status subresource, matching the real CRD - Argo CD keeps no status on a project.
+# No status subresource, matching the real CRD. Argo CD stores JWT token records in status.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -31,5 +31,8 @@ spec:
           type: object
           properties:
             spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
