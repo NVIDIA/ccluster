@@ -126,9 +126,8 @@ rbac:
   ## Helper roles for CRD management (admin/editor/viewer)
   ##
   helpers:
-    ## Install convenience admin/editor/viewer roles for CRDs. The ip chart carries
-    ## no CRDs, so there is nothing for them to grant.
-    enabled: false
+    ## Install convenience admin/editor/viewer roles for the CCLClusterConfig CRD.
+    enabled: true
 
 ## ServiceAccount configuration
 ##
@@ -148,6 +147,15 @@ serviceAccount:
   ## Custom ServiceAccount labels
   ##
   # labels: {}
+
+## Custom Resource Definitions
+##
+crd:
+  # Install the CCLClusterConfig CRD with the chart
+  enabled: true
+  # Keep it when uninstalling, so the CCLClusterConfig object survives a chart
+  # reinstall. Deleting a CRD deletes its objects.
+  keep: true
 
 ## Controller metrics endpoint.
 ## Enable to expose /metrics endpoint

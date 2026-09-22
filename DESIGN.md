@@ -69,7 +69,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | Piece | Role |
 | --- | --- |
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
-| `ccluster-ip-operator` | Runs in each infra-plane cluster. A placeholder: it registers no controllers yet. |
+| `ccluster-ip-operator` | Runs in each infra-plane cluster. Registers no controllers yet; `CCLClusterConfig` (§3a) is the input its first one will reconcile. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
@@ -188,6 +188,33 @@ on delete — and only if the ownership check still agrees they are ours.
 `Available` — `True/ClusterSecretCreated`, or `False` with `SecretNotFound` (the referenced
 Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No failure
 requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
+
+## 3a. `CCLClusterConfig` — describing an infra-plane cluster from the inside
+
+```yaml
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLClusterConfig
+metadata:
+  name: cluster
+spec:
+  domain: gpu-a.infra.example.com
+```
+
+The control plane knows what it *asked* Argo CD to deploy onto a cluster, and Argo CD's
+health tells it whether the sync landed. Neither says whether the platform stack on that
+cluster actually works and is configured for it — whether SPIRE issues identities in the
+cluster's own trust domain, whether external-dns is filtered to the cluster's zone. That
+is the infra-plane operator's job, and it needs an input to check against.
+
+`CCLClusterConfig` is that input, a cluster-scoped singleton (the CRD's CEL rule admits
+only the name `cluster`) served by the ip chart alone: the control-plane chart drops it,
+and the ip chart drops the two control-plane kinds, each with a `$patch: delete` in its
+overlay, because kustomize will not load a CRD file from outside a kustomization's own
+directory and so a per-operator list cannot live under `config/crd/`. Its spec carries
+just what checks consume today: the cluster's domain, which is also its SPIFFE trust
+domain. It is created once the domain exists — which is after the cluster has been
+registered with the control plane. Its status reports a `Verified` condition; the
+controller that writes it is not built yet (§8).
 
 ## 4. `CCLComponentSet` — an ordered bundle of charts
 
@@ -483,7 +510,8 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
 - **The infra-plane operator is empty.** `internal/controller/ip/` contains only `doc.go`;
-  its RBAC role is hand-written with `rules: []`.
+  its RBAC role is hand-written with `rules: []`. `CCLClusterConfig` exists but nothing
+  reconciles it yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the

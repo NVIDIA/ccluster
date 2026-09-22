@@ -5,9 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 // ccluster-ip-operator runs in an infra-plane cluster.
 //
-// This is a placeholder: it starts a manager with health probes and a metrics
-// server but registers no controllers yet. Add them to setupControllers below,
-// with their reconcilers in internal/controller/ip.
+// It starts a manager with health probes and a metrics server but registers no
+// controllers yet; the CCLClusterConfig it will reconcile is already in its scheme. Add
+// controllers to setupControllers below, with their reconcilers in internal/controller/ip.
 package main
 
 import (
@@ -19,6 +19,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 )
 
@@ -26,6 +27,8 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(scheme))
 }
 
 func main() {
