@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -84,17 +85,7 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	var failing []string
-	total := 0
-	for _, component := range r.Components {
-		if component.Verifier == nil {
-			continue
-		}
-		total++
-		if !component.Verifier.Verify(ctx, r, config.Spec) {
-			failing = append(failing, component.Chart)
-		}
-	}
+	total, failing := r.verify(ctx, config.Spec)
 
 	status, reason, message := verifiedCondition(total, failing)
 	previous := apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeVerified)
@@ -111,6 +102,39 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{RequeueAfter: recheckWhileFailing}, nil
 	}
 	return ctrl.Result{RequeueAfter: recheckWhenVerified}, nil
+}
+
+// verify runs every registered Verifier against spec and returns how many there were
+// and the charts whose Verifier reported false, in catalog order.
+//
+// The Verifiers run concurrently. Each is an independent set of reads through the
+// manager's cached client, which is safe for concurrent use, so the pass takes as long
+// as the slowest check rather than the sum of all of them. Results are collected by
+// position so the failing list, and with it the condition message, is deterministic
+// whatever order the goroutines finish in.
+func (r *CCLClusterConfigReconciler) verify(
+	ctx context.Context,
+	spec cclusternvidiacomv1alpha1.CCLClusterConfigSpec,
+) (total int, failing []string) {
+	verified := make([]bool, len(r.Components))
+	var wg sync.WaitGroup
+	for i, component := range r.Components {
+		if component.Verifier == nil {
+			continue
+		}
+		total++
+		wg.Go(func() {
+			verified[i] = component.Verifier.Verify(ctx, r, spec)
+		})
+	}
+	wg.Wait()
+
+	for i, component := range r.Components {
+		if component.Verifier != nil && !verified[i] {
+			failing = append(failing, component.Chart)
+		}
+	}
+	return total, failing
 }
 
 // verifiedCondition turns the verification outcome into the Verified condition.

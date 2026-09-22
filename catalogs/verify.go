@@ -24,6 +24,10 @@ import (
 // controller-runtime read needs; r is a cached, read-only client; cfg is the cluster's
 // declared configuration, for checks such as "spire's trust domain is this cluster's
 // domain".
+//
+// The operator runs all Verifiers concurrently, so an implementation must not rely on
+// another component's Verifier having run, and must be safe to call from its own
+// goroutine; r is safe for concurrent reads.
 type Verifier interface {
 	Verify(ctx context.Context, r client.Reader, cfg cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool
 }

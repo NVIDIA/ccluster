@@ -7,7 +7,9 @@ package ip
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -167,6 +169,30 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		Expect(verified().ObservedGeneration).To(Equal(config.Generation))
 	})
 
+	It("runs the Verifiers concurrently", func() {
+		// Each Verifier blocks until every other one has been called. A sequential
+		// controller would never get there; the timeout on ctx fails the spec instead
+		// of hanging the suite.
+		var arrived sync.WaitGroup
+		arrived.Add(2)
+		met := make(chan struct{})
+		go func() {
+			arrived.Wait()
+			close(met)
+		}()
+		rendezvous := &meetingVerifier{arrived: &arrived, met: met}
+		reconciler.Components = []components.Component{
+			{Chart: chartA, Verifier: rendezvous},
+			{Chart: chartB, Verifier: rendezvous},
+		}
+
+		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_, err := reconciler.Reconcile(timeout, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified().Status).To(Equal(metav1.ConditionTrue))
+	})
+
 	It("is idle when the singleton does not exist", func() {
 		config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
@@ -195,5 +221,26 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 	})
 })
 
-// Compile-time check that the test double is what the controller consumes.
-var _ catalogs.Verifier = &switchVerifier{}
+// meetingVerifier passes only once every expected call to Verify is in flight at the
+// same time: each call checks in on arrived and then waits for met, which the spec
+// closes when the last one has checked in.
+type meetingVerifier struct {
+	arrived *sync.WaitGroup
+	met     <-chan struct{}
+}
+
+func (v *meetingVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+	v.arrived.Done()
+	select {
+	case <-v.met:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Compile-time check that the test doubles are what the controller consumes.
+var (
+	_ catalogs.Verifier = &switchVerifier{}
+	_ catalogs.Verifier = &meetingVerifier{}
+)
