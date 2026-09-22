@@ -33,14 +33,11 @@ Keep leader-election IDs `cp.ccluster.nvidia.com` and `ip.ccluster.nvidia.com` d
 
 ## Per-operator RBAC
 
-`make manifests` generates CRDs over `./api/...` and cp RBAC over
-`./internal/controller/cp/...`, into `config/crd/bases/` and `config/cp/rbac/role.yaml`.
-Markers only grant rights to the operator whose package contains them.
-
-The ip RBAC generation pass is disabled: controller-gen produces no file for a package
-without markers. `config/ip/rbac/role.yaml` therefore contains hand-written `rules: []`.
-When adding the first ip controller, remove that placeholder and enable the ip pass in
-`manifests`. The overlays prefix the shared `manager-role` name for each operator.
+`make manifests` generates CRDs over `./api/...` into `config/crd/bases/`, and one RBAC
+role per operator: `./internal/controller/cp/...` into `config/cp/rbac/role.yaml` and
+`./internal/controller/ip/...` into `config/ip/rbac/role.yaml`. Markers only grant rights
+to the operator whose package contains them. The overlays prefix the shared
+`manager-role` name for each operator.
 
 Each deploy overlay includes `config/crd` and deletes the CRDs the other operator serves
 with a `$patch: delete` patch, because kustomize refuses to load a file from outside a
@@ -117,7 +114,12 @@ When adding or changing a component:
   its path under `ccluster.catalogs` in Python automatically, whether it sits in a
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
-  choices, not a universally deployable default.
+  choices, not a universally deployable default; teleport values need real configuration.
+- A `cluster_base` component is registered in `components.All` with a `catalogs.Verifier`
+  beside its `Values` (`TestClusterBaseHasVerifiers` fails otherwise). Start with
+  `catalogs.DefaultVerifier`; a check of the chart's own reads live objects only (never
+  Argo CD or Helm state), and reading a kind needs a `+kubebuilder:rbac` marker in
+  `internal/controller/ip` and `make manifests`.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. This is separate from the generated operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.

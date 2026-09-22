@@ -89,6 +89,16 @@ kubectl -n ccluster-quickstart get cclcomponentsets
 kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
+In the infra-plane cluster, describe the cluster to its operator and it reports whether
+every `catalogs/cluster_base` component verifies against it (every component's check is
+a placeholder reporting true for now):
+
+```bash
+kubectl apply -f examples/quickstart/v1alpha1_cclclusterconfig.yaml
+kubectl get cclclusterconfig cluster
+kubectl get cclclusterconfig cluster -o jsonpath='{.status.conditions[0].message}'
+```
+
 The sample `CCLComponentSet` deploys from `--catalog-repo-url` at `--catalog-revision`
 (`https://github.com/NVIDIA/ccluster` at `main` by default). Argo CD clones that repository
 itself, so if it is private give it a token with read access:

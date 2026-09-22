@@ -10,6 +10,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ### Added
 - `CCLComponentSet` status gains `componentSyncs`, which records the sync the operator
   asked Argo CD for per component, and its result.
+- The first ccluster-ip-operator controller: it runs every `catalogs/cluster_base`
+  component's `Verifier` against the `CCLClusterConfig` and reports the outcome as its
+  `Verified` condition. `catalogs.Verifier` is registered per `cluster_base` chart in
+  `components.All`; every chart starts with `catalogs.DefaultVerifier`, which reports
+  true, and real checks follow. The ip ClusterRole is now generated from
+  `internal/controller/ip`.
 - `dynamo_deployment` gains `kvTransfer`, which selects the NIXL backend of the
   disaggregated pools, UCX or LIBFABRIC. LIBFABRIC requires `kvTransfer.efa`, which gives
   every worker one EFA device through DRA.
