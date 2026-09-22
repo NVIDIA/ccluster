@@ -53,13 +53,14 @@ def main() -> None:
         parser.error("--infra-plane is required unless --delete is given")
 
     api_client = new_client_from_config() if args.kubeconfig else None
-    client = CCLClient(args.namespace, api_client=api_client)
+    client = CCLClient(api_client=api_client)
     if args.delete:
-        client.delete_component_set(args.name)
+        client.delete_component_set(args.namespace, args.name)
         print(f"deleted {args.namespace}/{args.name}")
         return
 
-    component_set = client.create_component_set(
+    component_set = client.apply_component_set(
+        args.namespace,
         args.name,
         [
             catalogs.component(

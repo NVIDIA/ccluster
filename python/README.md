@@ -49,37 +49,42 @@ catalog makes with pointer fields.
 
 ## Creating an infra plane
 
-`CCLClient` writes into one namespace, given at construction and created then if it does
-not exist, and by default connects with the in-cluster configuration of the pod it runs
-in. `create_infraplane` creates a Secret named `<name>-credentials` in Argo CD's
-cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
-`CCLInfraPlane` pointing at it; `delete_infraplane` deletes the Secret and the CCLInfraPlane, the
-CCLInfraPlane first so the operator's finalizer removes the mirrored Argo CD Secret, and
-leaves the namespace. Everything is server-side applied under the `ccluster-py` field
-manager, so re-registering a cluster rotates its token in place. Both `create_infraplane`
-and `create_component_set` return the applied object, a `CCLInfraPlane` or
+Every `CCLClient` method takes the namespace it works in as its first argument, so one
+client serves every namespace; constructing it neither reads nor writes, and by default it
+connects with the in-cluster configuration of the pod it runs in. `apply_infraplane`
+applies a Secret named `<name>-credentials` in Argo CD's cluster-secret shape (`server`,
+and a `config` carrying the bearer token and the CA) and a `CCLInfraPlane` pointing at it;
+`delete_infraplane` deletes the Secret and the CCLInfraPlane, the CCLInfraPlane first so
+the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace.
+`ensure_namespace` creates the namespace, and is the only method that does: keeping it
+separate means a mistyped namespace fails against the API server rather than quietly
+gaining a working plane. Everything is server-side applied under the `ccluster-py` field
+manager, so re-registering a cluster rotates its token in place. Both `apply_infraplane`
+and `apply_component_set` return the applied object, a `CCLInfraPlane` or
 `CCLComponentSet`, with the metadata the server filled in and the status the operator has
 written so far.
 
 ```python
 from ccluster.client import CCLClient
 
-client = CCLClient("tenant-a")   # in-cluster
-plane = client.create_infraplane(
-    "edge-1",
-    "https://10.0.0.1:6443",
+client = CCLClient()   # in-cluster
+client.ensure_namespace("tenant-a")
+plane = client.apply_infraplane(
+    "tenant-a",
+    name="edge-1",
+    server="https://10.0.0.1:6443",
     bearer_token=open("token").read(),
     ca_cert=open("ca.crt").read(),
 )
-client.delete_infraplane("edge-1")
+client.delete_infraplane("tenant-a", name="edge-1")
 ```
 
 `server`, `bearer_token` and `ca_cert` are all optional. With none given,
-`create_infraplane` registers the cluster the operator itself runs in, credential-free —
+`apply_infraplane` registers the cluster the operator itself runs in, credential-free —
 Argo CD's special-cased in-cluster address, no ServiceAccount or token needed:
 
 ```python
-plane = client.create_infraplane("ccluster-local")
+plane = client.apply_infraplane("tenant-a", name="ccluster-local")
 ```
 
 From a workstation, pass a client built from your kubeconfig:
@@ -87,7 +92,7 @@ From a workstation, pass a client built from your kubeconfig:
 ```python
 from kubernetes.config import new_client_from_config
 
-client = CCLClient("tenant-a", api_client=new_client_from_config())
+client = CCLClient(api_client=new_client_from_config())
 ```
 
 `examples/create_infraplane.py` is the same as a command. The call returns once the
@@ -96,35 +101,40 @@ has marked the plane `Available`.
 
 ## Deploying a component set
 
-`create_component_set` server-side applies a `CCLComponentSet` in the client's namespace
+`apply_component_set` server-side applies a `CCLComponentSet` in the given namespace
 from a list of components built with `catalogs.component`, each with a chart's typed
 `Values` where the defaults are not wanted. Each component's `infraPlaneRef`
 names the registered cluster it deploys to, so one set may span several planes; those
 planes must be in the same namespace and already `Available`. List order is rollout order.
 Because the set is applied under the same `ccluster-py` field manager, calling
-`create_component_set` again with a different list updates it in place.
+`apply_component_set` again with a different list updates it in place. The namespace
+argument is the set's own, on the control plane; a component's own namespace is on its
+infra plane, created there by Argo CD from the `CreateNamespace=true` sync option the
+operator puts on every Application.
 
 ```python
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import keda
 from ccluster.client import CCLClient, component_set_current_conditions
 
-client = CCLClient("tenant-a")
-client.create_infraplane("ccluster-local")
-cs = client.create_component_set(
-    "local-base",
-    [
+client = CCLClient()
+client.ensure_namespace("tenant-a")
+client.apply_infraplane("tenant-a", name="ccluster-local")
+cs = client.apply_component_set(
+    "tenant-a",
+    name="local-base",
+    components=[
         catalogs.component(
             "keda", "ccluster-local", keda.CHART, "keda",
             keda.Values(keda=keda.ChartValues(operator=keda.Replicas(replica_count=1))),
         ),
     ],
 )
-finished = client.is_component_set_finished("local-base")
-client.delete_component_set("local-base")
+finished = client.is_component_set_finished("tenant-a", name="local-base")
+client.delete_component_set("tenant-a", name="local-base")
 ```
 
-`create_component_set` does not wait for rollout completion. Poll
+`apply_component_set` does not wait for rollout completion. Poll
 `is_component_set_finished` with a caller-defined timeout before deploying dependent sets.
 It reads once and requires `Validated=True`, `ComponentsApplied=True` and
 `Progressing=False` for the current generation. It returns `False` during deletion and
@@ -137,8 +147,10 @@ other types still carry the previous generation's. `get_component_set` and
 `get_infraplane` read one object and return it as its model, or raise `NotFoundError`.
 
 ```python
-if not client.is_component_set_finished("local-base"):
-    conditions = component_set_current_conditions(client.get_component_set("local-base"))
+if not client.is_component_set_finished("tenant-a", name="local-base"):
+    conditions = component_set_current_conditions(
+        client.get_component_set("tenant-a", name="local-base")
+    )
     for condition in conditions.values():
         print(condition.type, condition.status.value, condition.reason, condition.message)
 ```

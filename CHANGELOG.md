@@ -21,6 +21,19 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   write into the spec the operator owns, and the deployment history in its Application
   status must survive a spec rewrite rather than restart.
 
+### Changed
+- `CCLClient` is no longer scoped to one namespace: `CCLClient(namespace, api_client=...)`
+  becomes `CCLClient(api_client=...)` and every method takes its namespace as the first
+  argument. Nothing the client held was namespace-specific, so one client now serves every
+  namespace and pays for its connection and API discovery once.
+- Constructing a `CCLClient` neither reads nor writes, and no write method creates a
+  namespace. `CCLClient.ensure_namespace(namespace)` does, and is the only method that
+  does, so a mistyped namespace fails against the API server rather than quietly gaining
+  a working infra plane.
+- `CCLClient.create_infraplane` and `CCLClient.create_component_set` are renamed
+  `apply_infraplane` and `apply_component_set`. Both server-side apply, so they create
+  the object or update it in place; the old names said only the first.
+
 ### Fixed
 - Application and AppProject reconciliation no longer deletes the Argo CD status and any
   pending operation on the objects it manages: the managed spec is replaced with a patch

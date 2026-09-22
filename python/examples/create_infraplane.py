@@ -39,6 +39,11 @@ def main() -> None:
     parser.add_argument(
         "--namespace", required=True, help="namespace to register it in"
     )
+    parser.add_argument(
+        "--create-namespace",
+        action="store_true",
+        help="create the namespace if it does not exist",
+    )
     parser.add_argument("--token-file", type=Path, default=None)
     parser.add_argument(
         "--ca-file", type=Path, default=None, help="CA certificate, PEM"
@@ -51,8 +56,11 @@ def main() -> None:
     args = parser.parse_args()
 
     api_client = new_client_from_config() if args.kubeconfig else None
-    client = CCLClient(args.namespace, api_client=api_client)
-    plane = client.create_infraplane(
+    client = CCLClient(api_client=api_client)
+    if args.create_namespace:
+        client.ensure_namespace(args.namespace)
+    plane = client.apply_infraplane(
+        args.namespace,
         args.name,
         args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
