@@ -33,6 +33,8 @@ type Verifier interface {
 // its own when it has something to look at.
 type DefaultVerifier struct{}
 
+// Compile-time check that DefaultVerifier satisfies Verifier; the blank variable is
+// never used and costs nothing at runtime.
 var _ Verifier = DefaultVerifier{}
 
 // Verify always reports true.
