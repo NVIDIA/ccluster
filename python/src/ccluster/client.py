@@ -15,7 +15,7 @@ import base64
 from kubernetes import client as k8s
 from kubernetes import config
 from kubernetes.dynamic import DynamicClient
-from kubernetes.dynamic.exceptions import NotFoundError
+from kubernetes.dynamic.exceptions import ConflictError, NotFoundError
 from pydantic import BaseModel, ConfigDict, Field
 
 from ccluster.v1alpha1 import API_VERSION, CCLComponentSet, CCLInfraPlane, Kind, ObjectMeta
@@ -100,9 +100,11 @@ class CCLClient:
 
     Every method but the constructor takes as its first argument the namespace it works
     in: the CCLInfraPlanes, their credentials Secrets and the CCLComponentSets live there.
-    Nothing the client holds is namespace-specific, so one client serves every namespace
-    and constructing it neither reads nor writes. api_client defaults to the in-cluster
-    configuration; from a workstation pass kubernetes.config.new_client_from_config().
+    Every other argument is keyword-only, so a namespace and a name cannot be passed in
+    the wrong order. Nothing the client holds is namespace-specific, so one client serves
+    every namespace and constructing it only runs API discovery. api_client defaults to
+    the in-cluster configuration; from a workstation pass
+    kubernetes.config.new_client_from_config().
     """
 
     def __init__(self, api_client: k8s.ApiClient | None = None) -> None:
@@ -124,6 +126,7 @@ class CCLClient:
     def ensure_namespace(self, namespace: str) -> None:
         """Create namespace if it does not exist.
 
+        Another caller creating it between this read and this create is not an error.
         No other method creates one, so call this before registering the first
         CCLInfraPlane of a namespace. A CCLComponentSet needs an Available CCLInfraPlane
         already in its namespace, so it can never be the first object written there.
@@ -138,13 +141,17 @@ class CCLClient:
                 kind="Namespace",
                 metadata=k8s.V1ObjectMeta(name=namespace),
             )
-            self._dynamic.create(
-                self._namespace_gvr, body=self._api.sanitize_for_serialization(body)
-            )
+            try:
+                self._dynamic.create(
+                    self._namespace_gvr, body=self._api.sanitize_for_serialization(body)
+                )
+            except ConflictError:
+                pass
 
     def apply_infraplane(
         self,
         namespace: str,
+        *,
         name: str,
         server: str | None = None,
         bearer_token: str | None = None,
@@ -198,23 +205,24 @@ class CCLClient:
             self._apply_object(self._infra_plane_gvr, namespace, plane)
         )
 
-    def delete_infraplane(self, namespace: str, name: str) -> None:
+    def delete_infraplane(self, namespace: str, *, name: str) -> None:
         """Remove the CCLInfraPlane called name in namespace and its credentials Secret.
 
         The CCLInfraPlane goes first so its finalizer can remove the mirrored Argo CD
-        cluster Secret. Either object already being gone is not an error. The namespace
-        is left in place.
+        cluster Secret. Either object already being gone is not an error, and neither is
+        a namespace that does not exist: the API server answers both with the same 404.
+        The namespace is left in place.
         """
         self._delete(self._infra_plane_gvr, namespace, name)
         self._delete(self._secret_gvr, namespace, _credentials_secret_name(name))
 
-    def get_infraplane(self, namespace: str, name: str) -> CCLInfraPlane:
+    def get_infraplane(self, namespace: str, *, name: str) -> CCLInfraPlane:
         """Return the CCLInfraPlane called name in namespace, or raise NotFoundError."""
         plane = self._dynamic.get(self._infra_plane_gvr, name=name, namespace=namespace)
         return CCLInfraPlane.model_validate(plane.to_dict())
 
     def apply_component_set(
-        self, namespace: str, name: str, components: list[ComponentSpec]
+        self, namespace: str, *, name: str, components: list[ComponentSpec]
     ) -> CCLComponentSet:
         """Create or update the CCLComponentSet called name in namespace.
 
@@ -239,7 +247,7 @@ class CCLClient:
             self._apply_object(self._component_set_gvr, namespace, component_set)
         )
 
-    def is_component_set_finished(self, namespace: str, name: str) -> bool:
+    def is_component_set_finished(self, namespace: str, *, name: str) -> bool:
         """Return whether the current generation is applied and reported converged.
 
         Reads once. Returns False during deletion or unless validation, Application
@@ -252,7 +260,7 @@ class CCLClient:
         as Argo CD last compared it, so shortly after an update it can still describe the
         previous spec. Treat True as convergence, not as proof the newest values are live.
         """
-        component_set = self.get_component_set(namespace, name)
+        component_set = self.get_component_set(namespace, name=name)
 
         # deletionTimestamp is server-managed metadata, retained by ObjectMeta's
         # extra="allow". The finalizer never writes conditions, so a set being torn down
@@ -282,17 +290,19 @@ class CCLClient:
         body = obj.model_dump(mode="json", by_alias=True, exclude_none=True)
         return self._apply(gvr, namespace, body).to_dict()
 
-    def delete_component_set(self, namespace: str, name: str) -> None:
+    def delete_component_set(self, namespace: str, *, name: str) -> None:
         """Remove the CCLComponentSet called name in namespace.
 
         Returns as soon as the delete is accepted. The operator's finalizer then removes
         the set's Argo CD Applications in reverse order, one at a time, so the object
         stays in Terminating until every chart is uninstalled. Already being gone is not
-        an error. The referenced CCLInfraPlanes and the namespace are left in place.
+        an error, and neither is a namespace that does not exist: the API server answers
+        both with the same 404. The referenced CCLInfraPlanes and the namespace are left
+        in place.
         """
         self._delete(self._component_set_gvr, namespace, name)
 
-    def get_component_set(self, namespace: str, name: str) -> CCLComponentSet:
+    def get_component_set(self, namespace: str, *, name: str) -> CCLComponentSet:
         """Return the CCLComponentSet called name in namespace, or raise NotFoundError."""
         got = self._dynamic.get(self._component_set_gvr, name=name, namespace=namespace)
         return CCLComponentSet.model_validate(got.to_dict())

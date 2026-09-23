@@ -55,14 +55,14 @@ def main() -> None:
     api_client = new_client_from_config() if args.kubeconfig else None
     client = CCLClient(api_client=api_client)
     if args.delete:
-        client.delete_component_set(args.namespace, args.name)
+        client.delete_component_set(args.namespace, name=args.name)
         print(f"deleted {args.namespace}/{args.name}")
         return
 
     component_set = client.apply_component_set(
         args.namespace,
-        args.name,
-        [
+        name=args.name,
+        components=[
             catalogs.component(
                 "argo-rollouts", args.infra_plane, argo_rollouts.CHART, "argo-rollouts"
             ),

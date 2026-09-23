@@ -24,9 +24,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ### Changed
 - `CCLClient` is no longer scoped to one namespace: `CCLClient(namespace, api_client=...)`
   becomes `CCLClient(api_client=...)` and every method takes its namespace as the first
-  argument. Nothing the client held was namespace-specific, so one client now serves every
-  namespace and pays for its connection and API discovery once.
-- Constructing a `CCLClient` neither reads nor writes, and no write method creates a
+  argument and the rest by keyword. Nothing the client held was namespace-specific, so one
+  client now serves every namespace and pays for its connection and API discovery once.
+- Constructing a `CCLClient` only runs API discovery, and no write method creates a
   namespace. `CCLClient.ensure_namespace(namespace)` does, and is the only method that
   does, so a mistyped namespace fails against the API server rather than quietly gaining
   a working infra plane.

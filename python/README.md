@@ -49,8 +49,9 @@ catalog makes with pointer fields.
 
 ## Creating an infra plane
 
-Every `CCLClient` method takes the namespace it works in as its first argument, so one
-client serves every namespace; constructing it neither reads nor writes, and by default it
+Every `CCLClient` method takes the namespace it works in as its first argument and the
+rest by keyword, so a namespace and a name cannot be passed in the wrong order. One client
+serves every namespace; its constructor only runs API discovery, and by default it
 connects with the in-cluster configuration of the pod it runs in. `apply_infraplane`
 applies a Secret named `<name>-credentials` in Argo CD's cluster-secret shape (`server`,
 and a `config` carrying the bearer token and the CA) and a `CCLInfraPlane` pointing at it;

@@ -37,12 +37,9 @@ def main() -> None:
         "in-cluster server",
     )
     parser.add_argument(
-        "--namespace", required=True, help="namespace to register it in"
-    )
-    parser.add_argument(
-        "--create-namespace",
-        action="store_true",
-        help="create the namespace if it does not exist",
+        "--namespace",
+        required=True,
+        help="namespace to register it in; created if it does not exist",
     )
     parser.add_argument("--token-file", type=Path, default=None)
     parser.add_argument(
@@ -57,12 +54,11 @@ def main() -> None:
 
     api_client = new_client_from_config() if args.kubeconfig else None
     client = CCLClient(api_client=api_client)
-    if args.create_namespace:
-        client.ensure_namespace(args.namespace)
+    client.ensure_namespace(args.namespace)
     plane = client.apply_infraplane(
         args.namespace,
-        args.name,
-        args.server,
+        name=args.name,
+        server=args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
         ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
     )
