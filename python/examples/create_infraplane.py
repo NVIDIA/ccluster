@@ -21,7 +21,8 @@ instead of the in-cluster configuration.
 import argparse
 from pathlib import Path
 
-from kubernetes.config import new_client_from_config
+from kubernetes import client as k8s
+from kubernetes import config
 
 from ccluster.client import CCLClient
 
@@ -52,11 +53,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_client = new_client_from_config() if args.kubeconfig else None
-    client = CCLClient(api_client=api_client)
-    client.ensure_namespace(args.namespace)
+    if args.kubeconfig:
+        api_client = config.new_client_from_config()
+    else:
+        config.load_incluster_config()
+        api_client = k8s.ApiClient()
+    client = CCLClient(args.namespace, api_client=api_client)
+    client.ensure_namespace()
     plane = client.apply_infraplane(
-        args.namespace,
         name=args.name,
         server=args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,

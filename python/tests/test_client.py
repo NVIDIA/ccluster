@@ -88,8 +88,11 @@ class FakeDynamicClient:
 def fake(monkeypatch):
     holder = {}
 
+    holder["built"] = 0
+
     def factory(api_client):
         holder["client"] = FakeDynamicClient(api_client)
+        holder["built"] += 1
         return holder["client"]
 
     monkeypatch.setattr(client_module, "DynamicClient", factory)
@@ -97,7 +100,7 @@ def fake(monkeypatch):
 
 
 def make_client(fake):
-    c = CCLClient(api_client=k8s.ApiClient())
+    c = CCLClient(NS, api_client=k8s.ApiClient())
     return c, fake["client"]
 
 
@@ -109,7 +112,7 @@ def test_constructing_reads_and_writes_no_object(fake):
 def test_ensure_namespace_creates_a_missing_namespace(fake):
     c, dyn = make_client(fake)
 
-    c.ensure_namespace(NS)
+    c.ensure_namespace()
 
     assert dyn.created == [
         (
@@ -123,7 +126,7 @@ def test_ensure_namespace_leaves_an_existing_namespace_alone(fake):
     c, dyn = make_client(fake)
     dyn.namespaces.add("tenant")
 
-    c.ensure_namespace(NS)
+    c.ensure_namespace()
 
     assert dyn.reads == [("Namespace", "tenant", None)]
     assert dyn.created == []
@@ -133,7 +136,7 @@ def test_ensure_namespace_tolerates_a_concurrent_create(fake):
     c, dyn = make_client(fake)
     dyn.racing.add(NS)
 
-    c.ensure_namespace(NS)
+    c.ensure_namespace()
 
     assert dyn.reads == [("Namespace", "tenant", None)]
 
@@ -145,10 +148,9 @@ def test_no_write_creates_a_namespace(fake):
     c, dyn = make_client(fake)
 
     c.apply_infraplane(
-        NS, name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
     )
     c.apply_component_set(
-        NS,
         name="local-base",
         components=[catalogs.component("keda", "edge-1", keda.CHART, "keda")],
     )
@@ -157,29 +159,35 @@ def test_no_write_creates_a_namespace(fake):
     assert dyn.reads == []
 
 
-def test_one_client_serves_several_namespaces(fake):
-    c, dyn = make_client(fake)
+def test_clients_sharing_an_api_client_discover_once(fake):
+    api_client = k8s.ApiClient()
+    a = CCLClient("tenant-a", api_client=api_client)
+    b = CCLClient("tenant-b", api_client=api_client)
 
-    def keda_component():
-        return [catalogs.component("keda", "edge-1", keda.CHART, "keda")]
-
-    c.apply_component_set("tenant-a", name="base", components=keda_component())
-    c.apply_component_set("tenant-b", name="base", components=keda_component())
-    c.delete_component_set("tenant-c", name="base")
-
-    assert [ns for _, ns, _, _ in dyn.applied] == ["tenant-a", "tenant-b"]
-    assert [body["metadata"]["namespace"] for _, _, body, _ in dyn.applied] == [
-        "tenant-a",
-        "tenant-b",
+    assert fake["built"] == 1
+    # Each still writes only into its own namespace.
+    keda_component = [catalogs.component("keda", "edge-1", keda.CHART, "keda")]
+    a.apply_component_set(name="base", components=keda_component)
+    b.delete_component_set(name="base")
+    dyn = fake["client"]
+    assert [(ns, body["metadata"]["namespace"]) for _, ns, body, _ in dyn.applied] == [
+        ("tenant-a", "tenant-a")
     ]
-    assert dyn.deleted == [(Kind.CCL_COMPONENT_SET, "base", "tenant-c")]
+    assert dyn.deleted == [(Kind.CCL_COMPONENT_SET, "base", "tenant-b")]
+
+
+def test_each_api_client_runs_its_own_discovery(fake):
+    CCLClient(NS, api_client=k8s.ApiClient())
+    CCLClient(NS, api_client=k8s.ApiClient())
+
+    assert fake["built"] == 2
 
 
 def test_apply_infraplane_applies_secret_then_infra_plane(fake):
     c, dyn = make_client(fake)
 
     plane = c.apply_infraplane(
-        NS, name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
     )
 
     kinds = [kind for kind, *_ in dyn.applied]
@@ -221,7 +229,7 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
 def test_apply_infraplane_defaults_to_in_cluster_credential_free(fake):
     c, dyn = make_client(fake)
 
-    c.apply_infraplane(NS, name="edge-1")
+    c.apply_infraplane(name="edge-1")
 
     secret = dyn.applied[0][2]
     assert secret["stringData"]["server"] == "https://kubernetes.default.svc"
@@ -233,7 +241,6 @@ def test_apply_infraplane_defaults_to_in_cluster_credential_free(fake):
 def test_apply_infraplane_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.apply_infraplane(
-        NS,
         name="edge-1",
         server="https://10.0.0.1:6443",
         bearer_token="tok",
@@ -245,7 +252,7 @@ def test_apply_infraplane_accepts_pem_bytes(fake):
 
 def test_delete_infraplane_deletes_infra_plane_before_secret(fake):
     c, dyn = make_client(fake)
-    c.delete_infraplane(NS, name="edge-1")
+    c.delete_infraplane(name="edge-1")
     assert dyn.deleted == [
         (Kind.CCL_INFRA_PLANE, "edge-1", "tenant"),
         ("Secret", "edge-1-credentials", "tenant"),
@@ -255,7 +262,7 @@ def test_delete_infraplane_deletes_infra_plane_before_secret(fake):
 def test_delete_infraplane_ignores_missing_objects(fake):
     c, dyn = make_client(fake)
     dyn.missing = {(Kind.CCL_INFRA_PLANE, "edge-1"), ("Secret", "edge-1-credentials")}
-    c.delete_infraplane(NS, name="edge-1")
+    c.delete_infraplane(name="edge-1")
     assert dyn.deleted == []
 
 
@@ -280,7 +287,7 @@ def test_get_infraplane_returns_the_plane_with_its_status(fake):
         },
     }
 
-    plane = c.get_infraplane(NS, name="edge-1")
+    plane = c.get_infraplane(name="edge-1")
 
     assert isinstance(plane, CCLInfraPlane)
     assert plane.spec.cluster_credentials_ref.name == "edge-1-credentials"
@@ -293,7 +300,7 @@ def test_get_infraplane_raises_for_a_missing_plane(fake):
     dyn.missing.add((Kind.CCL_INFRA_PLANE, "edge-1"))
 
     with pytest.raises(NotFoundError):
-        c.get_infraplane(NS, name="edge-1")
+        c.get_infraplane(name="edge-1")
 
 
 def test_apply_component_set_applies_the_set(fake):
@@ -311,7 +318,7 @@ def test_apply_component_set_applies_the_set(fake):
         ),
     ]
 
-    component_set = c.apply_component_set(NS, name="local-base", components=components)
+    component_set = c.apply_component_set(name="local-base", components=components)
 
     assert [kind for kind, *_ in dyn.applied] == [Kind.CCL_COMPONENT_SET]
     _, ns_arg, body, kwargs = dyn.applied[0]
@@ -349,46 +356,59 @@ def test_apply_component_set_rejects_empty_components(fake):
     c, dyn = make_client(fake)
     # minItems: 1 comes from the CRD, so Pydantic rejects it before any request is made.
     with pytest.raises(ValidationError):
-        c.apply_component_set(NS, name="local-base", components=[])
+        c.apply_component_set(name="local-base", components=[])
     assert dyn.applied == []
 
 
 def test_delete_component_set_deletes_the_set(fake):
     c, dyn = make_client(fake)
-    c.delete_component_set(NS, name="local-base")
+    c.delete_component_set(name="local-base")
     assert dyn.deleted == [(Kind.CCL_COMPONENT_SET, "local-base", "tenant")]
 
 
 def test_delete_component_set_ignores_a_missing_set(fake):
     c, dyn = make_client(fake)
     dyn.missing = {(Kind.CCL_COMPONENT_SET, "local-base")}
-    c.delete_component_set(NS, name="local-base")
+    c.delete_component_set(name="local-base")
     assert dyn.deleted == []
 
 
 @pytest.mark.parametrize("method", ["delete_infraplane", "delete_component_set"])
 def test_delete_takes_the_name_by_keyword(fake, method):
-    # A namespace that does not exist returns the same 404 as an object already gone, so
-    # a namespace and name passed in the wrong order would delete nothing and not say so.
     c, dyn = make_client(fake)
 
     with pytest.raises(TypeError):
-        getattr(c, method)("edge-1", NS)
+        getattr(c, method)("edge-1")
     assert dyn.deleted == []
 
 
-def test_defaults_to_in_cluster_config(fake, monkeypatch):
-    loaded = []
-    monkeypatch.setattr(
-        client_module.config, "load_incluster_config", lambda: loaded.append(True)
-    )
-    in_cluster = k8s.ApiClient()
-    monkeypatch.setattr(client_module.k8s, "ApiClient", lambda: in_cluster)
+def test_namespace_is_required(fake):
+    # The namespace is the client's isolation boundary; it has no default to fall back to.
+    with pytest.raises(TypeError):
+        CCLClient(api_client=k8s.ApiClient())
 
-    CCLClient()
 
-    assert loaded == [True]
-    assert fake["client"].api_client is in_cluster
+def test_api_client_is_required(fake):
+    # No in-cluster default: the caller decides which connection clients share.
+    with pytest.raises(TypeError):
+        CCLClient(NS)
+    assert fake["built"] == 0
+
+
+def test_failed_discovery_is_retried_by_the_next_client(fake, monkeypatch):
+    api_client = k8s.ApiClient()
+    real_factory = client_module.DynamicClient
+
+    def unreachable(api_client):
+        raise ConnectionError("API server unreachable")
+
+    monkeypatch.setattr(client_module, "DynamicClient", unreachable)
+    with pytest.raises(ConnectionError):
+        CCLClient(NS, api_client=api_client)
+
+    monkeypatch.setattr(client_module, "DynamicClient", real_factory)
+    CCLClient(NS, api_client=api_client)
+    assert fake["built"] == 1
 
 
 def component_set_body(*conditions, generation=1, observed_generation=1):
@@ -468,7 +488,7 @@ def test_is_component_set_finished_is_true_once_progressing_is_false(fake):
     c, dyn = make_client(fake)
     dyn.component_set = component_set_body(VALIDATED, APPLIED, COMPLETE)
 
-    assert c.is_component_set_finished(NS, name="base") is True
+    assert c.is_component_set_finished(name="base") is True
     assert dyn.reads[-1] == (Kind.CCL_COMPONENT_SET.value, "base", "tenant")
 
 
@@ -492,7 +512,7 @@ def test_is_component_set_finished_rejects_incomplete_status(fake, body):
     c, dyn = make_client(fake)
     dyn.component_set = body
 
-    assert c.is_component_set_finished(NS, name="base") is False
+    assert c.is_component_set_finished(name="base") is False
 
 
 @pytest.mark.parametrize("condition_type", ["Validated", "ComponentsApplied", "Progressing"])
@@ -504,7 +524,7 @@ def test_is_component_set_finished_requires_current_conditions(fake, condition_t
             condition["observedGeneration"] = 1
     dyn.component_set = body
 
-    assert c.is_component_set_finished(NS, name="base") is False
+    assert c.is_component_set_finished(name="base") is False
 
 
 @pytest.mark.parametrize("applied", [None, ("ComponentsApplied", "False", "ApplicationConflict")])
@@ -515,7 +535,7 @@ def test_is_component_set_finished_requires_successful_application_writes(fake, 
         conditions.append(applied)
     dyn.component_set = component_set_body(*conditions)
 
-    assert c.is_component_set_finished(NS, name="base") is False
+    assert c.is_component_set_finished(name="base") is False
 
 
 def test_is_component_set_finished_is_false_during_teardown(fake):
@@ -525,7 +545,7 @@ def test_is_component_set_finished_is_false_during_teardown(fake):
     body["metadata"]["finalizers"] = ["ccluster.nvidia.com/argocd-applications"]
     dyn.component_set = body
 
-    assert c.is_component_set_finished(NS, name="base") is False
+    assert c.is_component_set_finished(name="base") is False
 
 
 def test_is_component_set_finished_raises_for_a_missing_set(fake):
@@ -533,4 +553,4 @@ def test_is_component_set_finished_raises_for_a_missing_set(fake):
     dyn.missing.add((Kind.CCL_COMPONENT_SET.value, "base"))
 
     with pytest.raises(NotFoundError):
-        c.is_component_set_finished(NS, name="base")
+        c.is_component_set_finished(name="base")

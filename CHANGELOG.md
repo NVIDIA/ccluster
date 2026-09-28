@@ -8,12 +8,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
-- `CCLClient.is_component_set_finished(name)` reports whether a set is applied and
+- `CCLClient.is_component_set_finished(name=...)` reports whether a set is applied and
   reported converged, with one read. It requires successful validation and Application
   writes, completion conditions for the current generation, and a ComponentSet that is
   not being deleted.
-- `CCLClient.get_component_set(name)` and `CCLClient.get_infraplane(name)` read one object
-  and return it as its model, raising `NotFoundError` if it does not exist.
+- `CCLClient.get_component_set(name=...)` and `CCLClient.get_infraplane(name=...)` read
+  one object and return it as its model, raising `NotFoundError` if it does not exist.
 - `component_set_current_conditions(component_set)` returns the conditions the operator
   computed from the object's current generation, keyed by type, so a caller can read the
   reason and message behind a rollout that has not finished.
@@ -22,17 +22,20 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   status must survive a spec rewrite rather than restart.
 
 ### Changed
-- `CCLClient` is no longer scoped to one namespace: `CCLClient(namespace, api_client=...)`
-  becomes `CCLClient(api_client=...)` and every method takes its namespace as the first
-  argument and the rest by keyword. Nothing the client held was namespace-specific, so one
-  client now serves every namespace and pays for its connection and API discovery once.
-- Constructing a `CCLClient` only runs API discovery, and no write method creates a
-  namespace. `CCLClient.ensure_namespace(namespace)` does, and is the only method that
-  does, so a mistyped namespace fails against the API server rather than quietly gaining
-  a working infra plane.
-- `CCLClient.create_infraplane` and `CCLClient.create_component_set` are renamed
-  `apply_infraplane` and `apply_component_set`. Both server-side apply, so they create
-  the object or update it in place; the old names said only the first.
+- **Breaking:** `CCLClient(namespace, api_client=None)` becomes
+  `CCLClient(namespace, *, api_client)`. `api_client` is required and there is no
+  in-cluster default, so the caller decides which connection its clients share. Clients
+  built on the same `api_client` share its API discovery, which runs on the first
+  construction only, so a client per namespace costs nothing more.
+- **Breaking:** Constructing a `CCLClient` reads and writes no object: it no longer
+  creates its namespace. `CCLClient.ensure_namespace()` does, and is the only method that
+  does, so a mistyped namespace fails against the API server rather than quietly gaining a
+  working infra plane.
+- **Breaking:** `CCLClient.create_infraplane` and `CCLClient.create_component_set` are
+  renamed `apply_infraplane` and `apply_component_set`. Both server-side apply, so they
+  create the object or update it in place; the old names said only the first.
+- **Breaking:** Every `CCLClient` method takes the object's name by keyword, for example
+  `delete_component_set(name="local-base")`.
 
 ### Fixed
 - Application and AppProject reconciliation no longer deletes the Argo CD status and any
@@ -46,6 +49,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   own status writes move the resource version the operator's patch carries, and a read
   from the informer cache can miss an object that already exists. Neither lost race
   surfaces as a transient `ApplicationFailed` condition on the CCLComponentSet any more.
+- Pyright and Pylance no longer report `apiVersion` as a missing argument when a
+  `CCLInfraPlane` or `CCLComponentSet` is constructed: `CustomResource.api_version` passes
+  its default to `Field` by keyword, the only form type checkers read as a default.
 
 ## [0.0.3] - 2026-09-16
 
