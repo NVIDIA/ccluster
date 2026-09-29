@@ -284,9 +284,9 @@ class CCLClient:
         Raises kubernetes.dynamic.exceptions.NotFoundError if the set does not exist.
 
         True means the operator has written every Application for this generation and
-        Argo CD reports them Healthy and Synced. That verdict is about each Application
-        as Argo CD last compared it, so shortly after an update it can still describe the
-        previous spec. Treat True as convergence, not as proof the newest values are live.
+        Argo CD reports them Healthy and Synced after finishing the sync the operator
+        asked for on the spec it wrote. It is never a verdict left standing from an
+        earlier spec, so the values in the set are live.
         """
         component_set = self.get_component_set(name=name)
 

@@ -24,6 +24,21 @@ type argoCDObject interface {
 	metav1.ObjectMetaAccessor
 }
 
+// patchPath is a path createOrPatchArgoCDObject writes on top of the metadata and spec it
+// always writes, and the value to write there. Name one only when this write is what
+// changed it - the value goes out as given.
+type patchPath struct {
+	path  string
+	value any
+}
+
+// jsonPatchOp is one operation of an RFC 6902 patch.
+type jsonPatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value"`
+}
+
 // staleRead reports whether err means the read behind this write is out of date: the
 // server has a newer version (Conflict), or it has an object the cached read missed
 // (AlreadyExists). Both are HTTP 409 with different reasons. Reading again fixes both.
@@ -32,23 +47,19 @@ func staleRead(err error) bool {
 }
 
 // createOrPatchArgoCDObject creates obj if it has no resource version, and otherwise
-// replaces its metadata and spec - but only if obj differs from before. The caller reads
-// obj, copies it into before, checks ownership and sets obj.Spec.
+// patches its metadata and spec, plus any extra path the caller names - but only if obj
+// differs from before.
 //
-// The write is a JSON Patch of the two fields the operator owns. An update would send the
-// whole object, and these partial types do not model Argo CD's status, a pending
-// operation, or any undeclared spec field - the API server would delete all three.
-// Replacing /spec still reverts hand edits, and unlike a merge patch it keeps explicit
-// null Helm values.
-//
-// The comparison only sees modelled fields, because that is all a partial read returns.
-// A hand edit confined to unmodelled spec fields is therefore cleared the next time
-// something visible changes, not when it is made.
+// A JSON Patch, not an update: an update sends the whole object, and these partial types
+// would take Argo CD's status and every unmodelled spec field with it. Unlike a merge
+// patch it keeps explicit null Helm values. The comparison sees only modelled fields, so
+// a hand edit confined to the others is cleared the next time something visible changes.
 func createOrPatchArgoCDObject(
 	ctx context.Context,
 	c client.Client,
 	before, obj argoCDObject,
 	spec any,
+	extra ...patchPath,
 ) (controllerutil.OperationResult, error) {
 	version := obj.GetResourceVersion()
 	if version == "" {
@@ -62,14 +73,19 @@ func createOrPatchArgoCDObject(
 		return controllerutil.OperationResultNone, nil
 	}
 
-	patch, err := json.Marshal([]struct {
-		Op    string `json:"op"`
-		Path  string `json:"path"`
-		Value any    `json:"value"`
-	}{
-		{Op: "replace", Path: "/metadata", Value: obj.GetObjectMeta()},
-		{Op: "replace", Path: "/spec", Value: spec},
-	})
+	fields := append([]patchPath{
+		{path: "/metadata", value: obj.GetObjectMeta()},
+		{path: "/spec", value: spec},
+	}, extra...)
+
+	// add, not replace: replace needs its target to exist, and /operation does not between
+	// syncs. On a path that is there, add replaces it.
+	ops := make([]jsonPatchOp, len(fields))
+	for i, field := range fields {
+		ops[i] = jsonPatchOp{Op: "add", Path: field.path, Value: field.value}
+	}
+
+	patch, err := json.Marshal(ops)
 	if err != nil {
 		return controllerutil.OperationResultNone, err
 	}

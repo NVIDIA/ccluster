@@ -32,8 +32,8 @@ const (
 	// conditionTypeValidated reports whether every component's infraPlaneRef resolves
 	// to a CCLInfraPlane that Argo CD can already reach.
 	conditionTypeValidated = "Validated"
-	// conditionTypeProgressing reports on the rollout: false once every component is
-	// healthy and synced.
+	// conditionTypeProgressing reports on the rollout: false once every component has
+	// synced the spec the operator wrote and is healthy.
 	conditionTypeProgressing = "Progressing"
 	// conditionTypeComponentsApplied reports on the Argo CD Applications that deploy
 	// the components onto their infra-plane clusters.
@@ -44,6 +44,7 @@ const (
 	reasonInfraPlaneNotReady = "InfraPlaneNotReady"
 
 	reasonWaveSyncing     = "WaveSyncing"
+	reasonWaveSyncFailed  = "WaveSyncFailed"
 	reasonRolloutComplete = "RolloutComplete"
 
 	reasonApplicationsCreated   = "ApplicationsCreated"
@@ -62,6 +63,11 @@ const (
 	annotationComponentSetName      = "ccluster.nvidia.com/componentset-name"
 	annotationComponentSetNamespace = "ccluster.nvidia.com/componentset-namespace"
 
+	// The CCLComponentSet generation that produced an Application's spec. The operator
+	// writes it with that spec and sends the same value through Argo CD in the sync it asks
+	// for, so what Argo CD judged can be told from what the operator wants - see finished.
+	annotationComponentSetGeneration = "ccluster.nvidia.com/componentset-generation"
+
 	// The name again as a label, because a label can be selected on and an annotation
 	// cannot: listing a CCLComponentSet's Applications is how the operator knows what it
 	// has already released. The namespace needs no label - it is the Application's own.
@@ -76,6 +82,11 @@ const (
 	// would clean up. It is distinct from finalizerName so the two controllers never
 	// remove each other's.
 	componentSetFinalizerName = "ccluster.nvidia.com/argocd-applications"
+
+	// syncRetryLimit is how often Argo CD retries a sync the operator asked for before it
+	// gives up. It matches the limit Argo CD's own automated sync uses, and it is what keeps
+	// a failing sync reported as one long attempt rather than a series.
+	syncRetryLimit = 5
 
 	// teardownRetryInterval backstops the Application watch during teardown. Progress
 	// is event-driven - an Application going away brings the CCLComponentSet back - so
@@ -116,7 +127,7 @@ type CCLComponentSetReconciler struct {
 //     condition.
 //
 // Ordering is enforced by withholding a component's Application until everything before
-// it is healthy - see releaseCount - rather than by an Argo CD sync strategy, which would
+// it has finished - see releaseCount - rather than by an Argo CD sync strategy, which would
 // mean switching off the automated sync these Applications depend on.
 //
 // The operator installs nothing itself; Argo CD does all of the work.
@@ -357,8 +368,8 @@ func (r *CCLComponentSetReconciler) componentSetsForInfraPlane(ctx context.Conte
 
 // componentSetForApplication maps an Application back to the CCLComponentSet it was created
 // for: the one named by its label, in the Application's own namespace. This is what lets
-// the next component be released the moment the previous one reports healthy, rather
-// than on a poll.
+// the next component be released the moment the previous one finishes, rather than on
+// a poll.
 func (r *CCLComponentSetReconciler) componentSetForApplication(_ context.Context, obj client.Object) []reconcile.Request {
 	name, hasName := obj.GetLabels()[labelComponentSetName]
 	if !hasName {

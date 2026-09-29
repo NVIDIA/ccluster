@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -187,8 +188,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			return true
 		}
 
-		// setHealth stands in for Argo CD, which envtest does not run: it reports a
-		// health and sync status on an Application the operator created.
+		// setHealth stands in for Argo CD, which envtest does not run: it takes the sync
+		// the operator asked for, reports it succeeded, and reports a health and sync
+		// status on the Application.
 		//
 		// It patches, because that is what Argo CD does. An update through the partial
 		// Argo CD type would also wipe every spec field that type does not model, and
@@ -197,13 +199,27 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		setHealth := func(component, health, sync string) {
 			GinkgoHelper()
 
-			status, err := json.Marshal(map[string]any{"status": map[string]any{
+			application := getApplication(component)
+			status := map[string]any{
 				"health": map[string]any{"status": health},
 				"sync":   map[string]any{"status": sync},
-			}})
+			}
+			patch := map[string]any{"status": status}
+			if application.Operation != nil {
+				// Argo CD copies the request into the state and clears the field. The real
+				// CRD requires startedAt alongside the operation and its phase; the stub
+				// here does not, so only the e2e tier catches a stand-in that omits it.
+				status["operationState"] = map[string]any{
+					"operation": application.Operation,
+					"phase":     argocdv1alpha1.OperationSucceeded,
+					"startedAt": metav1.Now(),
+				}
+				patch["operation"] = nil
+			}
+			raw, err := json.Marshal(patch)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Patch(ctx, getApplication(component),
-				client.RawPatch(types.MergePatchType, status))).To(Succeed())
+			Expect(k8sClient.Patch(ctx, application,
+				client.RawPatch(types.MergePatchType, raw))).To(Succeed())
 		}
 
 		// release drives the rollout forward: each component is reported healthy,
@@ -761,7 +777,20 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(values).To(Equal(map[string]any{"replicaCount": int64(3)}))
 
 			Expect(rewritten.Object["status"]).To(Equal(application.Object["status"]))
-			Expect(rewritten.Object["operation"]).To(Equal(application.Object["operation"]))
+
+			// The operation is a request, not status. The one that was pending asked Argo CD
+			// to sync the spec the operator has just replaced, so the operator's own request
+			// takes its place, carrying the generation that produced the new spec.
+			generation := strconv.FormatInt(componentSet.Generation, 10)
+			Expect(rewritten.GetAnnotations()).To(
+				HaveKeyWithValue(annotationComponentSetGeneration, generation))
+			info, found, err := unstructured.NestedSlice(rewritten.Object, "operation", "info")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the operator did not ask Argo CD for a sync")
+			Expect(info).To(ConsistOf(map[string]any{
+				"name":  annotationComponentSetGeneration,
+				"value": generation,
+			}))
 		})
 
 		It("should reject a spec write after ownership changes concurrently", func() {
