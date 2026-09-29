@@ -8,12 +8,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
-- `CCLClient.is_component_set_finished(name=...)` reports whether a set is applied and
+- `CCLClient.is_component_set_finished(name)` reports whether a set is applied and
   reported converged, with one read. It requires successful validation and Application
   writes, completion conditions for the current generation, and a ComponentSet that is
   not being deleted.
-- `CCLClient.get_component_set(name=...)` and `CCLClient.get_infraplane(name=...)` read
-  one object and return it as its model, raising `NotFoundError` if it does not exist.
+- `CCLClient.get_component_set(name)` and `CCLClient.get_infraplane(name)` read one object
+  and return it as its model, raising `NotFoundError` if it does not exist.
 - `component_set_current_conditions(component_set)` returns the conditions the operator
   computed from the object's current generation, keyed by type, so a caller can read the
   reason and message behind a rollout that has not finished.
