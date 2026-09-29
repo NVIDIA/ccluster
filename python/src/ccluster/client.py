@@ -11,7 +11,6 @@ namespace, fixed at construction, over a Kubernetes ApiClient the caller supplie
 from __future__ import annotations
 
 import base64
-import threading
 
 from kubernetes import client as k8s
 from kubernetes.dynamic import DynamicClient
@@ -96,17 +95,20 @@ class _Discovery:
 # The ApiClient attribute that holds its _Discovery. Stored on the ApiClient itself, so the
 # discovery results are released together with it.
 _DISCOVERY_ATTR = "_ccluster_discovery"
-_discovery_lock = threading.Lock()
 
 
 def _discover(api_client: k8s.ApiClient) -> _Discovery:
-    """Return api_client's discovery results, running discovery on its first call only."""
-    with _discovery_lock:
-        discovery = getattr(api_client, _DISCOVERY_ATTR, None)
-        if discovery is None:
-            discovery = _Discovery(api_client)
-            setattr(api_client, _DISCOVERY_ATTR, discovery)
-        return discovery
+    """Return api_client's discovery results, running discovery if it has none yet.
+
+    Unlocked: constructions that race on a new api_client may each run discovery, and the
+    last one's results are kept. Every run resolves the same resources, so any of them is
+    correct.
+    """
+    discovery = getattr(api_client, _DISCOVERY_ATTR, None)
+    if discovery is None:
+        discovery = _Discovery(api_client)
+        setattr(api_client, _DISCOVERY_ATTR, discovery)
+    return discovery
 
 
 def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str, Condition]:
@@ -136,7 +138,7 @@ class CCLClient:
     CCLComponentSets are read and written, and the client reaches no other. It is the
     isolation boundary: whoever constructs the client decides which namespace it serves.
     Construct one client per namespace. Clients built on the same api_client share its
-    connection pool and its API discovery, which runs on the first construction only.
+    connection pool and reuse its API discovery results.
     Constructing a client reads and writes no object.
 
     api_client is required. In a pod, call kubernetes.config.load_incluster_config() and
@@ -147,12 +149,7 @@ class CCLClient:
     def __init__(self, namespace: str, *, api_client: k8s.ApiClient) -> None:
         self.namespace = namespace
         self._api = api_client
-        discovery = _discover(api_client)
-        self._dynamic = discovery.dynamic
-        self._namespace_gvr = discovery.namespace_gvr
-        self._secret_gvr = discovery.secret_gvr
-        self._infra_plane_gvr = discovery.infra_plane_gvr
-        self._component_set_gvr = discovery.component_set_gvr
+        self._discovery = _discover(api_client)
 
     def ensure_namespace(self) -> None:
         """Create the client's namespace if it does not exist.
@@ -165,7 +162,7 @@ class CCLClient:
         the API server rather than quietly gaining a working infra plane.
         """
         try:
-            self._dynamic.get(self._namespace_gvr, name=self.namespace)
+            self._discovery.dynamic.get(self._discovery.namespace_gvr, name=self.namespace)
         except NotFoundError:
             body = k8s.V1Namespace(
                 api_version="v1",
@@ -173,8 +170,8 @@ class CCLClient:
                 metadata=k8s.V1ObjectMeta(name=self.namespace),
             )
             try:
-                self._dynamic.create(
-                    self._namespace_gvr, body=self._api.sanitize_for_serialization(body)
+                self._discovery.dynamic.create(
+                    self._discovery.namespace_gvr, body=self._api.sanitize_for_serialization(body)
                 )
             except ConflictError:
                 pass
@@ -225,14 +222,14 @@ class CCLClient:
                 ),
             },
         )
-        self._apply(self._secret_gvr, secret)
+        self._apply(self._discovery.secret_gvr, secret)
 
         plane = CCLInfraPlane(
             metadata=ObjectMeta(name=name, namespace=self.namespace),
             spec=CCLInfraPlaneSpec(cluster_credentials_ref=LocalObjectReference(name=secret_name)),
         )
         return CCLInfraPlane.model_validate(
-            self._apply_object(self._infra_plane_gvr, plane)
+            self._apply_object(self._discovery.infra_plane_gvr, plane)
         )
 
     def delete_infraplane(self, *, name: str) -> None:
@@ -243,13 +240,13 @@ class CCLClient:
         a namespace that does not exist: the API server answers both with the same 404.
         The namespace is left in place.
         """
-        self._delete(self._infra_plane_gvr, name)
-        self._delete(self._secret_gvr, _credentials_secret_name(name))
+        self._delete(self._discovery.infra_plane_gvr, name)
+        self._delete(self._discovery.secret_gvr, _credentials_secret_name(name))
 
     def get_infraplane(self, *, name: str) -> CCLInfraPlane:
         """Return the CCLInfraPlane called name, or raise NotFoundError."""
         return CCLInfraPlane.model_validate(
-            self._get(self._infra_plane_gvr, name)
+            self._get(self._discovery.infra_plane_gvr, name)
         )
 
     def apply_component_set(
@@ -275,7 +272,7 @@ class CCLClient:
             spec=CCLComponentSetSpec(components=components),
         )
         return CCLComponentSet.model_validate(
-            self._apply_object(self._component_set_gvr, component_set)
+            self._apply_object(self._discovery.component_set_gvr, component_set)
         )
 
     def is_component_set_finished(self, *, name: str) -> bool:
@@ -331,16 +328,16 @@ class CCLClient:
         both with the same 404. The referenced CCLInfraPlanes and the namespace are left
         in place.
         """
-        self._delete(self._component_set_gvr, name)
+        self._delete(self._discovery.component_set_gvr, name)
 
     def get_component_set(self, *, name: str) -> CCLComponentSet:
         """Return the CCLComponentSet called name, or raise NotFoundError."""
         return CCLComponentSet.model_validate(
-            self._get(self._component_set_gvr, name)
+            self._get(self._discovery.component_set_gvr, name)
         )
 
     def _apply(self, gvr, body):
-        return self._dynamic.server_side_apply(
+        return self._discovery.dynamic.server_side_apply(
             gvr,
             body=self._api.sanitize_for_serialization(body),
             namespace=self.namespace,
@@ -350,9 +347,9 @@ class CCLClient:
 
     def _delete(self, gvr, name: str) -> None:
         try:
-            self._dynamic.delete(gvr, name=name, namespace=self.namespace)
+            self._discovery.dynamic.delete(gvr, name=name, namespace=self.namespace)
         except NotFoundError:
             pass
 
     def _get(self, gvr, name: str) -> dict:
-        return self._dynamic.get(gvr, name=name, namespace=self.namespace).to_dict()
+        return self._discovery.dynamic.get(gvr, name=name, namespace=self.namespace).to_dict()

@@ -25,8 +25,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - **Breaking:** `CCLClient(namespace, api_client=None)` becomes
   `CCLClient(namespace, *, api_client)`. `api_client` is required and there is no
   in-cluster default, so the caller decides which connection its clients share. Clients
-  built on the same `api_client` share its API discovery, which runs on the first
-  construction only, so a client per namespace costs nothing more.
+  built on the same `api_client` reuse its API discovery results, so a client per
+  namespace costs nothing more.
 - **Breaking:** Constructing a `CCLClient` reads and writes no object: it no longer
   creates its namespace. `CCLClient.ensure_namespace()` does, and is the only method that
   does, so a mistyped namespace fails against the API server rather than quietly gaining a

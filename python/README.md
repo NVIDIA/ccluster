@@ -52,9 +52,9 @@ catalog makes with pointer fields.
 A `CCLClient` works in one namespace, given at construction, and reaches no other: the
 namespace is the isolation boundary, and whoever constructs the client decides which one
 it serves. Construct one client per namespace. `api_client` is required; clients built on
-the same one share its connection pool and its API discovery, which runs on the first
-construction only, so a client per namespace costs nothing more. Constructing a client
-reads and writes no object. Every method takes the object's name by keyword.
+the same one share its connection pool and reuse its API discovery results, so a client
+per namespace costs nothing more. Constructing a client reads and writes no object.
+Every method takes the object's name by keyword.
 
 `apply_infraplane` applies a Secret named `<name>-credentials` in Argo CD's
 cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
