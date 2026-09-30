@@ -7,19 +7,22 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-09-30
+
 ### Added
-- `CCLClient.is_component_set_finished(name)` reports whether a set is applied and
+- `CCLClient.is_component_set_finished(*, name)` reports whether a set is applied and
   reported converged, with one read. It requires successful validation and Application
   writes, completion conditions for the current generation, and a ComponentSet that is
   not being deleted.
-- `CCLClient.get_component_set(name)` and `CCLClient.get_infraplane(name)` read one object
-  and return it as its model, raising `NotFoundError` if it does not exist.
+- `CCLClient.get_component_set(*, name)` and `CCLClient.get_infraplane(*, name)` read one
+  object and return it as its model, raising `NotFoundError` if it does not exist.
 - `component_set_current_conditions(component_set)` returns the conditions the operator
   computed from the object's current generation, keyed by type, so a caller can read the
   reason and message behind a rollout that has not finished.
-- A full-tier e2e spec covers the field ownership contract with Argo CD: Argo CD must not
-  write into the spec the operator owns, and the deployment history in its Application
-  status must survive a spec rewrite rather than restart.
+- The operator and catalog `Chart.yaml` files carry `home`, `sources` and `maintainers`,
+  and every `cluster_base` chart has a description. `THIRD_PARTY_NOTICES.md` records
+  teleport-kube-agent as AGPL-3.0, fetched from upstream by Argo CD rather than
+  redistributed.
 
 ### Changed
 - **Breaking:** `CCLClient(namespace, api_client=None)` becomes
@@ -34,7 +37,7 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - **Breaking:** `CCLClient.create_infraplane` and `CCLClient.create_component_set` are
   renamed `apply_infraplane` and `apply_component_set`. Both server-side apply, so they
   create the object or update it in place; the old names said only the first.
-- **Breaking:** Every `CCLClient` method takes the object's name by keyword, for example
+- **Breaking:** `CCLClient` methods take the object's name by keyword only, for example
   `delete_component_set(name="local-base")`.
 
 ### Fixed
@@ -220,7 +223,8 @@ Template for future releases:
 ### Security
 -->
 
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/NVIDIA/ccluster/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/NVIDIA/ccluster/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/NVIDIA/ccluster/releases/tag/v0.0.1
