@@ -21,7 +21,8 @@ instead of the in-cluster configuration.
 import argparse
 from pathlib import Path
 
-from kubernetes.config import new_client_from_config
+from kubernetes import client as k8s
+from kubernetes import config
 
 from ccluster.client import CCLClient
 
@@ -37,7 +38,9 @@ def main() -> None:
         "in-cluster server",
     )
     parser.add_argument(
-        "--namespace", required=True, help="namespace to register it in"
+        "--namespace",
+        required=True,
+        help="namespace to register it in; created if it does not exist",
     )
     parser.add_argument("--token-file", type=Path, default=None)
     parser.add_argument(
@@ -50,11 +53,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_client = new_client_from_config() if args.kubeconfig else None
+    if args.kubeconfig:
+        api_client = config.new_client_from_config()
+    else:
+        config.load_incluster_config()
+        api_client = k8s.ApiClient()
     client = CCLClient(args.namespace, api_client=api_client)
-    plane = client.create_infraplane(
-        args.name,
-        args.server,
+    client.ensure_namespace()
+    plane = client.apply_infraplane(
+        name=args.name,
+        server=args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
         ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
     )

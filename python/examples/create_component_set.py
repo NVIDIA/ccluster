@@ -22,7 +22,8 @@ instead of the in-cluster configuration.
 
 import argparse
 
-from kubernetes.config import new_client_from_config
+from kubernetes import client as k8s
+from kubernetes import config
 
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import argo_rollouts, keda
@@ -52,16 +53,20 @@ def main() -> None:
     if not args.delete and args.infra_plane is None:
         parser.error("--infra-plane is required unless --delete is given")
 
-    api_client = new_client_from_config() if args.kubeconfig else None
+    if args.kubeconfig:
+        api_client = config.new_client_from_config()
+    else:
+        config.load_incluster_config()
+        api_client = k8s.ApiClient()
     client = CCLClient(args.namespace, api_client=api_client)
     if args.delete:
-        client.delete_component_set(args.name)
+        client.delete_component_set(name=args.name)
         print(f"deleted {args.namespace}/{args.name}")
         return
 
-    component_set = client.create_component_set(
-        args.name,
-        [
+    component_set = client.apply_component_set(
+        name=args.name,
+        components=[
             catalogs.component(
                 "argo-rollouts", args.infra_plane, argo_rollouts.CHART, "argo-rollouts"
             ),

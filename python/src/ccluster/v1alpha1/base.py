@@ -47,7 +47,11 @@ class CustomResource(BaseModel, Generic[SpecT, StatusT]):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    api_version: Literal["ccluster.nvidia.com/v1alpha1"] = Field(API_VERSION, alias="apiVersion")
+    # default= by keyword: type checkers see a Field default only when it is passed that way,
+    # and would otherwise make apiVersion a required constructor argument.
+    api_version: Literal["ccluster.nvidia.com/v1alpha1"] = Field(
+        default=API_VERSION, alias="apiVersion"
+    )
     kind: str
     metadata: ObjectMeta
     spec: SpecT

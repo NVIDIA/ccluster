@@ -21,6 +21,22 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   write into the spec the operator owns, and the deployment history in its Application
   status must survive a spec rewrite rather than restart.
 
+### Changed
+- **Breaking:** `CCLClient(namespace, api_client=None)` becomes
+  `CCLClient(namespace, *, api_client)`. `api_client` is required and there is no
+  in-cluster default, so the caller decides which connection its clients share. Clients
+  built on the same `api_client` reuse its API discovery results, so a client per
+  namespace costs nothing more.
+- **Breaking:** Constructing a `CCLClient` reads and writes no object: it no longer
+  creates its namespace. `CCLClient.ensure_namespace()` does, and is the only method that
+  does, so a mistyped namespace fails against the API server rather than quietly gaining a
+  working infra plane.
+- **Breaking:** `CCLClient.create_infraplane` and `CCLClient.create_component_set` are
+  renamed `apply_infraplane` and `apply_component_set`. Both server-side apply, so they
+  create the object or update it in place; the old names said only the first.
+- **Breaking:** Every `CCLClient` method takes the object's name by keyword, for example
+  `delete_component_set(name="local-base")`.
+
 ### Fixed
 - Application and AppProject reconciliation no longer deletes the Argo CD status and any
   pending operation on the objects it manages: the managed spec is replaced with a patch
@@ -33,6 +49,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   own status writes move the resource version the operator's patch carries, and a read
   from the informer cache can miss an object that already exists. Neither lost race
   surfaces as a transient `ApplicationFailed` condition on the CCLComponentSet any more.
+- Pyright and Pylance no longer report `apiVersion` as a missing argument when a
+  `CCLInfraPlane` or `CCLComponentSet` is constructed: `CustomResource.api_version` passes
+  its default to `Field` by keyword, the only form type checkers read as a default.
 
 ## [0.0.3] - 2026-09-16
 
