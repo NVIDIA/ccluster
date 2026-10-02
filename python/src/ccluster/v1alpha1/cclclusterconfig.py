@@ -24,13 +24,14 @@ class CCLClusterConfigSpec(BaseModel):
         Field(
             max_length=253,
             min_length=1,
-            pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$",
+            pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$",
         ),
     ]
     """
     domain is the cluster's DNS domain, and its SPIFFE trust domain. Components such
     as spire, external-dns and final_stack must be configured with it; the infra-plane
-    operator verifies that they are.
+    operator verifies that they are. It must be a lowercase DNS name of at least two
+    labels, each at most 63 characters.
     """
 
 
