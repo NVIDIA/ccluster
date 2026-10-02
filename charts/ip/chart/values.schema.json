@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Hand-written; make helm-generate preserves it. Constrains only what the generated templates cannot express, and leaves every other value unchecked.",
+  "type": "object",
+  "properties": {
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "namespaced": {
+          "$comment": "CCLClusterConfig is cluster-scoped, so a namespaced Role cannot grant access to it: the helper roles would grant nothing, and neither could the manager role once a controller reads it.",
+          "const": false
+        }
+      }
+    }
+  }
+}

@@ -57,6 +57,9 @@ deploy through Helm.
 
 - `Chart.yaml` and `values.yaml` are preserved. They hold dependencies and the pinned
   `fullnameOverride` values `ccluster-cp` / `ccluster-ip`, which tests and recipes use.
+- `charts/ip/chart/values.schema.json` is hand-written and preserved too. It rejects
+  `rbac.namespaced: true`: the plugin renders every role as a namespaced `Role` under
+  that value, and a `Role` cannot grant access to the cluster-scoped `CCLClusterConfig`.
 - `templates/` is deleted and rebuilt on every run, including helpers and notes.
   Additional hand-written resources belong in a separate chart. The chart `.helmignore`
   is generated too.

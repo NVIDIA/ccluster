@@ -121,6 +121,8 @@ rbac:
   ## - false (default): ClusterRole/ClusterRoleBinding (all namespaces)
   ## - true: Role/RoleBinding (release namespace only)
   ##
+  ## CCLClusterConfig is cluster-scoped, and a namespaced Role cannot grant access to
+  ## it, so this chart needs the cluster-scoped default. values.schema.json rejects true.
   namespaced: false
 
   ## Helper roles for CRD management (admin/editor/viewer)
