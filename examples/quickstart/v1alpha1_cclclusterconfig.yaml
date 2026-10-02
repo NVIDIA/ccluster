@@ -3,15 +3,11 @@
 # Describes the infra-plane cluster to ccluster-ip-operator, which runs in that cluster.
 # Apply it there, not in the control-plane cluster.
 #
-# The operator runs every catalogs/cluster_base component's Verifier against it and
-# reports the outcome as the Verified condition (every Verifier is a placeholder
-# reporting true for now):
-#
-#   kubectl get cclclusterconfig cluster
-#   kubectl get cclclusterconfig cluster -o jsonpath='{.status.conditions[0].message}'
-#
-# The operator installs nothing. Whether the components arrived through a
-# CCLComponentSet from the control plane or through helm by hand is invisible to it.
+# No controller reconciles it yet: the operator only registers the type, so its status
+# stays empty. The first ip controller will verify the catalogs/cluster_base components
+# against it and report the outcome as the Verified condition. It will install nothing,
+# so whether the components arrived through a CCLComponentSet or through helm by hand
+# will not matter to it.
 #
 # It is a cluster-scoped singleton: there is one cluster to describe, so the API server
 # rejects any name but "cluster".
