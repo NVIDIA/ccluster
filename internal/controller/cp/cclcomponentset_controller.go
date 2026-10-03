@@ -48,6 +48,7 @@ const (
 	reasonRolloutComplete = "RolloutComplete"
 
 	reasonApplicationsCreated   = "ApplicationsCreated"
+	reasonApplicationsSyncing   = "ApplicationsSyncing"
 	reasonApplicationCRDMissing = "ApplicationCRDMissing"
 	reasonApplicationConflict   = "ApplicationConflict"
 	reasonApplicationFailed     = "ApplicationFailed"
@@ -63,10 +64,12 @@ const (
 	annotationComponentSetName      = "ccluster.nvidia.com/componentset-name"
 	annotationComponentSetNamespace = "ccluster.nvidia.com/componentset-namespace"
 
-	// The CCLComponentSet generation that produced an Application's spec. The operator
-	// writes it with that spec and sends the same value through Argo CD in the sync it asks
-	// for, so what Argo CD judged can be told from what the operator wants - see finished.
+	// The parent generation is diagnostic; sync-request-id identifies the actual write,
+	// including writes caused by operator configuration changes within one generation.
 	annotationComponentSetGeneration = "ccluster.nvidia.com/componentset-generation"
+	annotationSyncRequestID          = "ccluster.nvidia.com/sync-request-id"
+	annotationAppRefresh             = "argocd.argoproj.io/refresh"
+	refreshTypeHard                  = "hard"
 
 	// The name again as a label, because a label can be selected on and an annotation
 	// cannot: listing a CCLComponentSet's Applications is how the operator knows what it
@@ -88,6 +91,10 @@ const (
 	// a failing sync reported as one long attempt rather than a series.
 	syncRetryLimit = 5
 
+	// Requeue observations independently of watches, including same-second timestamps.
+	syncObservationRetryInterval = 2 * time.Second
+	syncRequestRetryInterval     = 15 * time.Second
+
 	// teardownRetryInterval backstops the Application watch during teardown. Progress
 	// is event-driven - an Application going away brings the CCLComponentSet back - so
 	// this only covers a missed event, and keeps a component whose cluster is
@@ -99,6 +106,9 @@ const (
 type CCLComponentSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// APIReader bypasses the informer cache before submitting or recovering a request.
+	APIReader client.Reader
 
 	// CatalogRepoURL and CatalogRevision locate the chart catalog components are
 	// deployed from. Component paths in the spec are relative to that repository's
@@ -164,7 +174,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// No requeue: only an edit to the CCLComponentSet or its CCLInfraPlanes can
 		// resolve this, and both are watched.
 		log.Info("Did not apply CCLComponentSet", "reason", reason, "message", message)
-		return ctrl.Result{}, r.setConditions(ctx, &componentSet,
+		return ctrl.Result{}, r.setConditions(ctx, &componentSet, componentSet.DeepCopy(),
 			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
 	}
 
@@ -175,11 +185,18 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	applications := liveApplications(all)
-	released := releaseCount(&componentSet, applications)
+	statusBase := componentSet.DeepCopy()
+	r.observeSyncs(&componentSet, applications)
+	released := r.releaseCount(&componentSet, applications)
 
-	changed, applyErr := r.reconcileApplications(ctx, &componentSet, released, applications)
+	changed, waiting, applyErr := r.reconcileApplications(ctx, &componentSet, released, applications)
 	appliedStatus, appliedReason, appliedMessage, retryErr :=
 		r.applicationsCondition(&componentSet, released, applyErr)
+
+	if applyErr == nil && waiting {
+		appliedStatus, appliedReason, appliedMessage = metav1.ConditionFalse, reasonApplicationsSyncing,
+			"Waiting for pending or running Application operations before writing updated specs"
+	}
 
 	if applyErr == nil && changed {
 		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,
@@ -201,19 +218,27 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Only meaningful once the Applications exist; before that there is nothing to read
 	// back and the previous Progressing condition, if any, still stands. They are
 	// re-listed because reconcileApplications has just created some.
-	if appliedStatus == metav1.ConditionTrue {
+	if applyErr == nil {
 		all, err = r.listApplications(ctx, &componentSet)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		applications = liveApplications(all)
+		r.observeSyncs(&componentSet, applications)
 		progressStatus, progressReason, progressMessage := r.rolloutStatus(&componentSet, applications)
 		conditions = append(conditions, condition(
 			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 	}
 
-	if err := r.setConditions(ctx, &componentSet, conditions...); err != nil {
+	r.pruneSyncRecords(&componentSet)
+	if err := r.setConditions(ctx, &componentSet, statusBase, conditions...); err != nil {
 		return ctrl.Result{}, err
+	}
+	if applyErr == nil {
+		if err := r.requestSyncObservations(ctx, &componentSet, applications); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: r.syncRequeueAfter(&componentSet, applications)}, retryErr
 	}
 	return ctrl.Result{}, retryErr
 }
@@ -297,8 +322,7 @@ func (r *CCLComponentSetReconciler) finalize(
 		return ctrl.Result{RequeueAfter: teardownRetryInterval}, nil
 	}
 
-	// Patched rather than updated, and NotFound ignored, for the reasons in
-	// setConditions: the deletion that brought us here may not have reached the cache.
+	// Ignore NotFound if deletion completed before this finalizer patch.
 	base := componentSet.DeepCopy()
 	controllerutil.RemoveFinalizer(componentSet, componentSetFinalizerName)
 	return ctrl.Result{}, client.IgnoreNotFound(r.Patch(ctx, componentSet, client.MergeFrom(base)))
@@ -318,18 +342,15 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 // setConditions sets the given conditions and the observed generation, then writes the
 // status subresource in one patch.
 //
-// This is a merge patch, not an update, because r.Get reads through the informer cache:
-// on a CCLComponentSet that was just written the cached copy can carry a stale resource
-// version, and an update would fail the optimistic-concurrency check even though the
-// status it computed is correct. A patch carries no such precondition. A NotFound is
-// ignored - the object was deleted while we were reconciling it, and there is no status
-// left to record.
+// Carry the original resource version so a concurrent spec edit cannot receive a
+// completion computed for older input. A conflict is retried by the controller; a missing
+// object has no status left to record. The base precedes all request bookkeeping changes.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	base *cclusternvidiacomv1alpha1.CCLComponentSet,
 	conditions ...metav1.Condition,
 ) error {
-	base := componentSet.DeepCopy()
 
 	for _, c := range conditions {
 		c.ObservedGeneration = componentSet.Generation
@@ -337,7 +358,8 @@ func (r *CCLComponentSetReconciler) setConditions(
 	}
 	componentSet.Status.ObservedGeneration = componentSet.Generation
 
-	return client.IgnoreNotFound(r.Status().Patch(ctx, componentSet, client.MergeFrom(base)))
+	return client.IgnoreNotFound(r.Status().Patch(ctx, componentSet,
+		client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})))
 }
 
 // componentSetsForInfraPlane maps a CCLInfraPlane to the CCLComponentSets that reference it,
@@ -384,6 +406,7 @@ func (r *CCLComponentSetReconciler) componentSetForApplication(_ context.Context
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.APIReader = mgr.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{}).
 		Watches(&cclusternvidiacomv1alpha1.CCLInfraPlane{},

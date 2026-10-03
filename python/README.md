@@ -165,11 +165,14 @@ if not client.is_component_set_finished(name="local-base"):
 A type is absent when the operator did not get far enough to write it: a set whose
 validation failed has no `Progressing` condition for this generation.
 
-`Progressing=False` means that for every component Argo CD finished the sync the operator
-asked for on the spec it wrote, and reported the result `Healthy` and `Synced`. It is never
-a verdict left standing from an earlier spec, so the values in the set are live. While the
-rollout is still going the reason is `WaveSyncing`, or `WaveSyncFailed` when the sync the
-operator asked for failed and the message carries Argo CD's own.
+`Progressing=False` means every Application matches the operator's current desired spec,
+its tracked sync request succeeded, and a later Argo CD comparison reports `Healthy` and
+`Synced`. Successful request records survive self-heal. This timestamp check is a
+freshness barrier, not an atomic configuration-version acknowledgement from Argo CD.
+Existing Applications without request IDs enter tracking on their next spec change.
+While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when a tracked
+sync fails or request delivery is exhausted. Updates across already released components
+are not yet serialized by wave.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
 then uninstalls the set's charts in reverse order, one at a time, so the object stays in

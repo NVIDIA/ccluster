@@ -98,6 +98,48 @@ class CCLComponentSetSpec(BaseModel):
     """
 
 
+class ComponentSyncStatus(BaseModel):
+    """
+    ComponentSyncStatus records a sync request submitted for one Application.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    application_uid: Annotated[str, Field(alias="applicationUID")]
+    """
+    applicationUID prevents a recreated Application from reusing an old result.
+    """
+    attempts: int | None = None
+    """
+    attempts bounds resubmission when a request or its result cannot be observed.
+    """
+    finished_at: Annotated[AwareDatetime | None, Field(alias="finishedAt")] = None
+    """
+    finishedAt records when Argo CD completed this request.
+    """
+    message: str | None = None
+    """
+    message explains a failed sync or a request that could not be delivered.
+    """
+    name: str
+    """
+    name identifies the component in spec.components.
+    """
+    phase: str | None = None
+    """
+    phase is the last observed phase of this request, or empty before it is observed.
+    """
+    request_id: Annotated[str, Field(alias="requestID")]
+    """
+    requestID identifies the request carried in the Application's operation.info.
+    """
+    requested_at: Annotated[AwareDatetime | None, Field(alias="requestedAt")] = None
+    """
+    requestedAt is the last time the operator submitted this request.
+    """
+
+
 class Status(Enum):
     """
     status of the condition, one of True, False, Unknown.
@@ -173,6 +215,13 @@ class CCLComponentSetStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    component_syncs: Annotated[
+        list[ComponentSyncStatus] | None, Field(alias="componentSyncs")
+    ] = None
+    """
+    componentSyncs track the operator's current sync request for each component.
+    Completed results survive Argo CD replacing its last operation during self-heal.
+    """
     conditions: list[Condition] | None = None
     """
     conditions represent the current state of the CCLComponentSet resource.

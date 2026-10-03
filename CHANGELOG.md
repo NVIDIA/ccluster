@@ -66,14 +66,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - A CCLComponentSet waits for a referenced CCLInfraPlane whose status is still the
   previous generation's, rather than trusting an `Available` condition computed for an
   older spec. The status reports that separately from a plane that is not Available.
-- A CCLComponentSet no longer releases the next component against Argo CD's verdict on
-  the spec before the one the operator just wrote. The operator records the generation
-  that produced each Application's spec on that Application, asks Argo CD for a sync
-  carrying the same generation, and treats the component as converged only once that sync
-  has succeeded. `Progressing=False` now means Argo CD judged the spec the operator wrote,
-  and a requested sync that fails is reported as `WaveSyncFailed` rather than as a slow
-  one. An Application written by an older operator keeps its previous judgement until its
-  spec next changes.
+- CCLComponentSet tracks each submitted Application sync with a unique request ID and
+  persists its result across Argo CD self-heal. Completion checks the current desired
+  spec and waits for a comparison after sync completion before accepting Healthy/Synced.
+  Pending operations are preserved; unobserved request delivery is bounded and failures
+  are reported as `WaveSyncFailed`. Existing Applications enter tracking on their next
+  spec change. Update ordering across already released components remains unchanged.
 - A write to an Application or AppProject built on a stale read is retried in place
   instead of failing the reconcile. Neither object has a status subresource, so Argo CD's
   own status writes move the resource version the operator's patch carries, and a read

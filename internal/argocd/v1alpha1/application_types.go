@@ -54,7 +54,7 @@ type Application struct {
 
 	// operation requests a sync. Argo CD copies it into status.operationState.operation and
 	// then clears this field, so it is a one-shot request rather than desired state. The
-	// operator sets it to tie Argo CD's next verdict to the spec it just wrote.
+	// operator sets it to identify the sync submitted with a spec write.
 	//
 	// It gets its own patch path. A read of an operation Argo CD's own auto-sync requested
 	// decodes only the fields below, so a decoded one must never be written back.
@@ -100,8 +100,7 @@ func (a *Application) OperationMessage() string {
 }
 
 // OperationInfo returns what Argo CD echoed back for one info item of the last sync.
-// Argo CD sets no info on the syncs it starts itself, so a hit means the operator asked
-// for this one.
+// Callers match the returned value against their independently recorded request ID.
 func (a *Application) OperationInfo(name string) (string, bool) {
 	if a.Status == nil || a.Status.OperationState == nil {
 		return "", false
@@ -200,8 +199,7 @@ type Operation struct {
 	InitiatedBy OperationInitiator `json:"initiatedBy,omitempty"`
 
 	// info is free-form and copied verbatim into status.operationState.operation.info. It
-	// is the only thing Argo CD hands back unchanged, and so the only way the operator can
-	// recognise its own sync.
+	// lets the operator recognise its own sync by the request ID.
 	Info []Info `json:"info,omitempty"`
 
 	// retry lets Argo CD back a failing sync off itself. The phase stays Running while it
@@ -213,9 +211,11 @@ type Operation struct {
 //
 // Argo CD reads none of this from spec.syncPolicy - the sync it starts itself copies the
 // policy across field by field, and so must the operator. A revision is deliberately not
-// modelled: without one Argo CD uses spec.source.targetRevision, which is the revision the
-// operator set in the first place.
+// modelled: without one Argo CD resolves the submitted source's targetRevision.
 type SyncOperation struct {
+	// source captures the source submitted with this request, including Helm values.
+	Source *ApplicationSource `json:"source,omitempty"`
+
 	// prune must repeat spec.syncPolicy.automated.prune.
 	Prune bool `json:"prune,omitempty"`
 
@@ -243,6 +243,9 @@ type Info struct {
 
 // ApplicationStatus is the observed state of an Application.
 type ApplicationStatus struct {
+	// reconciledAt is the start time of Argo CD's last full comparison.
+	ReconciledAt *metav1.Time `json:"reconciledAt,omitempty"`
+
 	// health is Argo CD's assessment of the deployed resources.
 	Health ApplicationHealthStatus `json:"health,omitempty"`
 
@@ -264,6 +267,9 @@ type OperationState struct {
 
 	// message explains a Failed or Error phase.
 	Message string `json:"message,omitempty"`
+
+	// finishedAt is set when the operation reaches a terminal phase.
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // ApplicationHealthStatus is the health half of an Application's status. Argo CD also

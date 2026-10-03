@@ -141,6 +141,58 @@ spec:
           status:
             description: status defines the observed state of CCLComponentSet
             properties:
+              componentSyncs:
+                description: |-
+                  componentSyncs track the operator's current sync request for each component.
+                  Completed results survive Argo CD replacing its last operation during self-heal.
+                items:
+                  description: ComponentSyncStatus records a sync request submitted
+                    for one Application.
+                  properties:
+                    applicationUID:
+                      description: applicationUID prevents a recreated Application
+                        from reusing an old result.
+                      type: string
+                    attempts:
+                      description: attempts bounds resubmission when a request or
+                        its result cannot be observed.
+                      format: int32
+                      type: integer
+                    finishedAt:
+                      description: finishedAt records when Argo CD completed this
+                        request.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message explains a failed sync or a request that
+                        could not be delivered.
+                      type: string
+                    name:
+                      description: name identifies the component in spec.components.
+                      type: string
+                    phase:
+                      description: phase is the last observed phase of this request,
+                        or empty before it is observed.
+                      type: string
+                    requestID:
+                      description: requestID identifies the request carried in the
+                        Application's operation.info.
+                      type: string
+                    requestedAt:
+                      description: requestedAt is the last time the operator submitted
+                        this request.
+                      format: date-time
+                      type: string
+                  required:
+                  - applicationUID
+                  - name
+                  - requestID
+                  title: ComponentSyncStatus
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               conditions:
                 description: |-
                   conditions represent the current state of the CCLComponentSet resource.

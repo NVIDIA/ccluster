@@ -21,6 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	cclv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 
 	"github.com/NVIDIA/ccluster/test/utils"
 )
@@ -733,6 +738,9 @@ var _ = Describe("Manager", Ordered, func() {
 			// or the watch is not wired. Done here rather than in a sibling spec
 			// because the CRD install and manager restart are already paid for.
 			By("drifting the Application spec and waiting for the operator to restore it")
+			// This tier has no Argo CD controller. Complete its pending request before
+			// testing a new spec write; the operator must preserve in-flight operations.
+			markConverged(applicationName)
 			revision, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
 				"-n", crNamespace, "-o", "jsonpath={.spec.source.targetRevision}"))
 			Expect(err).NotTo(HaveOccurred())
@@ -1363,17 +1371,13 @@ var _ = Describe("Manager", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			// The generation round trip is what the ordering guarantee rests on, and only a
-			// real Argo CD can settle it: envtest's stand-in echoes back whatever the test
-			// tells it to. Under test is that Argo CD copies an operator-supplied
-			// operation.info into status.operationState untouched - on create, a path Argo
-			// CD's own API server refuses and so never exercises, and again on an
-			// Application it is already managing.
-			It("should carry the CCLComponentSet generation through Argo CD's sync result", func() {
+			// Real Argo CD must echo the request identity and converge the managed Deployment.
+			// Completion of the updated parent must never precede the updated workload.
+			It("should track sync requests through Argo CD and wait for the updated Deployment", func() {
 				const componentSetName = "e2e-sync-generation"
 				const planeName = "e2e-sync-generation-plane"
 				const credentialsName = "e2e-sync-generation-plane-credentials"
-				const generationKey = "ccluster.nvidia.com/componentset-generation"
+				const requestKey = "ccluster.nvidia.com/sync-request-id"
 				applicationName := componentSetName + "-keda"
 
 				By("registering the control-plane cluster with itself as an infra plane")
@@ -1390,70 +1394,91 @@ var _ = Describe("Manager", Ordered, func() {
 				applyCCLInfraPlane(planeName, credentialsName)
 				waitInfraPlaneAvailable(planeName)
 
-				componentSetGeneration := func(g Gomega) string {
+				readSet := func(g Gomega) *cclv1alpha1.CCLComponentSet {
 					out, err := utils.Run(exec.Command("kubectl", "get", "cclcomponentset",
-						componentSetName, "-n", crNamespace, "-o", "jsonpath={.metadata.generation}"))
+						componentSetName, "-n", crNamespace, "-o", "json"))
 					g.Expect(err).NotTo(HaveOccurred())
-					return strings.TrimSpace(out)
+					var set cclv1alpha1.CCLComponentSet
+					g.Expect(json.Unmarshal([]byte(out), &set)).To(Succeed())
+					return &set
 				}
-				// The generation the operator recorded on the Application, and the one Argo CD
-				// handed back with the phase of the sync that carried it.
 				recorded := func(g Gomega) string {
 					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-						// jsonpath reads a dot as a step, so the key's own dots are escaped.
 						"-n", crNamespace, "-o", fmt.Sprintf("jsonpath={.metadata.annotations.%s}",
-							strings.ReplaceAll(generationKey, ".", `\.`))))
+							strings.ReplaceAll(requestKey, ".", `\.`))))
 					g.Expect(err).NotTo(HaveOccurred())
 					return strings.TrimSpace(out)
 				}
-				synced := func(g Gomega) string {
-					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-						"-n", crNamespace, "-o", fmt.Sprintf(
-							"jsonpath={.status.operationState.operation.info[?(@.name=='%s')].value}"+
-								" {.status.operationState.phase}", generationKey)))
-					g.Expect(err).NotTo(HaveOccurred())
-					return strings.TrimSpace(out)
+				receipt := func(set *cclv1alpha1.CCLComponentSet) *cclv1alpha1.ComponentSyncStatus {
+					for i := range set.Status.ComponentSyncs {
+						if set.Status.ComponentSyncs[i].Name == "keda" {
+							return &set.Status.ComponentSyncs[i]
+						}
+					}
+					return nil
 				}
 
 				By("deploying keda with one operator replica")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
+				var createdID string
+				var createdGeneration int64
 				Eventually(func(g Gomega) {
+					set := readSet(g)
+					result := receipt(set)
+					g.Expect(result).NotTo(BeNil())
+					createdID = recorded(g)
+					createdGeneration = set.Generation
+					g.Expect(createdID).NotTo(BeEmpty())
+					g.Expect(result.RequestID).To(Equal(createdID))
+					g.Expect(result.Phase).To(Equal("Succeeded"))
 					g.Expect(applicationConverged(applicationName)).To(BeTrue())
 				}, 8*time.Minute).Should(Succeed())
 
-				By("verifying Argo CD ran the sync written alongside the Application on create")
-				var created string
-				Eventually(func(g Gomega) {
-					created = componentSetGeneration(g)
-					g.Expect(recorded(g)).To(Equal(created))
-					g.Expect(synced(g)).To(Equal(created + " Succeeded"))
-				}, 5*time.Minute).Should(Succeed())
-
-				By("verifying Argo CD attributes that sync to the operator, not to its own automation")
+				By("finding the managed operator Deployment")
 				out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-					"-n", crNamespace, "-o",
-					"jsonpath={.status.operationState.operation.initiatedBy.username}"))
+					"-n", crNamespace, "-o", `jsonpath={.status.resources[?(@.kind=="Deployment")].name}`))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(strings.TrimSpace(out)).To(Equal("ccluster-cp-operator"))
+				var operatorDeployment string
+				for name := range strings.FieldsSeq(out) {
+					if strings.Contains(name, "operator") && !strings.Contains(name, "metrics") {
+						Expect(operatorDeployment).To(BeEmpty(), "multiple operator Deployments: %s", out)
+						operatorDeployment = name
+					}
+				}
+				Expect(operatorDeployment).NotTo(BeEmpty())
+				readDeployment := func(g Gomega) *appsv1.Deployment {
+					out, err := utils.Run(exec.Command("kubectl", "get", "deployment", operatorDeployment,
+						"-n", "keda", "-o", "json"))
+					g.Expect(err).NotTo(HaveOccurred())
+					var deployment appsv1.Deployment
+					g.Expect(json.Unmarshal([]byte(out), &deployment)).To(Succeed())
+					return &deployment
+				}
 
-				By("raising the replica count in the CCLComponentSet")
+				By("raising the replica count and checking that completion never precedes convergence")
 				applyKedaCCLComponentSet(componentSetName, planeName, 2)
-
-				By("waiting for Argo CD to finish the sync for the generation that produced it")
 				Eventually(func(g Gomega) {
-					generation := componentSetGeneration(g)
-					g.Expect(generation).NotTo(Equal(created), "the CCLComponentSet spec did not change")
-					g.Expect(recorded(g)).To(Equal(generation))
-					g.Expect(synced(g)).To(Equal(generation + " Succeeded"))
+					set := readSet(g)
+					g.Expect(set.Generation).NotTo(Equal(createdGeneration))
+					progress := apimeta.FindStatusCondition(set.Status.Conditions, conditionProgressing)
+					g.Expect(progress).NotTo(BeNil())
+					if progress.ObservedGeneration == set.Generation && progress.Status == metav1.ConditionFalse {
+						// Use Expect: premature completion is a safety failure, not an Eventually retry.
+						result := receipt(set)
+						Expect(result).NotTo(BeNil())
+						Expect(result.RequestID).NotTo(Equal(createdID))
+						Expect(result.RequestID).To(Equal(recorded(g)))
+						Expect(result.Phase).To(Equal("Succeeded"))
+						deployment := readDeployment(g)
+						Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
+						Expect(deployment.Status.ObservedGeneration).To(BeNumerically(">=", deployment.Generation))
+						Expect(deployment.Status.UpdatedReplicas).To(Equal(int32(2)))
+						Expect(deployment.Status.AvailableReplicas).To(Equal(int32(2)))
+					}
+					g.Expect(progress.ObservedGeneration).To(Equal(set.Generation))
+					g.Expect(progress.Status).To(Equal(metav1.ConditionFalse))
+					g.Expect(progress.Reason).To(Equal("RolloutComplete"))
 				}, 8*time.Minute).Should(Succeed())
-
-				By("verifying the rollout is reported complete only once that sync has landed")
-				Eventually(func(g Gomega) {
-					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "status")).
-						To(Equal("False"))
-					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
-						To(Equal("RolloutComplete"))
-				}, 2*time.Minute).Should(Succeed())
 
 				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
 				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
@@ -1743,8 +1768,7 @@ func applicationConverged(name string) bool {
 
 // markConverged stands in for Argo CD in the quick tier, which does not run it: it takes
 // the sync the operator asked for, reports it succeeded, and reports the Application
-// Healthy and Synced. The operator wants all three before it releases the component after
-// this one, so patching health and sync alone no longer moves a rollout on.
+// Healthy and Synced after that sync. The timestamps also model a subsequent comparison.
 func markConverged(name string) {
 	GinkgoHelper()
 
@@ -1756,18 +1780,26 @@ func markConverged(name string) {
 	}
 	Expect(json.Unmarshal([]byte(out), &application)).To(Succeed())
 
+	now := time.Now().UTC()
 	status := map[string]any{
-		"health": map[string]any{"status": "Healthy"},
-		"sync":   map[string]any{"status": "Synced"},
+		"health":       map[string]any{"status": "Healthy"},
+		"sync":         map[string]any{"status": "Synced"},
+		"reconciledAt": now.Format(time.RFC3339),
 	}
-	patch := map[string]any{"status": status}
+	patch := map[string]any{
+		"status": status,
+		"metadata": map[string]any{"annotations": map[string]any{
+			"argocd.argoproj.io/refresh": nil,
+		}},
+	}
 	if len(application.Operation) > 0 {
 		// Argo CD copies the request into the state and clears the field. The CRD
 		// requires startedAt alongside the operation and its phase.
 		status["operationState"] = map[string]any{
 			"operation": application.Operation,
 			"phase":     "Succeeded",
-			"startedAt": time.Now().UTC().Format(time.RFC3339),
+			"startedAt": now.Add(-2 * time.Second).Format(time.RFC3339),
+			"finishedAt": now.Add(-time.Second).Format(time.RFC3339),
 		}
 		patch["operation"] = nil
 	}
