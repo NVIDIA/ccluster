@@ -64,12 +64,10 @@ const (
 	annotationComponentSetName      = "ccluster.nvidia.com/componentset-name"
 	annotationComponentSetNamespace = "ccluster.nvidia.com/componentset-namespace"
 
-	// The parent generation is diagnostic; sync-request-id identifies the actual write,
-	// including writes caused by operator configuration changes within one generation.
-	annotationComponentSetGeneration = "ccluster.nvidia.com/componentset-generation"
-	annotationSyncRequestID          = "ccluster.nvidia.com/sync-request-id"
-	annotationAppRefresh             = "argocd.argoproj.io/refresh"
-	refreshTypeHard                  = "hard"
+	// sync-request-id identifies a spec write even when the parent generation is unchanged.
+	annotationSyncRequestID = "ccluster.nvidia.com/sync-request-id"
+	annotationAppRefresh    = "argocd.argoproj.io/refresh"
+	refreshTypeNormal       = "normal"
 
 	// The name again as a label, because a label can be selected on and an annotation
 	// cannot: listing a CCLComponentSet's Applications is how the operator knows what it
@@ -93,7 +91,6 @@ const (
 
 	// Requeue observations independently of watches, including same-second timestamps.
 	syncObservationRetryInterval = 2 * time.Second
-	syncRequestRetryInterval     = 15 * time.Second
 
 	// teardownRetryInterval backstops the Application watch during teardown. Progress
 	// is event-driven - an Application going away brings the CCLComponentSet back - so
@@ -107,7 +104,7 @@ type CCLComponentSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// APIReader bypasses the informer cache before submitting or recovering a request.
+	// APIReader only verifies missing or mismatched request identities during recovery.
 	APIReader client.Reader
 
 	// CatalogRepoURL and CatalogRevision locate the chart catalog components are

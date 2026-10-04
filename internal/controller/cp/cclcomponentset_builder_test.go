@@ -78,7 +78,6 @@ func healthyApp() *argocdv1alpha1.Application {
 }
 
 const (
-	testGeneration     = "7"
 	testRequestID      = "request-7"
 	syncFailureMessage = "one or more objects failed to apply"
 )
@@ -87,7 +86,7 @@ const (
 // An empty phase means Argo CD has not recorded an operation for that request yet.
 func stamped(health, sync, phase string) *argocdv1alpha1.Application {
 	application := app(health, sync)
-	application.Annotations = map[string]string{annotationComponentSetGeneration: testGeneration, annotationSyncRequestID: testRequestID}
+	application.Annotations = map[string]string{annotationSyncRequestID: testRequestID}
 	application.UID = types.UID("application-uid")
 	if phase == "" {
 		return application
@@ -128,7 +127,7 @@ func TestReleaseCount(t *testing.T) {
 		want       int
 	}{
 		{
-			name:       "holds while a released component has no sync for its generation",
+			name:       "holds while a released component has no result for its request",
 			components: []string{"a", "b"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": stamped(argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced, ""),
@@ -280,48 +279,6 @@ func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
 		}
 	}()
 	_ = componentSet.Spec.Components[:released]
-}
-
-func TestNeedsSync(t *testing.T) {
-	now := time.Unix(200, 0)
-	tests := []struct {
-		name        string
-		specChanged bool
-		phase       string
-		pending     bool
-		receipt     string
-		observed    bool
-		age         time.Duration
-		want        bool
-	}{
-		{name: "submits a new spec", specChanged: true, want: true},
-		{name: "does not overwrite a pending operation", specChanged: true, pending: true},
-		{name: "waits for a running operation", specChanged: true, phase: "Running"},
-		{name: "waits for a terminating operation", specChanged: true, phase: "Terminating"},
-		{name: "preserves success after self-heal", phase: "Succeeded", receipt: "Succeeded", age: time.Minute},
-		{name: "preserves failure after self-heal", phase: "Succeeded", receipt: "Failed", age: time.Minute},
-		{name: "waits before retrying a missing result", phase: "Succeeded", age: time.Second},
-		{name: "retries an unobserved request", phase: "Succeeded", age: time.Minute, want: true},
-		{name: "does not repeat an observed result", phase: "Succeeded", observed: true, age: time.Minute},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			application := stamped("Healthy", "Synced", test.phase)
-			if application.Status != nil && application.Status.OperationState != nil && !test.observed {
-				application.Status.OperationState.Operation.Info = nil
-			}
-			if test.pending {
-				application.Operation = &argocdv1alpha1.Operation{}
-			}
-			record := &cclusternvidiacomv1alpha1.ComponentSyncStatus{
-				ApplicationUID: string(application.UID), RequestID: testRequestID,
-				Phase: test.receipt, RequestedAt: &metav1.Time{Time: now.Add(-test.age)},
-			}
-			if got := needsSync(application, test.specChanged, record, now); got != test.want {
-				t.Fatalf("needsSync() = %v, want %v", got, test.want)
-			}
-		})
-	}
 }
 
 // trackTestSyncs supplies the independent request records represented by these fixtures.
@@ -529,7 +486,7 @@ func TestRolloutStatus(t *testing.T) {
 			name:       "reports complete when every component is healthy and synced",
 			components: []string{"a", "b"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				// Recorded, and written before the operator recorded generations.
+				// Recorded, and written before the operator recorded requests.
 				"a": stamped(argocdv1alpha1.HealthStatusHealthy,
 					argocdv1alpha1.SyncStatusSynced, argocdv1alpha1.OperationSucceeded),
 				"b": healthyApp(),

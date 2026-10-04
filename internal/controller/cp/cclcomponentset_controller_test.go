@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -749,7 +748,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				reconciler.Client = k8sClient
 				reconciler.APIReader = nil
 			}()
-			reconciler.Client = &staleApplicationList{Client: k8sClient, application: previous}
+			cached := &staleApplicationList{Client: k8sClient, application: previous}
+			reconciler.Client = cached
 			reconciler.APIReader = k8sClient
 			updated := reconcileAndGet()
 			written := getApplication(firstComponent)
@@ -762,10 +762,77 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
 			Expect(conditionOf(updated, conditionTypeProgressing).ObservedGeneration).To(Equal(updated.Generation))
 
-			By("not reverting the tracked identity on another stale list")
+			By("not reverting the tracked identity when both Get and List are stale")
+			cached.staleGets = true
 			updated = reconcileAndGet()
 			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(newID))
 			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should use cached reads when request identities match", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			reconcileAndGet()
+			reader := &countingApplicationReader{Reader: k8sClient}
+			reconciler.APIReader = reader
+			defer func() { reconciler.APIReader = nil }()
+			for range 3 {
+				reconcileAndGet()
+			}
+			Expect(reader.gets).To(BeZero())
+		})
+
+		It("should assign a new request to a recreated Application instead of reusing its receipt", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			reconcileAndGet()
+			previous := getApplication(firstComponent)
+			previous.Finalizers = nil
+			Expect(k8sClient.Update(ctx, previous)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, previous)).To(Succeed())
+			recreated := previous.DeepCopy()
+			recreated.ObjectMeta = metav1.ObjectMeta{
+				Name: previous.Name, Namespace: previous.Namespace,
+				Labels: previous.Labels, Annotations: previous.Annotations,
+			}
+			Expect(k8sClient.Create(ctx, recreated)).To(Succeed())
+			Expect(recreated.UID).NotTo(Equal(previous.UID))
+			reconciler.APIReader = k8sClient
+			defer func() { reconciler.APIReader = nil }()
+			updated := reconcileAndGet()
+			written := getApplication(firstComponent)
+			Expect(written.Operation).NotTo(BeNil())
+			Expect(written.Annotations[annotationSyncRequestID]).NotTo(Equal(previous.Annotations[annotationSyncRequestID]))
+			Expect(updated.Status.ComponentSyncs[0].ApplicationUID).To(Equal(string(recreated.UID)))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should stop updating later released components when an earlier operation is busy", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			release(secondComponent)
+			componentSet := reconcileAndGet()
+			first := getApplication(firstComponent)
+			second := getApplication(secondComponent)
+			first.Operation = newOperation(first)
+			Expect(k8sClient.Update(ctx, first)).To(Succeed())
+			for i := range componentSet.Spec.Components {
+				componentSet.Spec.Components[i].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			waiting := reconcileAndGet()
+			Expect(conditionOf(waiting, conditionTypeComponentsApplied).Reason).To(Equal(reasonApplicationsSyncing))
+			Expect(getApplication(firstComponent).Spec).To(Equal(first.Spec))
+			Expect(getApplication(secondComponent).Spec).To(Equal(second.Spec))
+			Expect(getApplication(secondComponent).Annotations[annotationSyncRequestID]).To(Equal(second.Annotations[annotationSyncRequestID]))
 		})
 
 		It("should assign a new request when operator configuration changes without a parent spec update", func() {
@@ -824,59 +891,113 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(getApplication(firstComponent).Operation).To(BeNil())
 		})
 
-		It("should keep a failed request failed after an unrelated operation replaces its result", func() {
+		It("should resume a failed request when a later sync of the same spec succeeds", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
-			settle()
+			componentSet := settle()
+			requestID := componentSet.Status.ComponentSyncs[0].RequestID
 			application := getApplication(firstComponent)
 			application.Status = &argocdv1alpha1.ApplicationStatus{OperationState: &argocdv1alpha1.OperationState{
 				Operation: *application.Operation, Phase: "Failed", Message: "apply failed",
-				FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+				FinishedAt: &metav1.Time{Time: time.Now().Add(-2 * time.Second)},
 			}}
 			application.Operation = nil
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 			failed := reconcileAndGet()
 			Expect(conditionOf(failed, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncFailed))
+			Expect(conditionOf(failed, conditionTypeProgressing).Message).To(ContainSubstring("apply failed"))
+			Expect(conditionOf(failed, conditionTypeProgressing).Message).To(ContainSubstring("in Argo CD resumes"))
+
+			By("adopting a manual sync in Argo CD that succeeded")
 			application = getApplication(firstComponent)
-			application.Status.OperationState.Operation.Info = nil
-			application.Status.OperationState.Phase = "Succeeded"
-			application.Status.OperationState.Message = ""
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
+					Operation: argocdv1alpha1.Operation{InitiatedBy: argocdv1alpha1.OperationInitiator{Username: "admin"}},
+					Phase:     "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+				},
+			}
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 			updated := reconcileAndGet()
-			Expect(conditionOf(updated, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncFailed))
-			Expect(conditionOf(updated, conditionTypeProgressing).Message).To(ContainSubstring("apply failed"))
+			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
 			Expect(getApplication(firstComponent).Operation).To(BeNil())
 		})
 
-		It("should bound delivery retries while preserving the request ID", func() {
+		It("should adopt a later result without resubmission when self-heal replaces an unobserved one", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
 			componentSet := settle()
 			requestID := componentSet.Status.ComponentSyncs[0].RequestID
-			for attempts := int32(2); attempts <= int32(syncRetryLimit)+1; attempts++ {
-				application := getApplication(firstComponent)
-				application.Operation = nil
-				application.Status = &argocdv1alpha1.ApplicationStatus{OperationState: &argocdv1alpha1.OperationState{
+
+			// R1 completed before the operator observed its result; self-heal is now latest.
+			application := getApplication(firstComponent)
+			application.Operation = nil
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
 					Phase: "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
-				}}
-				Expect(k8sClient.Update(ctx, application)).To(Succeed())
-				Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
-				componentSet.Status.ComponentSyncs[0].RequestedAt = &metav1.Time{Time: time.Now().Add(-time.Minute)}
-				Expect(k8sClient.Status().Update(ctx, componentSet)).To(Succeed())
-				componentSet = reconcileAndGet()
-				application = getApplication(firstComponent)
-				Expect(componentSet.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
-				if attempts <= int32(syncRetryLimit) {
-					Expect(application.Operation).NotTo(BeNil())
-					Expect(application.Operation.Info).To(ContainElement(argocdv1alpha1.Info{
-						Name: annotationSyncRequestID, Value: requestID,
-					}))
-					Expect(componentSet.Status.ComponentSyncs[0].Attempts).To(Equal(attempts))
-				} else {
-					Expect(application.Operation).To(BeNil())
-					Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncFailed))
-				}
+				},
 			}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(componentSet.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(componentSet.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+		})
+
+		It("should not adopt an earlier result while its own operation is still pending", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			// The operator's operation has not been picked up. The recorded state is the
+			// previous operation's, which ran on the previous spec.
+			application := getApplication(firstComponent)
+			Expect(application.Operation).NotTo(BeNil())
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
+					Phase: "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Minute)},
+				},
+			}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncing))
+		})
+
+		It("should not downgrade a successful request when a later operation fails", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			completed := reconcileAndGet()
+			receipt := completed.Status.ComponentSyncs[0]
+			Expect(receipt.Phase).To(Equal("Succeeded"))
+
+			application := getApplication(firstComponent)
+			application.Status.OperationState = &argocdv1alpha1.OperationState{
+				Phase: "Failed", Message: "self-heal failed",
+				FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+			}
+			application.Status.ReconciledAt = &metav1.Time{Time: time.Now()}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0]).To(Equal(receipt))
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).NotTo(Equal(reasonWaveSyncFailed))
 		})
 
 		It("should wait for a post-sync comparison before trusting old Healthy and Synced", func() {
@@ -899,6 +1020,13 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(updated.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
 			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
 			Expect(conditionOf(updated, conditionTypeProgressing).Message).To(ContainSubstring("reassess health"))
+			Expect(getApplication(firstComponent).Annotations).To(HaveKeyWithValue(annotationAppRefresh, refreshTypeNormal))
+
+			By("preserving an existing hard refresh")
+			application = getApplication(firstComponent)
+			application.Annotations[annotationAppRefresh] = "hard"
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			reconcileAndGet()
 			Expect(getApplication(firstComponent).Annotations).To(HaveKeyWithValue(annotationAppRefresh, "hard"))
 
 			By("keeping equal timestamps pending")
@@ -1027,18 +1155,14 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			Expect(rewritten.Object["status"]).To(Equal(application.Object["status"]))
 
-			// The old request has completed. Submit the new spec with its own request ID
-			// and retain the parent generation for diagnostics.
-			generation := strconv.FormatInt(componentSet.Generation, 10)
-			Expect(rewritten.GetAnnotations()).To(
-				HaveKeyWithValue(annotationComponentSetGeneration, generation))
+			// The old request has completed. Submit the new spec with its own request ID.
+			Expect(rewritten.GetAnnotations()).NotTo(HaveKey("ccluster.nvidia.com/componentset-generation"))
 			info, found, err := unstructured.NestedSlice(rewritten.Object, "operation", "info")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeTrue(), "the operator did not ask Argo CD for a sync")
-			Expect(info).To(ContainElements(
-				map[string]any{"name": annotationComponentSetGeneration, "value": generation},
+			Expect(info).To(Equal([]any{
 				map[string]any{"name": annotationSyncRequestID, "value": rewritten.GetAnnotations()[annotationSyncRequestID]},
-			))
+			}))
 		})
 
 		It("should reject a spec write after ownership changes concurrently", func() {
@@ -1295,6 +1419,7 @@ func (c *staleOnFirstWrite) Create(
 type staleApplicationList struct {
 	client.Client
 	application *argocdv1alpha1.Application
+	staleGets   bool
 }
 
 func (c *staleApplicationList) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
@@ -1303,4 +1428,24 @@ func (c *staleApplicationList) List(ctx context.Context, list client.ObjectList,
 		return nil
 	}
 	return c.Client.List(ctx, list, opts...)
+}
+
+func (c *staleApplicationList) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if app, ok := obj.(*argocdv1alpha1.Application); ok && c.staleGets {
+		*app = *c.application.DeepCopy()
+		return nil
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+type countingApplicationReader struct {
+	client.Reader
+	gets int
+}
+
+func (r *countingApplicationReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*argocdv1alpha1.Application); ok {
+		r.gets++
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
 }

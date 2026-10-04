@@ -410,9 +410,9 @@ The operator reuses its Application spec comparison to check the current desired
 it does not render manifests or reproduce Argo CD's resource diff. For each actual spec
 write, it generates a unique request ID and submits the spec, the
 `ccluster.nvidia.com/sync-request-id` annotation and a matching `operation.info` entry in
-one patch. The parent generation remains diagnostic: operator configuration can change an
-Application spec without changing its CCLComponentSet generation. The operation captures
-the source submitted with the request, including Helm values.
+one patch. Request identity does not use parent generation: operator configuration can
+change an Application spec without changing its CCLComponentSet generation. The operation
+captures the source submitted with the request, including Helm values.
 
 The current request is recorded independently in `status.componentSyncs`, keyed by
 component name and bound to the Application UID. Completion requires both the current
@@ -432,11 +432,19 @@ Request tracking has the following rules:
   A later self-heal can replace Argo CD's last operation without erasing this receipt or
   causing the operator to repeat a successful sync. Status writes carry the original
   resource version so a concurrent parent edit cannot receive an obsolete completion.
-- Recover a request from a direct API read after a crash between the Application write and
-  the ComponentSet status write. Repeat an unobserved request only while the Application
-  is idle, using the same ID, at fifteen-second intervals and at most five submissions.
-  Argo CD separately retries each sync up to five times. Exhaustion is reported as
-  `WaveSyncFailed`, rather than restarting retries at watch speed.
+- Use cached Application reads normally. Verify missing or mismatched request identities
+  with a direct API read before recovering a committed request after a crash or failed
+  ComponentSet status write. Stale cache entries must not restore an older request ID.
+- Submit each request once; the operator never resubmits. Argo CD's retry policy allows up
+  to five retries of the submitted sync. Observed `Failed` or `Error` results are reported
+  as `WaveSyncFailed`.
+- Adopt the result of a later operation once it has replaced the request's own result, until
+  the request has succeeded. The request ID and its operation are written in one patch and
+  Argo CD runs one operation at a time, so an idle Application that still carries the request
+  ID records either this request's operation or a later one, and every later one synced the
+  same spec. A self-heal that replaces an unobserved result therefore completes the request,
+  and a sync started in Argo CD retries a failed one without a CCLComponentSet edit. A
+  success is never downgraded by a later failure.
 - Copy prune and sync options into the requested operation. Argo CD does not inherit them
   from syncPolicy; ServerSideApply is required by this catalog.
 - Existing Applications without a request ID continue to use health and sync status, but
@@ -446,14 +454,18 @@ Request tracking has the following rules:
 Operation completion and health assessment run in separate Argo CD loops. After a
 successful request, require `status.reconciledAt` to be strictly later than its saved
 `finishedAt` and any later operation's finish time. Equal second-resolution timestamps
-remain pending. Request a hard refresh and requeue while this observation is missing;
-only then accept Healthy and Synced. This is a conservative freshness barrier, not an
-atomic Argo CD configuration-version acknowledgement. A stronger guarantee would require
+remain pending. Request a normal refresh and requeue while this observation is missing;
+preserve any existing refresh request. Only then accept Healthy and Synced. This is a
+conservative freshness barrier, not an atomic Argo CD configuration-version acknowledgement. A stronger guarantee would require
 Argo CD to bind comparison results to their input version and reject stale status writes.
 
-This request tracking does not serialize updates to already released waves: the existing
-reconciliation loop still visits every released component. Sequential update admission is
-a separate change. Terminating and pruned components are handled below.
+A busy earlier component stops writes to later released components in that pass; pruning
+still runs. Submitting a new request does not stop the pass, so updates to already released
+waves are not fully serialized. Sequential update admission is a separate change.
+
+The captured source preserves a revision string such as `main`, not its Git commit SHA.
+A catalog commit behind an unchanged revision does not create an operator request when
+`applicationSpec()` is unchanged; Argo CD autosync handles that repository change.
 
 Terminating Applications are excluded from this reasoning (`liveApplications`): one still
 holds its cascade finalizer while Argo CD uninstalls the chart, and counting it would let a
@@ -492,12 +504,16 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
-| `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
-| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when a sync the operator asked for failed, with Argo CD's message; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
+| `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationsSyncing`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
+| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
+
+`ApplicationsSyncing` is the one `ComponentsApplied=False` that is not a failure: an earlier
+component has an operation of its own running, so the later specs are held back until it
+finishes. The other three need a human.
 
 Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely

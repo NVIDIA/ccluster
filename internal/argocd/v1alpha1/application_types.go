@@ -268,7 +268,8 @@ type OperationState struct {
 	// message explains a Failed or Error phase.
 	Message string `json:"message,omitempty"`
 
-	// finishedAt is set when the operation reaches a terminal phase.
+	// finishedAt marks completion, or the failed attempt while Argo CD waits to retry.
+	// Only a terminal phase establishes that the operation has completed.
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 

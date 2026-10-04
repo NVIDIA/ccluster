@@ -133,24 +133,19 @@ type ComponentSyncStatus struct {
 	RequestID string `json:"requestID"`
 
 	// phase is the last observed phase of this request, or empty before it is observed.
+	// Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
+	// that operation has replaced the request's own result.
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
-	// message explains a failed sync or a request that could not be delivered.
+	// message explains the last observed request phase.
 	// +optional
 	Message string `json:"message,omitempty"`
 
-	// finishedAt records when Argo CD completed this request.
+	// finishedAt is the timestamp observed with phase, including retry backoff in Running.
+	// A terminal phase is required to interpret it as request completion.
 	// +optional
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
-
-	// requestedAt is the last time the operator submitted this request.
-	// +optional
-	RequestedAt *metav1.Time `json:"requestedAt,omitempty"`
-
-	// attempts bounds resubmission when a request or its result cannot be observed.
-	// +optional
-	Attempts int32 `json:"attempts,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -1754,7 +1754,7 @@ func applyOrderedCCLComponentSet(name, planeName string) {
 
 // applicationConverged reports whether an Application in crNamespace is Healthy and Synced.
 // The operator wants one thing more before it releases the component after it - the sync it
-// asked for having succeeded - which the generation spec below covers.
+// asked for having succeeded - which the request-tracking spec covers.
 func applicationConverged(name string) bool {
 	GinkgoHelper()
 

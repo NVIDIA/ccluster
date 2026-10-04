@@ -110,17 +110,14 @@ class ComponentSyncStatus(BaseModel):
     """
     applicationUID prevents a recreated Application from reusing an old result.
     """
-    attempts: int | None = None
-    """
-    attempts bounds resubmission when a request or its result cannot be observed.
-    """
     finished_at: Annotated[AwareDatetime | None, Field(alias="finishedAt")] = None
     """
-    finishedAt records when Argo CD completed this request.
+    finishedAt is the timestamp observed with phase, including retry backoff in Running.
+    A terminal phase is required to interpret it as request completion.
     """
     message: str | None = None
     """
-    message explains a failed sync or a request that could not be delivered.
+    message explains the last observed request phase.
     """
     name: str
     """
@@ -129,14 +126,12 @@ class ComponentSyncStatus(BaseModel):
     phase: str | None = None
     """
     phase is the last observed phase of this request, or empty before it is observed.
+    Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
+    that operation has replaced the request's own result.
     """
     request_id: Annotated[str, Field(alias="requestID")]
     """
     requestID identifies the request carried in the Application's operation.info.
-    """
-    requested_at: Annotated[AwareDatetime | None, Field(alias="requestedAt")] = None
-    """
-    requestedAt is the last time the operator submitted this request.
     """
 
 

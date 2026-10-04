@@ -170,9 +170,11 @@ its tracked sync request succeeded, and a later Argo CD comparison reports `Heal
 `Synced`. Successful request records survive self-heal. This timestamp check is a
 freshness barrier, not an atomic configuration-version acknowledgement from Argo CD.
 Existing Applications without request IDs enter tracking on their next spec change.
-While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when a tracked
-sync fails or request delivery is exhausted. Updates across already released components
-are not yet serialized by wave.
+While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when the last
+sync of a component's current spec failed. The operator does not retry a failed sync; a
+later successful sync of that Application in Argo CD clears `WaveSyncFailed` and resumes
+the rollout.
+Updates across already released components are not yet fully serialized by wave.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
 then uninstalls the set's charts in reverse order, one at a time, so the object stays in

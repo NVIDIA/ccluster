@@ -26,6 +26,17 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   caller-run Teleport cluster; deploy the upstream chart directly instead.
   `cluster_base.Components` no longer includes it.
 
+### Fixed
+- CCLComponentSet tracks each submitted Application sync with a unique request ID and
+  persists its result across Argo CD self-heal. Completion checks the current desired
+  spec and waits for a comparison after sync completion before accepting Healthy/Synced.
+  Pending operations are preserved and requests are never resubmitted. A later Argo CD
+  operation on the same spec supplies the result when it replaced the request's own, so
+  a self-heal does not strand a request and a successful sync in Argo CD clears
+  `WaveSyncFailed`. Ordinary Application reads use the cache. Existing
+  Applications enter tracking on their next spec change. A busy component stops later
+  writes; full update ordering remains a separate change.
+
 ## [0.0.4] - 2026-09-30
 
 ### Added
@@ -66,12 +77,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - A CCLComponentSet waits for a referenced CCLInfraPlane whose status is still the
   previous generation's, rather than trusting an `Available` condition computed for an
   older spec. The status reports that separately from a plane that is not Available.
-- CCLComponentSet tracks each submitted Application sync with a unique request ID and
-  persists its result across Argo CD self-heal. Completion checks the current desired
-  spec and waits for a comparison after sync completion before accepting Healthy/Synced.
-  Pending operations are preserved; unobserved request delivery is bounded and failures
-  are reported as `WaveSyncFailed`. Existing Applications enter tracking on their next
-  spec change. Update ordering across already released components remains unchanged.
 - A write to an Application or AppProject built on a stale read is retried in place
   instead of failing the reconcile. Neither object has a status subresource, so Argo CD's
   own status writes move the resource version the operator's patch carries, and a read

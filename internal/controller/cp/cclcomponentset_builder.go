@@ -104,8 +104,9 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 // createOrPatchApplication brings one component's Application in line with the spec, and
 // asks Argo CD to sync it when that spec changed.
 //
-// Read directly from the API server before assigning or recovering a request. Argo CD
-// has no status subresource and may write concurrently, so retry read/write conflicts.
+// Normal reads use the informer cache. Verify request identity recovery against the API
+// server; otherwise an old cached annotation could replace a newer tracked request.
+// Argo CD has no status subresource, so retry read/write conflicts.
 func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -129,12 +130,20 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 			},
 		}
 
-		reader := r.APIReader
-		if reader == nil {
-			reader = r.Client
-		}
-		if err := reader.Get(ctx, client.ObjectKeyFromObject(application), application); client.IgnoreNotFound(err) != nil {
+		key := client.ObjectKeyFromObject(application)
+		if err := r.Get(ctx, key, application); client.IgnoreNotFound(err) != nil {
 			return err
+		}
+		record := syncRecord(componentSet, component.Name)
+		requestID := application.Annotations[annotationSyncRequestID]
+		needsRecovery := requestID != "" && !requestMatches(application, record) ||
+			record != nil && record.ApplicationUID != string(application.UID)
+		if application.ResourceVersion != "" && needsRecovery && r.APIReader != nil {
+			fresh := &argocdv1alpha1.Application{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
+			if err := r.APIReader.Get(ctx, key, fresh); client.IgnoreNotFound(err) != nil {
+				return err
+			}
+			application = fresh
 		}
 		before := application.DeepCopy()
 		if !componentSetOwner.ownedBy(application, componentSet) {
@@ -153,27 +162,21 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 
 		desired := r.applicationSpec(componentSet, component)
 		specChanged := !equality.Semantic.DeepEqual(before.Spec, desired)
-		if specChanged && operationInProgress(before) {
+		newRequest := specChanged || record != nil && record.ApplicationUID != string(application.UID)
+		if newRequest && operationInProgress(before) {
 			return errApplicationSyncInProgress
 		}
 		application.Spec = desired
 
-		record := syncRecord(componentSet, component.Name)
-		if specChanged {
-			application.Annotations[annotationComponentSetGeneration] =
-				strconv.FormatInt(componentSet.Generation, 10)
+		if newRequest {
 			application.Annotations[annotationSyncRequestID] = uuid.NewString()
-			// Bind the operation to this source rather than a later read of the spec.
-			application.Annotations[annotationAppRefresh] = refreshTypeHard
 			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{Name: component.Name}
 		} else if application.Annotations[annotationSyncRequestID] != "" && !requestMatches(application, record) {
 			// Recover a committed request after a crash or a failed ComponentSet status
 			// write. This read bypasses the informer cache in a running manager.
-			now := metav1.Now()
 			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{
 				Name: component.Name, ApplicationUID: string(application.UID),
-				RequestID: application.Annotations[annotationSyncRequestID], RequestedAt: &now,
-				Attempts: 1,
+				RequestID: application.Annotations[annotationSyncRequestID],
 			}
 		} else if record != nil && record.ApplicationUID == string(application.UID) &&
 			application.Annotations[annotationSyncRequestID] == "" {
@@ -183,14 +186,7 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		observeSync(application, record)
 
 		var extra []patchPath
-		now := metav1.Now()
-		submitted := needsSync(application, specChanged, record, now.Time)
-		if submitted && record.Attempts >= int32(syncRetryLimit) {
-			record.Phase = argocdv1alpha1.OperationError
-			record.Message = "Sync request or its result was not observed after repeated submissions"
-			submitted = false
-		}
-		if submitted {
+		if newRequest {
 			application.Operation = newOperation(application)
 			extra = append(extra, patchPath{path: "/operation", value: application.Operation})
 		}
@@ -201,10 +197,6 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		if err == nil && record != nil {
 			record.ApplicationUID = string(application.UID)
 			record.RequestID = application.Annotations[annotationSyncRequestID]
-			if submitted {
-				record.RequestedAt = &now
-				record.Attempts++
-			}
 			rememberSync(componentSet, *record)
 		}
 		return err
@@ -226,7 +218,6 @@ func newOperation(application *argocdv1alpha1.Application) *argocdv1alpha1.Opera
 		InitiatedBy: argocdv1alpha1.OperationInitiator{Username: labelManagedByValue},
 		Info: []argocdv1alpha1.Info{
 			{Name: annotationSyncRequestID, Value: application.Annotations[annotationSyncRequestID]},
-			{Name: annotationComponentSetGeneration, Value: application.Annotations[annotationComponentSetGeneration]},
 		},
 		Retry: argocdv1alpha1.RetryStrategy{Limit: syncRetryLimit},
 	}
@@ -249,7 +240,7 @@ func (r *CCLComponentSetReconciler) reconcileApplications(
 		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
 		if errors.Is(err, errApplicationSyncInProgress) {
 			waiting = true
-			continue
+			break
 		}
 		if err != nil {
 			return changed, waiting, err
@@ -526,9 +517,12 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 		phase, operationMessage := r.currentSyncPhase(componentSet, component, application)
 		switch phase {
 		case argocdv1alpha1.OperationFailed, argocdv1alpha1.OperationError:
+			// Not retried by the operator. Any later successful sync of this spec is adopted
+			// - see adoptLaterResult - so the message says how to start one.
 			return metav1.ConditionTrue, reasonWaveSyncFailed, fmt.Sprintf(
-				"Wave %d (component %q) failed to sync: %s",
-				wave, component.Name, operationMessage)
+				"Wave %d (component %q) failed to sync: %s. A successful sync of Application "+
+					"%q in Argo CD resumes the rollout",
+				wave, component.Name, operationMessage, name)
 		case argocdv1alpha1.OperationSucceeded:
 			if !healthObservedAfterSync(application, syncRecord(componentSet, component.Name)) {
 				return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
