@@ -11,6 +11,13 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - `CCLClusterConfig`, a cluster-scoped singleton describing the infra-plane cluster the
   ip operator runs in (its domain). The ip chart ships this CRD; the cp chart does not.
 
+### Removed
+- **Breaking:** The `cluster_base/teleport_kube_agent` component, its Go package and its
+  `ccluster.catalogs.cluster_base.teleport_kube_agent` Python model. It wrapped the
+  AGPL-3.0 upstream chart, the catalog's only non-permissive dependency, and needed a
+  caller-run Teleport cluster; deploy the upstream chart directly instead.
+  `cluster_base.Components` no longer includes it.
+
 ## [0.0.4] - 2026-09-30
 
 ### Added

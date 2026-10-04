@@ -28,7 +28,6 @@ import (
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
-	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 )
 
 func Components(
@@ -37,9 +36,10 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as eighteen error checks. Only
-	// teleport-kube-agent's error can be non-nil, and only when its required values
-	// are unset; catalogs.Entry names the chart it came from.
+	// the catalog reads as the list it is rather than as seventeen error checks. None
+	// of these components has required values, so every error is nil today; the error
+	// return stays so that adding one which does is not a signature change, and
+	// catalogs.Entry names the chart an error came from.
 	var errs []error
 	entry := func(
 		e cclusternvidiacomv1alpha1.ComponentEntry,
@@ -135,24 +135,6 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(metricsserver.New("kube-system", metricsserver.Values{})),
 		}, // wave  47
-		{
-			Name:          "teleport-kube-agent",
-			InfraPlaneRef: ref,
-			// The one component with values it cannot be installed without.
-			// They are samples like every name and namespace above, and go
-			// through the same values parameter every other component's do:
-			// teleport-kube-agent's New is not special.
-			ComponentEntry: entry(teleportkubeagent.New("teleport", teleportkubeagent.Values{
-				TeleportKubeAgent: &teleportkubeagent.ChartValues{
-					ProxyAddr:           "teleport.example.com:443",
-					TeleportClusterName: "example",
-					KubeClusterName:     "example-infra-plane",
-					JoinParams: teleportkubeagent.JoinParams{
-						TokenName: "example-kube-token",
-					},
-				},
-			})),
-		}, // wave  50
 	}
 
 	if err := errors.Join(errs...); err != nil {

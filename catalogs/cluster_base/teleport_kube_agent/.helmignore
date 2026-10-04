@@ -1,5 +1,0 @@
-# The Go package alongside this chart describes its values as typed structs; see
-# component.go and the catalogs package. Helm never reads these files - it only
-# looks at Chart.yaml, values.yaml, templates/, charts/ and crds/ - but they would
-# otherwise be swept into a `helm package` tarball.
-*.go
