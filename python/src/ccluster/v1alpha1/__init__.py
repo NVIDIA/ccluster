@@ -11,11 +11,13 @@ from enum import Enum
 from typing import Literal
 
 from .base import API_VERSION, CustomResource, ObjectMeta
+from .cclclusterconfig import CCLClusterConfigSpec, CCLClusterConfigStatus
 from .cclcomponentset import CCLComponentSetSpec, CCLComponentSetStatus
 from .cclinfraplane import CCLInfraPlaneSpec, CCLInfraPlaneStatus
 
 __all__ = [
     "API_VERSION",
+    "CCLClusterConfig",
     "CCLComponentSet",
     "CCLInfraPlane",
     "CustomResource",
@@ -27,8 +29,15 @@ __all__ = [
 class Kind(str, Enum):
     """The kinds of ccluster.nvidia.com/v1alpha1, as they appear on the wire."""
 
+    CCL_CLUSTER_CONFIG = "CCLClusterConfig"
     CCL_COMPONENT_SET = "CCLComponentSet"
     CCL_INFRA_PLANE = "CCLInfraPlane"
+
+
+class CCLClusterConfig(CustomResource[CCLClusterConfigSpec, CCLClusterConfigStatus]):
+    """A CCLClusterConfig object; see CCLClusterConfigSpec and CCLClusterConfigStatus for its contents."""
+
+    kind: Literal[Kind.CCL_CLUSTER_CONFIG] = Kind.CCL_CLUSTER_CONFIG
 
 
 class CCLComponentSet(CustomResource[CCLComponentSetSpec, CCLComponentSetStatus]):

@@ -6,3 +6,8 @@
 resources:
 - role.yaml
 - role_binding.yaml
+# Admin, editor and viewer helper roles for the CRD, as for the control-plane kinds.
+# Not used by the operator itself.
+- cclclusterconfig_admin_role.yaml
+- cclclusterconfig_editor_role.yaml
+- cclclusterconfig_viewer_role.yaml

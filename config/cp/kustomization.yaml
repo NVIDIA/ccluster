@@ -12,8 +12,6 @@ namespace: ccluster-cp-system
 # namespace field above.
 namePrefix: ccluster-cp-
 
-# The CRDs are installed in the control-plane cluster only; the infra-plane
-# overlay deliberately omits them.
 resources:
 - ../crd
 - ../base
@@ -30,6 +28,17 @@ resources:
 # Only CR(s) which requires webhooks and are applied on namespaces labeled with 'webhooks: enabled' will
 # be able to communicate with the Webhook Server.
 #- ../network-policy
+
+# Only the control-plane kinds are served here. CCLClusterConfig describes an
+# infra-plane cluster and is reconciled by ccluster-ip-operator in that cluster; the
+# infra-plane overlay ships it and drops these two.
+patches:
+- patch: |-
+    $patch: delete
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      name: cclclusterconfigs.ccluster.nvidia.com
 
 # The image name is fixed here and nothing rewrites it. No tag is set: the deployed
 # image is manager.image in the chart's values.yaml, stamped by `make helm-package-cp`.

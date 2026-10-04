@@ -42,6 +42,12 @@ without markers. `config/ip/rbac/role.yaml` therefore contains hand-written `rul
 When adding the first ip controller, remove that placeholder and enable the ip pass in
 `manifests`. The overlays prefix the shared `manager-role` name for each operator.
 
+Each deploy overlay includes `config/crd` and deletes the CRDs the other operator serves
+with a `$patch: delete` patch, because kustomize refuses to load a file from outside a
+kustomization's directory, so a per-operator CRD list cannot live under `config/crd/`.
+The cp chart ships `CCLInfraPlane` and `CCLComponentSet`; the ip chart ships
+`CCLClusterConfig`; `make install` installs all three.
+
 ## Helm generation
 
 `config/base/` and `config/{cp,ip}/` are the source for operator deployments and RBAC.
@@ -51,6 +57,9 @@ deploy through Helm.
 
 - `Chart.yaml` and `values.yaml` are preserved. They hold dependencies and the pinned
   `fullnameOverride` values `ccluster-cp` / `ccluster-ip`, which tests and recipes use.
+- `charts/ip/chart/values.schema.json` is hand-written and preserved too. It rejects
+  `rbac.namespaced: true`: the plugin renders every role as a namespaced `Role` under
+  that value, and a `Role` cannot grant access to the cluster-scoped `CCLClusterConfig`.
 - `templates/` is deleted and rebuilt on every run, including helpers and notes.
   Additional hand-written resources belong in a separate chart. The chart `.helmignore`
   is generated too.

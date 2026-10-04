@@ -8,10 +8,12 @@
 # plugin preserves both.
 #
 # No dependencies: Argo CD is hub-and-spoke and lives in the control-plane cluster
-# only. Infra-plane clusters are registered there as remote destinations.
+# only. Infra-plane clusters are registered there as remote destinations. The chart
+# carries one CRD, CCLClusterConfig, the singleton the operator verifies the cluster
+# against.
 apiVersion: v2
 name: ccluster-ip
-description: ccluster infra plane - the ip operator
+description: ccluster infra plane - the ip operator and the CCLClusterConfig CRD it verifies the cluster against
 type: application
 
 # Placeholders. The release version is the git tag, and `make helm-package` stamps it

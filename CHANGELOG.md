@@ -7,6 +7,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `CCLClusterConfig`, a cluster-scoped singleton describing the infra-plane cluster the
+  ip operator runs in (its domain). The ip chart ships this CRD; the cp chart does not.
+
 ## [0.0.4] - 2026-09-30
 
 ### Added

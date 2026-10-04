@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Describes the infra-plane cluster to ccluster-ip-operator, which runs in that cluster.
+# Apply it there, not in the control-plane cluster.
+#
+# No controller reconciles it yet: the operator only registers the type, so its status
+# stays empty. The first ip controller will verify the catalogs/cluster_base components
+# against it and report the outcome as the Verified condition. It will install nothing,
+# so whether the components arrived through a CCLComponentSet or through helm by hand
+# will not matter to it.
+#
+# It is a cluster-scoped singleton: there is one cluster to describe, so the API server
+# rejects any name but "cluster".
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLClusterConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: ccluster
+  name: cluster
+spec:
+  # The cluster's DNS domain and SPIFFE trust domain. Created once the cluster is
+  # registered with the control plane; apply this object when it exists.
+  domain: ccluster-local.example.com
