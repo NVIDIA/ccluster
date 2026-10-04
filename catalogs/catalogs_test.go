@@ -25,8 +25,8 @@ type stubChartValues struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-// validatingValues implements catalogs.Validator, the way teleport-kube-agent's Values
-// does. It is the only hook by which a chart's required values are ever checked.
+// validatingValues implements catalogs.Validator, the way kai_gpu_queues' and the
+// deployments charts' Values do. It is the only hook by which a chart's required values are ever checked.
 type validatingValues struct {
 	stubValues
 	err error
@@ -125,7 +125,7 @@ func TestEntry(t *testing.T) {
 // are enforced: nothing rejects them at admission, and Helm only fails once the chart is
 // already being installed.
 func TestEntryRejectsInvalidValues(t *testing.T) {
-	sentinel := errors.New("proxyAddr not set")
+	sentinel := errors.New("queues[0].name not set")
 
 	_, err := Entry(chart, namespace, validatingValues{err: sentinel})
 	if !errors.Is(err, sentinel) {
@@ -133,7 +133,7 @@ func TestEntryRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-// TestEntrySkipsValuesWithoutValidator is the other half: the 17 components that have no
+// TestEntrySkipsValuesWithoutValidator is the other half: the components that have no
 // required values must not be asked for a Validate they do not have.
 func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
 	if _, err := Entry(chart, namespace, stubValues{}); err != nil {

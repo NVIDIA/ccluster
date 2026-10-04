@@ -117,7 +117,7 @@ When adding or changing a component:
   its path under `ccluster.catalogs` in Python automatically, whether it sits in a
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
-  choices, not a universally deployable default; teleport values need real configuration.
+  choices, not a universally deployable default.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. This is separate from the generated operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.

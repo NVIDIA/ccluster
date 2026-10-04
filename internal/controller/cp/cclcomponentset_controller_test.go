@@ -27,7 +27,7 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
-	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
+	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
@@ -421,21 +421,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			server, err := spire.New("spire-system", spire.Values{})
 			Expect(err).NotTo(HaveOccurred())
 
-			// teleport-kube-agent is the one component whose values are
-			// mandatory, so it is also the one that proves New reports them
-			// rather than building an entry full of placeholders.
-			_, err = teleportkubeagent.New("teleport", teleportkubeagent.Values{})
+			// kai_gpu_queues has required values, so it also proves New reports
+			// them rather than building an entry the chart cannot render.
+			_, err = kaigpuqueues.New("kai-scheduler", kaigpuqueues.Values{
+				Queues: []kaigpuqueues.Queue{{GPUQuota: 4}},
+			})
 			Expect(err).To(HaveOccurred())
 
-			agent, err := teleportkubeagent.New("teleport", teleportkubeagent.Values{
-				TeleportKubeAgent: &teleportkubeagent.ChartValues{
-					ProxyAddr:           "teleport.example.com:443",
-					TeleportClusterName: "prod",
-					KubeClusterName:     planeA,
-					JoinParams: teleportkubeagent.JoinParams{
-						TokenName: "kube-token",
-					},
-				},
+			queues, err := kaigpuqueues.New("kai-scheduler", kaigpuqueues.Values{
+				Queues: []kaigpuqueues.Queue{{Name: "team-a", GPUQuota: 4}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -443,7 +437,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			specs := []cclusternvidiacomv1alpha1.ComponentSpec{
 				{Name: "spire-crds", InfraPlaneRef: ref, ComponentEntry: crds},
 				{Name: "spire", InfraPlaneRef: ref, ComponentEntry: server},
-				{Name: "teleport-kube-agent", InfraPlaneRef: ref, ComponentEntry: agent},
+				{Name: "kai-gpu-queues", InfraPlaneRef: ref, ComponentEntry: queues},
 			}
 
 			createInfraPlane(planeA, true)

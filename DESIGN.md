@@ -285,17 +285,16 @@ A component knows its chart directory and nothing else: its name, its namespace 
 position in the rollout are all the caller's, because they are deployment choices rather
 than facts about the chart. `catalogs/cluster_base.Components(infraPlane)` writes down one
 plausible set of all three — sample names and namespaces, chart defaults for every values
-struct but teleport-kube-agent's, and the rollout order carried over from the legacy Python
-catalog's sync waves — so that a caller has something to copy rather than an empty page.
+struct, and the rollout order carried over from the legacy Python catalog's sync waves — so that a caller has something to copy rather than an empty page.
 
 **None of this is enforced at admission.** The CRD's `values` is as untyped as it ever was, so
 a hand-written `CCLComponentSet` bypasses the typed layer entirely and is forwarded to Helm
-verbatim. The concrete hazard is `teleport_kube_agent`, whose `values.yaml` ships `proxyAddr:
-"<PROXY_ADDR>"` and three more placeholders: a `CCLComponentSet` that omits them is accepted and
-installs an agent that cannot connect. The only check is a `Values` type's `Validate()`,
+verbatim. The concrete hazard is a chart with required values, such as `kai_gpu_queues`, whose
+queues each need a name and a quota: a `CCLComponentSet` that omits them is accepted, and the
+mistake surfaces only when Argo CD syncs the chart. The only check is a `Values` type's `Validate()`,
 called by `catalogs.Entry` — which a caller only reaches by going through the Go layer.
 
-The alternative, a discriminated union of 18 chart schemas inside `ComponentSpec`, would have
+The alternative, a discriminated union of every chart's schema inside `ComponentSpec`, would have
 bought API-server rejection at the cost of putting every chart's schema into the CRD, where
 changing one becomes a schema migration. Given §6's experience with a 600KB CRD, that trade
 was not worth making yet.
@@ -496,9 +495,9 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 
 - **`dependsOn`.** Ordering is a straight line; there is no dependency graph and no
   parallelism between independent components. This has a concrete cost now that
-  `catalogs/cluster_base` ships a full 18-component order: the legacy Python catalog it was
+  `catalogs/cluster_base` ships a full 17-component order: the legacy Python catalog it was
   taken from gave four components one sync wave and two others another, and those six could
-  have installed concurrently. Here they serialise, so installing the catalog is eighteen
+  have installed concurrently. Here they serialise, so installing the catalog is seventeen
   sequential convergence waits.
 - **Global values.** The legacy catalog threaded a `Shared` object into every component and
   deep-merged computed per-cluster defaults under the user's values — SPIFFE helper sidecars,

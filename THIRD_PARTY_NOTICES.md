@@ -33,18 +33,12 @@ substitute for the license text shipped with each upstream project.
 | prometheus-adapter | 4.14.1 | https://prometheus-community.github.io/helm-charts | Apache-2.0 |
 | spire | 0.20.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
 | spire-crds | 0.4.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
-| teleport-kube-agent | 18.2.5 | https://charts.releases.teleport.dev | AGPL-3.0 (Teleport Community Edition, v15 and later) |
 
 ## Notes
 
 - Chart *dependencies* above are fetched from their upstream repositories at
   build/sync time; this repository pins their versions but does not vendor their
   source. The images those charts deploy carry their own licenses.
-- `teleport-kube-agent` is the only AGPL-3.0 dependency. This repository neither
-  redistributes nor modifies it: Argo CD pulls the chart from the upstream repository
-  when a cluster opts into the `cluster_base/teleport_kube_agent` component, and the
-  agent connects to a Teleport cluster the operator of that cluster provides. Operators
-  who bundle or modify Teleport themselves take on its license obligations.
 - Runtime dependencies of the `ccluster-py` package are declared in
   [`python/pyproject.toml`](python/pyproject.toml).
 - If you add, remove, or bump a chart dependency, update this file in the same

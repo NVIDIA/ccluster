@@ -36,7 +36,6 @@ import (
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
-	teleportkubeagent "github.com/NVIDIA/ccluster/catalogs/cluster_base/teleport_kube_agent"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
@@ -77,7 +76,6 @@ var All = []Component{
 	{prometheusadapter.Chart, prometheusadapter.Values{}},
 	{spire.Chart, spire.Values{}},
 	{spirecrds.Chart, spirecrds.Values{}},
-	{teleportkubeagent.Chart, teleportkubeagent.Values{}},
 
 	// deployments: the tenant workload charts.
 	{computedeployment.Chart, computedeployment.Values{}},

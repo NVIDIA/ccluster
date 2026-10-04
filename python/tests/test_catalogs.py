@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from ccluster import catalogs
 from ccluster.catalogs import namespace_base
-from ccluster.catalogs.cluster_base import gpu_operator, teleport_kube_agent
+from ccluster.catalogs.cluster_base import gpu_operator
 from ccluster.catalogs.deployments import inference_deployment
 from ccluster.catalogs.resources import kai_gpu_queues
 
@@ -55,30 +55,15 @@ def test_wire_names_are_aliases():
         gpu_operator.Values.model_validate({"gpu-operator": {"unknown": 1}})
 
 
-def test_teleport_required_values():
+def test_kai_gpu_queues_required_values():
     with pytest.raises(ValidationError):
-        teleport_kube_agent.ChartValues(proxy_addr="teleport.example.com:443")
+        kai_gpu_queues.Queue(name="team-a")
 
-    # The sample from catalogs/cluster_base/cluster_base.go, dumped as Go dumps it.
-    values = teleport_kube_agent.Values(
-        teleport_kube_agent=teleport_kube_agent.ChartValues(
-            proxy_addr="teleport.example.com:443",
-            teleport_cluster_name="example",
-            kube_cluster_name="example-infra-plane",
-            join_params=teleport_kube_agent.JoinParams(token_name="example-kube-token"),
-        )
-    )
-    assert catalogs.entry(teleport_kube_agent.CHART, "teleport", values) == {
-        "chart": "catalogs/cluster_base/teleport_kube_agent",
-        "namespace": "teleport",
-        "values": {
-            "teleport-kube-agent": {
-                "proxyAddr": "teleport.example.com:443",
-                "teleportClusterName": "example",
-                "kubeClusterName": "example-infra-plane",
-                "joinParams": {"tokenName": "example-kube-token"},
-            }
-        },
+    values = kai_gpu_queues.Values(queues=[kai_gpu_queues.Queue(name="team-a", gpu_quota=4)])
+    assert catalogs.entry(kai_gpu_queues.CHART, "kai-scheduler", values) == {
+        "chart": "catalogs/resources/kai_gpu_queues",
+        "namespace": "kai-scheduler",
+        "values": {"queues": [{"name": "team-a", "gpuQuota": 4}]},
     }
 
 
