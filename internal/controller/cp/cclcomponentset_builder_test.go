@@ -578,6 +578,42 @@ func stampedWithRequestID(app *argocdv1alpha1.Application, requestID string) *ar
 	return restored
 }
 
+// TestSpecEqualIgnoresHelmValueFormatting pins the reason specEqual exists. The API server
+// hands back one canonical spelling, so neither case below is reachable through it today -
+// which is exactly why the comparison would get "simplified" back to a byte compare. If it
+// is, a component whose values differ only in spelling asks for a sync on every reconcile
+// and never reaches finished, because specEqual gates both.
+func TestSpecEqualIgnoresHelmValueFormatting(t *testing.T) {
+	spec := func(values string) argocdv1alpha1.ApplicationSpec {
+		set := componentSetWith("a")
+		set.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(values)}
+		return (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
+	}
+
+	tests := []struct {
+		name  string
+		a, b  string
+		equal bool
+	}{
+		{
+			name: "key order", equal: true,
+			a: `{"image":"nvcr.io/x","replicaCount":3}`, b: `{"replicaCount":3,"image":"nvcr.io/x"}`,
+		},
+		{name: "number formatting", equal: true, a: `{"replicaCount":3}`, b: `{"replicaCount":3.0}`},
+		{name: "whitespace", equal: true, a: `{"replicaCount":3}`, b: `{ "replicaCount" : 3 }`},
+		{name: "a real change", equal: false, a: `{"replicaCount":3}`, b: `{"replicaCount":4}`},
+		{name: "a removed key", equal: false, a: `{"replicaCount":3,"image":"x"}`, b: `{"replicaCount":3}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := specEqual(spec(test.a), spec(test.b)); got != test.equal {
+				t.Errorf("specEqual(%s, %s) = %v, want %v", test.a, test.b, got, test.equal)
+			}
+		})
+	}
+}
+
 // TestApplicationSpecOmitsHelmWhenValuesAbsent covers the len(Raw) > 0 guard. The
 // values-present path is asserted by the envtest suite; this is the branch that is easy
 // to drop, and dropping it emits an empty helm block on every valueless component.

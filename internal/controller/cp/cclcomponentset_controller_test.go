@@ -822,7 +822,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			componentSet := reconcileAndGet()
 			first := getApplication(firstComponent)
 			second := getApplication(secondComponent)
-			first.Operation = newOperation(first)
+			first.Operation = newOperation(first.Spec, first.Annotations[annotationSyncRequestID])
 			Expect(k8sClient.Update(ctx, first)).To(Succeed())
 			for i := range componentSet.Spec.Components {
 				componentSet.Spec.Components[i].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}

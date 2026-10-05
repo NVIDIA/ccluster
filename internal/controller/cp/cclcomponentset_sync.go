@@ -19,7 +19,6 @@ import (
 	"slices"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -150,7 +149,7 @@ func (r *CCLComponentSetReconciler) observeSyncs(
 ) {
 	for _, component := range set.Spec.Components {
 		app := apps[applicationName(set.Name, component.Name)]
-		if app != nil && equality.Semantic.DeepEqual(app.Spec, r.applicationSpec(set, component)) {
+		if app != nil && specEqual(app.Spec, r.applicationSpec(set, component)) {
 			observeSync(app, syncRecord(set, component.Name))
 		}
 	}
@@ -164,7 +163,7 @@ func (r *CCLComponentSetReconciler) observeSyncs(
 func (r *CCLComponentSetReconciler) currentSyncPhase(
 	set *cclv1alpha1.CCLComponentSet, component cclv1alpha1.ComponentSpec, app *argocdv1alpha1.Application,
 ) (string, string) {
-	if !equality.Semantic.DeepEqual(app.Spec, r.applicationSpec(set, component)) {
+	if !specEqual(app.Spec, r.applicationSpec(set, component)) {
 		return "", ""
 	}
 	record := syncRecord(set, component.Name)
@@ -287,7 +286,7 @@ func (r *CCLComponentSetReconciler) syncRequeueAfter(
 		if app == nil {
 			continue
 		}
-		if !equality.Semantic.DeepEqual(app.Spec, r.applicationSpec(set, component)) && app.OperationInProgress() {
+		if !specEqual(app.Spec, r.applicationSpec(set, component)) && app.OperationInProgress() {
 			return syncObservationRetryInterval
 		}
 		phase, _ := r.currentSyncPhase(set, component, app)

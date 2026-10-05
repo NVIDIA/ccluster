@@ -7,6 +7,7 @@ package cp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -107,6 +108,43 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	}
 }
 
+// specEqual reports whether an Application's stored spec is still the one applicationSpec
+// builds. It is the comparison behind every decision in this package: whether to ask
+// Argo CD for a sync, and whether a recorded result still describes what is wanted.
+//
+// Helm values are apiextensionsv1.JSON, which equality.Semantic compares as raw bytes, so
+// two spellings of the same document - a different key order, 3 against 3.0 - read as a
+// change. That would be a new request on every reconcile, and a component that never
+// reaches finished, because the same comparison gates both.
+//
+// The byte comparison settles it whenever the two are identical, which is the usual case.
+// Decoding only runs when they differ, and a difference is either a real spec change or
+// the formatting case this exists to absorb. Neither is frequent.
+func specEqual(a, b argocdv1alpha1.ApplicationSpec) bool {
+	if equality.Semantic.DeepEqual(a, b) {
+		return true
+	}
+	aValues, bValues := decodedHelmValues(a.Source), decodedHelmValues(b.Source)
+	// Compared apart, so the bytes underneath do not decide the rest of the spec. These
+	// are copies: ApplicationSpec holds Source by value.
+	a.Source.Helm, b.Source.Helm = nil, nil
+	return equality.Semantic.DeepEqual(a, b) && equality.Semantic.DeepEqual(aValues, bValues)
+}
+
+// decodedHelmValues parses a component's values so that two spellings of one document
+// compare equal. Values that are not valid JSON cannot reach here through the API server;
+// if they ever do, the raw bytes stand in and that spec compares byte for byte as before.
+func decodedHelmValues(source argocdv1alpha1.ApplicationSource) any {
+	if source.Helm == nil || source.Helm.ValuesObject == nil {
+		return nil
+	}
+	var values any
+	if err := json.Unmarshal(source.Helm.ValuesObject.Raw, &values); err != nil {
+		return string(source.Helm.ValuesObject.Raw)
+	}
+	return values
+}
+
 // readApplicationForWrite returns the Application a write is built on, and is the only
 // place that decides which read to trust.
 //
@@ -190,7 +228,7 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		controllerutil.AddFinalizer(application, argocdv1alpha1.ResourcesFinalizer)
 
 		desired := r.applicationSpec(componentSet, component)
-		specChanged := !equality.Semantic.DeepEqual(before.Spec, desired)
+		specChanged := !specEqual(before.Spec, desired)
 		newRequest := specChanged || recreatedApplication(application, record)
 		if newRequest && before.OperationInProgress() {
 			return errApplicationSyncInProgress
@@ -221,7 +259,8 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 
 		var extra []patchPath
 		if newRequest {
-			application.Operation = newOperation(application)
+			application.Operation = newOperation(
+				desired, application.Annotations[annotationSyncRequestID])
 			extra = append(extra, patchPath{path: "/operation", value: application.Operation})
 		}
 
@@ -235,22 +274,34 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	return result, err
 }
 
-// newOperation requests a sync of this source with an opaque request identity.
-// Prune and sync options must be copied explicitly: Argo CD does not inherit them.
-func newOperation(application *argocdv1alpha1.Application) *argocdv1alpha1.Operation {
+// newOperation requests a sync of this spec's source under the given request ID.
+//
+// The spec and the ID are parameters rather than read back off the Application, because
+// reading them back would mean this had to be called after both were set on it, and
+// nothing said so. Reading the spec back would also dereference
+// syncPolicy.automated, which only applicationSpec guarantees is there.
+func newOperation(
+	spec argocdv1alpha1.ApplicationSpec, requestID string,
+) *argocdv1alpha1.Operation {
+	sync := &argocdv1alpha1.SyncOperation{Source: spec.Source.DeepCopy()}
+
+	// Argo CD reads neither of these from spec.syncPolicy for a sync it was asked for -
+	// the one it starts itself copies them across field by field - so they are repeated
+	// here. A request without ServerSideApply syncs, and then never converges.
+	if spec.SyncPolicy != nil {
+		sync.SyncOptions = spec.SyncPolicy.SyncOptions
+		if spec.SyncPolicy.Automated != nil {
+			sync.Prune = spec.SyncPolicy.Automated.Prune
+		}
+	}
+
 	return &argocdv1alpha1.Operation{
-		Sync: &argocdv1alpha1.SyncOperation{
-			Source:      application.Spec.Source.DeepCopy(),
-			Prune:       application.Spec.SyncPolicy.Automated.Prune,
-			SyncOptions: application.Spec.SyncPolicy.SyncOptions,
-		},
+		Sync: sync,
 		// Not automated: Argo CD re-resolves the revision after a sync it did not start
 		// itself, which keeps a just-synced Application from reporting OutOfSync.
 		InitiatedBy: argocdv1alpha1.OperationInitiator{Username: labelManagedByValue},
-		Info: []argocdv1alpha1.Info{
-			{Name: annotationSyncRequestID, Value: application.Annotations[annotationSyncRequestID]},
-		},
-		Retry: argocdv1alpha1.RetryStrategy{Limit: syncRetryLimit},
+		Info:        []argocdv1alpha1.Info{{Name: annotationSyncRequestID, Value: requestID}},
+		Retry:       argocdv1alpha1.RetryStrategy{Limit: syncRetryLimit},
 	}
 }
 
@@ -565,9 +616,16 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 				"Wave %d (component %q) has health %q, sync %q", wave, component.Name,
 				application.HealthStatus(), application.SyncStatus())
 		default:
-			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+			waiting := fmt.Sprintf(
 				"Wave %d (component %q) is waiting for Argo CD to sync the spec the operator "+
 					"wrote", wave, component.Name)
+			// Argo CD holds a failing sync in Running while it retries, and says which
+			// attempt it is on in the operation message. Without it a sync failing on
+			// every attempt reads exactly like a slow one.
+			if operationMessage != "" {
+				waiting += ": " + operationMessage
+			}
+			return metav1.ConditionTrue, reasonWaveSyncing, waiting
 		}
 	}
 
