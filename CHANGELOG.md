@@ -7,6 +7,15 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `CCLComponentSet` status gains `componentSyncs`, which records the sync the operator
+  asked Argo CD for per component, and its result.
+
+### Fixed
+- A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
+  left over from the previous spec: it waits until Argo CD has synced the spec the
+  operator wrote. A failed sync is reported as `WaveSyncFailed`.
+
 ## [0.0.5] - 2026-10-05
 
 ### Added
@@ -25,17 +34,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   AGPL-3.0 upstream chart, the catalog's only non-permissive dependency, and needed a
   caller-run Teleport cluster; deploy the upstream chart directly instead.
   `cluster_base.Components` no longer includes it.
-
-### Fixed
-- CCLComponentSet tracks each submitted Application sync with a unique request ID and
-  persists its result across Argo CD self-heal. Completion checks the current desired
-  spec and waits for a comparison after sync completion before accepting Healthy/Synced.
-  Pending operations are preserved and requests are never resubmitted. A later Argo CD
-  operation on the same spec supplies the result when it replaced the request's own, so
-  a self-heal does not strand a request and a successful sync in Argo CD clears
-  `WaveSyncFailed`. Ordinary Application reads use the cache. Existing
-  Applications enter tracking on their next spec change. A busy component stops later
-  writes; full update ordering remains a separate change.
 
 ## [0.0.4] - 2026-09-30
 
