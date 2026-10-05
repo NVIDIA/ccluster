@@ -34,6 +34,12 @@ import (
 // than overwritten.
 var errApplicationConflict = errors.New("application belongs to another CCLComponentSet")
 
+// errApplicationSyncInProgress reports that a spec write was held back because Argo CD
+// already owes this Application an operation. The write carries a sync request, and
+// writing one over an operation Argo CD has not picked up would lose it. Not a failure:
+// reconcileApplications turns it into a wait, and the requeue brings the write back.
+var errApplicationSyncInProgress = errors.New("application has a pending or running operation")
+
 // applicationName is the name Argo CD gives the Application for a component.
 func applicationName(componentSetName, componentName string) string {
 	return componentSetName + "-" + componentName
@@ -101,12 +107,48 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	}
 }
 
+// readApplicationForWrite returns the Application a write is built on, and is the only
+// place that decides which read to trust.
+//
+// The informer cache serves it, except when the request identity on what it returns
+// disagrees with the one the CCLComponentSet recorded. A cached annotation older than the
+// record reads as a request to recover, and recovering it would discard the newer one. The
+// API server settles which half is stale.
+//
+// The caller asks untrackedRequest and recreatedApplication again, of the object this
+// returns. That is not a repeat: the answers here decided whether to read again, and the
+// answers there are the ones the write is built on.
+func (r *CCLComponentSetReconciler) readApplicationForWrite(
+	ctx context.Context, key client.ObjectKey, record *cclusternvidiacomv1alpha1.ComponentSyncStatus,
+) (*argocdv1alpha1.Application, error) {
+	// A fresh object every call: Get decodes into whatever it is given, so reusing one
+	// would leave its stamp behind for before to copy.
+	application := &argocdv1alpha1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+	}
+	if err := r.Get(ctx, key, application); client.IgnoreNotFound(err) != nil {
+		return nil, err
+	}
+
+	inDoubt := untrackedRequest(application, record) || recreatedApplication(application, record)
+	if application.ResourceVersion == "" || r.APIReader == nil || !inDoubt {
+		return application, nil
+	}
+
+	fresh := &argocdv1alpha1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+	}
+	if err := r.APIReader.Get(ctx, key, fresh); client.IgnoreNotFound(err) != nil {
+		return nil, err
+	}
+	return fresh, nil
+}
+
 // createOrPatchApplication brings one component's Application in line with the spec, and
 // asks Argo CD to sync it when that spec changed.
 //
-// Normal reads use the informer cache. Verify request identity recovery against the API
-// server; otherwise an old cached annotation could replace a newer tracked request.
-// Argo CD has no status subresource, so retry read/write conflicts.
+// Argo CD has no status subresource, so its status writes move the resource version this
+// write carries and the read has to be redone rather than the write forced.
 func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -115,36 +157,23 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 ) (controllerutil.OperationResult, error) {
 	result := controllerutil.OperationResultNone
 
+	// Alongside the CCLComponentSet, not in the Argo CD namespace: Argo CD watches every
+	// namespace (the cp chart's application.namespaces), and the namespace's AppProject
+	// admits Applications from here.
+	key := client.ObjectKey{
+		Name:      applicationName(componentSet.Name, component.Name),
+		Namespace: componentSet.Namespace,
+	}
+
 	// DefaultBackoff, not DefaultRetry: the interval grows (10ms, 50ms, 250ms, 1250ms),
 	// which gives the informer time to catch up. DefaultRetry stays at 10ms.
 	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
-		// A fresh object every attempt: Get decodes into whatever it is given, so
-		// reusing the last one would leave its stamp behind for before to copy.
-		application := &argocdv1alpha1.Application{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: applicationName(componentSet.Name, component.Name),
-				// Alongside the CCLComponentSet, not in the Argo CD namespace: Argo CD
-				// watches every namespace (the cp chart's application.namespaces), and
-				// the namespace's AppProject admits Applications from here.
-				Namespace: componentSet.Namespace,
-			},
-		}
-
-		key := client.ObjectKeyFromObject(application)
-		if err := r.Get(ctx, key, application); client.IgnoreNotFound(err) != nil {
+		record := syncRecord(componentSet, component.Name)
+		application, err := r.readApplicationForWrite(ctx, key, record)
+		if err != nil {
 			return err
 		}
-		record := syncRecord(componentSet, component.Name)
-		requestID := application.Annotations[annotationSyncRequestID]
-		needsRecovery := requestID != "" && !requestMatches(application, record) ||
-			record != nil && record.ApplicationUID != string(application.UID)
-		if application.ResourceVersion != "" && needsRecovery && r.APIReader != nil {
-			fresh := &argocdv1alpha1.Application{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
-			if err := r.APIReader.Get(ctx, key, fresh); client.IgnoreNotFound(err) != nil {
-				return err
-			}
-			application = fresh
-		}
+
 		before := application.DeepCopy()
 		if !componentSetOwner.ownedBy(application, componentSet) {
 			return errApplicationConflict
@@ -162,25 +191,30 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 
 		desired := r.applicationSpec(componentSet, component)
 		specChanged := !equality.Semantic.DeepEqual(before.Spec, desired)
-		newRequest := specChanged || record != nil && record.ApplicationUID != string(application.UID)
-		if newRequest && operationInProgress(before) {
+		newRequest := specChanged || recreatedApplication(application, record)
+		if newRequest && before.OperationInProgress() {
 			return errApplicationSyncInProgress
 		}
 		application.Spec = desired
 
-		if newRequest {
+		// Which request this write carries. The annotation and the record are the two
+		// halves of that, and each case is one way they can be out of step.
+		switch {
+		case newRequest:
+			// Nothing judged so far applies to what is being written. Both halves start over.
 			application.Annotations[annotationSyncRequestID] = uuid.NewString()
 			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{Name: component.Name}
-		} else if application.Annotations[annotationSyncRequestID] != "" && !requestMatches(application, record) {
-			// Recover a committed request after a crash or a failed ComponentSet status
-			// write. This read bypasses the informer cache in a running manager.
+		case untrackedRequest(application, record):
+			// The Application half survived a crash, or a CCLComponentSet status write that
+			// failed after this request was already committed. Rebuild the record from it.
 			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{
 				Name: component.Name, ApplicationUID: string(application.UID),
 				RequestID: application.Annotations[annotationSyncRequestID],
 			}
-		} else if record != nil && record.ApplicationUID == string(application.UID) &&
-			application.Annotations[annotationSyncRequestID] == "" {
-			// Restore a removed tracking annotation without forgetting an observed result.
+		case record != nil && application.Annotations[annotationSyncRequestID] == "":
+			// The annotation was removed by hand. The record is this Application's - the
+			// cases above rule out the alternatives - so put it back without forgetting
+			// any result already observed against it.
 			application.Annotations[annotationSyncRequestID] = record.RequestID
 		}
 		observeSync(application, record)
@@ -191,13 +225,10 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 			extra = append(extra, patchPath{path: "/operation", value: application.Operation})
 		}
 
-		var err error
 		result, err = createOrPatchArgoCDObject(
 			ctx, r.Client, before, application, application.Spec, extra...)
 		if err == nil && record != nil {
-			record.ApplicationUID = string(application.UID)
-			record.RequestID = application.Annotations[annotationSyncRequestID]
-			rememberSync(componentSet, *record)
+			rememberRequest(componentSet, application, record)
 		}
 		return err
 	})

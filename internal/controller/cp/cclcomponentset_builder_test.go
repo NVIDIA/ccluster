@@ -533,6 +533,51 @@ func TestApplicationNameCollidesAcrossComponentSets(t *testing.T) {
 	}
 }
 
+// TestRememberRequestKeepsAStoredRequestWhenTheAnnotationIsEmpty is a regression guard,
+// not a test of a reachable state. Every branch that settles the request identity leaves
+// an annotation behind, so createOrPatchApplication cannot reach rememberRequest without
+// one today. It is called directly here because this is the only line that can erase a
+// record, and an erased record is permanent: requestMatches rejects an empty RequestID,
+// and nothing reissues a request for a spec that has not changed. If this test is ever
+// "simplified away", so is the reason that guard exists.
+func TestRememberRequestKeepsAStoredRequestWhenTheAnnotationIsEmpty(t *testing.T) {
+	set := componentSetWith("a")
+	stored := cclusternvidiacomv1alpha1.ComponentSyncStatus{
+		Name: "a", ApplicationUID: "application-uid", RequestID: testRequestID,
+		Phase: argocdv1alpha1.OperationSucceeded,
+	}
+	set.Status.ComponentSyncs = []cclusternvidiacomv1alpha1.ComponentSyncStatus{stored}
+
+	stripped := &argocdv1alpha1.Application{
+		ObjectMeta: metav1.ObjectMeta{UID: types.UID("application-uid")},
+	}
+	record := stored
+	rememberRequest(set, stripped, &record)
+
+	kept := syncRecord(set, "a")
+	if kept == nil {
+		t.Fatal("rememberRequest dropped the record")
+	}
+	if kept.RequestID != testRequestID {
+		t.Errorf("RequestID = %q, want %q - an empty annotation erased the stored request",
+			kept.RequestID, testRequestID)
+	}
+	if kept.Phase != argocdv1alpha1.OperationSucceeded {
+		t.Errorf("Phase = %q, want %q", kept.Phase, argocdv1alpha1.OperationSucceeded)
+	}
+	if !requestMatches(stampedWithRequestID(stripped, testRequestID), kept) {
+		t.Error("the kept record no longer matches its own Application")
+	}
+}
+
+// stampedWithRequestID puts the tracking annotation back, so a test can check that a
+// record survived well enough to be matched again once the annotation returns.
+func stampedWithRequestID(app *argocdv1alpha1.Application, requestID string) *argocdv1alpha1.Application {
+	restored := app.DeepCopy()
+	restored.Annotations = map[string]string{annotationSyncRequestID: requestID}
+	return restored
+}
+
 // TestApplicationSpecOmitsHelmWhenValuesAbsent covers the len(Raw) > 0 guard. The
 // values-present path is asserted by the envtest suite; this is the branch that is easy
 // to drop, and dropping it emits an empty helm block on every valueless component.

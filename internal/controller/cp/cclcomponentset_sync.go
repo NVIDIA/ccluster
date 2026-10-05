@@ -5,9 +5,17 @@ SPDX-License-Identifier: Apache-2.0
 
 package cp
 
+// Sync request tracking. The operator asks Argo CD for a sync when it writes a component's
+// spec, and has to recognise that sync's result later. Argo CD hands back nothing but
+// operation.info, and replaces status.operationState whenever it starts another operation,
+// so the operator keeps its own copy in the CCLComponentSet's status.componentSyncs.
+//
+// The sections below go: the record list, whether its entry and the Application describe
+// the same request, recording a result into it, judging completion from it, and finally
+// the two places that act on that judgement.
+
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 
@@ -20,16 +28,7 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
-var errApplicationSyncInProgress = errors.New("application has a pending or running operation")
-
-func operationCompleted(phase string) bool {
-	return phase == argocdv1alpha1.OperationSucceeded ||
-		phase == argocdv1alpha1.OperationFailed || phase == argocdv1alpha1.OperationError
-}
-
-func operationInProgress(app *argocdv1alpha1.Application) bool {
-	return app.Operation != nil || (app.OperationPhase() != "" && !operationCompleted(app.OperationPhase()))
-}
+// The record list: status.componentSyncs, one entry per component, keyed by name.
 
 func syncRecord(set *cclv1alpha1.CCLComponentSet, name string) *cclv1alpha1.ComponentSyncStatus {
 	for i := range set.Status.ComponentSyncs {
@@ -48,10 +47,62 @@ func rememberSync(set *cclv1alpha1.CCLComponentSet, record cclv1alpha1.Component
 	set.Status.ComponentSyncs = append(set.Status.ComponentSyncs, record)
 }
 
+// rememberRequest stores which request the write just left on the Application.
+//
+// An empty annotation never overwrites a stored request ID. requestMatches rejects an
+// empty one, so clearing it would retire the record and with it the only copy of any
+// result already observed - permanently, because nothing reissues a request for an
+// unchanged spec. No caller reaches this with an empty annotation today: every branch
+// that settles the request identity leaves one behind. The guard is here because this is
+// the single line that could erase a record, and the branches above are one edit away
+// from stopping holding that up.
+func rememberRequest(
+	set *cclv1alpha1.CCLComponentSet,
+	app *argocdv1alpha1.Application,
+	record *cclv1alpha1.ComponentSyncStatus,
+) {
+	if id := app.Annotations[annotationSyncRequestID]; id != "" {
+		record.ApplicationUID = string(app.UID)
+		record.RequestID = id
+	}
+	rememberSync(set, *record)
+}
+
+// pruneSyncRecords drops the entries of components no longer in the spec. Their
+// Applications are deleted in the same reconcile, so the two go together.
+func (r *CCLComponentSetReconciler) pruneSyncRecords(set *cclv1alpha1.CCLComponentSet) {
+	set.Status.ComponentSyncs = slices.DeleteFunc(set.Status.ComponentSyncs, func(record cclv1alpha1.ComponentSyncStatus) bool {
+		return !slices.ContainsFunc(set.Spec.Components, func(component cclv1alpha1.ComponentSpec) bool {
+			return component.Name == record.Name
+		})
+	})
+}
+
+// Identity. A request is held in two halves - the annotation on the Application and the
+// record on the CCLComponentSet - and these answer whether they describe the same one.
+// Every answer is about one particular read of the Application, and a later read can
+// answer differently; readApplicationForWrite exists because of that.
+
 func requestMatches(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) bool {
 	return record != nil && record.RequestID != "" && record.ApplicationUID == string(app.UID) &&
 		record.RequestID == app.Annotations[annotationSyncRequestID]
 }
+
+// untrackedRequest reports that the Application carries a request the record does not
+// describe. Either half may be the stale one, so this says they disagree, not which to
+// believe.
+func untrackedRequest(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) bool {
+	return app.Annotations[annotationSyncRequestID] != "" && !requestMatches(app, record)
+}
+
+// recreatedApplication reports that the record was written for a different object of this
+// name. Its result belongs to an Application that no longer exists.
+func recreatedApplication(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) bool {
+	return record != nil && record.ApplicationUID != string(app.UID)
+}
+
+// Recording a result. Only an Application whose spec is the desired one is read, so what
+// is recorded always describes the spec the operator currently wants.
 
 func observeSync(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) {
 	if !requestMatches(app, record) || app.OperationPhase() == "" {
@@ -86,7 +137,7 @@ func observeSync(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentS
 // which is what lets a sync in Argo CD retry a failed request without a spec edit.
 // Completion still waits for a comparison after the adopted operation, and for Synced.
 func adoptLaterResult(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) {
-	if record.Phase == argocdv1alpha1.OperationSucceeded || operationInProgress(app) {
+	if record.Phase == argocdv1alpha1.OperationSucceeded || app.OperationInProgress() {
 		return
 	}
 	record.Phase = app.OperationPhase()
@@ -105,13 +156,8 @@ func (r *CCLComponentSetReconciler) observeSyncs(
 	}
 }
 
-func (r *CCLComponentSetReconciler) pruneSyncRecords(set *cclv1alpha1.CCLComponentSet) {
-	set.Status.ComponentSyncs = slices.DeleteFunc(set.Status.ComponentSyncs, func(record cclv1alpha1.ComponentSyncStatus) bool {
-		return !slices.ContainsFunc(set.Spec.Components, func(component cclv1alpha1.ComponentSpec) bool {
-			return component.Name == record.Name
-		})
-	})
-}
+// Judging completion. finished is what releaseCount and rolloutStatus ask; the two below
+// it are the halves of that question.
 
 // currentSyncPhase checks both the desired input and the independently tracked request.
 // Old cache entries cannot establish completion by matching their own old annotations.
@@ -136,7 +182,7 @@ func (r *CCLComponentSetReconciler) currentSyncPhase(
 // and any later operation. Strict ordering also waits out timestamp truncation to seconds.
 // This is a freshness barrier, not an Argo CD proof of the comparison's input identity.
 func healthObservedAfterSync(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) bool {
-	if operationInProgress(app) {
+	if app.OperationInProgress() {
 		return false
 	}
 	var finishedAt *metav1.Time
@@ -167,12 +213,15 @@ func (r *CCLComponentSetReconciler) finished(
 		app.HealthStatus() == argocdv1alpha1.HealthStatusHealthy && app.SyncStatus() == argocdv1alpha1.SyncStatusSynced
 }
 
+// Acting on the judgement: nudging Argo CD into the comparison completion waits for, and
+// deciding whether this reconcile has to come back without a watch event.
+
 // observationRefreshDue reports that a succeeded request is still waiting for a comparison
 // that started after it, and that no refresh has been asked for yet.
 func (r *CCLComponentSetReconciler) observationRefreshDue(
 	set *cclv1alpha1.CCLComponentSet, component cclv1alpha1.ComponentSpec, app *argocdv1alpha1.Application,
 ) bool {
-	if operationInProgress(app) || app.Annotations[annotationAppRefresh] != "" {
+	if app.OperationInProgress() || app.Annotations[annotationAppRefresh] != "" {
 		return false
 	}
 	phase, _ := r.currentSyncPhase(set, component, app)
@@ -231,14 +280,14 @@ func (r *CCLComponentSetReconciler) syncRequeueAfter(
 	for _, component := range set.Spec.Components {
 		app := apps[applicationName(set.Name, component.Name)]
 		record := syncRecord(set, component.Name)
-		if record != nil && !operationCompleted(record.Phase) &&
-			(app == nil || !requestMatches(app, record) || operationInProgress(app)) {
+		if record != nil && !argocdv1alpha1.OperationCompleted(record.Phase) &&
+			(app == nil || !requestMatches(app, record) || app.OperationInProgress()) {
 			return syncObservationRetryInterval
 		}
 		if app == nil {
 			continue
 		}
-		if !equality.Semantic.DeepEqual(app.Spec, r.applicationSpec(set, component)) && operationInProgress(app) {
+		if !equality.Semantic.DeepEqual(app.Spec, r.applicationSpec(set, component)) && app.OperationInProgress() {
 			return syncObservationRetryInterval
 		}
 		phase, _ := r.currentSyncPhase(set, component, app)

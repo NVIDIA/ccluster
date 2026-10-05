@@ -113,6 +113,19 @@ func (a *Application) OperationInfo(name string) (string, bool) {
 	return "", false
 }
 
+// OperationCompleted reports whether a phase is one Argo CD will not move off. Running and
+// Terminating are the others, and a retry puts a failed sync back into Running.
+func OperationCompleted(phase string) bool {
+	return phase == OperationSucceeded || phase == OperationFailed || phase == OperationError
+}
+
+// OperationInProgress reports whether Argo CD owes this Application an operation or is
+// still running one. A request waiting in spec.operation counts: Argo CD has not picked it
+// up, and writing another would lose it.
+func (a *Application) OperationInProgress() bool {
+	return a.Operation != nil || (a.OperationPhase() != "" && !OperationCompleted(a.OperationPhase()))
+}
+
 // ApplicationSpec is the desired state of an Argo CD Application.
 type ApplicationSpec struct {
 	// project is the Argo CD AppProject the Application belongs to.
