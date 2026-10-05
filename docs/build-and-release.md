@@ -69,7 +69,7 @@ Every published artifact carries its license; keep it that way when changing a r
 
 | Artifact | Contents | Added by |
 | --- | --- | --- |
-| Images | `/licenses/LICENSE`, `/licenses/THIRD_PARTY_NOTICES.md`, and the license and NOTICE files of every linked Go module and the Go standard library under `/licenses/go` | `Dockerfile` (`licenses` stage, `go-licenses`) |
+| Images | `/licenses/LICENSE`, `/licenses/THIRD_PARTY_NOTICES.md`, and the license and NOTICE files of every linked Go module and the Go standard library under `/licenses/go` | `Dockerfile` (`go-licenses` in the builder stage) |
 | Helm charts | `LICENSE` and `THIRD_PARTY_NOTICES.md` at the chart root | `helm-package-cp` / `helm-package-ip` |
 | Python | `LICENSE` in the sdist and in the wheel's `dist-info/licenses` | `python/LICENSE`, `license-files` in `pyproject.toml` |
 
