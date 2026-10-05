@@ -10,6 +10,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ### Added
 - `CCLClusterConfig`, a cluster-scoped singleton describing the infra-plane cluster the
   ip operator runs in (its domain). The ip chart ships this CRD; the cp chart does not.
+- Release artifacts carry their license payload. The operator images ship `LICENSE`,
+  `THIRD_PARTY_NOTICES.md` and the license and NOTICE files of every linked Go module
+  under `/licenses`; the packaged Helm charts include `LICENSE` and
+  `THIRD_PARTY_NOTICES.md`; the `ccluster-py` wheel and sdist include `LICENSE`.
+  `THIRD_PARTY_NOTICES.md` now also lists the Go module licenses and the argo-cd chart
+  the cp chart bundles.
 
 ### Removed
 - **Breaking:** The `cluster_base/teleport_kube_agent` component, its Go package and its

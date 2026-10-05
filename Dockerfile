@@ -38,6 +38,18 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o manager ./cmd/${CMD}
 
+# Collect the license and NOTICE files of every Go module linked into the binary, plus the
+# Go standard library's, for /licenses/go in the image. go-licenses is installed for the
+# build platform and analyses for the target one, and it fails on a license it cannot
+# classify, so a new dependency needs a known license to ship.
+ARG GO_LICENSES_VERSION=v2.0.1
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/google/go-licenses/v2@${GO_LICENSES_VERSION} && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go-licenses save ./cmd/${CMD} --save_path licenses/go --ignore github.com/NVIDIA/ccluster && \
+    mkdir -p licenses/go/stdlib && cp "$(go env GOROOT)/LICENSE" licenses/go/stdlib/
+
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
@@ -49,6 +61,8 @@ LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
       org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY LICENSE THIRD_PARTY_NOTICES.md /licenses/
+COPY --from=builder /workspace/licenses/go /licenses/go
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

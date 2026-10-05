@@ -9,3 +9,7 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include the license payload the image ships under /licenses
+!LICENSE
+!THIRD_PARTY_NOTICES.md

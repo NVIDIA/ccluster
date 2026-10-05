@@ -13,8 +13,8 @@ Go module and build caches are BuildKit cache mounts shared by successive builds
 builder. Do not add `go build -a`, which defeats incremental compilation.
 
 CI retains image layers through `--cache-from/--cache-to type=gha`, passed via
-`BUILDX_ARGS`. `.dockerignore` admits Go sources and module files, so documentation changes
-can reuse the build layer. Do not restore cache mounts through
+`BUILDX_ARGS`. `.dockerignore` admits Go sources, module files, `LICENSE` and
+`THIRD_PARTY_NOTICES.md`, so other documentation changes can reuse the build layer. Do not restore cache mounts through
 `reproducible-containers/buildkit-cache-dance`: staging multiple cache copies exhausted
 runner disk space. Cache mounts currently persist on the builder, not across CI runs.
 
@@ -62,6 +62,22 @@ lowercase `REGISTRY`, as GHCR namespaces must be lowercase.
 `make python-build` changes `python/pyproject.toml` through `uv version`. Restore only that
 build-induced version change before committing; preserve unrelated edits. An `X.Y.Z-rc.N`
 tag becomes Python version `X.Y.ZrcN`. The GitHub prerelease flag does not change stamping.
+
+## License payload
+
+Every published artifact carries its license; keep it that way when changing a recipe.
+
+| Artifact | Contents | Added by |
+| --- | --- | --- |
+| Images | `/licenses/LICENSE`, `/licenses/THIRD_PARTY_NOTICES.md`, and the license and NOTICE files of every linked Go module and the Go standard library under `/licenses/go` | `Dockerfile` (`go-licenses` in the builder stage) |
+| Helm charts | `LICENSE` and `THIRD_PARTY_NOTICES.md` at the chart root | `helm-package-cp` / `helm-package-ip` |
+| Python | `LICENSE` in the sdist and in the wheel's `dist-info/licenses` | `python/LICENSE`, `license-files` in `pyproject.toml` |
+
+`go-licenses` fails the image build when a newly linked module's license cannot be
+classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to
+the root `LICENSE` because the package builds from `python/`; the build stores the
+file's contents, not the link. Update `THIRD_PARTY_NOTICES.md`
+when a bundled chart (the cp chart's `argo-cd`) or a catalog chart dependency changes.
 
 ## CI checks
 

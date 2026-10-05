@@ -588,10 +588,15 @@ helm-package: helm-package-cp helm-package-ip ## Package both charts into $(DIST
 # `make helm-generate` emits; CI fails on any diff there. The stamped values are the
 # image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
 # --catalog-revision, so a chart always pins the catalog to the commit or tag it came from.
+# The copy also gets the project LICENSE and THIRD_PARTY_NOTICES.md, so every packaged
+# chart carries its license payload; the cp chart's notices cover its bundled argo-cd.
+CHART_LICENSE_FILES ?= LICENSE THIRD_PARTY_NOTICES.md
+
 .PHONY: helm-package-cp
 helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-cp && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp
+	cp $(CHART_LICENSE_FILES) $(DIST_CHARTS)/ccluster-cp/
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
 	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=$(CATALOG_REV)"' \
@@ -602,6 +607,7 @@ helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/
 helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-ip && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip
+	cp $(CHART_LICENSE_FILES) $(DIST_CHARTS)/ccluster-ip/
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-ip/values.yaml
 	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)

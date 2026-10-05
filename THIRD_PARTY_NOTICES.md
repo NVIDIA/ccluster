@@ -1,16 +1,37 @@
 # Third-Party Notices
 
 CCluster packages and depends on third-party open-source software. This file
-lists the third-party components redistributed or referenced as Helm chart
+lists the third-party components redistributed in ccluster's release artifacts (the
+operator images and the operator Helm charts) and those referenced as Helm chart
 dependencies by the charts under `catalogs/`, together with their upstream source and
 license. This list is provided for attribution and convenience; it is **not** a
 substitute for the license text shipped with each upstream project.
 
 > **Maintainers:** verify each entry's license against the exact pinned version
-> before a release. Chart versions are pinned in the corresponding
-> `catalogs/**/Chart.yaml` files.
+> before a release. Chart versions are pinned in `charts/cp/chart/Chart.yaml` and the
+> corresponding `catalogs/**/Chart.yaml` files.
 
-## Helm chart dependencies
+## Operator images
+
+The `ccluster-cp-operator` and `ccluster-ip-operator` images contain one statically
+linked Go binary. It includes the Go standard library (BSD-3-Clause) and Go modules
+licensed under Apache-2.0, BSD-3-Clause, MIT and ISC. The image ships the full license
+and NOTICE file of each of them under `/licenses/go`, collected from the exact module
+versions at build time, together with this file and the project `LICENSE` under
+`/licenses`. The Go module versions are pinned in [`go.mod`](go.mod) and
+[`go.sum`](go.sum).
+
+## Operator Helm charts
+
+The packaged `ccluster-cp` chart bundles the following charts. The `ccluster-ip` chart
+bundles none.
+
+| Component | Version | Upstream Helm repository | License |
+| --- | --- | --- | --- |
+| argo-cd | 10.4.0 | https://argoproj.github.io/argo-helm | Apache-2.0 |
+| redis-ha (an argo-cd dependency, disabled by default) | 4.38.0 | https://dandydeveloper.github.io/charts/ | Apache-2.0 |
+
+## Catalog Helm chart dependencies
 
 | Component | Version | Upstream Helm repository | License |
 | --- | --- | --- | --- |
@@ -36,7 +57,7 @@ substitute for the license text shipped with each upstream project.
 
 ## Notes
 
-- Chart *dependencies* above are fetched from their upstream repositories at
+- Catalog chart dependencies above are fetched from their upstream repositories at
   build/sync time; this repository pins their versions but does not vendor their
   source. The images those charts deploy carry their own licenses.
 - Runtime dependencies of the `ccluster-py` package are declared in
