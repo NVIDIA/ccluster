@@ -13,6 +13,9 @@ version = "0.0.0.dev0"
 description = "Pydantic models and a client for the ccluster.nvidia.com API and its Helm chart catalog"
 readme = "README.md"
 license = "Apache-2.0"
+# A copy of the repository's root LICENSE: the package is built from this directory, so
+# the wheel and sdist can only include a file that lives here.
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "kubernetes>=30",
