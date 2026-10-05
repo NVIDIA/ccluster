@@ -74,8 +74,9 @@ Every published artifact carries its license; keep it that way when changing a r
 | Python | `LICENSE` in the sdist and in the wheel's `dist-info/licenses` | `python/LICENSE`, `license-files` in `pyproject.toml` |
 
 `go-licenses` fails the image build when a newly linked module's license cannot be
-classified; resolve it rather than ignoring the module. `python/LICENSE` is a copy of the
-root `LICENSE` because the package builds from `python/`. Update `THIRD_PARTY_NOTICES.md`
+classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to
+the root `LICENSE` because the package builds from `python/`; the build stores the
+file's contents, not the link. Update `THIRD_PARTY_NOTICES.md`
 when a bundled chart (the cp chart's `argo-cd`) or a catalog chart dependency changes.
 
 ## CI checks
