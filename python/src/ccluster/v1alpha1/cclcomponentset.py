@@ -98,6 +98,43 @@ class CCLComponentSetSpec(BaseModel):
     """
 
 
+class ComponentSyncStatus(BaseModel):
+    """
+    ComponentSyncStatus records a sync request submitted for one Application.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    application_uid: Annotated[str, Field(alias="applicationUID")]
+    """
+    applicationUID prevents a recreated Application from reusing an old result.
+    """
+    finished_at: Annotated[AwareDatetime | None, Field(alias="finishedAt")] = None
+    """
+    finishedAt is the timestamp observed with phase, including retry backoff in Running.
+    A terminal phase is required to interpret it as request completion.
+    """
+    message: str | None = None
+    """
+    message explains the last observed request phase.
+    """
+    name: str
+    """
+    name identifies the component in spec.components.
+    """
+    phase: str | None = None
+    """
+    phase is the last observed phase of this request, or empty before it is observed.
+    Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
+    that operation has replaced the request's own result.
+    """
+    request_id: Annotated[str, Field(alias="requestID")]
+    """
+    requestID identifies the request carried in the Application's operation.info.
+    """
+
+
 class Status(Enum):
     """
     status of the condition, one of True, False, Unknown.
@@ -173,6 +210,13 @@ class CCLComponentSetStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    component_syncs: Annotated[
+        list[ComponentSyncStatus] | None, Field(alias="componentSyncs")
+    ] = None
+    """
+    componentSyncs track the operator's current sync request for each component.
+    Completed results survive Argo CD replacing its last operation during self-heal.
+    """
     conditions: list[Condition] | None = None
     """
     conditions represent the current state of the CCLComponentSet resource.

@@ -111,6 +111,41 @@ type CCLComponentSetStatus struct {
 	// observedGeneration is the .metadata.generation the conditions were computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// componentSyncs track the operator's current sync request for each component.
+	// Completed results survive Argo CD replacing its last operation during self-heal.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	ComponentSyncs []ComponentSyncStatus `json:"componentSyncs,omitempty"`
+}
+
+// ComponentSyncStatus records a sync request submitted for one Application.
+// +kubebuilder:title=ComponentSyncStatus
+type ComponentSyncStatus struct {
+	// name identifies the component in spec.components.
+	Name string `json:"name"`
+
+	// applicationUID prevents a recreated Application from reusing an old result.
+	ApplicationUID string `json:"applicationUID"`
+
+	// requestID identifies the request carried in the Application's operation.info.
+	RequestID string `json:"requestID"`
+
+	// phase is the last observed phase of this request, or empty before it is observed.
+	// Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
+	// that operation has replaced the request's own result.
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// message explains the last observed request phase.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// finishedAt is the timestamp observed with phase, including retry backoff in Running.
+	// A terminal phase is required to interpret it as request completion.
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

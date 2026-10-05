@@ -7,6 +7,15 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `CCLComponentSet` status gains `componentSyncs`, which records the sync the operator
+  asked Argo CD for per component, and its result.
+
+### Fixed
+- A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
+  left over from the previous spec: it waits until Argo CD has synced the spec the
+  operator wrote. A failed sync is reported as `WaveSyncFailed`.
+
 ## [0.0.5] - 2026-10-05
 
 ### Added

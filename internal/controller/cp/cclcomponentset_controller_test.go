@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -187,8 +188,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			return true
 		}
 
-		// setHealth stands in for Argo CD, which envtest does not run: it reports a
-		// health and sync status on an Application the operator created.
+		// setHealth stands in for Argo CD, which envtest does not run: it takes the sync
+		// the operator asked for, reports it succeeded, and reports a health and sync
+		// status on the Application.
 		//
 		// It patches, because that is what Argo CD does. An update through the partial
 		// Argo CD type would also wipe every spec field that type does not model, and
@@ -197,13 +199,31 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		setHealth := func(component, health, sync string) {
 			GinkgoHelper()
 
-			status, err := json.Marshal(map[string]any{"status": map[string]any{
+			application := getApplication(component)
+			status := map[string]any{
 				"health": map[string]any{"status": health},
 				"sync":   map[string]any{"status": sync},
-			}})
+			}
+			status["reconciledAt"] = metav1.Now()
+			patch := map[string]any{"status": status, "metadata": map[string]any{
+				"annotations": map[string]any{annotationAppRefresh: nil},
+			}}
+			if application.Operation != nil {
+				// Argo CD copies the request into the state and clears the field. The real
+				// CRD requires startedAt alongside the operation and its phase; the stub
+				// here does not, so only the e2e tier catches a stand-in that omits it.
+				status["operationState"] = map[string]any{
+					"operation":  application.Operation,
+					"phase":      argocdv1alpha1.OperationSucceeded,
+					"startedAt":  metav1.Now(),
+					"finishedAt": metav1.NewTime(time.Now().Add(-2 * time.Second)),
+				}
+				patch["operation"] = nil
+			}
+			raw, err := json.Marshal(patch)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Patch(ctx, getApplication(component),
-				client.RawPatch(types.MergePatchType, status))).To(Succeed())
+			Expect(k8sClient.Patch(ctx, application,
+				client.RawPatch(types.MergePatchType, raw))).To(Succeed())
 		}
 
 		// release drives the rollout forward: each component is reported healthy,
@@ -497,6 +517,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
 
 			By("repointing the Application at another repository")
 			application := getApplication(firstComponent)
@@ -656,6 +677,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			spec[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"config":{"removeMe":1,"keep":2}}`)}
 			createComponentSet(spec)
 			componentSet := settle()
+			setHealth(firstComponent, "Healthy", "Synced")
 			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{
 				Raw: []byte(`{"config":{"removeMe":null,"keep":2}}`),
 			}
@@ -677,6 +699,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
 			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
 
 			By("adding a spec field the operator does not model")
 			application := getApplication(firstComponent)
@@ -707,6 +730,367 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			version = restored.ResourceVersion
 			reconcileAndGet()
 			Expect(getApplication(firstComponent).ResourceVersion).To(Equal(version))
+		})
+
+		It("should keep the new request pending when an Application list returns the previous spec", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			componentSet := reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+			previous := getApplication(firstComponent)
+			oldID := previous.Annotations[annotationSyncRequestID]
+
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			defer func() {
+				reconciler.Client = k8sClient
+				reconciler.APIReader = nil
+			}()
+			cached := &staleApplicationList{Client: k8sClient, application: previous}
+			reconciler.Client = cached
+			reconciler.APIReader = k8sClient
+			updated := reconcileAndGet()
+			written := getApplication(firstComponent)
+			newID := written.Annotations[annotationSyncRequestID]
+			Expect(newID).NotTo(BeEmpty())
+			Expect(newID).NotTo(Equal(oldID))
+			Expect(updated.Status.ComponentSyncs).To(HaveLen(1))
+			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(newID))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+			Expect(conditionOf(updated, conditionTypeProgressing).ObservedGeneration).To(Equal(updated.Generation))
+
+			By("not reverting the tracked identity when both Get and List are stale")
+			cached.staleGets = true
+			updated = reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(newID))
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should use cached reads when request identities match", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			reconcileAndGet()
+			reader := &countingApplicationReader{Reader: k8sClient}
+			reconciler.APIReader = reader
+			defer func() { reconciler.APIReader = nil }()
+			for range 3 {
+				reconcileAndGet()
+			}
+			Expect(reader.gets).To(BeZero())
+		})
+
+		It("should assign a new request to a recreated Application instead of reusing its receipt", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			reconcileAndGet()
+			previous := getApplication(firstComponent)
+			previous.Finalizers = nil
+			Expect(k8sClient.Update(ctx, previous)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, previous)).To(Succeed())
+			recreated := previous.DeepCopy()
+			recreated.ObjectMeta = metav1.ObjectMeta{
+				Name: previous.Name, Namespace: previous.Namespace,
+				Labels: previous.Labels, Annotations: previous.Annotations,
+			}
+			Expect(k8sClient.Create(ctx, recreated)).To(Succeed())
+			Expect(recreated.UID).NotTo(Equal(previous.UID))
+			reconciler.APIReader = k8sClient
+			defer func() { reconciler.APIReader = nil }()
+			updated := reconcileAndGet()
+			written := getApplication(firstComponent)
+			Expect(written.Operation).NotTo(BeNil())
+			Expect(written.Annotations[annotationSyncRequestID]).NotTo(Equal(previous.Annotations[annotationSyncRequestID]))
+			Expect(updated.Status.ComponentSyncs[0].ApplicationUID).To(Equal(string(recreated.UID)))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should stop updating later released components when an earlier operation is busy", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			release(secondComponent)
+			componentSet := reconcileAndGet()
+			first := getApplication(firstComponent)
+			second := getApplication(secondComponent)
+			first.Operation = newOperation(first.Spec, first.Annotations[annotationSyncRequestID])
+			Expect(k8sClient.Update(ctx, first)).To(Succeed())
+			for i := range componentSet.Spec.Components {
+				componentSet.Spec.Components[i].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			waiting := reconcileAndGet()
+			Expect(conditionOf(waiting, conditionTypeComponentsApplied).Reason).To(Equal(reasonApplicationsSyncing))
+			Expect(getApplication(firstComponent).Spec).To(Equal(first.Spec))
+			Expect(getApplication(secondComponent).Spec).To(Equal(second.Spec))
+			Expect(getApplication(secondComponent).Annotations[annotationSyncRequestID]).To(Equal(second.Annotations[annotationSyncRequestID]))
+		})
+
+		It("should assign a new request when operator configuration changes without a parent spec update", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			componentSet := reconcileAndGet()
+			generation := componentSet.Generation
+			oldID := getApplication(firstComponent).Annotations[annotationSyncRequestID]
+
+			reconciler.CatalogRevision = "updated-catalog"
+			updated := reconcileAndGet()
+			application := getApplication(firstComponent)
+			Expect(updated.Generation).To(Equal(generation))
+			Expect(application.Annotations[annotationSyncRequestID]).NotTo(Equal(oldID))
+			Expect(application.Operation.Sync.Source.TargetRevision).To(Equal("updated-catalog"))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should preserve a successful request after Argo CD self-heals", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			completed := reconcileAndGet()
+			receipt := completed.Status.ComponentSyncs[0]
+
+			application := getApplication(firstComponent)
+			application.Status.OperationState.Operation.Info = nil
+			application.Status.OperationState.FinishedAt = &metav1.Time{Time: time.Now().Add(-time.Second)}
+			application.Status.ReconciledAt = &metav1.Time{Time: time.Now()}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+			Expect(updated.Status.ComponentSyncs[0]).To(Equal(receipt))
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should not regress a saved successful receipt when the cache still reports Running", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			completed := reconcileAndGet()
+			receipt := completed.Status.ComponentSyncs[0]
+			cached := getApplication(firstComponent)
+			cached.Status.OperationState.Phase = "Running"
+			cached.Status.OperationState.FinishedAt = nil
+			defer func() { reconciler.Client = k8sClient; reconciler.APIReader = nil }()
+			reconciler.Client = &staleApplicationList{Client: k8sClient, application: cached}
+			reconciler.APIReader = k8sClient
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0]).To(Equal(receipt))
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+		})
+
+		It("should resume a failed request when a later sync of the same spec succeeds", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+			requestID := componentSet.Status.ComponentSyncs[0].RequestID
+			application := getApplication(firstComponent)
+			application.Status = &argocdv1alpha1.ApplicationStatus{OperationState: &argocdv1alpha1.OperationState{
+				Operation: *application.Operation, Phase: "Failed", Message: "apply failed",
+				FinishedAt: &metav1.Time{Time: time.Now().Add(-2 * time.Second)},
+			}}
+			application.Operation = nil
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			failed := reconcileAndGet()
+			Expect(conditionOf(failed, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncFailed))
+			Expect(conditionOf(failed, conditionTypeProgressing).Message).To(ContainSubstring("apply failed"))
+			Expect(conditionOf(failed, conditionTypeProgressing).Message).To(ContainSubstring("in Argo CD resumes"))
+
+			By("adopting a manual sync in Argo CD that succeeded")
+			application = getApplication(firstComponent)
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
+					Operation: argocdv1alpha1.Operation{InitiatedBy: argocdv1alpha1.OperationInitiator{Username: "admin"}},
+					Phase:     "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+				},
+			}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+		})
+
+		It("should adopt a later result without resubmission when self-heal replaces an unobserved one", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+			requestID := componentSet.Status.ComponentSyncs[0].RequestID
+
+			// R1 completed before the operator observed its result; self-heal is now latest.
+			application := getApplication(firstComponent)
+			application.Operation = nil
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
+					Phase: "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+				},
+			}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(componentSet.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(componentSet.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+		})
+
+		It("should not adopt an earlier result while its own operation is still pending", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			// The operator's operation has not been picked up. The recorded state is the
+			// previous operation's, which ran on the previous spec.
+			application := getApplication(firstComponent)
+			Expect(application.Operation).NotTo(BeNil())
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now()},
+				OperationState: &argocdv1alpha1.OperationState{
+					Phase: "Succeeded", FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Minute)},
+				},
+			}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncing))
+		})
+
+		It("should not downgrade a successful request when a later operation fails", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			setHealth(firstComponent, "Healthy", "Synced")
+			completed := reconcileAndGet()
+			receipt := completed.Status.ComponentSyncs[0]
+			Expect(receipt.Phase).To(Equal("Succeeded"))
+
+			application := getApplication(firstComponent)
+			application.Status.OperationState = &argocdv1alpha1.OperationState{
+				Phase: "Failed", Message: "self-heal failed",
+				FinishedAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+			}
+			application.Status.ReconciledAt = &metav1.Time{Time: time.Now()}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0]).To(Equal(receipt))
+			Expect(conditionOf(updated, conditionTypeProgressing).Reason).NotTo(Equal(reasonWaveSyncFailed))
+		})
+
+		It("should wait for a post-sync comparison before trusting old Healthy and Synced", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+			application := getApplication(firstComponent)
+			finishedAt := metav1.NewTime(time.Now().Add(-5 * time.Second))
+			application.Status = &argocdv1alpha1.ApplicationStatus{
+				Health:       argocdv1alpha1.ApplicationHealthStatus{Status: "Healthy"},
+				Sync:         argocdv1alpha1.ApplicationSyncStatus{Status: "Synced"},
+				ReconciledAt: &metav1.Time{Time: time.Now().Add(-10 * time.Second)},
+				OperationState: &argocdv1alpha1.OperationState{
+					Operation: *application.Operation, Phase: "Succeeded", FinishedAt: &finishedAt,
+				},
+			}
+			application.Operation = nil
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+			Expect(conditionOf(updated, conditionTypeProgressing).Message).To(ContainSubstring("reassess health"))
+			Expect(getApplication(firstComponent).Annotations).To(HaveKeyWithValue(annotationAppRefresh, refreshTypeNormal))
+
+			By("preserving an existing hard refresh")
+			application = getApplication(firstComponent)
+			application.Annotations[annotationAppRefresh] = "hard"
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			reconcileAndGet()
+			Expect(getApplication(firstComponent).Annotations).To(HaveKeyWithValue(annotationAppRefresh, "hard"))
+
+			By("keeping equal timestamps pending")
+			application = getApplication(firstComponent)
+			application.Status.ReconciledAt = &finishedAt
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+
+			By("completing only after a later comparison")
+			application = getApplication(firstComponent)
+			application.Status.ReconciledAt = &metav1.Time{Time: time.Now()}
+			delete(application.Annotations, annotationAppRefresh)
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+			Expect(getApplication(firstComponent).Operation).To(BeNil())
+		})
+
+		It("should defer a changed spec until the pending operation completes", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+			previous := getApplication(firstComponent)
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			waiting := reconcileAndGet()
+			Expect(conditionOf(waiting, conditionTypeComponentsApplied).Reason).To(Equal(reasonApplicationsSyncing))
+			Expect(conditionOf(waiting, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+			Expect(getApplication(firstComponent).Spec).To(Equal(previous.Spec))
+			Expect(getApplication(firstComponent).Operation).To(Equal(previous.Operation))
+
+			By("continuing to wait after Argo CD starts the same operation")
+			application := getApplication(firstComponent)
+			application.Status = &argocdv1alpha1.ApplicationStatus{OperationState: &argocdv1alpha1.OperationState{
+				Operation: *application.Operation, Phase: "Running",
+			}}
+			application.Operation = nil
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			reconcileAndGet()
+			Expect(getApplication(firstComponent).Spec).To(Equal(previous.Spec))
+
+			By("submitting the new source after the old operation finishes")
+			application = getApplication(firstComponent)
+			application.Status.OperationState.Phase = "Succeeded"
+			application.Status.OperationState.FinishedAt = &metav1.Time{Time: time.Now().Add(-time.Second)}
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			updated := reconcileAndGet()
+			application = getApplication(firstComponent)
+			Expect(application.Annotations[annotationSyncRequestID]).NotTo(Equal(previous.Annotations[annotationSyncRequestID]))
+			Expect(application.Operation.Sync.Source.Helm.ValuesObject.Raw).To(MatchJSON(`{"replicaCount":3}`))
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should recover the same request after its ComponentSet status record is lost", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			componentSet := settle()
+			requestID := getApplication(firstComponent).Annotations[annotationSyncRequestID]
+			componentSet.Status.ComponentSyncs = nil
+			Expect(k8sClient.Status().Update(ctx, componentSet)).To(Succeed())
+			updated := reconcileAndGet()
+			Expect(updated.Status.ComponentSyncs).To(HaveLen(1))
+			Expect(updated.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(getApplication(firstComponent).Annotations[annotationSyncRequestID]).To(Equal(requestID))
+			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
 		})
 
 		It("should leave the status Argo CD owns alone when it rewrites an Application", func() {
@@ -743,6 +1127,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			}, "operation")).To(Succeed())
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
+			By("waiting for the pending operation before changing the spec")
+			beforeWait := readApplication()
+
 			By("the operator rewriting the Application because the component's values changed")
 			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
 			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
@@ -752,6 +1139,12 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
 			reconcileAndGet()
 
+			Expect(readApplication().Object["spec"]).To(Equal(beforeWait.Object["spec"]))
+			Expect(readApplication().Object["operation"]).To(Equal(beforeWait.Object["operation"]))
+			application = readApplication()
+			delete(application.Object, "operation")
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			reconcileAndGet()
 			rewritten := readApplication()
 
 			values, found, err := unstructured.NestedFieldNoCopy(
@@ -761,7 +1154,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(values).To(Equal(map[string]any{"replicaCount": int64(3)}))
 
 			Expect(rewritten.Object["status"]).To(Equal(application.Object["status"]))
-			Expect(rewritten.Object["operation"]).To(Equal(application.Object["operation"]))
+
+			// The old request has completed. Submit the new spec with its own request ID.
+			Expect(rewritten.GetAnnotations()).NotTo(HaveKey("ccluster.nvidia.com/componentset-generation"))
+			info, found, err := unstructured.NestedSlice(rewritten.Object, "operation", "info")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the operator did not ask Argo CD for a sync")
+			Expect(info).To(Equal([]any{
+				map[string]any{"name": annotationSyncRequestID, "value": rewritten.GetAnnotations()[annotationSyncRequestID]},
+			}))
 		})
 
 		It("should reject a spec write after ownership changes concurrently", func() {
@@ -787,6 +1188,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
 			componentSet := settle()
+			setHealth(firstComponent, "Healthy", "Synced")
 
 			// Argo CD's status writes move the resource version, so a patch built on
 			// an earlier read loses. A rollout must not stall on that.
@@ -1011,4 +1413,39 @@ func (c *staleOnFirstWrite) Create(
 		return apierrors.NewAlreadyExists(applicationsResource, obj.GetName())
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+// staleApplicationList holds the informer behind writes while APIReader stays current.
+type staleApplicationList struct {
+	client.Client
+	application *argocdv1alpha1.Application
+	staleGets   bool
+}
+
+func (c *staleApplicationList) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if applications, ok := list.(*argocdv1alpha1.ApplicationList); ok {
+		applications.Items = []argocdv1alpha1.Application{*c.application.DeepCopy()}
+		return nil
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func (c *staleApplicationList) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if app, ok := obj.(*argocdv1alpha1.Application); ok && c.staleGets {
+		*app = *c.application.DeepCopy()
+		return nil
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+type countingApplicationReader struct {
+	client.Reader
+	gets int
+}
+
+func (r *countingApplicationReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*argocdv1alpha1.Application); ok {
+		r.gets++
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
 }

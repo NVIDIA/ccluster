@@ -24,6 +24,12 @@ const (
 	HealthStatusDegraded    = "Degraded"
 
 	SyncStatusSynced = "Synced"
+
+	// Terminal phases of a sync operation. Any other phase - Running, Terminating -
+	// means it has not stopped yet.
+	OperationSucceeded = "Succeeded"
+	OperationFailed    = "Failed"
+	OperationError     = "Error"
 )
 
 // Application is an Argo CD Application: one chart deployed to one cluster.
@@ -46,6 +52,14 @@ type Application struct {
 
 	Spec ApplicationSpec `json:"spec,omitempty"`
 
+	// operation requests a sync. Argo CD copies it into status.operationState.operation and
+	// then clears this field, so it is a one-shot request rather than desired state. The
+	// operator sets it to identify the sync submitted with a spec write.
+	//
+	// It gets its own patch path. A read of an operation Argo CD's own auto-sync requested
+	// decodes only the fields below, so a decoded one must never be written back.
+	Operation *Operation `json:"operation,omitempty"`
+
 	// status is read, never written: Argo CD owns it.
 	//
 	// A pointer so that an Application the operator is creating serialises without a
@@ -55,8 +69,7 @@ type Application struct {
 	Status *ApplicationStatus `json:"status,omitempty"`
 }
 
-// HealthStatus, SyncStatus and HealthMessage read through a status Argo CD may not have
-// written yet.
+// HealthStatus and SyncStatus read through a status Argo CD may not have written yet.
 func (a *Application) HealthStatus() string {
 	if a.Status == nil {
 		return ""
@@ -71,11 +84,46 @@ func (a *Application) SyncStatus() string {
 	return a.Status.Sync.Status
 }
 
-func (a *Application) HealthMessage() string {
-	if a.Status == nil {
+// OperationPhase and OperationMessage read through an Application that has never synced.
+func (a *Application) OperationPhase() string {
+	if a.Status == nil || a.Status.OperationState == nil {
 		return ""
 	}
-	return a.Status.Health.Message
+	return a.Status.OperationState.Phase
+}
+
+func (a *Application) OperationMessage() string {
+	if a.Status == nil || a.Status.OperationState == nil {
+		return ""
+	}
+	return a.Status.OperationState.Message
+}
+
+// OperationInfo returns what Argo CD echoed back for one info item of the last sync.
+// Callers match the returned value against their independently recorded request ID.
+func (a *Application) OperationInfo(name string) (string, bool) {
+	if a.Status == nil || a.Status.OperationState == nil {
+		return "", false
+	}
+	for _, info := range a.Status.OperationState.Operation.Info {
+		if info.Name == name {
+			return info.Value, true
+		}
+	}
+	return "", false
+}
+
+// OperationCompleted reports whether a phase is one Argo CD will not move off. Running and
+// Terminating are the others, and a retry puts a failed sync back into Running.
+func OperationCompleted(phase string) bool {
+	return phase == OperationSucceeded || phase == OperationFailed || phase == OperationError
+}
+
+// OperationInProgress reports whether Argo CD owes this Application an operation or is
+// still running one. A request waiting in spec.operation counts: Argo CD has not picked it
+// up, and writing another would lose it.
+func (a *Application) OperationInProgress() bool {
+	return a.Operation != nil || (a.OperationPhase() != "" && !OperationCompleted(a.OperationPhase()))
 }
 
 // ApplicationSpec is the desired state of an Argo CD Application.
@@ -153,19 +201,96 @@ type SyncPolicyAutomated struct {
 	SelfHeal bool `json:"selfHeal,omitempty"`
 }
 
+// Operation is a sync Argo CD has been asked to run.
+type Operation struct {
+	// sync is required: Argo CD fails an operation that does not name one.
+	Sync *SyncOperation `json:"sync,omitempty"`
+
+	// initiatedBy records who asked. Argo CD has an `automated` flag here too, left
+	// unmodelled on purpose - it force-resolves the revision after a sync that is not
+	// automated, which is what stops a just-synced Application reporting OutOfSync.
+	InitiatedBy OperationInitiator `json:"initiatedBy,omitempty"`
+
+	// info is free-form and copied verbatim into status.operationState.operation.info. It
+	// lets the operator recognise its own sync by the request ID.
+	Info []Info `json:"info,omitempty"`
+
+	// retry lets Argo CD back a failing sync off itself. The phase stays Running while it
+	// does, so the operator sees one long attempt rather than a flapping one.
+	Retry RetryStrategy `json:"retry,omitempty"`
+}
+
+// SyncOperation is the sync half of an Operation.
+//
+// Argo CD reads none of this from spec.syncPolicy - the sync it starts itself copies the
+// policy across field by field, and so must the operator. A revision is deliberately not
+// modelled: without one Argo CD resolves the submitted source's targetRevision.
+type SyncOperation struct {
+	// source captures the source submitted with this request, including Helm values.
+	Source *ApplicationSource `json:"source,omitempty"`
+
+	// prune must repeat spec.syncPolicy.automated.prune.
+	Prune bool `json:"prune,omitempty"`
+
+	// syncOptions must repeat spec.syncPolicy.syncOptions. Leaving them out drops
+	// ServerSideApply, which this catalog cannot sync without - see DESIGN.md.
+	SyncOptions []string `json:"syncOptions,omitempty"`
+}
+
+// OperationInitiator names who asked for an operation.
+type OperationInitiator struct {
+	Username string `json:"username,omitempty"`
+}
+
+// RetryStrategy bounds how often Argo CD retries a failed sync. Its backoff is not
+// modelled: unset is Argo CD's own default, which is what its auto-sync uses.
+type RetryStrategy struct {
+	Limit int64 `json:"limit,omitempty"`
+}
+
+// Info is a name/value pair carried on an operation and reported back with its state.
+type Info struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // ApplicationStatus is the observed state of an Application.
 type ApplicationStatus struct {
+	// reconciledAt is the start time of Argo CD's last full comparison.
+	ReconciledAt *metav1.Time `json:"reconciledAt,omitempty"`
+
 	// health is Argo CD's assessment of the deployed resources.
 	Health ApplicationHealthStatus `json:"health,omitempty"`
 
 	// sync reports whether the live state matches the source revision.
 	Sync ApplicationSyncStatus `json:"sync,omitempty"`
+
+	// operationState is the last sync Argo CD ran, and the operation that asked for it.
+	// Nil until one has run.
+	OperationState *OperationState `json:"operationState,omitempty"`
 }
 
-// ApplicationHealthStatus is the health half of an Application's status.
-type ApplicationHealthStatus struct {
-	Status  string `json:"status,omitempty"`
+// OperationState is how the sync an Operation asked for is going.
+type OperationState struct {
+	// operation is the request, copied across whole when the sync started.
+	Operation Operation `json:"operation"`
+
+	// phase is Running, Terminating, Succeeded, Failed or Error.
+	Phase string `json:"phase"`
+
+	// message explains a Failed or Error phase.
 	Message string `json:"message,omitempty"`
+
+	// finishedAt marks completion, or the failed attempt while Argo CD waits to retry.
+	// Only a terminal phase establishes that the operation has completed.
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+}
+
+// ApplicationHealthStatus is the health half of an Application's status. Argo CD also
+// declares a message here and marks it deprecated; v3.5.1 never writes one, so the detail
+// behind an unhealthy Application is only in status.resources, which is not modelled.
+type ApplicationHealthStatus struct {
+	Status string `json:"status,omitempty"`
 }
 
 // ApplicationSyncStatus is the sync half of an Application's status.
