@@ -90,6 +90,9 @@ type Values struct {
 	// ConfigFile is a file mounted into the container from a ConfigMap.
 	ConfigFile *deployments.ConfigFile `json:"configFile,omitempty"`
 
+	// VolumeMounts are existing claims mounted into the container.
+	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
+
 	// Metrics is the application's own Prometheus endpoint. Unset, the chart scrapes
 	// /metrics on ContainerPort.
 	Metrics *Metrics `json:"metrics,omitempty"`
@@ -145,6 +148,7 @@ func (v Values) Validate() error {
 		v.HPA.Validate(),
 		v.RolloutStrategy.Validate(),
 		v.ConfigFile.Validate(),
+		deployments.ValidateVolumeMounts(v.VolumeMounts),
 		v.Metrics.Validate(),
 	}
 	if v.ContainerPort == 0 {

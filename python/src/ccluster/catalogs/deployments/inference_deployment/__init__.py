@@ -69,12 +69,14 @@ class HPA(BaseModel):
     average_value: Annotated[int | None, Field(alias="averageValue")] = None
     """
     AverageValue is the target number of in-flight requests per pod, from 1 to
-    2^53. The chart ships 2^53, which effectively disables the trigger.
+    2^53. The chart ships 2^53, which effectively disables the trigger, and renders
+    any value outside that range as 2^53.
     """
     cooldown_period: Annotated[int | None, Field(alias="cooldownPeriod")] = None
     """
     CooldownPeriod is how many seconds KEDA waits after the last active trigger
-    before scaling down. The chart ships 1800.
+    before scaling down. The chart ships 1800. inference_deployment renders 0 as
+    1800; dynamo_deployment renders 0 as 0.
     """
 
 
@@ -170,6 +172,30 @@ class RolloutStrategy(BaseModel):
     """
     MaxSurge is the most pods that may be scheduled above the desired count during
     an update. The chart ships 0.
+    """
+
+
+class VolumeMount(BaseModel):
+    """
+    VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
+    does not own the claim; catalogs/resources/persistent_volume creates one.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    name: str
+    """
+    Name is the claim's name in the release namespace. Required.
+    """
+    mount_path: Annotated[str, Field(alias="mountPath")]
+    """
+    MountPath is the absolute directory it is mounted at. Required.
+    """
+    read_only: Annotated[bool | None, Field(alias="readOnly")] = None
+    """
+    ReadOnly mounts it read-only in this container. The chart ships false.
     """
 
 
@@ -361,6 +387,12 @@ class Values(BaseModel):
     config_file: Annotated[ConfigFile | None, Field(alias="configFile")] = None
     """
     ConfigFile is a file mounted into the container from a ConfigMap.
+    """
+    volume_mounts: Annotated[list[VolumeMount] | None, Field(alias="volumeMounts")] = (
+        None
+    )
+    """
+    VolumeMounts are existing claims mounted into the container.
     """
     metrics: Metrics | None = None
     """

@@ -85,6 +85,57 @@ priorityClassName: {{ .priorityClassName | quote }}
 {{- end }}
 {{- end -}}
 
+{{/* --kv-transfer-config of both disaggregated pools. kvTransfer adds its NIXL backend;
+     LIBFABRIC also keeps the KV buffer in GPU memory. dgd.yaml validates kvTransfer. */}}
+{{- define "dynamo.kvTransferConfig" -}}
+{{- $config := dict "kv_connector" "NixlConnector" "kv_role" "kv_both" -}}
+{{- with .kvTransfer -}}
+{{- $_ := set $config "kv_connector_extra_config" (dict "backends" (list .backend)) -}}
+{{- if eq .backend "LIBFABRIC" -}}
+{{- $_ := set $config "kv_buffer_device" "cuda" -}}
+{{- end -}}
+{{- end -}}
+{{- $config | toJson | quote -}}
+{{- end -}}
+
+{{- define "dynamo.efaClaimTemplateName" -}}
+{{- printf "%s-r%d-efa" .Values.name (.Values.revisionNumber | int64) -}}
+{{- end -}}
+
+{{/* Claims in volumeMounts, mounted at the same paths on the Frontend and every
+     worker. One pod volume per distinct claim, however many times it is mounted. */}}
+{{- define "dynamo.volumeNameByClaim" -}}
+{{- $names := dict -}}
+{{- range $index, $mount := .volumeMounts -}}
+{{- if not (hasKey $names $mount.name) -}}
+{{- $_ := set $names $mount.name (printf "external-volume-%d" $index) -}}
+{{- end -}}
+{{- end -}}
+{{- $names | toJson -}}
+{{- end -}}
+
+{{- define "dynamo.volumeMounts" -}}
+{{- $names := include "dynamo.volumeNameByClaim" . | fromJson -}}
+{{- range .volumeMounts }}
+- mountPath: {{ .mountPath | quote }}
+  name: {{ get $names .name }}
+  readOnly: {{ .readOnly | default false }}
+{{- end }}
+{{- end -}}
+
+{{- define "dynamo.pvcVolumes" -}}
+{{- $names := include "dynamo.volumeNameByClaim" . | fromJson -}}
+{{- $rendered := dict -}}
+{{- range .volumeMounts }}
+{{- if not (hasKey $rendered .name) }}
+{{- $_ := set $rendered .name true }}
+- name: {{ get $names .name }}
+  persistentVolumeClaim:
+    claimName: {{ .name | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
 {{/* Render the autoscaled aggregated vLLM worker. */}}
 {{- define "dynamo.aggregatedWorker" -}}
 {{- $pool := .Values.workerPool -}}
@@ -192,6 +243,9 @@ priorityClassName: {{ .priorityClassName | quote }}
               mountPath: /tmp/dynamo-hf-cache
               subPath: dynamo-hf
             {{- end }}
+            {{- if .Values.volumeMounts }}
+            {{- include "dynamo.volumeMounts" .Values | trim | nindent 12 }}
+            {{- end }}
       volumes:
         - name: dshm
           emptyDir:
@@ -202,6 +256,9 @@ priorityClassName: {{ .priorityClassName | quote }}
         - name: model-cache
           persistentVolumeClaim:
             claimName: node-model-cache-pvc
+        {{- end }}
+        {{- if .Values.volumeMounts }}
+        {{- include "dynamo.pvcVolumes" .Values | trim | nindent 8 }}
         {{- end }}
       imagePullSecrets:
         - name: ecr-image-pull
@@ -233,6 +290,7 @@ priorityClassName: {{ .priorityClassName | quote }}
 {{- $root := .root -}}
 {{- $pool := .pool -}}
 {{- $role := .role -}}
+{{- $efa := hasKey ($root.Values.kvTransfer | default dict) "efa" -}}
 - name: {{ .name }}
   type: {{ $role }}
   replicas: {{ $pool.replicas | default 1 | int }}
@@ -256,6 +314,9 @@ priorityClassName: {{ .priorityClassName | quote }}
         platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
         platform.centml.ai/revision-number: "{{ $root.Values.revisionNumber | int64 }}"
         ccluster.nvidia.com/component-type: {{ $role }}
+        {{- if $efa }}
+        ccluster.nvidia.com/kv-transfer: efa
+        {{- end }}
         {{- include "dynamo.kaiQueueLabel" $root.Values | nindent 8 }}
         {{- if $root.Values.userAnnotations }}
         {{- range $key, $value := $root.Values.userAnnotations }}
@@ -264,6 +325,11 @@ priorityClassName: {{ .priorityClassName | quote }}
         {{- end }}
     spec:
       {{- include "dynamo.kaiPodScheduling" $root.Values | nindent 6 }}
+      {{- if $efa }}
+      resourceClaims:
+        - name: efa
+          resourceClaimTemplateName: {{ include "dynamo.efaClaimTemplateName" $root | quote }}
+      {{- end }}
       {{- if $root.Values.enableNodeModelCache }}
       initContainers:
         - name: prepare-model-cache
@@ -293,7 +359,7 @@ priorityClassName: {{ .priorityClassName | quote }}
             - "--tensor-parallel-size"
             - {{ $pool.tensorParallelSize | int | quote }}
             - "--kv-transfer-config"
-            - '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+            - {{ include "dynamo.kvTransferConfig" $root.Values }}
             {{- if eq $role "prefill" }}
             - "--kv-events-config"
             - '{"publisher":"zmq","topic":"kv-events","endpoint":"tcp://*:20080","enable_kv_cache_events":true}'
@@ -307,6 +373,14 @@ priorityClassName: {{ .priorityClassName | quote }}
             {{- include "dynamo.runtimeEnv" $root | nindent 12 }}
             - name: DYN_SELF_HOST_METADATA
               value: "0"
+            {{- if $efa }}
+            - name: FI_PROVIDER
+              value: "efa"
+            - name: FI_EFA_USE_DEVICE_RDMA
+              value: "1"
+            - name: FI_EFA_ENABLE_SHM_TRANSFER
+              value: "0"
+            {{- end }}
             {{- if $root.Values.enableNodeModelCache }}
             - name: HF_HUB_CACHE
               value: /tmp/dynamo-hf-cache
@@ -318,7 +392,10 @@ priorityClassName: {{ .priorityClassName | quote }}
                 name: {{ $root.Values.name }}-hf-token
           {{- end }}
           resources:
-            # Do not infer cluster-specific RDMA resources from the hardware profile.
+            {{- if $efa }}
+            claims:
+              - name: efa
+            {{- end }}
             limits:
               cpu: "{{ $pool.resources.limits.cpu }}"
               memory: "{{ $pool.resources.limits.memory }}"
@@ -335,6 +412,9 @@ priorityClassName: {{ .priorityClassName | quote }}
               mountPath: /tmp/dynamo-hf-cache
               subPath: dynamo-hf
             {{- end }}
+            {{- if $root.Values.volumeMounts }}
+            {{- include "dynamo.volumeMounts" $root.Values | trim | nindent 12 }}
+            {{- end }}
       volumes:
         - name: dshm
           emptyDir:
@@ -344,6 +424,9 @@ priorityClassName: {{ .priorityClassName | quote }}
         - name: model-cache
           persistentVolumeClaim:
             claimName: node-model-cache-pvc
+        {{- end }}
+        {{- if $root.Values.volumeMounts }}
+        {{- include "dynamo.pvcVolumes" $root.Values | trim | nindent 8 }}
         {{- end }}
       imagePullSecrets:
         - name: ecr-image-pull
@@ -355,8 +438,9 @@ priorityClassName: {{ .priorityClassName | quote }}
           key: dedicated_compute
           operator: Equal
           value: "true"
-      {{- if $pool.nodeAffinityLabels }}
+      {{- if or $pool.nodeAffinityLabels $efa }}
       affinity:
+        {{- if $pool.nodeAffinityLabels }}
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
@@ -367,5 +451,17 @@ priorityClassName: {{ .priorityClassName | quote }}
                     values:
                       - {{ $value | quote }}
                   {{- end }}
+        {{- end }}
+        {{- if $efa }}
+        # Every EFA worker matches this selector itself, so the first one scheduled picks
+        # the zone. The selector omits the revision, so the zone holds across rollouts.
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  platform.centml.ai/deployment-id: {{ $root.Values.deploymentId | quote }}
+                  ccluster.nvidia.com/kv-transfer: efa
+              topologyKey: topology.kubernetes.io/zone
+        {{- end }}
       {{- end }}
 {{- end -}}
