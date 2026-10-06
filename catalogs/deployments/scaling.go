@@ -59,11 +59,13 @@ type HPA struct {
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
 	// AverageValue is the target number of in-flight requests per pod, from 1 to
-	// 2^53. The chart ships 2^53, which effectively disables the trigger.
+	// 2^53. The chart ships 2^53, which effectively disables the trigger, and renders
+	// any value outside that range as 2^53.
 	AverageValue *int64 `json:"averageValue,omitempty"`
 
 	// CooldownPeriod is how many seconds KEDA waits after the last active trigger
-	// before scaling down. The chart ships 1800.
+	// before scaling down. The chart ships 1800. inference_deployment renders 0 as
+	// 1800; dynamo_deployment renders 0 as 0.
 	CooldownPeriod *int64 `json:"cooldownPeriod,omitempty"`
 }
 

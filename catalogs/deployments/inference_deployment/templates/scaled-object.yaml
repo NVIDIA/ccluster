@@ -2,6 +2,14 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */ -}}
+{{- /* hpa.cooldownPeriod 0 falls back to 1800: at 0 KEDA scales to zero as soon as the
+       last trigger goes inactive. */ -}}
+{{- $cooldown := .Values.hpa.cooldownPeriod | default 1800 | int64 -}}
+{{- /* Values.Validate keeps hpa.averageValue within 1-2^53, but callers that skip it
+       reach the template directly. Out-of-range values, including the negative value
+       an overflowed 2^63-1 decodes to, mean autoscaling disabled: 2^53. */ -}}
+{{- $averageValue := .Values.hpa.averageValue | int64 -}}
+{{- if or (lt $averageValue 1) (gt $averageValue 9007199254740992) }}{{ $averageValue = 9007199254740992 }}{{ end -}}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -21,8 +29,8 @@ spec:
   # before the first scale-down (only relevant when scaling to zero).
   # cooldownPeriod: wait after the last active trigger before scaling down
   # (only relevant when scaling to zero).
-  initialCooldownPeriod: {{ .Values.hpa.cooldownPeriod | int64 }}
-  cooldownPeriod: {{ .Values.hpa.cooldownPeriod | int64 }}
+  initialCooldownPeriod: {{ $cooldown }}
+  cooldownPeriod: {{ $cooldown }}
   pollingInterval: 30
   triggers:
   # Handle auto-scaling from 1 to N.
@@ -34,11 +42,15 @@ spec:
       # KEDA multiplies the threshold by 1000 (millivalue), so it is capped at 2^53
       # where a float64-decoded value is still exact; that cap also means "autoscaling
       # disabled", which is the chart default.
-      threshold: {{ .Values.hpa.averageValue | int64 | quote }}
+      threshold: {{ $averageValue | quote }}
+      # The envoy-stats PodMonitor copies deployment_id from the pod annotation.
+      # scaleTargetRef selects the Rollout to scale but does not scope this query to its
+      # pods.
       query: >-
         sum(
           envoy_http_downstream_rq_active{
             namespace="{{ .Release.Namespace }}",
+            deployment_id="{{ .Values.deploymentId }}",
             http_conn_manager_prefix="inbound_0.0.0.0_{{ .Values.containerPort | int }}"
           }
         ) or on() vector(0)

@@ -10,11 +10,25 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ### Added
 - `CCLComponentSet` status gains `componentSyncs`, which records the sync the operator
   asked Argo CD for per component, and its result.
+- `dynamo_deployment` gains `kvTransfer`, which selects the NIXL backend of the
+  disaggregated pools, UCX or LIBFABRIC. LIBFABRIC requires `kvTransfer.efa`, which gives
+  every worker one EFA device through DRA.
+- `dynamo_deployment` and `inference_deployment` gain `volumeMounts`. Dynamo mounts the
+  claims into the Frontend and every worker.
+
+### Changed
+- `inference_deployment` renders `hpa.cooldownPeriod: 0` as 1800, as the platform chart
+  does.
+- `inference_deployment` sidecars emit only inbound `downstream_rq` stats.
 
 ### Fixed
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
   left over from the previous spec: it waits until Argo CD has synced the spec the
   operator wrote. A failed sync is reported as `WaveSyncFailed`.
+- The `inference_deployment` KEDA query counts only the deployment's own pods. It summed
+  the in-flight requests of every inference deployment in the namespace on the same port.
+- `dynamo_deployment` and `inference_deployment` render an `hpa.averageValue` outside
+  1-2^53 as 2^53 instead of passing it to KEDA.
 
 ## [0.0.5] - 2026-10-05
 

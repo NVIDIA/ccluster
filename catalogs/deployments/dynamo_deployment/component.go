@@ -131,6 +131,14 @@ type Values struct {
 	PrefillPool *StaticWorkerPool `json:"prefillPool,omitempty"`
 	DecodePool  *StaticWorkerPool `json:"decodePool,omitempty"`
 
+	// KVTransfer selects how the disaggregated pools move the KV cache. Only allowed
+	// in disaggregated mode. Unset leaves the NIXL backend to the runtime's default.
+	KVTransfer *KVTransfer `json:"kvTransfer,omitempty"`
+
+	// VolumeMounts are existing claims mounted at the same paths into the Frontend
+	// and every worker.
+	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
+
 	// BackendProtocol is the Frontend's protocol. HTTP keeps the OpenAI HTTP
 	// frontend; GRPC starts Dynamo's KServe gRPC server and moves metrics to
 	// KServeGRPCMetricsPort. The chart ships HTTP.
@@ -242,6 +250,69 @@ func (p *StaticWorkerPool) validate(name string) error {
 	return errors.Join(errs...)
 }
 
+// KVTransferBackend is the NIXL backend the disaggregated pools move the KV cache over.
+// Fields of this type carry the enum and a title in their jsonschema tag; see
+// deployments.BackendProtocol for why.
+type KVTransferBackend string
+
+const (
+	// UCX is NIXL's UCX backend.
+	UCX KVTransferBackend = "UCX"
+
+	// Libfabric is NIXL's libfabric backend. The chart keeps the KV buffer in GPU
+	// memory for it, and it requires EFA.
+	Libfabric KVTransferBackend = "LIBFABRIC"
+)
+
+// KVTransfer is the NIXL configuration shared by the prefill and decode pools.
+type KVTransfer struct {
+	// Backend is UCX or LIBFABRIC. Required.
+	//nolint:lll // A struct tag cannot wrap.
+	Backend KVTransferBackend `json:"backend" jsonschema:"title=KVTransferBackend,enum=UCX,enum=LIBFABRIC"`
+
+	// EFA gives every worker an Elastic Fabric Adapter. Required with LIBFABRIC; not
+	// allowed with UCX.
+	EFA *EFA `json:"efa,omitempty"`
+}
+
+// EFADeviceClassName is the DeviceClass the DRANet driver publishes EFA devices under.
+const EFADeviceClassName = "efa.networking.k8s.aws"
+
+// EFA gives every disaggregated worker one exclusive EFA device, allocated by DRA. The
+// chart renders a ResourceClaimTemplate per revision and claims it in both pools, sets
+// FI_PROVIDER=efa with device RDMA on and shared-memory transfer off, and labels the
+// workers ccluster.nvidia.com/kv-transfer: efa. A required pod affinity on that label
+// keeps prefill and decode in one zone.
+//
+// The infra plane must serve resource.k8s.io/v1 (Kubernetes 1.34 or later) and run the
+// DRANet driver with the efa.networking.k8s.aws DeviceClass, and ImageURL must be an
+// EFA-capable Dynamo runtime.
+type EFA struct {
+	// DeviceClassName is the DeviceClass each worker's claim requests. The chart ships
+	// efa.networking.k8s.aws, the only class it supports.
+	DeviceClassName *string `json:"deviceClassName,omitempty"`
+
+	// DevicesPerWorker is how many devices each worker claims. The chart ships 1, the
+	// only count it supports.
+	DevicesPerWorker *int32 `json:"devicesPerWorker,omitempty"`
+}
+
+func (e *EFA) validate() error {
+	if e == nil {
+		return nil
+	}
+	var errs []error
+	if e.DeviceClassName != nil && *e.DeviceClassName != EFADeviceClassName {
+		errs = append(errs, fmt.Errorf("%w: kvTransfer.efa.deviceClassName %q is not %s",
+			deployments.ErrInvalidValue, *e.DeviceClassName, EFADeviceClassName))
+	}
+	if e.DevicesPerWorker != nil && *e.DevicesPerWorker != 1 {
+		errs = append(errs, fmt.Errorf("%w: kvTransfer.efa.devicesPerWorker %d is not 1",
+			deployments.ErrInvalidValue, *e.DevicesPerWorker))
+	}
+	return errors.Join(errs...)
+}
+
 // New returns the dynamo_deployment chart entry, installed into namespace with values.
 // The chart's objects are all created in that namespace, and its Ingress host is
 // derived from it.
@@ -268,7 +339,9 @@ func (v Values) Validate() error {
 		v.RolloutStrategy.Validate(),
 		v.BackendProtocol.Validate(),
 		v.validateServingMode(),
+		v.validateKVTransfer(),
 		v.validateExtraArgv(),
+		deployments.ValidateVolumeMounts(v.VolumeMounts),
 	}
 
 	if minReplicas, _ := v.HPA.Bounds(); minReplicas < 1 {
@@ -333,6 +406,36 @@ func (v Values) validateServingMode() error {
 		return fmt.Errorf("%w: servingMode %q is not aggregated or disaggregated",
 			deployments.ErrInvalidValue, mode)
 	}
+}
+
+// validateKVTransfer rejects kvTransfer outside disaggregated serving, an unknown
+// backend, and EFA settings that do not match the backend.
+func (v Values) validateKVTransfer() error {
+	kv := v.KVTransfer
+	if kv == nil {
+		return nil
+	}
+	var errs []error
+	if v.ServingMode == nil || *v.ServingMode != Disaggregated {
+		errs = append(errs, fmt.Errorf("%w: kvTransfer is only for disaggregated serving",
+			deployments.ErrInvalidValue))
+	}
+	switch kv.Backend {
+	case UCX:
+		if kv.EFA != nil {
+			errs = append(errs, fmt.Errorf("%w: kvTransfer.efa is not allowed with UCX",
+				deployments.ErrInvalidValue))
+		}
+	case Libfabric:
+		if kv.EFA == nil {
+			errs = append(errs, fmt.Errorf("%w: kvTransfer.efa; LIBFABRIC needs it",
+				deployments.ErrMissingValue))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%w: kvTransfer.backend %q is not UCX or LIBFABRIC",
+			deployments.ErrInvalidValue, kv.Backend))
+	}
+	return errors.Join(append(errs, kv.EFA.validate())...)
 }
 
 // validateExtraArgv rejects a --runner option, in any spelling vLLM's parser accepts

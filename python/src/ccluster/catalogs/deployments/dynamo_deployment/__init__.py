@@ -31,6 +31,35 @@ class BackendProtocol(Enum):
     grpc = "GRPC"
 
 
+class EFA(BaseModel):
+    """
+    EFA gives every disaggregated worker one exclusive EFA device, allocated by DRA. The
+    chart renders a ResourceClaimTemplate per revision and claims it in both pools, sets
+    FI_PROVIDER=efa with device RDMA on and shared-memory transfer off, and labels the
+    workers ccluster.nvidia.com/kv-transfer: efa. A required pod affinity on that label
+    keeps prefill and decode in one zone.
+
+    The infra plane must serve resource.k8s.io/v1 (Kubernetes 1.34 or later) and run the
+    DRANet driver with the efa.networking.k8s.aws DeviceClass, and ImageURL must be an
+    EFA-capable Dynamo runtime.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    device_class_name: Annotated[str | None, Field(alias="deviceClassName")] = None
+    """
+    DeviceClassName is the DeviceClass each worker's claim requests. The chart ships
+    efa.networking.k8s.aws, the only class it supports.
+    """
+    devices_per_worker: Annotated[int | None, Field(alias="devicesPerWorker")] = None
+    """
+    DevicesPerWorker is how many devices each worker claims. The chart ships 1, the
+    only count it supports.
+    """
+
+
 class HPA(BaseModel):
     """
     HPA bounds the KEDA ScaledObject that scales the workers.
@@ -53,12 +82,14 @@ class HPA(BaseModel):
     average_value: Annotated[int | None, Field(alias="averageValue")] = None
     """
     AverageValue is the target number of in-flight requests per pod, from 1 to
-    2^53. The chart ships 2^53, which effectively disables the trigger.
+    2^53. The chart ships 2^53, which effectively disables the trigger, and renders
+    any value outside that range as 2^53.
     """
     cooldown_period: Annotated[int | None, Field(alias="cooldownPeriod")] = None
     """
     CooldownPeriod is how many seconds KEDA waits after the last active trigger
-    before scaling down. The chart ships 1800.
+    before scaling down. The chart ships 1800. inference_deployment renders 0 as
+    1800; dynamo_deployment renders 0 as 0.
     """
 
 
@@ -83,6 +114,35 @@ class ImagePullSecret(BaseModel):
     password: str
     """
     Password is the registry password or token.
+    """
+
+
+class KVTransferBackend(Enum):
+    """
+    Backend is UCX or LIBFABRIC. Required.
+    """
+
+    ucx = "UCX"
+    libfabric = "LIBFABRIC"
+
+
+class KVTransfer(BaseModel):
+    """
+    KVTransfer is the NIXL configuration shared by the prefill and decode pools.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    backend: Annotated[KVTransferBackend, Field(title="KVTransferBackend")]
+    """
+    Backend is UCX or LIBFABRIC. Required.
+    """
+    efa: EFA | None = None
+    """
+    EFA gives every worker an Elastic Fabric Adapter. Required with LIBFABRIC; not
+    allowed with UCX.
     """
 
 
@@ -134,6 +194,30 @@ class RolloutStrategy(BaseModel):
     """
     MaxSurge is the most pods that may be scheduled above the desired count during
     an update. The chart ships 0.
+    """
+
+
+class VolumeMount(BaseModel):
+    """
+    VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
+    does not own the claim; catalogs/resources/persistent_volume creates one.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    name: str
+    """
+    Name is the claim's name in the release namespace. Required.
+    """
+    mount_path: Annotated[str, Field(alias="mountPath")]
+    """
+    MountPath is the absolute directory it is mounted at. Required.
+    """
+    read_only: Annotated[bool | None, Field(alias="readOnly")] = None
+    """
+    ReadOnly mounts it read-only in this container. The chart ships false.
     """
 
 
@@ -326,6 +410,18 @@ class Values(BaseModel):
     required in disaggregated mode; neither is allowed otherwise.
     """
     decode_pool: Annotated[StaticWorkerPool | None, Field(alias="decodePool")] = None
+    kv_transfer: Annotated[KVTransfer | None, Field(alias="kvTransfer")] = None
+    """
+    KVTransfer selects how the disaggregated pools move the KV cache. Only allowed
+    in disaggregated mode. Unset leaves the NIXL backend to the runtime's default.
+    """
+    volume_mounts: Annotated[list[VolumeMount] | None, Field(alias="volumeMounts")] = (
+        None
+    )
+    """
+    VolumeMounts are existing claims mounted at the same paths into the Frontend
+    and every worker.
+    """
     backend_protocol: Annotated[
         BackendProtocol | None, Field(alias="backendProtocol", title="BackendProtocol")
     ] = None

@@ -3,6 +3,25 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */ -}}
 {{- $_ := required "model is required" .Values.model }}
+{{- /* Values.Validate checks kvTransfer too, but callers that skip it reach the template
+       directly. */}}
+{{- if hasKey .Values "kvTransfer" }}
+{{- $kv := .Values.kvTransfer }}
+{{- if ne (.Values.servingMode | default "aggregated") "disaggregated" }}
+{{- fail "kvTransfer is only for disaggregated serving" }}
+{{- end }}
+{{- if not (has $kv.backend (list "UCX" "LIBFABRIC")) }}
+{{- fail "kvTransfer.backend must be UCX or LIBFABRIC" }}
+{{- end }}
+{{- if ne (eq $kv.backend "LIBFABRIC") (hasKey $kv "efa") }}
+{{- fail "kvTransfer.efa is required with LIBFABRIC and not allowed with UCX" }}
+{{- end }}
+{{- with $kv.efa }}
+{{- if or (ne (.deviceClassName | default "efa.networking.k8s.aws") "efa.networking.k8s.aws") (ne (.devicesPerWorker | default 1 | int) 1) }}
+{{- fail "kvTransfer.efa supports only deviceClassName efa.networking.k8s.aws and devicesPerWorker 1" }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: nvidia.com/v1beta1
 kind: DynamoGraphDeployment
 metadata:
@@ -128,6 +147,15 @@ spec:
                 requests:
                   cpu: "500m"
                   memory: "512Mi"
+              {{- if .Values.volumeMounts }}
+              # The Frontend reads local model metadata at the same paths as the workers.
+              volumeMounts:
+                {{- include "dynamo.volumeMounts" .Values | trim | nindent 16 }}
+              {{- end }}
+          {{- if .Values.volumeMounts }}
+          volumes:
+            {{- include "dynamo.pvcVolumes" .Values | trim | nindent 12 }}
+          {{- end }}
           imagePullSecrets:
             - name: ecr-image-pull
             {{- if .Values.imagePullSecret }}

@@ -20,6 +20,10 @@ signal to scale back up. The active-request trigger below is inert when min == m
 averageValue is left at the 2^53 default.
 */ -}}
 {{- $cooldown := .Values.hpa.cooldownPeriod | int64 -}}
+{{- /* Values.Validate keeps hpa.averageValue within 1-2^53, but callers that skip it
+       reach the template directly. Out-of-range values mean autoscaling disabled: 2^53. */ -}}
+{{- $averageValue := .Values.hpa.averageValue | int64 -}}
+{{- if or (lt $averageValue 1) (gt $averageValue 9007199254740992) }}{{ $averageValue = 9007199254740992 }}{{ end -}}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -68,7 +72,7 @@ spec:
       # KEDA multiplies the threshold by 1000 (millivalue), so it is capped at 2^53
       # where a float64-decoded value is still exact; that cap also means "autoscaling
       # disabled", which is the chart default.
-      threshold: {{ .Values.hpa.averageValue | int64 | quote }}
+      threshold: {{ $averageValue | quote }}
       query: >-
         sum(
           dynamo_frontend_active_requests{

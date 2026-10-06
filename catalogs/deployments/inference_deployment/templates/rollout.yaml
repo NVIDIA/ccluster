@@ -2,6 +2,13 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */ -}}
+{{- /* One pod volume per distinct claim, however many times it is mounted. */}}
+{{- $volumeNameByClaim := dict }}
+{{- range $index, $mount := .Values.volumeMounts }}
+{{- if not (hasKey $volumeNameByClaim $mount.name) }}
+{{- $_ := set $volumeNameByClaim $mount.name (printf "external-volume-%d" $index) }}
+{{- end }}
+{{- end }}
 # Load the (potentially) extra config files from _helpers.tpl.
 {{- template "setExtraConfigFiles" . }}
 
@@ -53,11 +60,12 @@ spec:
         ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
         {{- end }}
         {{- end }}
-        # this is needed to get the right metrics from istio/envoy for hpa
+        # KEDA reads the sidecar's inbound downstream_rq stats. Outbound stats grow
+        # with every service in the mesh, so the sidecar does not emit them.
         proxy.istio.io/config: |-
           proxyStatsMatcher:
             inclusionRegexps:
-            - ".*downstream_rq.*"
+            - "http\\.inbound.*downstream_rq.*"
       labels:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
         platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
@@ -178,6 +186,11 @@ spec:
             - name: model-cache
               mountPath: /tmp
             {{- end }}
+            {{- range $mount := .Values.volumeMounts }}
+            - mountPath: {{ $mount.mountPath | quote }}
+              name: {{ get $volumeNameByClaim $mount.name }}
+              readOnly: {{ $mount.readOnly | default false }}
+            {{- end }}
       enableServiceLinks: false
       imagePullSecrets:
         - name: ecr-image-pull
@@ -204,6 +217,15 @@ spec:
         - name: model-cache
           persistentVolumeClaim:
             claimName: node-model-cache-pvc
+        {{- end }}
+        {{- $renderedClaims := dict }}
+        {{- range $mount := .Values.volumeMounts }}
+        {{- if not (hasKey $renderedClaims $mount.name) }}
+        {{- $_ := set $renderedClaims $mount.name true }}
+        - name: {{ get $volumeNameByClaim $mount.name }}
+          persistentVolumeClaim:
+            claimName: {{ $mount.name | quote }}
+        {{- end }}
         {{- end }}
   strategy:
     # Adding `trafficRouting` (e.g. istio) splits traffic across weighted
