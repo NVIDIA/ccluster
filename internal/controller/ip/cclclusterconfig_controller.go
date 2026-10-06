@@ -51,7 +51,7 @@ type CCLClusterConfigReconciler struct {
 	Scheme *runtime.Scheme
 
 	// Components is the catalog registry the Verifiers are taken from, normally
-	// components.All. Entries without a Verifier are skipped. Injectable so tests can
+	// components.ClusterBase. Entries without a Verifier are skipped. Injectable so tests can
 	// drive the controller with a registry of their own.
 	Components []components.Component
 }

@@ -69,17 +69,40 @@ func TestAllValuesAreStructs(t *testing.T) {
 	}
 }
 
-// TestClusterBaseHasVerifiers: the infra-plane operator verifies every cluster_base
-// component through All, so a cluster_base chart without a Verifier would silently be
-// left out of the check. The tenant charts are the other way round: nothing verifies
-// them, and a Verifier there would be dead code.
+// TestGroupsMatchTheirDirectories: each group holds exactly the charts of one catalogs/
+// directory, so the groups are disjoint and a chart registered in the wrong one fails
+// here. TestAllCoversTheTree checks that together they cover the tree.
+func TestGroupsMatchTheirDirectories(t *testing.T) {
+	for _, group := range []struct {
+		name   string
+		charts []Component
+		inDir  func(chart string) bool
+	}{
+		{"NamespaceBase", NamespaceBase, func(c string) bool { return c == "catalogs/namespace_base" }},
+		{"ClusterBase", ClusterBase, func(c string) bool { return strings.HasPrefix(c, "catalogs/cluster_base/") }},
+		{"Deployments", Deployments, func(c string) bool { return strings.HasPrefix(c, "catalogs/deployments/") }},
+		{"Resources", Resources, func(c string) bool { return strings.HasPrefix(c, "catalogs/resources/") }},
+	} {
+		for _, c := range group.charts {
+			if !group.inDir(c.Chart) {
+				t.Errorf("%s: %s does not belong in this group", group.name, c.Chart)
+			}
+		}
+	}
+}
+
+// TestClusterBaseHasVerifiers: the infra-plane operator verifies every ClusterBase
+// component, so a cluster_base chart without a Verifier would silently be left out of
+// the check. The other groups are the other way round: nothing verifies them, and a
+// Verifier there would be dead code.
 func TestClusterBaseHasVerifiers(t *testing.T) {
-	for _, c := range All {
-		isClusterBase := strings.HasPrefix(c.Chart, "catalogs/cluster_base/")
-		if isClusterBase && c.Verifier == nil {
+	for _, c := range ClusterBase {
+		if c.Verifier == nil {
 			t.Errorf("%s: cluster_base component without a Verifier", c.Chart)
 		}
-		if !isClusterBase && c.Verifier != nil {
+	}
+	for _, c := range slices.Concat(NamespaceBase, Deployments, Resources) {
+		if c.Verifier != nil {
 			t.Errorf("%s: Verifier on a chart outside cluster_base", c.Chart)
 		}
 	}

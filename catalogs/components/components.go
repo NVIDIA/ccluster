@@ -9,8 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 // hack/pyschema, tests - reads All rather than keeping a list of its own.
 //
 // Adding a chart is three steps: create its directory with the Helm chart and a
-// component.go declaring Chart, Values and New, add one line to All below (with
-// catalogs.DefaultVerifier under cluster_base), and run make python-generate.
+// component.go declaring Chart, Values and New, add one line to its directory's group
+// below (with catalogs.DefaultVerifier in ClusterBase), and run make python-generate.
 // TestAllCoversTheTree fails when the directory and the list disagree, and the chart's
 // path under catalogs/ becomes its path under ccluster.catalogs in Python without
 // further registration.
@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 package components
 
 import (
+	"slices"
+
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
@@ -59,12 +61,15 @@ type Component struct {
 	Verifier catalogs.Verifier
 }
 
-// All is every chart in the catalog, grouped by directory and sorted by chart within it.
-var All = []Component{
-	// The per-tenant namespace baseline the deployments charts assume is in place.
+// NamespaceBase is the per-tenant namespace baseline the deployments charts assume is
+// in place.
+var NamespaceBase = []Component{
 	{namespacebase.Chart, namespacebase.Values{}, nil},
+}
 
-	// cluster_base: the platform components every infra-plane cluster gets.
+// ClusterBase is the platform components every infra-plane cluster gets, sorted by
+// chart. Each carries the Verifier the infra-plane operator runs for it.
+var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}, catalogs.DefaultVerifier{}},
 	{certmanager.Chart, certmanager.Values{}, catalogs.DefaultVerifier{}},
 	{externaldns.Chart, externaldns.Values{}, catalogs.DefaultVerifier{}},
@@ -82,14 +87,22 @@ var All = []Component{
 	{prometheusadapter.Chart, prometheusadapter.Values{}, catalogs.DefaultVerifier{}},
 	{spire.Chart, spire.Values{}, catalogs.DefaultVerifier{}},
 	{spirecrds.Chart, spirecrds.Values{}, catalogs.DefaultVerifier{}},
+}
 
-	// deployments: the tenant workload charts.
+// Deployments is the tenant workload charts, sorted by chart.
+var Deployments = []Component{
 	{computedeployment.Chart, computedeployment.Values{}, nil},
 	{dynamodeployment.Chart, dynamodeployment.Values{}, nil},
 	{inferencedeployment.Chart, inferencedeployment.Values{}, nil},
 	{jobdeployment.Chart, jobdeployment.Values{}, nil},
+}
 
-	// resources: cluster and tenant resources the workloads use.
+// Resources is the cluster and tenant resources the workloads use, sorted by chart.
+var Resources = []Component{
 	{kaigpuqueues.Chart, kaigpuqueues.Values{}, nil},
 	{persistentvolume.Chart, persistentvolume.Values{}, nil},
 }
+
+// All is every chart in the catalog: the groups above, concatenated in that order. The
+// groups are disjoint, each holding the charts of one catalogs/ directory.
+var All = slices.Concat(NamespaceBase, ClusterBase, Deployments, Resources)

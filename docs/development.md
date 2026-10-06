@@ -108,14 +108,15 @@ When adding or changing a component:
 - Optional scalars are pointers with `omitempty`, so explicit `false` survives marshaling.
   Required fields are non-pointer without `omitempty`. Add `Values.Validate()` when needed;
   `catalogs.Entry` calls it. Hand-written CRs bypass this validation.
-- Register the component in `catalogs/components/components.go`, the single list of
-  every chart; `hack/pyschema` and the tests read it, and `TestAllCoversTheTree` fails if
-  the list and the `catalogs/` tree disagree. The chart's path under `catalogs/` becomes
+- Register the component in `catalogs/components/components.go`, in the list for its
+  directory (`NamespaceBase`, `ClusterBase`, `Deployments` or `Resources`); `All`
+  concatenates them, `hack/pyschema` and the tests read it, and `TestAllCoversTheTree`
+  fails if `All` and the `catalogs/` tree disagree. The chart's path under `catalogs/` becomes
   its path under `ccluster.catalogs` in Python automatically, whether it sits in a
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
   choices, not a universally deployable default; teleport values need real configuration.
-- A `cluster_base` component is registered in `components.All` with a `catalogs.Verifier`
+- A `cluster_base` component is registered in `components.ClusterBase` with a `catalogs.Verifier`
   beside its `Values` (`TestClusterBaseHasVerifiers` fails otherwise). Start with
   `catalogs.DefaultVerifier`; a check of the chart's own reads live objects only (never
   Argo CD or Helm state), and reading a kind needs a `+kubebuilder:rbac` marker in

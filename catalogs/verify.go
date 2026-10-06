@@ -15,7 +15,7 @@ import (
 
 // Verifier is implemented by a chart package that can check, from live objects in the
 // cluster the chart is installed in, that its component is installed and configured for
-// that cluster. The infra-plane operator runs every Verifier in components.All and
+// that cluster. The infra-plane operator runs every Verifier in components.ClusterBase and
 // reports the outcome on CCLClusterConfig.
 //
 // Verification reads the cluster only. It never consults Argo CD or Helm release state,

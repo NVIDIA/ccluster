@@ -50,7 +50,7 @@ func setupControllers(mgr ctrl.Manager) error {
 	if err := (&ip.CCLClusterConfigReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
-		Components: components.All,
+		Components: components.ClusterBase,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLClusterConfig: %w", err)
 	}

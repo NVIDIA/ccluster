@@ -216,8 +216,10 @@ operator is idle until then.
 
 ### Verifiers live with the catalog
 
-`catalogs/components.All` carries, beside each chart's `Values`, the `Verifier` the
-operator runs for it (`nil` for the tenant charts, which nothing verifies):
+`catalogs/components` registers the charts in one list per catalog directory, and `All`
+concatenates them. Each `ClusterBase` entry carries, beside the chart's `Values`, the
+`Verifier` the operator runs for it; the operator is handed `ClusterBase` alone (the
+other lists carry `nil`, since nothing verifies them):
 
 ```go
 type Verifier interface {
