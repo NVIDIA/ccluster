@@ -223,17 +223,19 @@ other lists carry `nil`, since nothing verifies them):
 
 ```go
 type Verifier interface {
-    Verify(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClusterConfigSpec) bool
+    Verify(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClusterConfigSpec) error
 }
 ```
 
-Every cluster_base chart starts with `catalogs.DefaultVerifier`, which reports true
-without looking; a chart replaces it with a check of its own when it has something to
+Every cluster_base chart starts with `catalogs.DefaultVerifier`, which passes without
+looking; a chart replaces it with a check of its own when it has something to
 look at. The contract those checks will follow is fixed now: they read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
-auto-mode; an Argo CD-based check would fail in self-mode. A Verifier returns a plain
-`bool`; the CCLClusterConfig spec is what it compares the cluster against.
+auto-mode; an Argo CD-based check would fail in self-mode. A Verifier returns `nil` when
+the component passes, and otherwise an error whose text says why, which the condition
+shows next to the chart; the CCLClusterConfig spec is what it compares the cluster
+against.
 
 ### The controller
 
@@ -245,9 +247,9 @@ outcome is one condition:
 
 | Condition | Meaning |
 | --- | --- |
-| `Verified` | `True/ComponentsVerified` when every cluster_base component passes; `False/ComponentsNotVerified` with a message naming the failing charts. |
+| `Verified` | `True/ComponentsVerified` when every cluster_base component passes; `False/ComponentsNotVerified` with a message naming each failing chart and its Verifier's error. |
 
-A failing Verifier is not an error: it is the answer, reported rather than retried. The
+A Verifier's error is not a reconcile error: it is the answer, reported rather than retried. The
 operator writes nothing but this status, and its ClusterRole grants nothing but the
 singleton and its status; a Verifier that reads a kind adds a read-only marker for it in
 the controller package.

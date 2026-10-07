@@ -12,10 +12,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   asked Argo CD for per component, and its result.
 - The first ccluster-ip-operator controller: it runs every `catalogs/cluster_base`
   component's `Verifier` against the `CCLClusterConfig` and reports the outcome as its
-  `Verified` condition. `catalogs.Verifier` is registered per `cluster_base` chart in
-  `components.ClusterBase`; every chart starts with `catalogs.DefaultVerifier`, which reports
-  true, and real checks follow. The ip ClusterRole is now generated from
-  `internal/controller/ip`.
+  `Verified` condition, naming each failing chart with the error its Verifier returned.
+  `catalogs.Verifier` is registered per `cluster_base` chart in `components.ClusterBase`;
+  every chart starts with `catalogs.DefaultVerifier`, which always passes, and real checks
+  follow. The ip ClusterRole is now generated from `internal/controller/ip`.
 - `dynamo_deployment` gains `kvTransfer`, which selects the NIXL backend of the
   disaggregated pools, UCX or LIBFABRIC. LIBFABRIC requires `kvTransfer.efa`, which gives
   every worker one EFA device through DRA.

@@ -53,7 +53,7 @@ import (
 // the path Argo CD resolves and the chart's Python package; the zero value of its Values
 // type, from which its schema is reflected; and, for cluster_base charts, the Verifier
 // the infra-plane operator runs to check the component is installed and configured.
-// Every cluster_base chart starts with catalogs.DefaultVerifier, which reports true, until
+// Every cluster_base chart starts with catalogs.DefaultVerifier, which always passes, until
 // it has a check of its own. Verifier is nil for the tenant charts, which nothing verifies.
 type Component struct {
 	Chart    string

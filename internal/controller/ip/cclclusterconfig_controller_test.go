@@ -7,6 +7,7 @@ package ip
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,9 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
+// errNotReady is what a switchVerifier reports while it is off.
+var errNotReady = errors.New("not ready")
+
 // switchVerifier is a catalogs.Verifier the specs flip by hand, and which records the
 // spec it was handed, so the controller's contract - run every Verifier against the
 // CCLClusterConfig, report the outcome - is tested without seventeen real charts.
@@ -38,9 +42,12 @@ func (v *switchVerifier) Verify(
 	_ context.Context,
 	_ client.Reader,
 	cfg cclusternvidiacomv1alpha1.CCLClusterConfigSpec,
-) bool {
+) error {
 	v.lastCfg.Store(&cfg)
-	return v.ready.Load()
+	if !v.ready.Load() {
+		return errNotReady
+	}
+	return nil
 }
 
 var _ = Describe("CCLClusterConfig Controller", func() {
@@ -101,9 +108,9 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		Expect(condition).NotTo(BeNil())
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 		Expect(condition.Reason).To(Equal(reasonComponentsNotVerified))
-		Expect(condition.Message).To(ContainSubstring("0 of 2"))
-		Expect(condition.Message).To(ContainSubstring(chartA))
-		Expect(condition.Message).To(ContainSubstring(chartB))
+		Expect(condition.Message).To(Equal(
+			"0 of 2 cluster_base components verified; failing: " +
+				chartA + " (not ready); " + chartB + " (not ready)"))
 	})
 
 	It("hands every Verifier the spec it verifies against", func() {
@@ -206,7 +213,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		condition := verified()
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 		Expect(condition.Message).To(ContainSubstring("1 of 2"))
-		Expect(condition.Message).To(ContainSubstring(chartB))
+		Expect(condition.Message).To(ContainSubstring(chartB + " (verifier panicked: verifier bug)"))
 		Expect(condition.Message).NotTo(ContainSubstring(chartA))
 	})
 
@@ -262,20 +269,20 @@ type meetingVerifier struct {
 	met     <-chan struct{}
 }
 
-func (v *meetingVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+func (v *meetingVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	v.arrived.Done()
 	select {
 	case <-v.met:
-		return true
+		return nil
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	}
 }
 
 // panicVerifier stands in for a Verifier with a bug.
 type panicVerifier struct{}
 
-func (panicVerifier) Verify(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+func (panicVerifier) Verify(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	panic("verifier bug")
 }
 
@@ -284,11 +291,11 @@ type deadlineVerifier struct {
 	deadline atomic.Pointer[time.Time]
 }
 
-func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		v.deadline.Store(&deadline)
 	}
-	return true
+	return nil
 }
 
 // Compile-time check that the test doubles are what the controller consumes.

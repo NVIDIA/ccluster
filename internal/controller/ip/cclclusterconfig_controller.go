@@ -77,8 +77,8 @@ type CCLClusterConfigReconciler struct {
 // The operator reads the cluster and writes status; it changes nothing else. Whether
 // the components were installed by the control plane through a CCLComponentSet or by a
 // user with helm is invisible to it - the Verifiers look at live objects, never at Argo
-// CD or Helm release state - so the same check holds in both cases. A failing Verifier
-// is not an error: it is the answer, and it is reported rather than retried.
+// CD or Helm release state - so the same check holds in both cases. A Verifier's error
+// is not a reconcile error: it is the answer, and it is reported rather than retried.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
@@ -100,7 +100,7 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	previous := apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeVerified)
 	if previous == nil || previous.Status != status || previous.Message != message {
 		log.Info("Verified cluster_base components", "verified", total-len(failing),
-			"total", total, "failing", failing)
+			"total", total, "failing", describe(failing))
 	}
 
 	if err := r.setVerified(ctx, &config, status, reason, message); err != nil {
@@ -113,8 +113,14 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	return ctrl.Result{RequeueAfter: recheckWhenVerified}, nil
 }
 
+// failure is a cluster_base chart whose Verifier did not pass, and why.
+type failure struct {
+	chart string
+	err   error
+}
+
 // verify runs every registered Verifier against spec and returns how many there were
-// and the charts whose Verifier reported false, in catalog order.
+// and the charts whose Verifier returned an error, in catalog order.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's cached client, which is safe for concurrent use, so the pass takes as long
@@ -124,14 +130,15 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 //
 // Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
 // recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
-// faulty Verifier would crash the operator. Either way the chart is reported as failing.
+// faulty Verifier would crash the operator. Either way the chart is reported as failing,
+// with the panic or the timeout as its reason.
 func (r *CCLClusterConfigReconciler) verify(
 	ctx context.Context,
 	spec cclusternvidiacomv1alpha1.CCLClusterConfigSpec,
-) (total int, failing []string) {
+) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
-	verified := make([]bool, len(r.Components))
+	errs := make([]error, len(r.Components))
 	var wg sync.WaitGroup
 	for i, component := range r.Components {
 		if component.Verifier == nil {
@@ -143,36 +150,47 @@ func (r *CCLClusterConfigReconciler) verify(
 				if p := recover(); p != nil {
 					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
 						"chart", component.Chart, "stack", string(debug.Stack()))
+					errs[i] = fmt.Errorf("verifier panicked: %v", p)
 				}
 			}()
 
 			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 			defer cancel()
-			verified[i] = component.Verifier.Verify(verifyCtx, r, spec)
-			if !verified[i] && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				log.Info("Timed out cluster_base Verifier", "chart", component.Chart, "timeout", verifyTimeout)
+			errs[i] = component.Verifier.Verify(verifyCtx, r, spec)
+			if errs[i] != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				errs[i] = fmt.Errorf("timed out after %s: %w", verifyTimeout, errs[i])
 			}
 		})
 	}
 	wg.Wait()
 
 	for i, component := range r.Components {
-		if component.Verifier != nil && !verified[i] {
-			failing = append(failing, component.Chart)
+		if component.Verifier != nil && errs[i] != nil {
+			failing = append(failing, failure{chart: component.Chart, err: errs[i]})
 		}
 	}
 	return total, failing
 }
 
 // verifiedCondition turns the verification outcome into the Verified condition.
-func verifiedCondition(total int, failing []string) (metav1.ConditionStatus, string, string) {
+func verifiedCondition(total int, failing []failure) (metav1.ConditionStatus, string, string) {
 	if len(failing) == 0 {
 		return metav1.ConditionTrue, reasonComponentsVerified, fmt.Sprintf(
 			"All %d cluster_base components are installed and configured", total)
 	}
 	return metav1.ConditionFalse, reasonComponentsNotVerified, fmt.Sprintf(
 		"%d of %d cluster_base components verified; failing: %s",
-		total-len(failing), total, strings.Join(failing, ", "))
+		total-len(failing), total, strings.Join(describe(failing), "; "))
+}
+
+// describe renders each failure as "chart (reason)". The separator between them is a
+// semicolon, since a reason may itself contain commas.
+func describe(failing []failure) []string {
+	described := make([]string, len(failing))
+	for i, f := range failing {
+		described[i] = fmt.Sprintf("%s (%v)", f.chart, f.err)
+	}
+	return described
 }
 
 // setVerified sets the Verified condition and the observed generation, then writes the
