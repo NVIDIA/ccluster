@@ -438,13 +438,18 @@ Request tracking has the following rules:
 - Submit each request once; the operator never resubmits. Argo CD's retry policy allows up
   to five retries of the submitted sync. Observed `Failed` or `Error` results are reported
   as `WaveSyncFailed`.
-- Adopt the result of a later operation once it has replaced the request's own result, until
-  the request has succeeded. The request ID and its operation are written in one patch and
-  Argo CD runs one operation at a time, so an idle Application that still carries the request
-  ID records either this request's operation or a later one, and every later one synced the
-  same spec. A self-heal that replaces an unobserved result therefore completes the request,
-  and a sync started in Argo CD retries a failed one without a CCLComponentSet edit. A
-  success is never downgraded by a later failure.
+- Adopt the result of a later operation once the request's own result has been observed,
+  until the request has succeeded. Every operation after the request's own synced the same
+  spec, so a sync started in Argo CD retries a failed request without a CCLComponentSet
+  edit. A success is never downgraded by a later failure.
+- Never adopt a result before the request's own has been observed. If the request's
+  operation is removed before Argo CD starts it, the Application is left idle on the
+  previous operation's result, which describes the previous spec. Operator and Argo CD
+  clocks are not comparable, so timestamps cannot exclude it. A request whose result was
+  replaced unobserved therefore stays pending, even when the Application is Healthy and
+  Synced: a missed completion blocks the rollout rather than a stale one advancing it. The
+  status message says so; changing the component, or editing the Application's spec, makes
+  the operator submit a new request.
 - Copy prune and sync options into the requested operation. Argo CD does not inherit them
   from syncPolicy; ServerSideApply is required by this catalog.
 - Existing Applications without a request ID continue to use health and sync status, but

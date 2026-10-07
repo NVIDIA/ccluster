@@ -108,6 +108,12 @@ func stamped(health, sync, phase string) *argocdv1alpha1.Application {
 	return application
 }
 
+// pending gives an Application the operation its request wrote, not yet picked up by Argo CD.
+func pending(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
+	application.Operation = &argocdv1alpha1.Operation{}
+	return application
+}
+
 // applications keys apps by the Application name the reconciler would give them.
 func applications(byComponent map[string]*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
 	out := make(map[string]*argocdv1alpha1.Application, len(byComponent))
@@ -431,7 +437,7 @@ func TestRolloutStatus(t *testing.T) {
 			name:       "waits when Argo CD has not synced the spec the operator wrote",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced, ""),
+				"a": pending(stamped(argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced, "")),
 			}),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  reasonWaveSyncing,

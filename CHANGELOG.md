@@ -29,6 +29,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the in-flight requests of every inference deployment in the namespace on the same port.
 - `dynamo_deployment` and `inference_deployment` render an `hpa.averageValue` outside
   1-2^53 as 2^53 instead of passing it to KEDA.
+- A CCLComponentSet no longer completes a component on the previous spec's sync result when
+  the sync the operator requested is removed before Argo CD runs it. A request whose result
+  the operator never observed stays pending, and the status message says how to request a
+  new sync.
 
 ## [0.0.5] - 2026-10-05
 

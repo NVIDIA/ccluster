@@ -126,22 +126,33 @@ func observeSync(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentS
 // Argo CD has replaced the request's own result with it - a self-heal, a manual sync, or
 // an auto-sync of a new catalog commit.
 //
-// The request ID and its operation are written in one patch, and Argo CD runs one
-// operation at a time, so an idle Application that still carries this request ID records
-// either this operation or a later one. Every later one synced this request's spec: a
-// spec change would have replaced the request. Callers only observe an Application whose
-// spec is the desired one.
+// Only once this request's own result has been seen. Before that, an idle Application can
+// still hold the result of the operation before this request: the request's operation may
+// have been removed before Argo CD started it, and that result describes the previous
+// spec. Operator and Argo CD clocks are not comparable, so timestamps cannot tell the two
+// apart. A request whose result was replaced unseen stays pending - see
+// requestResultUnobserved.
+//
+// After it, every later operation synced this request's spec: a spec change would have
+// replaced the request. Callers only observe an Application whose spec is the desired one.
 //
 // A success is never downgraded: a later self-heal must not erase it. Anything else is,
 // which is what lets a sync in Argo CD retry a failed request without a spec edit.
 // Completion still waits for a comparison after the adopted operation, and for Synced.
 func adoptLaterResult(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) {
-	if record.Phase == argocdv1alpha1.OperationSucceeded || app.OperationInProgress() {
+	if record.Phase == "" || record.Phase == argocdv1alpha1.OperationSucceeded || app.OperationInProgress() {
 		return
 	}
 	record.Phase = app.OperationPhase()
 	record.Message = app.OperationMessage()
 	record.FinishedAt = app.Status.OperationState.FinishedAt.DeepCopy()
+}
+
+// requestResultUnobserved reports that the Application is idle under this request, but
+// its result was never seen: its operation was removed before Argo CD started it, or
+// another operation replaced its result first. Only a new request can complete it.
+func requestResultUnobserved(app *argocdv1alpha1.Application, record *cclv1alpha1.ComponentSyncStatus) bool {
+	return requestMatches(app, record) && record.Phase == "" && !app.OperationInProgress()
 }
 
 func (r *CCLComponentSetReconciler) observeSyncs(

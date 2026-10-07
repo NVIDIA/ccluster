@@ -616,6 +616,14 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 				"Wave %d (component %q) has health %q, sync %q", wave, component.Name,
 				application.HealthStatus(), application.SyncStatus())
 		default:
+			if requestResultUnobserved(application, syncRecord(componentSet, component.Name)) {
+				// Argo CD will not report this request again, so nothing here resolves it.
+				return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+					"Wave %d (component %q) is waiting for the result of the sync the operator "+
+						"requested, which Argo CD no longer reports for Application %q. Changing the "+
+						"component, or editing the Application's spec, makes the operator request "+
+						"a new sync", wave, component.Name, name)
+			}
 			waiting := fmt.Sprintf(
 				"Wave %d (component %q) is waiting for Argo CD to sync the spec the operator "+
 					"wrote", wave, component.Name)

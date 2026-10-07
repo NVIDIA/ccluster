@@ -927,13 +927,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(getApplication(firstComponent).Operation).To(BeNil())
 		})
 
-		It("should adopt a later result without resubmission when self-heal replaces an unobserved one", func() {
+		It("should stay pending when its own result was never seen, until a new request", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
 			componentSet := settle()
 			requestID := componentSet.Status.ComponentSyncs[0].RequestID
 
-			// R1 completed before the operator observed its result; self-heal is now latest.
+			// The request's operation is gone and the Application is idle on a result
+			// without its ID: the previous spec's, its operation having been removed before
+			// Argo CD started it, or a later one that replaced it unseen. Neither is adopted.
 			application := getApplication(firstComponent)
 			application.Operation = nil
 			application.Status = &argocdv1alpha1.ApplicationStatus{
@@ -946,14 +948,28 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			}
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
-			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
-			Expect(componentSet.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
-			Expect(componentSet.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
-			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
+			pending := reconcileAndGet()
+			Expect(pending.Status.ComponentSyncs[0].RequestID).To(Equal(requestID))
+			Expect(pending.Status.ComponentSyncs[0].Phase).To(BeEmpty())
+			Expect(conditionOf(pending, conditionTypeProgressing).Reason).To(Equal(reasonWaveSyncing))
+			Expect(conditionOf(pending, conditionTypeProgressing).Message).To(
+				ContainSubstring("Argo CD no longer reports"))
 			Expect(getApplication(firstComponent).Operation).To(BeNil())
+
+			By("editing the Application's spec, which the operator restores with a new request")
+			application = getApplication(firstComponent)
+			application.Spec.Source.RepoURL = "https://example.com/tampered"
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+			reconcileAndGet()
+			application = getApplication(firstComponent)
+			Expect(application.Spec.Source.RepoURL).To(Equal(repoURL))
+			Expect(application.Operation).NotTo(BeNil())
+			Expect(application.Annotations[annotationSyncRequestID]).NotTo(Equal(requestID))
+
+			setHealth(firstComponent, "Healthy", "Synced")
+			completed := reconcileAndGet()
+			Expect(completed.Status.ComponentSyncs[0].Phase).To(Equal("Succeeded"))
+			Expect(conditionOf(completed, conditionTypeProgressing).Reason).To(Equal(reasonRolloutComplete))
 		})
 
 		It("should not adopt an earlier result while its own operation is still pending", func() {
