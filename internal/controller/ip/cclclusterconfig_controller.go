@@ -7,7 +7,9 @@ package ip
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,11 @@ const (
 	// recheckWhenVerified is the interval once everything passes.
 	recheckWhenVerified = 5 * time.Minute
 )
+
+// verifyTimeout bounds each Verifier call, so one check that hangs cannot hold up the
+// pass and with it the status of every other component. It is shorter than
+// recheckWhileFailing, so a pass always finishes before the next is due.
+const verifyTimeout = 30 * time.Second
 
 // CCLClusterConfigReconciler reconciles a CCLClusterConfig object
 type CCLClusterConfigReconciler struct {
@@ -114,10 +121,16 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 // as the slowest check rather than the sum of all of them. Results are collected by
 // position so the failing list, and with it the condition message, is deterministic
 // whatever order the goroutines finish in.
+//
+// Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
+// recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
+// faulty Verifier would crash the operator. Either way the chart is reported as failing.
 func (r *CCLClusterConfigReconciler) verify(
 	ctx context.Context,
 	spec cclusternvidiacomv1alpha1.CCLClusterConfigSpec,
 ) (total int, failing []string) {
+	log := logf.FromContext(ctx)
+
 	verified := make([]bool, len(r.Components))
 	var wg sync.WaitGroup
 	for i, component := range r.Components {
@@ -126,7 +139,19 @@ func (r *CCLClusterConfigReconciler) verify(
 		}
 		total++
 		wg.Go(func() {
-			verified[i] = component.Verifier.Verify(ctx, r, spec)
+			defer func() {
+				if p := recover(); p != nil {
+					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
+						"chart", component.Chart, "stack", string(debug.Stack()))
+				}
+			}()
+
+			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
+			defer cancel()
+			verified[i] = component.Verifier.Verify(verifyCtx, r, spec)
+			if !verified[i] && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				log.Info("Timed out cluster_base Verifier", "chart", component.Chart, "timeout", verifyTimeout)
+			}
 		})
 	}
 	wg.Wait()

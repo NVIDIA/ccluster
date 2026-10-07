@@ -27,7 +27,9 @@ import (
 //
 // The operator runs all Verifiers concurrently, so an implementation must not rely on
 // another component's Verifier having run, and must be safe to call from its own
-// goroutine; r is safe for concurrent reads.
+// goroutine; r is safe for concurrent reads. Each call's ctx carries a deadline: an
+// implementation must return, reporting false, once ctx is done. A panic is recovered
+// and reported as false, but is a bug in the Verifier.
 type Verifier interface {
 	Verify(ctx context.Context, r client.Reader, cfg cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool
 }

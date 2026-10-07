@@ -193,6 +193,39 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		Expect(verified().Status).To(Equal(metav1.ConditionTrue))
 	})
 
+	It("reports a panicking Verifier as failing without stopping the others", func() {
+		a.ready.Store(true)
+		reconciler.Components = []components.Component{
+			{Chart: chartA, Verifier: a},
+			{Chart: chartB, Verifier: panicVerifier{}},
+		}
+
+		_, err := reconciler.Reconcile(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+
+		condition := verified()
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Message).To(ContainSubstring("1 of 2"))
+		Expect(condition.Message).To(ContainSubstring(chartB))
+		Expect(condition.Message).NotTo(ContainSubstring(chartA))
+	})
+
+	It("gives every Verifier a deadline of its own", func() {
+		// Reconcile's ctx has no deadline, so one seen by the Verifier was set for it.
+		// Waiting the real verifyTimeout out would make the suite slow; the deadline
+		// being there is the contract.
+		probe := &deadlineVerifier{}
+		reconciler.Components = []components.Component{{Chart: chartA, Verifier: probe}}
+
+		start := time.Now()
+		_, err := reconciler.Reconcile(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+
+		deadline := probe.deadline.Load()
+		Expect(deadline).NotTo(BeNil(), "the Verifier's ctx should carry a deadline")
+		Expect(*deadline).To(BeTemporally("<=", start.Add(verifyTimeout).Add(time.Second)))
+	})
+
 	It("is idle when the singleton does not exist", func() {
 		config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
@@ -239,8 +272,29 @@ func (v *meetingVerifier) Verify(ctx context.Context, _ client.Reader, _ ccluste
 	}
 }
 
+// panicVerifier stands in for a Verifier with a bug.
+type panicVerifier struct{}
+
+func (panicVerifier) Verify(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+	panic("verifier bug")
+}
+
+// deadlineVerifier records the deadline on the ctx it is handed, if any.
+type deadlineVerifier struct {
+	deadline atomic.Pointer[time.Time]
+}
+
+func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) bool {
+	if deadline, ok := ctx.Deadline(); ok {
+		v.deadline.Store(&deadline)
+	}
+	return true
+}
+
 // Compile-time check that the test doubles are what the controller consumes.
 var (
 	_ catalogs.Verifier = &switchVerifier{}
 	_ catalogs.Verifier = &meetingVerifier{}
+	_ catalogs.Verifier = panicVerifier{}
+	_ catalogs.Verifier = &deadlineVerifier{}
 )

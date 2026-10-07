@@ -238,7 +238,10 @@ auto-mode; an Argo CD-based check would fail in self-mode. A Verifier returns a 
 ### The controller
 
 `CCLClusterConfigReconciler` (`internal/controller/ip/cclclusterconfig_controller.go`)
-runs every Verifier against the spec, concurrently, and writes one condition:
+runs every Verifier against the spec, concurrently. Each Verifier runs under its own
+30-second deadline, and a panic in one is recovered; both count as that component
+failing, so one faulty check can neither crash the operator nor hold up the others. The
+outcome is one condition:
 
 | Condition | Meaning |
 | --- | --- |
