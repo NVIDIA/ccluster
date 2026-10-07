@@ -17,8 +17,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs/components"
@@ -183,9 +185,14 @@ func (r *CCLClusterConfigReconciler) setVerified(
 // verified - a watch on a kind the API server does not serve keeps a controller from
 // ever starting - so re-verification is periodic (Reconcile's RequeueAfter) rather than
 // event-driven.
+//
+// Updates are filtered to spec changes. The controller's own status patch is an update
+// too, and without the filter every patch would rerun every Verifier; the periodic pass
+// already covers re-verification.
 func (r *CCLClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&cclusternvidiacomv1alpha1.CCLClusterConfig{}).
+		For(&cclusternvidiacomv1alpha1.CCLClusterConfig{},
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("cclclusterconfig").
 		Complete(r)
 }

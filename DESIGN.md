@@ -253,7 +253,9 @@ Only the singleton is watched. Verifiers read state the operator does not write,
 the kinds they will read are installed by the very components being verified —
 controller-runtime never starts a controller whose watch source cannot sync — so
 re-verification is periodic: one minute while anything fails, five once everything
-passes. That is the one deliberate exception to the "no polling" rule in §7.
+passes. That is the one deliberate exception to the "no polling" rule in §7. Updates to
+the singleton trigger a pass only when its generation changes, so the operator's own
+status writes do not rerun every Verifier.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
 control plane does not read this status yet; it holds the credentials to, and doing so is
