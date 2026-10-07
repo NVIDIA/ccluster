@@ -83,12 +83,8 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	# config/{cp,ip}/rbac/role_binding.yaml be identical.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role paths="./internal/controller/cp/..." \
 		output:rbac:artifacts:config=config/cp/rbac
-	# The ip pass is disabled until ccluster-ip-operator has its first controller:
-	# controller-gen writes no file at all when a package has no +kubebuilder:rbac
-	# markers, which would delete nothing but leave config/ip/rbac/role.yaml stale.
-	# That file is hand-written (empty rules) for now — see the note in it.
-	#"$(CONTROLLER_GEN)" rbac:roleName=manager-role paths="./internal/controller/ip/..." \
-	#	output:rbac:artifacts:config=config/ip/rbac
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role paths="./internal/controller/ip/..." \
+		output:rbac:artifacts:config=config/ip/rbac
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

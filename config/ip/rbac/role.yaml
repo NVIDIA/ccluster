@@ -1,18 +1,22 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-# Hand-written placeholder. ccluster-ip-operator has no controllers yet, so
-# there are no +kubebuilder:rbac markers in internal/controller/ip for
-# controller-gen to read — and controller-gen writes no file at all when it
-# finds no markers, which would break `kustomize build config/ip`.
-#
-# Once the first IP controller lands, delete this file and re-enable the ip
-# generation pass in the `manifests` target of the Makefile.
-#
-# The manager still needs the leader-election Role and metrics-auth ClusterRole
-# from config/base; those are bound separately and are unaffected by this file.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: manager-role
-rules: []
+rules:
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclclusterconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclclusterconfigs/status
+  verbs:
+  - get
+  - patch
+  - update

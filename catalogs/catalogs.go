@@ -25,6 +25,10 @@ SPDX-License-Identifier: Apache-2.0
 // does not name itself: the component's name within a CCLComponentSet is the caller's, and
 // so is the namespace it installs into.
 //
+// A catalogs/cluster_base chart is also registered with a Verifier (see verify.go), which
+// the infra-plane operator runs to check that the component is installed and configured
+// for the cluster it runs in. Every chart starts with DefaultVerifier.
+//
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
 // the zero value — and several charts here need to set a flag to false against a chart

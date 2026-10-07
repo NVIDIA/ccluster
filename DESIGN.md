@@ -69,9 +69,9 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | Piece | Role |
 | --- | --- |
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
-| `ccluster-ip-operator` | Runs in each infra-plane cluster. Registers no controllers yet; `CCLClusterConfig` (§3a) is the input its first one will reconcile. |
+| `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 18 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -189,7 +189,7 @@ on delete — and only if the ownership check still agrees they are ours.
 Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No failure
 requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
 
-## 3a. `CCLClusterConfig` — describing an infra-plane cluster from the inside
+## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
 ```yaml
 apiVersion: ccluster.nvidia.com/v1alpha1
@@ -203,18 +203,68 @@ spec:
 The control plane knows what it *asked* Argo CD to deploy onto a cluster, and Argo CD's
 health tells it whether the sync landed. Neither says whether the platform stack on that
 cluster actually works and is configured for it — whether SPIRE issues identities in the
-cluster's own trust domain, whether external-dns is filtered to the cluster's zone. That
-is the infra-plane operator's job, and it needs an input to check against.
+cluster's own trust domain, whether external-dns is filtered to the cluster's zone,
+whether the ACME issuer ever became Ready. That is what the infra-plane operator answers,
+and it answers it the same way whichever installer put the charts there: a
+`CCLComponentSet` from the control plane, or a user running `helm install` themselves.
 
-`CCLClusterConfig` is that input, a cluster-scoped singleton (the CRD's CEL rule admits
-only the name `cluster`) served by the ip chart alone: the control-plane chart drops it,
-and the ip chart drops the two control-plane kinds, each with a `$patch: delete` in its
-overlay, because kustomize will not load a CRD file from outside a kustomization's own
-directory and so a per-operator list cannot live under `config/crd/`. Its spec carries
-just what checks consume today: the cluster's domain, which is also its SPIFFE trust
-domain. It is created once the domain exists — which is after the cluster has been
-registered with the control plane. Its status reports a `Verified` condition; the
-controller that writes it is not built yet (§8).
+`CCLClusterConfig` is the operator's one input, a cluster-scoped singleton (the CRD's CEL
+rule admits only the name `cluster`). Its spec carries just what the checks consume today:
+the cluster's domain, which is also its SPIFFE trust domain. It is created once the domain
+exists — which is after the cluster has been registered with the control plane — and the
+operator is idle until then.
+
+### Verifiers live with the catalog
+
+`catalogs/components` registers the charts in one list per catalog directory, and `All`
+concatenates them. Each `ClusterBase` entry carries, beside the chart's `Values`, the
+`Verifier` the operator runs for it; the operator is handed `ClusterBase` alone (the
+other lists carry `nil`, since nothing verifies them):
+
+```go
+type Verifier interface {
+    Verify(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClusterConfigSpec) error
+}
+```
+
+Every cluster_base chart starts with `catalogs.DefaultVerifier`, which passes without
+looking; a chart replaces it with a check of its own when it has something to
+look at. The contract those checks will follow is fixed now: they read **live objects
+only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
+and applies without creating Helm releases, so a release-based check would fail in
+auto-mode; an Argo CD-based check would fail in self-mode. A Verifier returns `nil` when
+the component passes, and otherwise an error whose text says why, which the condition
+shows next to the chart; the CCLClusterConfig spec is what it compares the cluster
+against.
+
+### The controller
+
+`CCLClusterConfigReconciler` (`internal/controller/ip/cclclusterconfig_controller.go`)
+runs every Verifier against the spec, concurrently. Each Verifier runs under its own
+30-second deadline, and a panic in one is recovered; both count as that component
+failing, so one faulty check can neither crash the operator nor hold up the others. The
+outcome is one condition:
+
+| Condition | Meaning |
+| --- | --- |
+| `Verified` | `True/ComponentsVerified` when every cluster_base component passes; `False/ComponentsNotVerified` with a message naming each failing chart and its Verifier's error. |
+
+A Verifier's error is not a reconcile error: it is the answer, reported rather than retried. The
+operator writes nothing but this status, and its ClusterRole grants nothing but the
+singleton and its status; a Verifier that reads a kind adds a read-only marker for it in
+the controller package.
+
+Only the singleton is watched. Verifiers read state the operator does not write, and
+the kinds they will read are installed by the very components being verified —
+controller-runtime never starts a controller whose watch source cannot sync — so
+re-verification is periodic: one minute while anything fails, five once everything
+passes. That is the one deliberate exception to the "no polling" rule in §7. Updates to
+the singleton trigger a pass only when its generation changes, so the operator's own
+status writes do not rerun every Verifier.
+
+Deleting the singleton uninstalls nothing, because the operator installs nothing. The
+control plane does not read this status yet; it holds the credentials to, and doing so is
+how an infra-plane's health would surface on its `CCLInfraPlane` later.
 
 ## 4. `CCLComponentSet` — an ordered bundle of charts
 
@@ -506,6 +556,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationsSyncing`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
+| `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
@@ -515,7 +566,8 @@ amount of retrying fixes it.
 component has an operation of its own running, so the later specs are held back until it
 finishes. The other three need a human.
 
-Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`.
+Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
+`Verified` and `Domain` on `CCLClusterConfig`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
 
@@ -540,7 +592,9 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
 
-There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
+In the control plane there is no `RequeueAfter` polling anywhere except the 15s teardown
+retry. The infra-plane operator's periodic re-verification (§3a) is the one exception, and
+it is there because that operator watches state it does not write.
 
 ## 8. Not built yet
 
@@ -559,9 +613,13 @@ There is no `RequeueAfter` polling anywhere except the 15s teardown retry.
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **The infra-plane operator is empty.** `internal/controller/ip/` contains only `doc.go`;
-  its RBAC role is hand-written with `rules: []`. `CCLClusterConfig` exists but nothing
-  reconciles it yet.
+- **Real Verifiers.** Every cluster_base chart still carries `catalogs.DefaultVerifier`;
+  the checks themselves (SPIRE's trust domain against `spec.domain`, workload readiness,
+  issuer readiness) are not written yet.
+- **The control plane does not read `CCLClusterConfig`.** An infra-plane's verification
+  result stays in that cluster; surfacing it on the `CCLInfraPlane` would need the cp to
+  read through the registered credentials. Per-component results are also not broken out
+  of the `Verified` condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the

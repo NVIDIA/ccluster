@@ -5,9 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 // ccluster-ip-operator runs in an infra-plane cluster.
 //
-// It starts a manager with health probes and a metrics server but registers no
-// controllers yet; the CCLClusterConfig it will reconcile is already in its scheme. Add
-// controllers to setupControllers below, with their reconcilers in internal/controller/ip.
+// It runs every catalogs/cluster_base component's Verifier against the CCLClusterConfig
+// singleton and reports the outcome there. It installs nothing.
 package main
 
 import (
@@ -20,6 +19,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs/components"
+	"github.com/NVIDIA/ccluster/internal/controller/ip"
 	"github.com/NVIDIA/ccluster/internal/manager"
 )
 
@@ -44,8 +45,14 @@ func main() {
 	}
 }
 
-// setupControllers registers every controller owned by the infra-plane
-// operator. There are none yet.
-func setupControllers(_ ctrl.Manager) error {
+// setupControllers registers every controller owned by the infra-plane operator.
+func setupControllers(mgr ctrl.Manager) error {
+	if err := (&ip.CCLClusterConfigReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Components: components.ClusterBase,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create controller CCLClusterConfig: %w", err)
+	}
 	return nil
 }

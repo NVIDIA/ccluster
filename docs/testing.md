@@ -11,7 +11,7 @@ by changed path. See [Development](development.md) for generation and cluster se
 | --- | --- | --- |
 | Selective unit | `go test -run TestReleaseCount ./internal/controller/cp/` | Pure rollout logic without envtest binaries. Select the relevant named test. |
 | Envtest | `make test` | Controller reconciliation against a real API server and etcd; no cluster needed. |
-| Quick e2e | `make test-e2e` | Helm deployment, operator ServiceAccount RBAC and running watch wiring, without Argo CD reconciliation. |
+| Quick e2e | `make test-e2e` | Helm deployment, operator ServiceAccount RBAC and running watch wiring for both operators, without Argo CD reconciliation. |
 | Full e2e | `make test-e2e-full` | Quick tier plus real Argo CD rollout, ordered release/teardown, drift repair, values updates and tenancy. |
 | Charts | `make helm-generate`, `make helm-lint` | Generated chart consistency and rendering. CI also checks the vendored Argo CD CRDs and server-side diff setting. |
 | Python | `make python-generate`, `make python-test` | Generated model consistency, example round-tripping and catalog value serialization. |
@@ -23,8 +23,13 @@ for checking generated chart or Python output.
 
 ## Envtest and unit tests
 
-Setup lives in `internal/controller/cp/suite_test.go`. `make test` supplies the envtest
-assets and performs manifest generation, formatting and vetting before running tests.
+Setup lives in `internal/controller/cp/suite_test.go` and, for the infra-plane operator,
+`internal/controller/ip/suite_test.go`. `make test` supplies the envtest assets and
+performs manifest generation, formatting and vetting before running tests.
+
+The ip suite drives `CCLClusterConfigReconciler` with an injected registry of test
+Verifiers, so the controller's contract (run every Verifier against the spec, report the
+outcome) is proven without the seventeen real charts.
 
 The envtest specs call `Reconcile` directly; they do not start controllers in the test
 manager. Watch map functions are exercised as ordinary functions, which cannot prove that

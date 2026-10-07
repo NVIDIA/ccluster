@@ -31,7 +31,7 @@ spec:
           CCLClusterConfig is the Schema for the cclclusterconfigs API.
 
           It describes the cluster the infra-plane operator runs in, and it is that operator's
-          only input: the operator verifies the catalogs/cluster_base components against it and
+          only input: the operator verifies every catalogs/cluster_base component against it and
           reports the outcome in status. It is cluster-scoped and there is exactly one, named
           "cluster".
         properties:

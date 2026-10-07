@@ -23,6 +23,9 @@ import (
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/ccluster-cp-operator:v0.0.1"
+	// ipManagerImage is the infra-plane operator image, built and loaded the same way
+	// for the IP operator specs in ip_e2e_test.go.
+	ipManagerImage = "example.com/ccluster-ip-operator:v0.0.1"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -48,6 +51,15 @@ var _ = BeforeSuite(func() {
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+
+	By("building the infra-plane manager image")
+	cmd = exec.Command("make", "docker-build-ip", fmt.Sprintf("IMG_IP=%s", ipManagerImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the infra-plane manager image")
+
+	By("loading the infra-plane manager image on Kind")
+	err = utils.LoadImageToKindClusterWithName(ipManagerImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the infra-plane manager image into Kind")
 
 	setupCertManager()
 })

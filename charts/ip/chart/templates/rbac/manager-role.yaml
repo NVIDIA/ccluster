@@ -9,4 +9,20 @@ metadata:
   namespace: {{ .Release.Namespace }}
 {{- end }}
   name: {{ include "ccluster.resourceName" (dict "suffix" "manager-role" "context" $) }}
-rules: []
+rules:
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclclusterconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ccluster.nvidia.com
+  resources:
+  - cclclusterconfigs/status
+  verbs:
+  - get
+  - patch
+  - update

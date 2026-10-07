@@ -9,13 +9,13 @@
 #   SPDX-License-Identifier: Apache-2.0
 #
 # in the comment syntax of the file. Generated files whose generator does not take a
-# header (CRDs, cp RBAC, operator chart templates) and third-party test fixtures are
+# header (CRDs, operator RBAC roles, operator chart templates) and third-party test fixtures are
 # excluded below; generated Go and Python carry the header via hack/boilerplate.*.txt.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-exclude='(zz_generated\.|^config/crd/bases/|^config/cp/rbac/role\.yaml$|^charts/(cp|ip)/chart/(templates|crds)/|^test/testdata/crd/|^hack/boilerplate\.)'
+exclude='(zz_generated\.|^config/crd/bases/|^config/(cp|ip)/rbac/role\.yaml$|^charts/(cp|ip)/chart/(templates|crds)/|^test/testdata/crd/|^hack/boilerplate\.)'
 
 fail=0
 while IFS= read -r f; do
