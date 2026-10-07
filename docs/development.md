@@ -115,7 +115,7 @@ When adding or changing a component:
   its path under `ccluster.catalogs` in Python automatically, whether it sits in a
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
-  choices, not a universally deployable default; teleport values need real configuration.
+  choices, not a universally deployable default.
 - A `cluster_base` component is registered in `components.ClusterBase` with a `catalogs.Verifier`
   beside its `Values` (`TestClusterBaseHasVerifiers` fails otherwise). Start with
   `catalogs.DefaultVerifier`; a check of the chart's own reads live objects only (never

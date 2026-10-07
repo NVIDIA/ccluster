@@ -28,7 +28,7 @@ import (
 
 // switchVerifier is a catalogs.Verifier the specs flip by hand, and which records the
 // spec it was handed, so the controller's contract - run every Verifier against the
-// CCLClusterConfig, report the outcome - is tested without eighteen real charts.
+// CCLClusterConfig, report the outcome - is tested without seventeen real charts.
 type switchVerifier struct {
 	ready   atomic.Bool
 	lastCfg atomic.Pointer[cclusternvidiacomv1alpha1.CCLClusterConfigSpec]

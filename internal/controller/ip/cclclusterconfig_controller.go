@@ -151,10 +151,11 @@ func verifiedCondition(total int, failing []string) (metav1.ConditionStatus, str
 // setVerified sets the Verified condition and the observed generation, then writes the
 // status subresource.
 //
-// A merge patch rather than an update, for the reason given on the control-plane
-// controllers: r.Get reads through the informer cache, whose copy may carry a stale
-// resource version, and a patch has no optimistic-concurrency precondition. NotFound is
-// ignored: the object was deleted while it was being verified.
+// A plain merge patch, without an optimistic lock: this controller is the only writer of
+// this status and nothing acts on Verified, so a racing write has nothing to clobber, and
+// a result computed for an older spec carries that spec's observedGeneration, so it reads
+// as stale until the next pass replaces it. NotFound is ignored: the object was deleted
+// while it was being verified.
 func (r *CCLClusterConfigReconciler) setVerified(
 	ctx context.Context,
 	config *cclusternvidiacomv1alpha1.CCLClusterConfig,
