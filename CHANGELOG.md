@@ -35,6 +35,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the in-flight requests of every inference deployment in the namespace on the same port.
 - `dynamo_deployment` and `inference_deployment` render an `hpa.averageValue` outside
   1-2^53 as 2^53 instead of passing it to KEDA.
+- `job_deployment` no longer sets `ttlSecondsAfterFinished: 7200` on its Job. After the
+  TTL controller deleted a finished Job, self-heal created it again and it ran again. The
+  finished Job now stays until the CCLComponentSet is deleted; its pods stay unless pod
+  garbage collection deletes them first.
 
 ## [0.0.5] - 2026-10-05
 

@@ -25,8 +25,8 @@ metadata:
   name: "{{ .Values.name }}"
   namespace: {{ .Release.Namespace }}
 spec:
+  {{- /* No ttlSecondsAfterFinished: self-heal would create the deleted Job again, and it would rerun. */}}
   backoffLimit: {{ .Values.backoffLimit | int }}
-  ttlSecondsAfterFinished: 7200
   {{- if .Values.activeDeadlineSeconds }}
   activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds | int64 }}
   {{- end }}

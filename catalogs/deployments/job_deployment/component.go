@@ -4,7 +4,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // Package jobdeployment describes the values of catalogs/deployments/job_deployment: an
-// indexed batch Job running a user image to completion.
+// indexed batch Job running a user image to completion. The finished Job stays until the
+// CCLComponentSet is deleted; its pods stay unless pod garbage collection deletes them first.
 package jobdeployment
 
 import (

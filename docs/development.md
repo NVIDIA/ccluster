@@ -121,6 +121,9 @@ When adding or changing a component:
   `catalogs.DefaultVerifier`; a check of the chart's own reads live objects only (never
   Argo CD or Helm state), and reading a kind needs a `+kubebuilder:rbac` marker in
   `internal/controller/ip` and `make manifests`.
+- Do not render objects that delete themselves, such as a Job with
+  `ttlSecondsAfterFinished`: self-heal creates them again. See
+  [the generated Application](../DESIGN.md#the-generated-application).
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. This is separate from the generated operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.
