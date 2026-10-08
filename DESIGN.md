@@ -385,9 +385,10 @@ unmanaged on the infra-plane cluster.
 Self-heal creates again any rendered object that disappears from the infra-plane cluster,
 so a chart must not render an object that deletes itself. `job_deployment` sets no
 `ttlSecondsAfterFinished` for this reason: the TTL controller would delete the finished
-Job, self-heal would create it again, and it would run again. The finished Job and its pods
-stay until the CCLComponentSet is deleted, and deleting the set is how a caller removes
-them. Turning self-heal off for that Application would not be enough: automated sync still
+Job, self-heal would create it again, and it would run again. The finished Job stays until
+the CCLComponentSet is deleted, and deleting the set is how a caller removes it. Its pods
+stay with it unless the cluster's pod garbage collection deletes them first; a deleted pod
+is not created again. Turning self-heal off for that Application would not be enough: automated sync still
 syncs an OutOfSync Application when its source or revision changes.
 
 `spec` is rebuilt from scratch on every reconcile and compared against the Application as
