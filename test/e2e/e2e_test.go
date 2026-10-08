@@ -1289,6 +1289,67 @@ var _ = Describe("Manager", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
+			// Self-heal, the spec above, creates again any object a chart renders that
+			// disappears. A job_deployment Job that deleted itself after it finished would
+			// therefore run again, so the finished Job stays, and deleting the set is what
+			// removes it.
+			It("should keep a finished Job until its CCLComponentSet is deleted", func() {
+				const componentSetName = "e2e-job"
+				const planeName = "e2e-job-plane"
+				const credentialsName = "e2e-job-plane-credentials"
+				const jobNamespace = "e2e-job"
+				const jobName = "e2e-job"
+
+				By("registering the control-plane cluster with itself as an infra plane")
+				_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+					credentialsName,
+					"--from-literal=server=https://kubernetes.default.svc",
+					`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+					"-n", crNamespace))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+						credentialsName, "-n", crNamespace, "--ignore-not-found"))
+				})
+				applyCCLInfraPlane(planeName, credentialsName)
+				waitInfraPlaneAvailable(planeName)
+
+				By("creating a CCLComponentSet with one job_deployment component")
+				applyManifest("cclcomponentset_job.yaml", map[string]string{
+					"Name": componentSetName, "Namespace": crNamespace, "PlaneName": planeName,
+					"JobNamespace": jobNamespace, "JobName": jobName,
+				})
+
+				By("waiting for the Job to succeed and the rollout to complete")
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "job", jobName,
+						"-n", jobNamespace, "-o", "jsonpath={.status.succeeded}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(out)).To(Equal("1"))
+					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
+						To(Equal("RolloutComplete"))
+				}, 8*time.Minute, 2*time.Second).Should(Succeed())
+
+				By("verifying nothing deletes the finished Job")
+				out, err := utils.Run(exec.Command("kubectl", "get", "job", jobName,
+					"-n", jobNamespace, "-o", "jsonpath={.spec.ttlSecondsAfterFinished}"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(strings.TrimSpace(out)).To(BeEmpty(),
+					"self-heal would create the Job again after its TTL deleted it")
+
+				By("deleting the CCLComponentSet, letting Argo CD delete the Job")
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
+					"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=5m"))
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(func(g Gomega) {
+					_, err := utils.Run(exec.Command("kubectl", "get", "job", jobName, "-n", jobNamespace))
+					g.Expect(err).To(HaveOccurred())
+				}, 2*time.Minute, 2*time.Second).Should(Succeed(), "the Job outlived its CCLComponentSet")
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+					planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
 			// The day-2 upgrade path: every full-tier spec above creates a CCLComponentSet
 			// and later deletes it, so nothing proves that editing one rolls the change
 			// forward. The operator side (the Application's valuesObject follows the

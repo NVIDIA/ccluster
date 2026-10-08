@@ -382,6 +382,14 @@ plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which delet
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
 unmanaged on the infra-plane cluster.
 
+Self-heal creates again any rendered object that disappears from the infra-plane cluster,
+so a chart must not render an object that deletes itself. `job_deployment` sets no
+`ttlSecondsAfterFinished` for this reason: the TTL controller would delete the finished
+Job, self-heal would create it again, and it would run again. The finished Job and its pods
+stay until the CCLComponentSet is deleted, and deleting the set is how a caller removes
+them. Turning self-heal off for that Application would not be enough: automated sync still
+syncs an OutOfSync Application when its source or revision changes.
+
 `spec` is rebuilt from scratch on every reconcile and compared against the Application as
 read; one that reads back unchanged is not written at all. A write is a JSON Patch over
 `metadata` and `spec`, plus `operation` on the reconcile that asks Argo CD for a sync, never

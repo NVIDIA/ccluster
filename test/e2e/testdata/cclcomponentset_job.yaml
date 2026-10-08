@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A single-component job_deployment CCLComponentSet whose Job exits 0 at once. It uses the
+# image the metrics spec already pulls, the default scheduler instead of kai-scheduler, and
+# a node label every kind node carries.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLComponentSet
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  components:
+    - name: job
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/deployments/job_deployment
+      namespace: {{ .JobNamespace }}
+      values:
+        name: {{ .JobName }}
+        deploymentId: "1"
+        imageUrl: curlimages/curl:latest
+        command: ["sh", "-c", "true"]
+        schedulerName: ""
+        backoffLimit: 0
+        nodeAffinityLabels:
+          kubernetes.io/os: linux
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
