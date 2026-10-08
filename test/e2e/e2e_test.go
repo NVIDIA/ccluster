@@ -1139,7 +1139,7 @@ var _ = Describe("Manager", Ordered, func() {
 				By("confirming the second component's Application is withheld until the first converges")
 				Eventually(func(g Gomega) {
 					_, kedaErr := utils.Run(exec.Command("kubectl", "get", "application", kedaApp, "-n", crNamespace))
-					converged := applicationConverged(rolloutsApp)
+					converged := applicationHealthyAndSynced(rolloutsApp)
 					if kedaErr == nil {
 						Expect(converged).To(BeTrue(), "keda Application created before argo-rollouts converged")
 					}
@@ -1291,9 +1291,9 @@ var _ = Describe("Manager", Ordered, func() {
 
 			// The day-2 upgrade path: every full-tier spec above creates a CCLComponentSet
 			// and later deletes it, so nothing proves that editing one rolls the change
-			// forward. The operator side (the Application's valuesObject follows the
-			// spec) and the Argo CD side (the managed Deployment follows the Application)
-			// are asserted separately so a failure names the half that broke.
+			// forward. The operator side (the Application's helm values follow the spec)
+			// and the Argo CD side (the managed Deployment follows the Application) are
+			// asserted separately so a failure names the half that broke.
 			It("should roll a values change forward through Argo CD", func() {
 				const componentSetName = "e2e-values-change"
 				const planeName = "e2e-values-change-plane"
@@ -1317,7 +1317,7 @@ var _ = Describe("Manager", Ordered, func() {
 				By("deploying keda with one operator replica")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
 				Eventually(func(g Gomega) {
-					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
 				}, 8*time.Minute).Should(Succeed())
 
 				// The Deployment's name is the chart's business, so it is taken from the
@@ -1348,9 +1348,9 @@ var _ = Describe("Manager", Ordered, func() {
 				By("waiting for the operator to rewrite the Application's values")
 				Eventually(func(g Gomega) {
 					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-						"-n", crNamespace, "-o", "jsonpath={.spec.source.helm.valuesObject.keda.operator.replicaCount}"))
+						"-n", crNamespace, "-o", "jsonpath={.spec.source.helm.values}"))
 					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(strings.TrimSpace(out)).To(Equal("2"))
+					g.Expect(out).To(ContainSubstring("replicaCount: 2"))
 				}, 2*time.Minute).Should(Succeed())
 
 				By("waiting for Argo CD to roll the change onto the managed Deployment")
@@ -1359,7 +1359,7 @@ var _ = Describe("Manager", Ordered, func() {
 						"-n", "keda", "-o", "jsonpath={.spec.replicas}"))
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(strings.TrimSpace(out)).To(Equal("2"))
-					g.Expect(applicationConverged(applicationName)).To(BeTrue(), "Application not back to Healthy/Synced")
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), "Application not back to Healthy/Synced")
 				}, 8*time.Minute).Should(Succeed())
 
 				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
@@ -1371,13 +1371,13 @@ var _ = Describe("Manager", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			// Real Argo CD must echo the request identity and converge the managed Deployment.
-			// Completion of the updated parent must never precede the updated workload.
-			It("should track sync requests through Argo CD and wait for the updated Deployment", func() {
+			// Verify with real Argo CD that comparedTo retains the desired source,
+			// including nulls in YAML values, and that completion waits for the updated
+			// workload. The simulated controller in envtest cannot prove this behavior.
+			It("should record the compared source and wait for the updated Deployment", func() {
 				const componentSetName = "e2e-sync-generation"
 				const planeName = "e2e-sync-generation-plane"
 				const credentialsName = "e2e-sync-generation-plane-credentials"
-				const requestKey = "ccluster.nvidia.com/sync-request-id"
 				applicationName := componentSetName + "-keda"
 
 				By("registering the control-plane cluster with itself as an infra plane")
@@ -1402,36 +1402,42 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(json.Unmarshal([]byte(out), &set)).To(Succeed())
 					return &set
 				}
-				recorded := func(g Gomega) string {
+				// The spec source and the source Argo CD says it compared, as re-encoded
+				// JSON so key order cannot make them differ.
+				sources := func(g Gomega) (spec, compared string) {
 					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
-						"-n", crNamespace, "-o", fmt.Sprintf("jsonpath={.metadata.annotations.%s}",
-							strings.ReplaceAll(requestKey, ".", `\.`))))
+						"-n", crNamespace, "-o", "json"))
 					g.Expect(err).NotTo(HaveOccurred())
-					return strings.TrimSpace(out)
-				}
-				receipt := func(set *cclv1alpha1.CCLComponentSet) *cclv1alpha1.ComponentSyncStatus {
-					for i := range set.Status.ComponentSyncs {
-						if set.Status.ComponentSyncs[i].Name == "keda" {
-							return &set.Status.ComponentSyncs[i]
-						}
+					var application struct {
+						Spec struct {
+							Source map[string]any `json:"source"`
+						} `json:"spec"`
+						Status struct {
+							Sync struct {
+								ComparedTo struct {
+									Source map[string]any `json:"source"`
+								} `json:"comparedTo"`
+							} `json:"sync"`
+						} `json:"status"`
 					}
-					return nil
+					g.Expect(json.Unmarshal([]byte(out), &application)).To(Succeed())
+					specJSON, err := json.Marshal(application.Spec.Source)
+					g.Expect(err).NotTo(HaveOccurred())
+					comparedJSON, err := json.Marshal(application.Status.Sync.ComparedTo.Source)
+					g.Expect(err).NotTo(HaveOccurred())
+					return string(specJSON), string(comparedJSON)
 				}
 
 				By("deploying keda with one operator replica")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
-				var createdID string
 				var createdGeneration int64
 				Eventually(func(g Gomega) {
-					set := readSet(g)
-					result := receipt(set)
-					g.Expect(result).NotTo(BeNil())
-					createdID = recorded(g)
-					createdGeneration = set.Generation
-					g.Expect(createdID).NotTo(BeEmpty())
-					g.Expect(result.RequestID).To(Equal(createdID))
-					g.Expect(result.Phase).To(Equal("Succeeded"))
-					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					createdGeneration = readSet(g).Generation
+					spec, compared := sources(g)
+					g.Expect(compared).To(Equal(spec),
+						"Argo CD did not record the source it compared verbatim")
+					g.Expect(spec).To(ContainSubstring("replicaCount: 1"))
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
 				}, 8*time.Minute).Should(Succeed())
 
 				By("finding the managed operator Deployment")
@@ -1464,11 +1470,10 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(progress).NotTo(BeNil())
 					if progress.ObservedGeneration == set.Generation && progress.Status == metav1.ConditionFalse {
 						// Use Expect: premature completion is a safety failure, not an Eventually retry.
-						result := receipt(set)
-						Expect(result).NotTo(BeNil())
-						Expect(result.RequestID).NotTo(Equal(createdID))
-						Expect(result.RequestID).To(Equal(recorded(g)))
-						Expect(result.Phase).To(Equal("Succeeded"))
+						spec, compared := sources(g)
+						Expect(spec).To(ContainSubstring("replicaCount: 2"))
+						Expect(compared).To(Equal(spec),
+							"the rollout completed on a comparison of some other source")
 						deployment := readDeployment(g)
 						Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
 						Expect(deployment.Status.ObservedGeneration).To(BeNumerically(">=", deployment.Generation))
@@ -1481,6 +1486,104 @@ var _ = Describe("Manager", Ordered, func() {
 				}, 8*time.Minute).Should(Succeed())
 
 				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
+					"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=5m"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+					planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			// Verify that Argo CD removes deleted source fields from comparedTo.
+			// Its status merge patch must explicitly clear removed keys; otherwise the
+			// comparison would continue to describe a source the operator no longer wants.
+			It("should drop a source key from comparedTo when it leaves the spec", func() {
+				const componentSetName = "e2e-source-key-removed"
+				const planeName = "e2e-source-key-removed-plane"
+				const credentialsName = "e2e-source-key-removed-plane-credentials"
+				applicationName := componentSetName + "-keda"
+
+				By("registering the control-plane cluster with itself as an infra plane")
+				_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+					credentialsName,
+					"--from-literal=server=https://kubernetes.default.svc",
+					`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+					"-n", crNamespace))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+						credentialsName, "-n", crNamespace, "--ignore-not-found"))
+				})
+				applyCCLInfraPlane(planeName, credentialsName)
+				waitInfraPlaneAvailable(planeName)
+
+				// The helm block as stored and as Argo CD recorded comparing it. A
+				// missing one decodes to an empty RawMessage, which is the state under
+				// test.
+				helmBlocks := func(g Gomega) (spec, compared string) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "application",
+						applicationName, "-n", crNamespace, "-o", "json"))
+					g.Expect(err).NotTo(HaveOccurred())
+					var application struct {
+						Spec struct {
+							Source struct {
+								Helm json.RawMessage `json:"helm"`
+							} `json:"source"`
+						} `json:"spec"`
+						Status struct {
+							Sync struct {
+								ComparedTo struct {
+									Source struct {
+										Helm json.RawMessage `json:"helm"`
+									} `json:"source"`
+								} `json:"comparedTo"`
+							} `json:"sync"`
+						} `json:"status"`
+					}
+					g.Expect(json.Unmarshal([]byte(out), &application)).To(Succeed())
+					return string(application.Spec.Source.Helm),
+						string(application.Status.Sync.ComparedTo.Source.Helm)
+				}
+
+				By("deploying keda with values, so the source has a helm block")
+				applyKedaCCLComponentSet(componentSetName, planeName, 1)
+				Eventually(func(g Gomega) {
+					spec, compared := helmBlocks(g)
+					g.Expect(spec).To(ContainSubstring("replicaCount: 1"))
+					// The source comparison spec covers equality; this checks that the Helm
+					// block is present before its removal.
+					g.Expect(compared).To(ContainSubstring("replicaCount: 1"),
+						"Argo CD did not record the helm block it compared\nspec.source.helm:       %s\ncomparedTo.source.helm: %s",
+						spec, compared)
+					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
+						To(Equal("RolloutComplete"))
+				}, 8*time.Minute).Should(Succeed())
+
+				// Logged whether or not this spec fails: the two blocks are the only
+				// direct evidence of how Argo CD stores what it compared.
+				specHelm, comparedHelm := helmBlocks(Default)
+				GinkgoWriter.Printf("spec.source.helm:        %s\ncomparedTo.source.helm:  %s\n",
+					specHelm, comparedHelm)
+
+				By("removing the values, which takes helm out of the source")
+				applyKedaCCLComponentSetWithoutValues(componentSetName, planeName)
+				Eventually(func(g Gomega) {
+					spec, _ := helmBlocks(g)
+					g.Expect(spec).To(BeEmpty(), "the operator did not drop the helm block")
+				}, 2*time.Minute).Should(Succeed())
+
+				By("waiting for Argo CD to drop it from comparedTo and the rollout to finish")
+				Eventually(func(g Gomega) {
+					spec, compared := helmBlocks(g)
+					g.Expect(spec).To(BeEmpty())
+					g.Expect(compared).To(BeEmpty(),
+						"helm stayed in comparedTo, so no comparison can match the spec again: %s",
+						compared)
+					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
+						To(Equal("RolloutComplete"))
+				}, 8*time.Minute).Should(Succeed())
+
+				By("deleting the CCLComponentSet and CCLInfraPlane")
 				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
 					"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=5m"))
 				Expect(err).NotTo(HaveOccurred())
@@ -1544,7 +1647,7 @@ var _ = Describe("Manager", Ordered, func() {
 				By("deploying keda and letting Argo CD record the first sync")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
 				Eventually(func(g Gomega) {
-					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
 					g.Expect(historyIDs(g)).To(HaveLen(1))
 				}, 8*time.Minute).Should(Succeed())
 
@@ -1571,12 +1674,12 @@ var _ = Describe("Manager", Ordered, func() {
 				applyKedaCCLComponentSet(componentSetName, planeName, 2)
 				Eventually(func(g Gomega) {
 					g.Expect(readApplication(g,
-						"{.spec.source.helm.valuesObject.keda.operator.replicaCount}")).To(Equal("2"))
+						"{.spec.source.helm.values}")).To(ContainSubstring("replicaCount: 2"))
 				}, 2*time.Minute).Should(Succeed())
 
 				By("confirming Argo CD's record of the earlier sync survived the rewrite")
 				Eventually(func(g Gomega) {
-					g.Expect(applicationConverged(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
 					// A history that restarts at one entry means the rewrite took Argo
 					// CD's records with it and Argo CD started over.
 					g.Expect(len(historyIDs(g))).To(BeNumerically(">=", 2))
@@ -1752,10 +1855,10 @@ func applyOrderedCCLComponentSet(name, planeName string) {
 	})
 }
 
-// applicationConverged reports whether an Application in crNamespace is Healthy and Synced.
-// The operator wants one thing more before it releases the component after it - the sync it
-// asked for having succeeded - which the request-tracking spec covers.
-func applicationConverged(name string) bool {
+// applicationHealthyAndSynced reports whether an Application in crNamespace is Healthy and Synced.
+// Rollout completion also requires matching spec and comparedTo, no pending or running
+// operation, and no terminal failure attributed to the current source and revision.
+func applicationHealthyAndSynced(name string) bool {
 	GinkgoHelper()
 
 	out, err := utils.Run(exec.Command("kubectl", "get", "application", name,
@@ -1766,9 +1869,12 @@ func applicationConverged(name string) bool {
 	return strings.TrimSpace(out) == "Healthy Synced"
 }
 
-// markConverged stands in for Argo CD in the quick tier, which does not run it: it takes
-// the sync the operator asked for, reports it succeeded, and reports the Application
-// Healthy and Synced after that sync. The timestamps also model a subsequent comparison.
+// markConverged simulates Argo CD in the quick tier by reporting Healthy/Synced,
+// recording the stored source and destination in comparedTo, and completing the sync.
+// Copying the stored source preserves unmodelled fields.
+//
+// The sync is Argo CD's own: the operator asks for none, so automated sync is what runs
+// one after a comparison comes out OutOfSync.
 func markConverged(name string) {
 	GinkgoHelper()
 
@@ -1777,13 +1883,23 @@ func markConverged(name string) {
 	Expect(err).NotTo(HaveOccurred())
 	var application struct {
 		Operation json.RawMessage `json:"operation"`
+		Spec      struct {
+			Source      json.RawMessage `json:"source"`
+			Destination json.RawMessage `json:"destination"`
+		} `json:"spec"`
 	}
 	Expect(json.Unmarshal([]byte(out), &application)).To(Succeed())
 
 	now := time.Now().UTC()
 	status := map[string]any{
-		"health":       map[string]any{"status": "Healthy"},
-		"sync":         map[string]any{"status": "Synced"},
+		"health": map[string]any{"status": "Healthy"},
+		"sync": map[string]any{
+			"status": "Synced",
+			"comparedTo": map[string]any{
+				"source":      application.Spec.Source,
+				"destination": application.Spec.Destination,
+			},
+		},
 		"reconciledAt": now.Format(time.RFC3339),
 	}
 	patch := map[string]any{
@@ -1792,17 +1908,28 @@ func markConverged(name string) {
 			"argocd.argoproj.io/refresh": nil,
 		}},
 	}
+	operation := map[string]any{"sync": map[string]any{"source": application.Spec.Source}}
 	if len(application.Operation) > 0 {
-		// Argo CD copies the request into the state and clears the field. The CRD
-		// requires startedAt alongside the operation and its phase.
-		status["operationState"] = map[string]any{
-			"operation": application.Operation,
-			"phase":     "Succeeded",
-			"startedAt": now.Add(-2 * time.Second).Format(time.RFC3339),
-			"finishedAt": now.Add(-time.Second).Format(time.RFC3339),
-		}
-		patch["operation"] = nil
+		// Argo CD copies a pending operation into the state and clears the field. The
+		// CRD requires startedAt alongside the operation and its phase.
+		operation = nil
+		Expect(json.Unmarshal(application.Operation, &operation)).To(Succeed())
 	}
+	status["operationState"] = map[string]any{
+		"operation":  operation,
+		"phase":      "Succeeded",
+		"startedAt":  now.Add(-2 * time.Second).Format(time.RFC3339),
+		"finishedAt": now.Add(-time.Second).Format(time.RFC3339),
+	}
+	patch["operation"] = nil
+	// Argo CD builds its status patch by diffing the old status against the new one, so
+	// a key that is no longer there is sent as null and removed. A patch written by hand
+	// only ever adds, so comparedTo is cleared first to get the same effect.
+	_, err = utils.Run(exec.Command("kubectl", "patch", "application", name,
+		"-n", crNamespace, "--type=merge", "-p",
+		`{"status":{"sync":{"status":"Synced","comparedTo":null}}}`))
+	Expect(err).NotTo(HaveOccurred())
+
 	body, err := json.Marshal(patch)
 	Expect(err).NotTo(HaveOccurred())
 	_, err = utils.Run(exec.Command("kubectl", "patch", "application", name,
@@ -1817,7 +1944,18 @@ func applyKedaCCLComponentSet(name, planeName string, operatorReplicas int) {
 	GinkgoHelper()
 	applyManifest("cclcomponentset_keda.yaml", map[string]any{
 		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
-		"OperatorReplicas": operatorReplicas,
+		"WithValues": true, "OperatorReplicas": operatorReplicas,
+	})
+}
+
+// applyKedaCCLComponentSetWithoutValues is the same component with no values at all, so
+// that applying it over the one above takes helm back out of the Application's source.
+// kubectl apply removes a field the manifest no longer has.
+func applyKedaCCLComponentSetWithoutValues(name, planeName string) {
+	GinkgoHelper()
+	applyManifest("cclcomponentset_keda.yaml", map[string]any{
+		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
+		"WithValues": false, "OperatorReplicas": 0,
 	})
 }
 

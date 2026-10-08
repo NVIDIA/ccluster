@@ -140,42 +140,36 @@ spec:
             properties:
               componentSyncs:
                 description: |-
-                  componentSyncs track the operator's current sync request for each component.
-                  Completed results survive Argo CD replacing its last operation during self-heal.
+                  componentSyncs reports the latest observed Application state for each released
+                  component.
                 items:
-                  description: ComponentSyncStatus records a sync request submitted
-                    for one Application.
+                  description: |-
+                    ComponentSyncStatus reports the latest observed Application state.
+                    The controller derives rollout decisions from Applications, not this report.
                   properties:
-                    applicationUID:
-                      description: applicationUID prevents a recreated Application
-                        from reusing an old result.
-                      type: string
-                    finishedAt:
+                    comparedToMatchesSpec:
                       description: |-
-                        finishedAt is the timestamp observed with phase, including retry backoff in Running.
-                        A terminal phase is required to interpret it as request completion.
-                      format: date-time
+                        comparedToMatchesSpec reports whether Argo CD's latest comparison used the
+                        desired source and destination. While false, health and sync do not establish
+                        convergence on the desired configuration.
+                      type: boolean
+                    health:
+                      description: health is Argo CD's observed Application health,
+                        empty before its first comparison.
                       type: string
                     message:
-                      description: message explains the last observed request phase.
+                      description: message is Argo CD's latest operation message,
+                        including progress, retries and failures.
                       type: string
                     name:
                       description: name identifies the component in spec.components.
                       type: string
-                    phase:
-                      description: |-
-                        phase is the last observed phase of this request, or empty before it is observed.
-                        Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
-                        that operation has replaced the request's own result.
-                      type: string
-                    requestID:
-                      description: requestID identifies the request carried in the
-                        Application's operation.info.
+                    sync:
+                      description: sync is Argo CD's observed Application sync status.
                       type: string
                   required:
-                  - applicationUID
+                  - comparedToMatchesSpec
                   - name
-                  - requestID
                   title: ComponentSyncStatus
                   type: object
                 type: array

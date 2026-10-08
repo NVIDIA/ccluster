@@ -8,8 +8,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
-- `CCLComponentSet` status gains `componentSyncs`, which records the sync the operator
-  asked Argo CD for per component, and its result.
+- `CCLComponentSet` status gains `componentSyncs`, which reports Argo CD's health and sync
+  verdict for each released component and whether that verdict was reached on the spec the
+  operator wrote.
 - The first ccluster-ip-operator controller: it runs every `catalogs/cluster_base`
   component's `Verifier` against the `CCLClusterConfig` and reports the outcome as its
   `Verified` condition, naming each failing chart with the error its Verifier returned.
@@ -26,11 +27,18 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - `inference_deployment` renders `hpa.cooldownPeriod: 0` as 1800, as the platform chart
   does.
 - `inference_deployment` sidecars emit only inbound `downstream_rq` stats.
+- The Applications the operator writes carry their Helm values as `source.helm.values`, a
+  YAML document, instead of `source.helm.valuesObject`. Argo CD renders the two
+  identically. Existing Applications are rewritten on the next reconcile; Argo CD compares
+  the rewritten source, which renders the same manifests, so the rewrite alone starts no
+  sync.
 
 ### Fixed
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
-  left over from the previous spec: it waits until Argo CD has synced the spec the
-  operator wrote. A failed sync is reported as `WaveSyncFailed`.
+  left over from the previous spec: it waits until Argo CD's `status.sync.comparedTo`
+  names the spec the operator wrote and no operation, including a PostSync hook, is
+  pending or running. A failed sync of that spec, including a failed hook, is reported as
+  `WaveSyncFailed`.
 - The `inference_deployment` KEDA query counts only the deployment's own pods. It summed
   the in-flight requests of every inference deployment in the namespace on the same port.
 - `dynamo_deployment` and `inference_deployment` render an `hpa.averageValue` outside

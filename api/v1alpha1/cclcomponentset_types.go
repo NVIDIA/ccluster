@@ -112,40 +112,37 @@ type CCLComponentSetStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// componentSyncs track the operator's current sync request for each component.
-	// Completed results survive Argo CD replacing its last operation during self-heal.
+	// componentSyncs reports the latest observed Application state for each released
+	// component.
 	// +listType=map
 	// +listMapKey=name
 	// +optional
 	ComponentSyncs []ComponentSyncStatus `json:"componentSyncs,omitempty"`
 }
 
-// ComponentSyncStatus records a sync request submitted for one Application.
+// ComponentSyncStatus reports the latest observed Application state.
+// The controller derives rollout decisions from Applications, not this report.
 // +kubebuilder:title=ComponentSyncStatus
 type ComponentSyncStatus struct {
 	// name identifies the component in spec.components.
 	Name string `json:"name"`
 
-	// applicationUID prevents a recreated Application from reusing an old result.
-	ApplicationUID string `json:"applicationUID"`
+	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
+	// desired source and destination. While false, health and sync do not establish
+	// convergence on the desired configuration.
+	ComparedToMatchesSpec bool `json:"comparedToMatchesSpec"`
 
-	// requestID identifies the request carried in the Application's operation.info.
-	RequestID string `json:"requestID"`
-
-	// phase is the last observed phase of this request, or empty before it is observed.
-	// Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
-	// that operation has replaced the request's own result.
+	// health is Argo CD's observed Application health, empty before its first comparison.
 	// +optional
-	Phase string `json:"phase,omitempty"`
+	Health string `json:"health,omitempty"`
 
-	// message explains the last observed request phase.
+	// sync is Argo CD's observed Application sync status.
+	// +optional
+	Sync string `json:"sync,omitempty"`
+
+	// message is Argo CD's latest operation message, including progress, retries and failures.
 	// +optional
 	Message string `json:"message,omitempty"`
-
-	// finishedAt is the timestamp observed with phase, including retry backoff in Running.
-	// A terminal phase is required to interpret it as request completion.
-	// +optional
-	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

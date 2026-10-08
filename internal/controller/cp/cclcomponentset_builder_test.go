@@ -13,6 +13,7 @@ package cp
 // Applications out of order.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,13 +22,15 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"k8s.io/apimachinery/pkg/api/equality"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
@@ -78,42 +81,81 @@ func healthyApp() *argocdv1alpha1.Application {
 }
 
 const (
-	testRequestID      = "request-7"
 	syncFailureMessage = "one or more objects failed to apply"
+
+	// retryMessage is the message format Argo CD uses while it waits to retry a failed sync.
+	retryMessage = syncFailureMessage + ". Retrying attempt #2 at 10:00AM."
+
+	// uncomparedMarker is how a case says "Argo CD has not compared this spec yet". It
+	// is written into a field applications() overwrites, so it never reaches a decision.
+	uncomparedMarker = "uncompared"
 )
 
-// stamped carries the operator's request ID and its observed phase.
-// An empty phase means Argo CD has not recorded an operation for that request yet.
-func stamped(health, sync, phase string) *argocdv1alpha1.Application {
-	application := app(health, sync)
-	application.Annotations = map[string]string{annotationSyncRequestID: testRequestID}
-	application.UID = types.UID("application-uid")
-	if phase == "" {
-		return application
+// uncompared leaves Argo CD's last comparison describing the previous spec. Its health
+// and sync verdicts are then about that one, whatever they say.
+func uncompared(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
+	if application.Status == nil {
+		application.Status = &argocdv1alpha1.ApplicationStatus{}
 	}
+	application.Status.Sync.ComparedTo.Source.Path = uncomparedMarker
+	return application
+}
+
+// failedSync adds the terminal operation state Argo CD leaves behind when a sync has
+// failed and the retry budget is spent.
+func failedSync(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
 	if application.Status == nil {
 		application.Status = &argocdv1alpha1.ApplicationStatus{}
 	}
 	application.Status.OperationState = &argocdv1alpha1.OperationState{
-		Operation: argocdv1alpha1.Operation{Info: []argocdv1alpha1.Info{{
-			Name: annotationSyncRequestID, Value: testRequestID,
-		}}},
-		Phase:      phase,
+		Phase:      argocdv1alpha1.OperationFailed,
+		Message:    syncFailureMessage,
 		FinishedAt: &metav1.Time{Time: time.Unix(100, 0)},
-	}
-	application.Status.ReconciledAt = &metav1.Time{Time: time.Unix(101, 0)}
-	if phase != argocdv1alpha1.OperationSucceeded {
-		application.Status.OperationState.Message = syncFailureMessage
 	}
 	return application
 }
 
-// applications keys apps by the Application name the reconciler would give them.
+// pending stages a request Argo CD has not picked up yet. The operation state beside it,
+// if any, still describes the previous operation.
+func pending(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
+	application.Operation = &argocdv1alpha1.Operation{Sync: &argocdv1alpha1.SyncOperation{}}
+	return application
+}
+
+// retrying puts a sync in the state Argo CD holds it in between failed attempts: phase
+// Running, the attempt in the message, and spec.operation still set, because Argo CD
+// clears that only when the operation reaches a terminal phase.
+func retrying(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
+	if application.Status == nil {
+		application.Status = &argocdv1alpha1.ApplicationStatus{}
+	}
+	application.Status.OperationState = &argocdv1alpha1.OperationState{
+		Phase:   "Running",
+		Message: retryMessage,
+	}
+	return pending(application)
+}
+
+// applications keys apps by the Application name the reconciler would give them, and
+// records that Argo CD compared the spec they carry. uncompared() opts out of that.
 func applications(byComponent map[string]*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
 	out := make(map[string]*argocdv1alpha1.Application, len(byComponent))
 	for component, application := range byComponent {
 		set := componentSetWith(component)
 		application.Spec = (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
+		if application.Status != nil {
+			if state := application.Status.OperationState; state != nil {
+				state.SyncResult = &argocdv1alpha1.SyncOperationResult{Source: application.Spec.Source}
+			}
+			if application.Status.Sync.ComparedTo.Source.Path == uncomparedMarker {
+				application.Status.Sync.ComparedTo = argocdv1alpha1.ComparedTo{}
+			} else {
+				application.Status.Sync.ComparedTo = argocdv1alpha1.ComparedTo{
+					Source:      application.Spec.Source,
+					Destination: application.Spec.Destination,
+				}
+			}
+		}
 		out[applicationName(testComponentSetName, component)] = application
 	}
 	return out
@@ -127,10 +169,10 @@ func TestReleaseCount(t *testing.T) {
 		want       int
 	}{
 		{
-			name:       "holds while a released component has no result for its request",
+			name:       "holds while Argo CD has not compared the spec the operator wrote",
 			components: []string{"a", "b"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced, ""),
+				"a": uncompared(healthyApp()),
 			}),
 			want: 1,
 		},
@@ -281,27 +323,7 @@ func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
 	_ = componentSet.Spec.Components[:released]
 }
 
-// trackTestSyncs supplies the independent request records represented by these fixtures.
-func trackTestSyncs(set *cclusternvidiacomv1alpha1.CCLComponentSet, apps map[string]*argocdv1alpha1.Application) {
-	for _, component := range set.Spec.Components {
-		application := apps[applicationName(set.Name, component.Name)]
-		if application == nil || application.Annotations[annotationSyncRequestID] == "" {
-			continue
-		}
-		record := cclusternvidiacomv1alpha1.ComponentSyncStatus{
-			Name: component.Name, ApplicationUID: string(application.UID), RequestID: testRequestID,
-		}
-		if application.Status != nil && application.Status.OperationState != nil {
-			record.Phase = application.OperationPhase()
-			record.Message = application.OperationMessage()
-			record.FinishedAt = application.Status.OperationState.FinishedAt.DeepCopy()
-		}
-		set.Status.ComponentSyncs = append(set.Status.ComponentSyncs, record)
-	}
-}
-
 func testReleaseCount(set *cclusternvidiacomv1alpha1.CCLComponentSet, apps map[string]*argocdv1alpha1.Application) int {
-	trackTestSyncs(set, apps)
 	return (&CCLComponentSetReconciler{}).releaseCount(set, apps)
 }
 
@@ -428,44 +450,67 @@ func TestRolloutStatus(t *testing.T) {
 		{
 			// Healthy and Synced here describe the spec before the one the operator
 			// wrote, so the message must not repeat them as if they were current.
-			name:       "waits when Argo CD has not synced the spec the operator wrote",
+			name:       "waits when Argo CD has not compared the spec the operator wrote",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced, ""),
+				"a": uncompared(healthyApp()),
 			}),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  reasonWaveSyncing,
-			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to sync`,
+			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to compare`,
 			notMessage:  "health",
 		},
 		{
-			name:       "waits while the sync it asked for is still running",
+			// Argo CD syncs only after it compares, so an operation that finished before
+			// the comparison is about an older source.
+			name:       "leaves a finished operation's message out while the comparison is outstanding",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy,
-					argocdv1alpha1.SyncStatusSynced, "Running"),
+				"a": uncompared(failedSync(healthyApp())),
 			}),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  reasonWaveSyncing,
-			wantMessage: "is waiting for Argo CD to sync",
+			wantMessage: "is waiting for Argo CD to compare the spec the operator wrote",
+			notMessage:  syncFailureMessage,
+		},
+		{
+			// Argo CD puts the retry attempt in the operation message, which is the only
+			// thing separating a sync failing on every attempt from a slow one.
+			name:       "repeats the retry attempt while an operation is running",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": retrying(healthyApp()),
+			}),
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  reasonWaveSyncing,
+			wantMessage: "is waiting for an Argo CD operation to complete: " + retryMessage,
+		},
+		{
+			name:       "leaves the previous operation's message out while a request is pending",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": pending(failedSync(healthyApp())),
+			}),
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  reasonWaveSyncing,
+			wantMessage: "is waiting for an Argo CD operation to complete",
+			notMessage:  syncFailureMessage,
 		},
 		{
 			name:       "reports a failed sync apart from a slow one",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy,
-					argocdv1alpha1.SyncStatusSynced, argocdv1alpha1.OperationFailed),
+				"a": failedSync(app(argocdv1alpha1.HealthStatusHealthy, "OutOfSync")),
 			}),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  reasonWaveSyncFailed,
 			wantMessage: `Wave 1 (component "a") failed to sync: ` + syncFailureMessage,
 		},
 		{
-			name:       "names the health verdict once the sync it asked for succeeded",
+			name:       "names the health verdict once Argo CD has compared this spec",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": stamped(argocdv1alpha1.HealthStatusDegraded, "OutOfSync",
-					argocdv1alpha1.OperationSucceeded),
+				"a": app(argocdv1alpha1.HealthStatusDegraded, "OutOfSync"),
 			}),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  reasonWaveSyncing,
@@ -486,9 +531,7 @@ func TestRolloutStatus(t *testing.T) {
 			name:       "reports complete when every component is healthy and synced",
 			components: []string{"a", "b"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
-				// Recorded, and written before the operator recorded requests.
-				"a": stamped(argocdv1alpha1.HealthStatusHealthy,
-					argocdv1alpha1.SyncStatusSynced, argocdv1alpha1.OperationSucceeded),
+				"a": healthyApp(),
 				"b": healthyApp(),
 			}),
 			wantStatus:  metav1.ConditionFalse,
@@ -500,7 +543,6 @@ func TestRolloutStatus(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			set := componentSetWith(test.components...)
-			trackTestSyncs(set, test.existing)
 			status, reason, message := reconciler.rolloutStatus(set, test.existing)
 
 			if status != test.wantStatus {
@@ -533,57 +575,184 @@ func TestApplicationNameCollidesAcrossComponentSets(t *testing.T) {
 	}
 }
 
-// TestRememberRequestKeepsAStoredRequestWhenTheAnnotationIsEmpty is a regression guard,
-// not a test of a reachable state. Every branch that settles the request identity leaves
-// an annotation behind, so createOrPatchApplication cannot reach rememberRequest without
-// one today. It is called directly here because this is the only line that can erase a
-// record, and an erased record is permanent: requestMatches rejects an empty RequestID,
-// and nothing reissues a request for a spec that has not changed. If this test is ever
-// "simplified away", so is the reason that guard exists.
-func TestRememberRequestKeepsAStoredRequestWhenTheAnnotationIsEmpty(t *testing.T) {
+// TestHelmValuesKeepsNullValuedKeys verifies that YAML values retain explicit nulls.
+// A null inside valuesObject would be removed by Argo CD's status merge patch.
+func TestHelmValuesKeepsNullValuedKeys(t *testing.T) {
+	helm := helmValues(&apiextensionsv1.JSON{Raw: []byte(`{"kept":"yes","cleared":null}`)})
+	if helm == nil {
+		t.Fatal("helmValues returned nil for a non-empty document")
+	}
+	if !strings.Contains(helm.Values, "cleared: null") {
+		t.Errorf("values = %q, want it to carry the null-valued key", helm.Values)
+	}
+}
+
+// TestHelmValuesMatchesArgoCDRendering verifies the conversion Argo CD uses for valuesObject.
+func TestHelmValuesMatchesArgoCDRendering(t *testing.T) {
+	raw := []byte(`{"keda":{"operator":{"replicaCount":1}}}`)
+	want, err := yaml.JSONToYAML(raw)
+	if err != nil {
+		t.Fatalf("JSONToYAML: %v", err)
+	}
+	if got := helmValues(&apiextensionsv1.JSON{Raw: raw}); got.Values != string(want) {
+		t.Errorf("values = %q, want %q", got.Values, string(want))
+	}
+}
+
+// TestHelmValuesIsAbsentWithoutValues verifies that omitted values produce no helm block.
+func TestHelmValuesIsAbsentWithoutValues(t *testing.T) {
+	for _, values := range []*apiextensionsv1.JSON{nil, {Raw: []byte{}}} {
+		if got := helmValues(values); got != nil {
+			t.Errorf("helmValues(%v) = %+v, want nil", values, got)
+		}
+	}
+}
+
+// TestUnmodelledSourceFieldsAreVisible verifies that source drift survives decoding.
+// Unmodelled fields must affect both spec reconciliation and comparedTo matching.
+func TestUnmodelledSourceFieldsAreVisible(t *testing.T) {
 	set := componentSetWith("a")
-	stored := cclusternvidiacomv1alpha1.ComponentSyncStatus{
-		Name: "a", ApplicationUID: "application-uid", RequestID: testRequestID,
-		Phase: argocdv1alpha1.OperationSucceeded,
-	}
-	set.Status.ComponentSyncs = []cclusternvidiacomv1alpha1.ComponentSyncStatus{stored}
+	desired := (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
 
-	stripped := &argocdv1alpha1.Application{
-		ObjectMeta: metav1.ObjectMeta{UID: types.UID("application-uid")},
+	tests := []struct {
+		name  string
+		patch string
+	}{
+		{name: "a source field", patch: `{"chart":"keda"}`},
+		{name: "a helm field", patch: `{"helm":{"valueFiles":["values-prod.yaml"]}}`},
+		{name: "a helm parameter", patch: `{"helm":{"parameters":[{"name":"x","value":"y"}]}}`},
 	}
-	record := stored
-	rememberRequest(set, stripped, &record)
 
-	kept := syncRecord(set, "a")
-	if kept == nil {
-		t.Fatal("rememberRequest dropped the record")
-	}
-	if kept.RequestID != testRequestID {
-		t.Errorf("RequestID = %q, want %q - an empty annotation erased the stored request",
-			kept.RequestID, testRequestID)
-	}
-	if kept.Phase != argocdv1alpha1.OperationSucceeded {
-		t.Errorf("Phase = %q, want %q", kept.Phase, argocdv1alpha1.OperationSucceeded)
-	}
-	if !requestMatches(stampedWithRequestID(stripped, testRequestID), kept) {
-		t.Error("the kept record no longer matches its own Application")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			drifted := decodeSource(t, desired.Source, test.patch)
+			stored := desired
+			stored.Source = drifted
+			if equality.Semantic.DeepEqual(stored, desired) {
+				t.Error("the drift did not read as a spec difference, so nothing would rewrite it away")
+			}
+
+			app := &argocdv1alpha1.Application{
+				Spec: desired,
+				Status: &argocdv1alpha1.ApplicationStatus{
+					Sync: argocdv1alpha1.ApplicationSyncStatus{
+						ComparedTo: argocdv1alpha1.ComparedTo{
+							Source: drifted, Destination: desired.Destination,
+						},
+					},
+				},
+			}
+			if comparedToMatchesSpec(app, desired) {
+				t.Error("a comparison of a different source counted as a comparison of this one")
+			}
+		})
 	}
 }
 
-// stampedWithRequestID puts the tracking annotation back, so a test can check that a
-// record survived well enough to be matched again once the annotation returns.
-func stampedWithRequestID(app *argocdv1alpha1.Application, requestID string) *argocdv1alpha1.Application {
-	restored := app.DeepCopy()
-	restored.Annotations = map[string]string{annotationSyncRequestID: requestID}
-	return restored
+// decodeSource merges a JSON overlay into source and decodes the result.
+// The JSON round trip exercises retention of unmodelled fields.
+func decodeSource(
+	t *testing.T, source argocdv1alpha1.ApplicationSource, patch string,
+) argocdv1alpha1.ApplicationSource {
+	t.Helper()
+
+	var base, overlay map[string]any
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal source: %v", err)
+	}
+	if err := json.Unmarshal(encoded, &base); err != nil {
+		t.Fatalf("unmarshal source: %v", err)
+	}
+	if err := json.Unmarshal([]byte(patch), &overlay); err != nil {
+		t.Fatalf("unmarshal patch: %v", err)
+	}
+	mergeInto(base, overlay)
+
+	merged, err := json.Marshal(base)
+	if err != nil {
+		t.Fatalf("marshal merged source: %v", err)
+	}
+	var decoded argocdv1alpha1.ApplicationSource
+	if err := json.Unmarshal(merged, &decoded); err != nil {
+		t.Fatalf("unmarshal merged source: %v", err)
+	}
+	return decoded
 }
 
-// TestSpecEqualIgnoresHelmValueFormatting pins the reason specEqual exists. The API server
-// hands back one canonical spelling, so neither case below is reachable through it today -
-// which is exactly why the comparison would get "simplified" back to a byte compare. If it
-// is, a component whose values differ only in spelling asks for a sync on every reconcile
-// and never reaches finished, because specEqual gates both.
-func TestSpecEqualIgnoresHelmValueFormatting(t *testing.T) {
+func mergeInto(base, overlay map[string]any) {
+	for key, value := range overlay {
+		if nested, ok := value.(map[string]any); ok {
+			if existing, ok := base[key].(map[string]any); ok {
+				mergeInto(existing, nested)
+				continue
+			}
+		}
+		base[key] = value
+	}
+}
+
+// TestZeroValuedUnmodelledFieldsAreIgnored verifies normalization of optional source fields.
+// Zero values are ignored; empty objects that select a source type are retained.
+func TestZeroValuedUnmodelledFieldsAreIgnored(t *testing.T) {
+	set := componentSetWith("a")
+	// With values, so that the helm cases patch a block that is already there rather
+	// than adding one.
+	set.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+	desired := (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
+
+	tests := []struct {
+		name    string
+		patch   string
+		ignored bool
+	}{
+		{name: "an empty chart", patch: `{"chart":""}`, ignored: true},
+		{name: "a null ref", patch: `{"ref":null}`, ignored: true},
+		{name: "an empty valueFiles", patch: `{"helm":{"valueFiles":[]}}`, ignored: true},
+		{name: "a false skipCrds", patch: `{"helm":{"skipCrds":false}}`, ignored: true},
+		{name: "a named chart", patch: `{"chart":"keda"}`, ignored: false},
+		{name: "a true skipCrds", patch: `{"helm":{"skipCrds":true}}`, ignored: false},
+		{name: "a non-empty valueFiles", patch: `{"helm":{"valueFiles":["x.yaml"]}}`, ignored: false},
+		// Which block is present is how Argo CD decides the source type, so an empty
+		// one is still a difference.
+		{name: "an empty kustomize block", patch: `{"kustomize":{}}`, ignored: false},
+		// Removing an existing values document is a source change.
+		{name: "a removed helm block", patch: `{"helm":null}`, ignored: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stored := desired
+			stored.Source = decodeSource(t, desired.Source, test.patch)
+			if got := equality.Semantic.DeepEqual(stored, desired); got != test.ignored {
+				t.Errorf("spec compared equal = %v, want %v", got, test.ignored)
+			}
+		})
+	}
+}
+
+// TestModelledSourceFieldsStayOutOfUnmodelled verifies that modelled fields are excluded
+// from Unmodelled and that the desired source survives a JSON round trip unchanged.
+func TestModelledSourceFieldsStayOutOfUnmodelled(t *testing.T) {
+	set := componentSetWith("a")
+	set.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+	desired := (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
+
+	roundTripped := decodeSource(t, desired.Source, `{}`)
+	if roundTripped.Unmodelled != nil {
+		t.Errorf("Unmodelled = %v, want nil - a modelled key is missing from sourceKeys", roundTripped.Unmodelled)
+	}
+	if roundTripped.Helm.Unmodelled != nil {
+		t.Errorf("helm Unmodelled = %v, want nil - a modelled key is missing from helmKeys", roundTripped.Helm.Unmodelled)
+	}
+	if !equality.Semantic.DeepEqual(roundTripped, desired.Source) {
+		t.Error("a source the operator wrote does not read back equal to the one it built")
+	}
+}
+
+// TestHelmValuesIgnoresValueFormatting verifies that equivalent JSON produces equal specs.
+// Formatting-only differences must not submit another sync or prevent completion.
+func TestHelmValuesIgnoresValueFormatting(t *testing.T) {
 	spec := func(values string) argocdv1alpha1.ApplicationSpec {
 		set := componentSetWith("a")
 		set.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(values)}
@@ -607,8 +776,8 @@ func TestSpecEqualIgnoresHelmValueFormatting(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := specEqual(spec(test.a), spec(test.b)); got != test.equal {
-				t.Errorf("specEqual(%s, %s) = %v, want %v", test.a, test.b, got, test.equal)
+			if got := equality.Semantic.DeepEqual(spec(test.a), spec(test.b)); got != test.equal {
+				t.Errorf("spec compared equal for %s and %s = %v, want %v", test.a, test.b, got, test.equal)
 			}
 		})
 	}
