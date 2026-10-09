@@ -48,7 +48,6 @@ const (
 	reasonRolloutComplete = "RolloutComplete"
 
 	reasonApplicationsCreated   = "ApplicationsCreated"
-	reasonApplicationsSyncing   = "ApplicationsSyncing"
 	reasonApplicationCRDMissing = "ApplicationCRDMissing"
 	reasonApplicationConflict   = "ApplicationConflict"
 	reasonApplicationFailed     = "ApplicationFailed"
@@ -63,11 +62,6 @@ const (
 	// exists precisely to take them down one at a time in reverse order.
 	annotationComponentSetName      = "ccluster.nvidia.com/componentset-name"
 	annotationComponentSetNamespace = "ccluster.nvidia.com/componentset-namespace"
-
-	// sync-request-id identifies a spec write even when the parent generation is unchanged.
-	annotationSyncRequestID = "ccluster.nvidia.com/sync-request-id"
-	annotationAppRefresh    = "argocd.argoproj.io/refresh"
-	refreshTypeNormal       = "normal"
 
 	// The name again as a label, because a label can be selected on and an annotation
 	// cannot: listing a CCLComponentSet's Applications is how the operator knows what it
@@ -84,14 +78,6 @@ const (
 	// remove each other's.
 	componentSetFinalizerName = "ccluster.nvidia.com/argocd-applications"
 
-	// syncRetryLimit is how often Argo CD retries a sync the operator asked for before it
-	// gives up. It matches the limit Argo CD's own automated sync uses, and it is what keeps
-	// a failing sync reported as one long attempt rather than a series.
-	syncRetryLimit = 5
-
-	// Requeue observations independently of watches, including same-second timestamps.
-	syncObservationRetryInterval = 2 * time.Second
-
 	// teardownRetryInterval backstops the Application watch during teardown. Progress
 	// is event-driven - an Application going away brings the CCLComponentSet back - so
 	// this only covers a missed event, and keeps a component whose cluster is
@@ -103,9 +89,6 @@ const (
 type CCLComponentSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-
-	// APIReader only verifies missing or mismatched request identities during recovery.
-	APIReader client.Reader
 
 	// CatalogRepoURL and CatalogRevision locate the chart catalog components are
 	// deployed from. Component paths in the spec are relative to that repository's
@@ -183,17 +166,11 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	applications := liveApplications(all)
 	statusBase := componentSet.DeepCopy()
-	r.observeSyncs(&componentSet, applications)
 	released := r.releaseCount(&componentSet, applications)
 
-	changed, waiting, applyErr := r.reconcileApplications(ctx, &componentSet, released, applications)
+	changed, applyErr := r.reconcileApplications(ctx, &componentSet, released, applications)
 	appliedStatus, appliedReason, appliedMessage, retryErr :=
 		r.applicationsCondition(&componentSet, released, applyErr)
-
-	if applyErr == nil && waiting {
-		appliedStatus, appliedReason, appliedMessage = metav1.ConditionFalse, reasonApplicationsSyncing,
-			"Waiting for pending or running Application operations before writing updated specs"
-	}
 
 	if applyErr == nil && changed {
 		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,
@@ -221,21 +198,14 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		applications = liveApplications(all)
-		r.observeSyncs(&componentSet, applications)
+		r.reportComponentSyncs(&componentSet, applications)
 		progressStatus, progressReason, progressMessage := r.rolloutStatus(&componentSet, applications)
 		conditions = append(conditions, condition(
 			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 	}
 
-	r.pruneSyncRecords(&componentSet)
 	if err := r.setConditions(ctx, &componentSet, statusBase, conditions...); err != nil {
 		return ctrl.Result{}, err
-	}
-	if applyErr == nil {
-		if err := r.requestSyncObservations(ctx, &componentSet, applications); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: r.syncRequeueAfter(&componentSet, applications)}, retryErr
 	}
 	return ctrl.Result{}, retryErr
 }
@@ -341,7 +311,7 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 //
 // Carry the original resource version so a concurrent spec edit cannot receive a
 // completion computed for older input. A conflict is retried by the controller; a missing
-// object has no status left to record. The base precedes all request bookkeeping changes.
+// object has no status left to record.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -403,7 +373,6 @@ func (r *CCLComponentSetReconciler) componentSetForApplication(_ context.Context
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.APIReader = mgr.GetAPIReader()
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{}).
 		Watches(&cclusternvidiacomv1alpha1.CCLInfraPlane{},

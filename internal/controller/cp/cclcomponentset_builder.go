@@ -7,14 +7,12 @@ package cp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 
-	"github.com/google/uuid"
-
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -23,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
@@ -35,35 +34,18 @@ import (
 // than overwritten.
 var errApplicationConflict = errors.New("application belongs to another CCLComponentSet")
 
-// errApplicationSyncInProgress reports that a spec write was held back because Argo CD
-// already owes this Application an operation. The write carries a sync request, and
-// writing one over an operation Argo CD has not picked up would lose it. Not a failure:
-// reconcileApplications turns it into a wait, and the requeue brings the write back.
-var errApplicationSyncInProgress = errors.New("application has a pending or running operation")
-
 // applicationName is the name Argo CD gives the Application for a component.
 func applicationName(componentSetName, componentName string) string {
 	return componentSetName + "-" + componentName
 }
 
-// applicationSpec builds the Argo CD Application for one component.
-//
-// The operator writes Applications directly rather than generating them from an
-// ApplicationSet. An ApplicationSet would earn its keep if the set were derived from
-// something - clusters, Git directories - but a CCLComponentSet enumerates its components
-// explicitly, so the generator would only add a Go-template layer between the operator
-// and an object it already knows in full. Writing them directly also means values pass
-// through as structured data instead of being marshalled into a templated string.
+// applicationSpec builds the desired Application spec for one component.
+// Components are enumerated explicitly, so Applications need no ApplicationSet generator.
+// Helm values are serialized directly to YAML without Go-template interpolation.
 func (r *CCLComponentSetReconciler) applicationSpec(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 ) argocdv1alpha1.ApplicationSpec {
-	var helm *argocdv1alpha1.ApplicationSourceHelm
-	if component.Values != nil && len(component.Values.Raw) > 0 {
-		// Copied through untouched: what the chart accepts is its business.
-		helm = &argocdv1alpha1.ApplicationSourceHelm{ValuesObject: component.Values}
-	}
-
 	return argocdv1alpha1.ApplicationSpec{
 		// The namespace's project, which the CCLInfraPlane controller created before it
 		// reported the plane Available. It is what permits an Application in this
@@ -76,7 +58,7 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 			// path, not chart: the catalog is a Git repository, and source.chart
 			// would make Argo CD look for a chart of that name in a Helm registry.
 			Path: component.Chart,
-			Helm: helm,
+			Helm: helmValues(component.Values),
 		},
 		Destination: argocdv1alpha1.ApplicationDestination{
 			// By name, not by server: the name is the one the CCLInfraPlane's mirrored
@@ -85,11 +67,11 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 			Namespace: component.Namespace,
 		},
 		SyncPolicy: &argocdv1alpha1.SyncPolicy{
-			// Never switched off. The operator asks for a sync when it rewrites the
-			// spec, but it never gates one, which is what keeps selfHeal working.
-			// Argo CD's own RollingSync strategy is deliberately unused
-			// because it gates Applications by switching automated sync off and, as
-			// of v3.5.1, never switches it back on.
+			// Never switched off. It runs every sync, including the one after the
+			// operator rewrites the spec, and the operator never gates one, which is
+			// what keeps selfHeal working. Argo CD's own RollingSync strategy is
+			// deliberately unused because it gates Applications by switching automated
+			// sync off and, as of v3.5.1, never switches it back on.
 			Automated: &argocdv1alpha1.SyncPolicyAutomated{
 				Prune:    true,
 				SelfHeal: true,
@@ -108,82 +90,68 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	}
 }
 
-// specEqual reports whether an Application's stored spec is still the one applicationSpec
-// builds. It is the comparison behind every decision in this package: whether to ask
-// Argo CD for a sync, and whether a recorded result still describes what is wanted.
-//
-// Helm values are apiextensionsv1.JSON, which equality.Semantic compares as raw bytes, so
-// two spellings of the same document - a different key order, 3 against 3.0 - read as a
-// change. That would be a new request on every reconcile, and a component that never
-// reaches finished, because the same comparison gates both.
-//
-// The byte comparison settles it whenever the two are identical, which is the usual case.
-// Decoding only runs when they differ, and a difference is either a real spec change or
-// the formatting case this exists to absorb. Neither is frequent.
-func specEqual(a, b argocdv1alpha1.ApplicationSpec) bool {
-	if equality.Semantic.DeepEqual(a, b) {
-		return true
-	}
-	aValues, bValues := decodedHelmValues(a.Source), decodedHelmValues(b.Source)
-	// Compared apart, so the bytes underneath do not decide the rest of the spec. These
-	// are copies: ApplicationSpec holds Source by value.
-	a.Source.Helm, b.Source.Helm = nil, nil
-	return equality.Semantic.DeepEqual(a, b) && equality.Semantic.DeepEqual(aValues, bValues)
-}
-
-// decodedHelmValues parses a component's values so that two spellings of one document
-// compare equal. Values that are not valid JSON cannot reach here through the API server;
-// if they ever do, the raw bytes stand in and that spec compares byte for byte as before.
-func decodedHelmValues(source argocdv1alpha1.ApplicationSource) any {
-	if source.Helm == nil || source.Helm.ValuesObject == nil {
+// helmValues serializes component values with the conversion Argo CD uses for valuesObject.
+// The YAML string preserves explicit nulls in comparedTo and normalizes key order and
+// number formatting for spec comparisons.
+func helmValues(values *apiextensionsv1.JSON) *argocdv1alpha1.ApplicationSourceHelm {
+	if values == nil || len(values.Raw) == 0 {
 		return nil
 	}
-	var values any
-	if err := json.Unmarshal(source.Helm.ValuesObject.Raw, &values); err != nil {
-		return string(source.Helm.ValuesObject.Raw)
+	document, err := yaml.JSONToYAML(values.Raw)
+	if err != nil {
+		// The API server validates JSON. Preserve invalid bytes from direct callers
+		// rather than silently dropping their values.
+		return &argocdv1alpha1.ApplicationSourceHelm{Values: string(values.Raw)}
 	}
-	return values
+	return &argocdv1alpha1.ApplicationSourceHelm{Values: string(document)}
 }
 
-// readApplicationForWrite returns the Application a write is built on, and is the only
-// place that decides which read to trust.
+// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
+// desired source and destination.
 //
-// The informer cache serves it, except when the request identity on what it returns
-// disagrees with the one the CCLComponentSet recorded. A cached annotation older than the
-// record reads as a request to recover, and recovering it would discard the newer one. The
-// API server settles which half is stale.
-//
-// The caller asks untrackedRequest and recreatedApplication again, of the object this
-// returns. That is not a repeat: the answers here decided whether to read again, and the
-// answers there are the ones the write is built on.
-func (r *CCLComponentSetReconciler) readApplicationForWrite(
-	ctx context.Context, key client.ObjectKey, record *cclusternvidiacomv1alpha1.ComponentSyncStatus,
-) (*argocdv1alpha1.Application, error) {
-	// A fresh object every call: Get decodes into whatever it is given, so reusing one
-	// would leave its stamp behind for before to copy.
-	application := &argocdv1alpha1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+// Argo CD records sync status, comparedTo and health from the same comparison.
+// Matching its inputs ties those statuses to the desired configuration without tracking
+// which sync request produced them.
+func comparedToMatchesSpec(
+	app *argocdv1alpha1.Application, desired argocdv1alpha1.ApplicationSpec,
+) bool {
+	if app.Status == nil {
+		return false
 	}
-	if err := r.Get(ctx, key, application); client.IgnoreNotFound(err) != nil {
-		return nil, err
-	}
-
-	inDoubt := untrackedRequest(application, record) || recreatedApplication(application, record)
-	if application.ResourceVersion == "" || r.APIReader == nil || !inDoubt {
-		return application, nil
-	}
-
-	fresh := &argocdv1alpha1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-	}
-	if err := r.APIReader.Get(ctx, key, fresh); client.IgnoreNotFound(err) != nil {
-		return nil, err
-	}
-	return fresh, nil
+	// ApplicationSource keeps the keys it does not model, so this sees a source Argo CD
+	// rendered from something the operator did not write. Destination is modelled in
+	// full. comparedTo.ignoreDifferences and comparedTo.sources are neither written nor
+	// read: the operator writes no ignoreDifferences and exactly one source.
+	comparedTo := app.Status.Sync.ComparedTo
+	return equality.Semantic.DeepEqual(comparedTo.Source, desired.Source) &&
+		equality.Semantic.DeepEqual(comparedTo.Destination, desired.Destination)
 }
 
-// createOrPatchApplication brings one component's Application in line with the spec, and
-// asks Argo CD to sync it when that spec changed.
+// finished reports that a released component has converged on the current spec.
+// Hooks do not contribute to aggregate health and sync, so operation state must also
+// permit completion.
+func (r *CCLComponentSetReconciler) finished(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	component cclusternvidiacomv1alpha1.ComponentSpec,
+	application *argocdv1alpha1.Application,
+) bool {
+	if application == nil || application.OperationInProgress() {
+		return false
+	}
+	desired := r.applicationSpec(componentSet, component)
+	return equality.Semantic.DeepEqual(application.Spec, desired) &&
+		comparedToMatchesSpec(application, desired) &&
+		!currentSyncFailed(application, desired) &&
+		application.SyncStatus() == argocdv1alpha1.SyncStatusSynced &&
+		application.HealthStatus() == argocdv1alpha1.HealthStatusHealthy
+}
+
+// createOrPatchApplication brings one component's Application in line with the spec.
+//
+// It asks Argo CD for nothing. An Application whose spec.source differs from
+// status.sync.comparedTo.source is queued for comparison at once, and automated sync
+// runs the sync that follows, so a request of the operator's own would only duplicate
+// it - and writing one over an operation Argo CD had not started yet would lose that one.
 //
 // Argo CD has no status subresource, so its status writes move the resource version this
 // write carries and the read has to be redone rather than the write forced.
@@ -206,9 +174,12 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	// DefaultBackoff, not DefaultRetry: the interval grows (10ms, 50ms, 250ms, 1250ms),
 	// which gives the informer time to catch up. DefaultRetry stays at 10ms.
 	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
-		record := syncRecord(componentSet, component.Name)
-		application, err := r.readApplicationForWrite(ctx, key, record)
-		if err != nil {
+		// A fresh object every call: Get decodes into whatever it is given, so reusing
+		// one would leave its stamp behind for before to copy.
+		application := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		}
+		if err := r.Get(ctx, key, application); client.IgnoreNotFound(err) != nil {
 			return err
 		}
 
@@ -227,82 +198,14 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		// Deleting the Application must also uninstall its chart.
 		controllerutil.AddFinalizer(application, argocdv1alpha1.ResourcesFinalizer)
 
-		desired := r.applicationSpec(componentSet, component)
-		specChanged := !specEqual(before.Spec, desired)
-		newRequest := specChanged || recreatedApplication(application, record)
-		if newRequest && before.OperationInProgress() {
-			return errApplicationSyncInProgress
-		}
-		application.Spec = desired
+		application.Spec = r.applicationSpec(componentSet, component)
 
-		// Which request this write carries. The annotation and the record are the two
-		// halves of that, and each case is one way they can be out of step.
-		switch {
-		case newRequest:
-			// Nothing judged so far applies to what is being written. Both halves start over.
-			application.Annotations[annotationSyncRequestID] = uuid.NewString()
-			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{Name: component.Name}
-		case untrackedRequest(application, record):
-			// The Application half survived a crash, or a CCLComponentSet status write that
-			// failed after this request was already committed. Rebuild the record from it.
-			record = &cclusternvidiacomv1alpha1.ComponentSyncStatus{
-				Name: component.Name, ApplicationUID: string(application.UID),
-				RequestID: application.Annotations[annotationSyncRequestID],
-			}
-		case record != nil && application.Annotations[annotationSyncRequestID] == "":
-			// The annotation was removed by hand. The record is this Application's - the
-			// cases above rule out the alternatives - so put it back without forgetting
-			// any result already observed against it.
-			application.Annotations[annotationSyncRequestID] = record.RequestID
-		}
-		observeSync(application, record)
-
-		var extra []patchPath
-		if newRequest {
-			application.Operation = newOperation(
-				desired, application.Annotations[annotationSyncRequestID])
-			extra = append(extra, patchPath{path: "/operation", value: application.Operation})
-		}
-
+		var err error
 		result, err = createOrPatchArgoCDObject(
-			ctx, r.Client, before, application, application.Spec, extra...)
-		if err == nil && record != nil {
-			rememberRequest(componentSet, application, record)
-		}
+			ctx, r.Client, before, application, application.Spec)
 		return err
 	})
 	return result, err
-}
-
-// newOperation requests a sync of this spec's source under the given request ID.
-//
-// The spec and the ID are parameters rather than read back off the Application, because
-// reading them back would mean this had to be called after both were set on it, and
-// nothing said so. Reading the spec back would also dereference
-// syncPolicy.automated, which only applicationSpec guarantees is there.
-func newOperation(
-	spec argocdv1alpha1.ApplicationSpec, requestID string,
-) *argocdv1alpha1.Operation {
-	sync := &argocdv1alpha1.SyncOperation{Source: spec.Source.DeepCopy()}
-
-	// Argo CD reads neither of these from spec.syncPolicy for a sync it was asked for -
-	// the one it starts itself copies them across field by field - so they are repeated
-	// here. A request without ServerSideApply syncs, and then never converges.
-	if spec.SyncPolicy != nil {
-		sync.SyncOptions = spec.SyncPolicy.SyncOptions
-		if spec.SyncPolicy.Automated != nil {
-			sync.Prune = spec.SyncPolicy.Automated.Prune
-		}
-	}
-
-	return &argocdv1alpha1.Operation{
-		Sync: sync,
-		// Not automated: Argo CD re-resolves the revision after a sync it did not start
-		// itself, which keeps a just-synced Application from reporting OutOfSync.
-		InitiatedBy: argocdv1alpha1.OperationInitiator{Username: labelManagedByValue},
-		Info:        []argocdv1alpha1.Info{{Name: annotationSyncRequestID, Value: requestID}},
-		Retry:       argocdv1alpha1.RetryStrategy{Limit: syncRetryLimit},
-	}
 }
 
 // reconcileApplications writes an Application for each of the first `released`
@@ -317,15 +220,11 @@ func (r *CCLComponentSetReconciler) reconcileApplications(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	released int,
 	existing map[string]*argocdv1alpha1.Application,
-) (changed, waiting bool, err error) {
+) (changed bool, err error) {
 	for i, component := range componentSet.Spec.Components[:released] {
 		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
-		if errors.Is(err, errApplicationSyncInProgress) {
-			waiting = true
-			break
-		}
 		if err != nil {
-			return changed, waiting, err
+			return changed, err
 		}
 		if op != controllerutil.OperationResultNone {
 			changed = true
@@ -333,7 +232,7 @@ func (r *CCLComponentSetReconciler) reconcileApplications(
 	}
 
 	pruned, err := r.pruneApplications(ctx, componentSet, existing)
-	return changed || pruned, waiting, err
+	return changed || pruned, err
 }
 
 // pruneApplications deletes Applications whose component has been removed from the spec.
@@ -574,6 +473,50 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 	}
 }
 
+// reportComponentSyncs rebuilds status.componentSyncs from observed Applications.
+// Rebuilding drops removed components and replaces stale observations.
+func (r *CCLComponentSetReconciler) reportComponentSyncs(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) {
+	reports := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
+	for _, component := range componentSet.Spec.Components {
+		application := applications[applicationName(componentSet.Name, component.Name)]
+		if application == nil {
+			// Omit components without a live Application.
+			continue
+		}
+		reports = append(reports, cclusternvidiacomv1alpha1.ComponentSyncStatus{
+			Name:                  component.Name,
+			ComparedToMatchesSpec: comparedToMatchesSpec(application, r.applicationSpec(componentSet, component)),
+			Health:                application.HealthStatus(),
+			Sync:                  application.SyncStatus(),
+			Message:               application.OperationMessage(),
+		})
+	}
+	componentSet.Status.ComponentSyncs = reports
+}
+
+// currentSyncFailed reports a terminal failure for the source currently desired and
+// the revision Argo CD compared. Comparison and operation status advance independently,
+// so comparedTo alone cannot attribute the last operation to the current spec.
+func currentSyncFailed(app *argocdv1alpha1.Application, desired argocdv1alpha1.ApplicationSpec) bool {
+	phase := app.OperationPhase()
+	if app.OperationInProgress() ||
+		(phase != argocdv1alpha1.OperationFailed && phase != argocdv1alpha1.OperationError) {
+		return false
+	}
+	state := app.Status.OperationState
+	if result := state.SyncResult; result != nil {
+		return equality.Semantic.DeepEqual(result.Source, desired.Source) &&
+			(result.Revision == "" || app.Status.Sync.Revision == "" || result.Revision == app.Status.Sync.Revision)
+	}
+	// Early errors can precede syncResult. An explicit source in the captured request
+	// still attributes them; without either source the failure cannot be attributed.
+	return state.Operation.Sync != nil && state.Operation.Sync.Source != nil &&
+		equality.Semantic.DeepEqual(*state.Operation.Sync.Source, desired.Source)
+}
+
 // rolloutStatus reports how far through the components the rollout has got.
 //
 // The first component that is not yet released, or is released but still converging, is
@@ -596,40 +539,62 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 			continue
 		}
 
-		phase, operationMessage := r.currentSyncPhase(componentSet, component, application)
-		switch phase {
-		case argocdv1alpha1.OperationFailed, argocdv1alpha1.OperationError:
-			// Not retried by the operator. Any later successful sync of this spec is adopted
-			// - see adoptLaterResult - so the message says how to start one.
+		desired := r.applicationSpec(componentSet, component)
+		switch {
+		case !equality.Semantic.DeepEqual(application.Spec, desired):
+			// The list behind this report predates this reconcile's write. The write's
+			// own event brings the CCLComponentSet back.
+			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+				"Wave %d (component %q) is waiting for the operator to write the current spec",
+				wave, component.Name)
+
+		case !comparedToMatchesSpec(application, desired):
+			// The latest comparison does not match the desired source and destination,
+			// so its health and sync statuses cannot establish completion.
+			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+				"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
+					"operator wrote", wave, component.Name), application)
+
+		case application.OperationInProgress():
+			// Hooks are excluded from aggregate health and sync. Healthy/Synced can
+			// therefore precede operation completion, including a pending PostSync hook.
+			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+				"Wave %d (component %q) is waiting for an Argo CD operation to complete",
+				wave, component.Name), application)
+
+		case currentSyncFailed(application, desired):
+			// A failed hook can leave aggregate health Healthy and sync Synced.
+			// A later successful sync of this source and revision resumes the rollout.
 			return metav1.ConditionTrue, reasonWaveSyncFailed, fmt.Sprintf(
-				"Wave %d (component %q) failed to sync: %s. A successful sync of Application "+
-					"%q in Argo CD resumes the rollout",
-				wave, component.Name, operationMessage, name)
-		case argocdv1alpha1.OperationSucceeded:
-			if !healthObservedAfterSync(application, syncRecord(componentSet, component.Name)) {
-				return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
-					"Wave %d (component %q) is waiting for Argo CD to reassess health after syncing", wave, component.Name)
-			}
-			// Argo CD synced this spec and is unhappy with what it deployed. Which resource
-			// is unhappy is in status.resources, which this type does not model.
+				"Wave %d (component %q) failed to sync: %s. A successful sync of "+
+					"Application %q in Argo CD resumes the rollout",
+				wave, component.Name, application.OperationMessage(), name)
+
+		default:
+			// Argo CD compared this spec and is unhappy with what it found. Which
+			// resource is unhappy is in status.resources, which this type does not model.
 			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
 				"Wave %d (component %q) has health %q, sync %q", wave, component.Name,
 				application.HealthStatus(), application.SyncStatus())
-		default:
-			waiting := fmt.Sprintf(
-				"Wave %d (component %q) is waiting for Argo CD to sync the spec the operator "+
-					"wrote", wave, component.Name)
-			// Argo CD holds a failing sync in Running while it retries, and says which
-			// attempt it is on in the operation message. Without it a sync failing on
-			// every attempt reads exactly like a slow one.
-			if operationMessage != "" {
-				waiting += ": " + operationMessage
-			}
-			return metav1.ConditionTrue, reasonWaveSyncing, waiting
 		}
 	}
 
 	return metav1.ConditionFalse, reasonRolloutComplete, fmt.Sprintf(
 		"All %d components have synced the current spec and are healthy",
 		len(componentSet.Spec.Components))
+}
+
+// withRunningOperationMessage appends the message of the operation Argo CD is running.
+//
+// Argo CD holds a failing sync in Running while it retries, and says which attempt it is
+// on in the operation message. Without it a sync failing on every attempt reads exactly
+// like a slow one. The phase decides whether the message is current, not spec.operation:
+// Argo CD keeps that set from the request until the operation reaches a terminal phase.
+// A terminal phase, beside a pending request or not, belongs to an earlier operation.
+func withRunningOperationMessage(waiting string, application *argocdv1alpha1.Application) string {
+	message := application.OperationMessage()
+	if message == "" || argocdv1alpha1.OperationCompleted(application.OperationPhase()) {
+		return waiting
+	}
+	return waiting + ": " + message
 }

@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	"encoding/json"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -32,15 +34,13 @@ const (
 	OperationError     = "Error"
 )
 
-// Application is an Argo CD Application: one chart deployed to one cluster.
+// Application is a partial mirror of the Argo CD Application API.
 //
-// Only the fields the control-plane operator writes are modelled, so this type is not a
-// faithful copy of Argo CD's - most of the spec and nearly all of the status are absent.
-// That is safe only because the operator owns the Applications it creates outright and
-// rewrites their spec on every reconcile: reading one of these into this type and writing
-// it back **deletes** any field not declared below. The ownership check in
-// internal/controller/cp is what keeps that confined to Applications the operator
-// authored. Do not use this type to modify an Application it did not create.
+// It models fields the control-plane operator writes or reads for rollout decisions.
+// The operator patches metadata and spec when they differ, and never writes operation
+// or status, which Argo CD owns. Replacing spec removes fields the operator does not
+// write, so ownership must be checked first. A whole-object update would discard
+// unmodelled fields and must not be used.
 //
 // See https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/ for the
 // full API.
@@ -52,12 +52,12 @@ type Application struct {
 
 	Spec ApplicationSpec `json:"spec,omitempty"`
 
-	// operation requests a sync. Argo CD copies it into status.operationState.operation and
-	// then clears this field, so it is a one-shot request rather than desired state. The
-	// operator sets it to identify the sync submitted with a spec write.
+	// operation is a sync Argo CD has been asked to run, by its automated sync or by a
+	// user. Argo CD copies it into status.operationState.operation and keeps this field
+	// set until the operation reaches a terminal phase, so it is set while the operation
+	// runs and retries, not only while it is pending.
 	//
-	// It gets its own patch path. A read of an operation Argo CD's own auto-sync requested
-	// decodes only the fields below, so a decoded one must never be written back.
+	// Read, never written. A decoded operation holds only the fields below.
 	Operation *Operation `json:"operation,omitempty"`
 
 	// status is read, never written: Argo CD owns it.
@@ -99,29 +99,12 @@ func (a *Application) OperationMessage() string {
 	return a.Status.OperationState.Message
 }
 
-// OperationInfo returns what Argo CD echoed back for one info item of the last sync.
-// Callers match the returned value against their independently recorded request ID.
-func (a *Application) OperationInfo(name string) (string, bool) {
-	if a.Status == nil || a.Status.OperationState == nil {
-		return "", false
-	}
-	for _, info := range a.Status.OperationState.Operation.Info {
-		if info.Name == name {
-			return info.Value, true
-		}
-	}
-	return "", false
-}
-
-// OperationCompleted reports whether a phase is one Argo CD will not move off. Running and
-// Terminating are the others, and a retry puts a failed sync back into Running.
+// OperationCompleted reports whether phase is terminal.
 func OperationCompleted(phase string) bool {
 	return phase == OperationSucceeded || phase == OperationFailed || phase == OperationError
 }
 
-// OperationInProgress reports whether Argo CD owes this Application an operation or is
-// still running one. A request waiting in spec.operation counts: Argo CD has not picked it
-// up, and writing another would lose it.
+// OperationInProgress reports whether a request is pending or an operation is nonterminal.
 func (a *Application) OperationInProgress() bool {
 	return a.Operation != nil || (a.OperationPhase() != "" && !OperationCompleted(a.OperationPhase()))
 }
@@ -142,6 +125,10 @@ type ApplicationSpec struct {
 
 // ApplicationSource locates a chart in a Git repository. Argo CD also supports Helm and
 // OCI repositories, which need different fields and are not modelled.
+//
+// Unmodelled keys are retained on read so source drift is visible in both spec and
+// status.sync.comparedTo. Otherwise a field such as helm.valueFiles could change rendered
+// manifests while the decoded source still matched the operator's desired source.
 type ApplicationSource struct {
 	// repoURL is the Git repository Argo CD's repo-server clones.
 	RepoURL string `json:"repoURL"`
@@ -154,16 +141,104 @@ type ApplicationSource struct {
 
 	// helm carries chart overrides.
 	Helm *ApplicationSourceHelm `json:"helm,omitempty"`
+
+	// Unmodelled retains other non-zero source fields for comparison. It is excluded
+	// from writes so replacing spec removes source drift.
+	Unmodelled map[string]apiextensionsv1.JSON `json:"-"`
+}
+
+// sourceKeys are the keys ApplicationSource models. UnmarshalJSON removes them from what
+// it puts in Unmodelled, so adding a field above means adding it here.
+var sourceKeys = []string{"repoURL", "targetRevision", "path", "helm"}
+
+func (s *ApplicationSource) UnmarshalJSON(data []byte) error {
+	type plain ApplicationSource
+	if err := json.Unmarshal(data, (*plain)(s)); err != nil {
+		return err
+	}
+	if s.Helm != nil && s.Helm.Values == "" && s.Helm.Unmodelled == nil {
+		// Normalize an empty helm block to the absent block used by the operator.
+		s.Helm = nil
+	}
+	rest, err := unmodelledKeys(data, sourceKeys)
+	s.Unmodelled = rest
+	return err
 }
 
 // ApplicationSourceHelm holds Helm-specific overrides for an Application's source.
 type ApplicationSourceHelm struct {
-	// valuesObject is structured Helm values. Argo CD also accepts `values`, a string
-	// holding a YAML document; the structured form is used because the operator copies
-	// a CCLComponentSet component's values straight through, and passing them as an
-	// object avoids serialising and re-parsing what the API server already validated.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	ValuesObject *apiextensionsv1.JSON `json:"valuesObject,omitempty"`
+	// values is a YAML document of Helm values, serialized with the conversion Argo CD
+	// uses for valuesObject. A string preserves explicit nulls in status.sync.comparedTo;
+	// Argo CD's status merge patch removes null-valued keys from an object.
+	Values string `json:"values,omitempty"`
+
+	// Unmodelled retains other non-zero Helm fields, including valueFiles and parameters.
+	// See ApplicationSource.Unmodelled.
+	Unmodelled map[string]apiextensionsv1.JSON `json:"-"`
+}
+
+// helmKeys are the keys ApplicationSourceHelm models.
+var helmKeys = []string{"values"}
+
+func (h *ApplicationSourceHelm) UnmarshalJSON(data []byte) error {
+	type plain ApplicationSourceHelm
+	if err := json.Unmarshal(data, (*plain)(h)); err != nil {
+		return err
+	}
+	rest, err := unmodelledKeys(data, helmKeys)
+	h.Unmodelled = rest
+	return err
+}
+
+// unmodelledKeys returns non-zero JSON fields absent from modelled, or nil if none remain.
+//
+// Argo CD omits zero-valued optional source fields. Ignoring them also prevents zero
+// defaults added by a future CRD from causing repeated spec writes.
+//
+// Empty objects are retained because kustomize and plugin blocks select the source type.
+func unmodelledKeys(data []byte, modelled []string) (map[string]apiextensionsv1.JSON, error) {
+	var all map[string]apiextensionsv1.JSON
+	if err := json.Unmarshal(data, &all); err != nil {
+		return nil, err
+	}
+	for _, key := range modelled {
+		delete(all, key)
+	}
+	for key, value := range all {
+		if isZeroJSON(value.Raw) {
+			delete(all, key)
+		}
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	return all, nil
+}
+
+// isZeroJSON reports whether raw holds the zero value of its type. Unparseable bytes are
+// not zero: this decides whether to ignore a field, and an unreadable one is not ignored.
+func isZeroJSON(raw []byte) bool {
+	// apiextensionsv1.JSON leaves Raw nil for a literal null, which is the absent field.
+	if len(raw) == 0 {
+		return true
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false
+	}
+	switch value := value.(type) {
+	case nil:
+		return true
+	case bool:
+		return !value
+	case float64:
+		return value == 0
+	case string:
+		return value == ""
+	case []any:
+		return len(value) == 0
+	}
+	return false
 }
 
 // ApplicationDestination is where an Application is deployed. AppProject reuses it to say
@@ -205,60 +280,18 @@ type SyncPolicyAutomated struct {
 type Operation struct {
 	// sync is required: Argo CD fails an operation that does not name one.
 	Sync *SyncOperation `json:"sync,omitempty"`
-
-	// initiatedBy records who asked. Argo CD has an `automated` flag here too, left
-	// unmodelled on purpose - it force-resolves the revision after a sync that is not
-	// automated, which is what stops a just-synced Application reporting OutOfSync.
-	InitiatedBy OperationInitiator `json:"initiatedBy,omitempty"`
-
-	// info is free-form and copied verbatim into status.operationState.operation.info. It
-	// lets the operator recognise its own sync by the request ID.
-	Info []Info `json:"info,omitempty"`
-
-	// retry lets Argo CD back a failing sync off itself. The phase stays Running while it
-	// does, so the operator sees one long attempt rather than a flapping one.
-	Retry RetryStrategy `json:"retry,omitempty"`
 }
 
 // SyncOperation is the sync half of an Operation.
-//
-// Argo CD reads none of this from spec.syncPolicy - the sync it starts itself copies the
-// policy across field by field, and so must the operator. A revision is deliberately not
-// modelled: without one Argo CD resolves the submitted source's targetRevision.
 type SyncOperation struct {
-	// source captures the source submitted with this request, including Helm values.
+	// source is the source the sync was asked for, including Helm values. Argo CD's
+	// automated sync fills it in for a single-source Application. It attributes an
+	// operation that failed before Argo CD recorded a sync result.
 	Source *ApplicationSource `json:"source,omitempty"`
-
-	// prune must repeat spec.syncPolicy.automated.prune.
-	Prune bool `json:"prune,omitempty"`
-
-	// syncOptions must repeat spec.syncPolicy.syncOptions. Leaving them out drops
-	// ServerSideApply, which this catalog cannot sync without - see DESIGN.md.
-	SyncOptions []string `json:"syncOptions,omitempty"`
-}
-
-// OperationInitiator names who asked for an operation.
-type OperationInitiator struct {
-	Username string `json:"username,omitempty"`
-}
-
-// RetryStrategy bounds how often Argo CD retries a failed sync. Its backoff is not
-// modelled: unset is Argo CD's own default, which is what its auto-sync uses.
-type RetryStrategy struct {
-	Limit int64 `json:"limit,omitempty"`
-}
-
-// Info is a name/value pair carried on an operation and reported back with its state.
-type Info struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
 }
 
 // ApplicationStatus is the observed state of an Application.
 type ApplicationStatus struct {
-	// reconciledAt is the start time of Argo CD's last full comparison.
-	ReconciledAt *metav1.Time `json:"reconciledAt,omitempty"`
-
 	// health is Argo CD's assessment of the deployed resources.
 	Health ApplicationHealthStatus `json:"health,omitempty"`
 
@@ -278,12 +311,22 @@ type OperationState struct {
 	// phase is Running, Terminating, Succeeded, Failed or Error.
 	Phase string `json:"phase"`
 
-	// message explains a Failed or Error phase.
+	// message describes operation progress, retries or the final result.
 	Message string `json:"message,omitempty"`
+
+	// syncResult records the source and resolved Git revision this operation synced.
+	// Nil if the operation failed before Argo CD initialized the sync result.
+	SyncResult *SyncOperationResult `json:"syncResult,omitempty"`
 
 	// finishedAt marks completion, or the failed attempt while Argo CD waits to retry.
 	// Only a terminal phase establishes that the operation has completed.
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+}
+
+// SyncOperationResult identifies the manifests an operation tried to apply.
+type SyncOperationResult struct {
+	Source   ApplicationSource `json:"source,omitempty"`
+	Revision string            `json:"revision,omitempty"`
 }
 
 // ApplicationHealthStatus is the health half of an Application's status. Argo CD also
@@ -294,10 +337,30 @@ type ApplicationHealthStatus struct {
 }
 
 // ApplicationSyncStatus is the sync half of an Application's status.
+//
+// Argo CD assigns status and comparedTo together from one comparison, so status describes
+// the recorded source and destination.
 type ApplicationSyncStatus struct {
 	// status is the sync state. Argo CD's CRD requires it whenever status.sync is
 	// present, so it carries no omitempty.
 	Status string `json:"status"`
+
+	// comparedTo is the input of the comparison that produced status.
+	ComparedTo ComparedTo `json:"comparedTo,omitempty"`
+
+	// revision is the resolved Git revision used by the comparison.
+	Revision string `json:"revision,omitempty"`
+}
+
+// ComparedTo is what Argo CD compared the live state against. Argo CD also records
+// sources and ignoreDifferences here; the operator writes a single source and no
+// ignoreDifferences, so neither is modelled.
+type ComparedTo struct {
+	// source is the source of the compared manifests.
+	Source ApplicationSource `json:"source,omitempty"`
+
+	// destination is the cluster and namespace they were compared in.
+	Destination ApplicationDestination `json:"destination,omitempty"`
 }
 
 // ApplicationList contains a list of Application.

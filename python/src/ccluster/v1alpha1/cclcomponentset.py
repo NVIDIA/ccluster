@@ -100,38 +100,34 @@ class CCLComponentSetSpec(BaseModel):
 
 class ComponentSyncStatus(BaseModel):
     """
-    ComponentSyncStatus records a sync request submitted for one Application.
+    ComponentSyncStatus reports the latest observed Application state.
+    The controller derives rollout decisions from Applications, not this report.
     """
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    application_uid: Annotated[str, Field(alias="applicationUID")]
+    compared_to_matches_spec: Annotated[bool, Field(alias="comparedToMatchesSpec")]
     """
-    applicationUID prevents a recreated Application from reusing an old result.
+    comparedToMatchesSpec reports whether Argo CD's latest comparison used the
+    desired source and destination. While false, health and sync do not establish
+    convergence on the desired configuration.
     """
-    finished_at: Annotated[AwareDatetime | None, Field(alias="finishedAt")] = None
+    health: str | None = None
     """
-    finishedAt is the timestamp observed with phase, including retry backoff in Running.
-    A terminal phase is required to interpret it as request completion.
+    health is Argo CD's observed Application health, empty before its first comparison.
     """
     message: str | None = None
     """
-    message explains the last observed request phase.
+    message is Argo CD's latest operation message, including progress, retries and failures.
     """
     name: str
     """
     name identifies the component in spec.components.
     """
-    phase: str | None = None
+    sync: str | None = None
     """
-    phase is the last observed phase of this request, or empty before it is observed.
-    Until it is Succeeded, a later Argo CD operation on the same spec replaces it once
-    that operation has replaced the request's own result.
-    """
-    request_id: Annotated[str, Field(alias="requestID")]
-    """
-    requestID identifies the request carried in the Application's operation.info.
+    sync is Argo CD's observed Application sync status.
     """
 
 
@@ -214,8 +210,8 @@ class CCLComponentSetStatus(BaseModel):
         list[ComponentSyncStatus] | None, Field(alias="componentSyncs")
     ] = None
     """
-    componentSyncs track the operator's current sync request for each component.
-    Completed results survive Argo CD replacing its last operation during self-heal.
+    componentSyncs reports the latest observed Application state for each released
+    component.
     """
     conditions: list[Condition] | None = None
     """

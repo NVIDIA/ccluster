@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # A single-component keda CCLComponentSet whose operator replica count is a parameter, so a
-# values change can be applied over an existing deployment.
+# values change can be applied over an existing deployment. WithValues false drops the
+# values block entirely, which is how a test takes a key back out of the Application's
+# source.
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLComponentSet
 metadata:
@@ -14,7 +16,9 @@ spec:
         name: {{ .PlaneName }}
       chart: catalogs/cluster_base/keda
       namespace: keda
+{{- if .WithValues }}
       values:
         keda:
           operator:
             replicaCount: {{ .OperatorReplicas }}
+{{- end }}
