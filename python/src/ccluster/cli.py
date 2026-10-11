@@ -10,6 +10,7 @@ file; the other commands read it from there. register registers an infra-plane c
 with that control plane: it creates a cluster-admin ServiceAccount token on the infra
 plane and hands it to CCLClient.apply_infraplane on the control plane. Both clusters are
 reached through kubeconfig contexts, so no credentials are stored by ccluster itself.
+unregister reverses register on the control plane and leaves the infra plane alone.
 """
 
 from __future__ import annotations
@@ -150,6 +151,32 @@ def register(
         f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "
         f"for {server}"
     )
+
+
+@main.command()
+@click.argument("name")
+@click.option(
+    "--namespace",
+    "-ns",
+    required=True,
+    help="Control-plane namespace of the CCLInfraPlane.",
+)
+def unregister(name: str, namespace: str) -> None:
+    """Unregister a cluster from the control plane.
+
+    Deletes the CCLInfraPlane NAME and then its Secret NAME-credentials from the control
+    plane saved by ccluster init; the operator's finalizer removes the copy it made for
+    Argo CD. The namespace is left in place, and objects already gone are not an error.
+
+    The infra plane is not touched: its ccluster-manager ServiceAccount and token stay, so
+    other registrations of the same cluster keep working and registering it again reuses
+    the token.
+    """
+    control_plane = _load_control_plane()
+    with _kube_errors():
+        control_api = k8s_config.new_client_from_config(context=control_plane)
+        CCLClient(namespace, api_client=control_api).delete_infraplane(name=name)
+    click.echo(f"Unregistered CCLInfraPlane {namespace}/{name}")
 
 
 def _config_path() -> Path:

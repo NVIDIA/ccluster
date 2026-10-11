@@ -218,6 +218,15 @@ same token.
 the kubeconfig. Set it when that address is only reachable from your workstation, as with
 kind, whose kubeconfig points at `127.0.0.1`.
 
+`ccluster unregister` reverses `register` on the control plane: it deletes the
+CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. The infra
+plane is not touched; its ServiceAccount and token stay, so registering the cluster again
+reuses them.
+
+```bash
+ccluster unregister edge-1 -ns tenant-a
+```
+
 ## What is generated from what
 
 | Python | Source | Via |

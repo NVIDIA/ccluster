@@ -108,10 +108,14 @@ class FakeCCLClient:
         self.api_client = api_client
         self.ensured = False
         self.applied = None
+        self.deleted = None
         FakeCCLClient.instances.append(self)
 
     def ensure_namespace(self):
         self.ensured = True
+
+    def delete_infraplane(self, *, name):
+        self.deleted = name
 
     def apply_infraplane(self, **kwargs):
         self.applied = kwargs
@@ -291,5 +295,35 @@ def test_register_requires_namespace_and_infra_plane(infra, missing):
     args = {"-ns": "tenant-a", "-ip": "ip"}
     del args[missing]
     result = invoke("register", "edge-1", *[x for kv in args.items() for x in kv])
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+
+
+def test_unregister_deletes_the_infraplane(infra):
+    result = invoke("unregister", "edge-1", "--namespace", "tenant-a")
+    assert result.exit_code == 0, result.output
+    assert result.output == "Unregistered CCLInfraPlane tenant-a/edge-1\n"
+    (client,) = FakeCCLClient.instances
+    assert client.api_client.context == "cp"
+    assert client.namespace == "tenant-a"
+    assert client.deleted == "edge-1"
+    assert infra.created == []
+
+
+def test_unregister_has_no_infra_plane_option(infra):
+    result = invoke("unregister", "edge-1", "-ns", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 2
+    assert FakeCCLClient.instances == []
+
+
+def test_unregister_needs_init(infra, config_file):
+    config_file.unlink()
+    result = invoke("unregister", "edge-1", "-ns", "tenant-a")
+    assert result.exit_code == 1
+    assert "run ccluster init first" in result.output
+
+
+def test_unregister_requires_namespace(infra):
+    result = invoke("unregister", "edge-1")
     assert result.exit_code == 2
     assert "Missing option" in result.output
