@@ -187,11 +187,21 @@ one has disappeared.
 The package installs a `ccluster` command, built on click. Run without a subcommand, it
 prints its usage.
 
-`ccluster register` registers an infra-plane cluster with the control plane, reaching both
-through kubeconfig contexts:
+Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
+that it serves the ccluster API, and saves the context name to
+`~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
+named by `$CCLUSTER_CONFIG`). Only the context name is saved; credentials stay in the
+kubeconfig. Run it again to switch control planes.
 
 ```bash
-ccluster register edge-1 -ns tenant-a -cp kind-ccluster-cp -ip kind-ccluster-ip \
+ccluster init -cp kind-ccluster-cp
+```
+
+`ccluster register` then registers an infra-plane cluster, also named by its kubeconfig
+context, with that control plane:
+
+```bash
+ccluster register edge-1 -ns tenant-a -ip kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
 

@@ -21,6 +21,7 @@ dependencies = [
     "click>=8.1",
     "kubernetes>=30",
     "pydantic>=2.11",
+    "pyyaml>=6",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -47,7 +48,6 @@ module-name = "ccluster"
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "pyyaml>=6",
 ]
 
 [tool.pytest.ini_options]

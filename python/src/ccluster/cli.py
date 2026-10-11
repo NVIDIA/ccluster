@@ -4,23 +4,33 @@
 """The ccluster command line.
 
 main is the click group installed as the `ccluster` executable; run without a
-subcommand, it prints its usage. register registers an infra-plane cluster with the
-control plane: it creates a cluster-admin ServiceAccount token on the infra plane and
-hands it to CCLClient.apply_infraplane on the control plane. Both clusters are reached
-through kubeconfig contexts.
+subcommand, it prints its usage. init saves the kubeconfig context of the one control
+plane the user works with, after checking it serves the ccluster API, to a small config
+file; the other commands read it from there. register registers an infra-plane cluster
+with that control plane: it creates a cluster-admin ServiceAccount token on the infra
+plane and hands it to CCLClient.apply_infraplane on the control plane. Both clusters are
+reached through kubeconfig contexts, so no credentials are stored by ccluster itself.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
+import os
 import time
+from collections.abc import Iterator
+from pathlib import Path
 
 import click
+import yaml
 from kubernetes import client as k8s
 from kubernetes import config as k8s_config
+from kubernetes.dynamic import DynamicClient
+from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
 from ccluster.client import CCLClient
+from ccluster.v1alpha1 import API_VERSION, Kind
 
 
 # What register creates on the infra plane. Argo CD deploys charts that install CRDs,
@@ -31,6 +41,10 @@ SERVICE_ACCOUNT_NAME = "ccluster-manager"
 TOKEN_SECRET_NAME = "ccluster-manager-token"
 CLUSTER_ROLE_BINDING_NAME = "ccluster-manager"
 CLUSTER_ROLE_NAME = "cluster-admin"
+
+# The config file init writes: $CCLUSTER_CONFIG, else ccluster/config.yaml under
+# $XDG_CONFIG_HOME or ~/.config.
+CONFIG_ENV = "CCLUSTER_CONFIG"
 
 # How long register waits for the token controller to fill in the token Secret.
 _TOKEN_TIMEOUT_SECONDS = 30.0
@@ -50,6 +64,37 @@ def main(ctx: click.Context) -> None:
 
 
 @main.command()
+@click.option(
+    "--control-plane",
+    "-cp",
+    "control_plane",
+    required=True,
+    help="Kubeconfig context of the control-plane cluster.",
+)
+def init(control_plane: str) -> None:
+    """Set the control plane the other commands work with.
+
+    Checks that the kubeconfig context exists and that its cluster serves the ccluster
+    API, then saves the context name to the ccluster config file. Running it again
+    replaces the saved control plane. Only the context name is saved; credentials stay in
+    the kubeconfig.
+    """
+    with _kube_errors():
+        api_client = k8s_config.new_client_from_config(context=control_plane)
+        try:
+            DynamicClient(api_client).resources.get(
+                api_version=API_VERSION, kind=Kind.CCL_INFRA_PLANE.value
+            )
+        except ResourceNotFoundError as e:
+            raise click.ClickException(
+                f"Control plane {control_plane} does not serve {Kind.CCL_INFRA_PLANE.value}; "
+                "is the ccluster-cp operator installed?"
+            ) from e
+    path = _save_control_plane(control_plane)
+    click.echo(f"Initialized ccluster with control plane {control_plane} (saved to {path})")
+
+
+@main.command()
 @click.argument("name")
 @click.option(
     "--namespace",
@@ -57,13 +102,6 @@ def main(ctx: click.Context) -> None:
     required=True,
     help="Control-plane namespace for the CCLInfraPlane and its credentials Secret; "
     "created if it does not exist.",
-)
-@click.option(
-    "--control-plane",
-    "-cp",
-    "control_plane",
-    required=True,
-    help="Kubeconfig context of the control-plane cluster.",
 )
 @click.option(
     "--infra-plane",
@@ -81,21 +119,22 @@ def main(ctx: click.Context) -> None:
 def register(
     name: str,
     namespace: str,
-    control_plane: str,
     infra_plane: str,
     server: str | None,
 ) -> None:
     """Register a cluster with the control plane.
 
-    On the infra plane, creates the ServiceAccount kube-system/ccluster-manager, binds it
-    to cluster-admin, and reads its long-lived token. On the control plane, applies the
-    Secret NAME-credentials carrying that token and the cluster CA, and the CCLInfraPlane
-    NAME pointing at it. Re-running reuses the same token.
+    The control plane is the one saved by ccluster init. On the infra plane, creates the
+    ServiceAccount kube-system/ccluster-manager, binds it to cluster-admin, and reads its
+    long-lived token. On the control plane, applies the Secret NAME-credentials carrying
+    that token and the cluster CA, and the CCLInfraPlane NAME pointing at it. Re-running
+    reuses the same token.
 
     Pass --server when the kubeconfig's address is not reachable from the control plane,
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
     """
-    try:
+    control_plane = _load_control_plane()
+    with _kube_errors():
         infra_api = k8s_config.new_client_from_config(context=infra_plane)
         control_api = k8s_config.new_client_from_config(context=control_plane)
 
@@ -107,14 +146,53 @@ def register(
         plane = client.apply_infraplane(
             name=name, server=server, bearer_token=token, ca_cert=ca_cert
         )
-    except k8s_config.ConfigException as e:
-        raise click.ClickException(f"Kubeconfig could not be loaded: {e}") from e
-    except k8s.ApiException as e:
-        raise click.ClickException(_api_error(e)) from e
     click.echo(
         f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "
         f"for {server}"
     )
+
+
+def _config_path() -> Path:
+    explicit = os.environ.get(CONFIG_ENV)
+    if explicit:
+        return Path(explicit)
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "ccluster" / "config.yaml"
+
+
+def _load_control_plane() -> str:
+    """Return the control plane's kubeconfig context saved by init."""
+    path = _config_path()
+    try:
+        config = yaml.safe_load(path.read_text())
+    except FileNotFoundError:
+        config = None
+    except yaml.YAMLError as e:
+        raise click.ClickException(f"Config file {path} is not valid YAML: {e}") from e
+    context = None
+    if isinstance(config, dict) and isinstance(config.get("controlPlane"), dict):
+        context = config["controlPlane"].get("context")
+    if not context:
+        raise click.ClickException("No control plane is configured; run ccluster init first")
+    return context
+
+
+def _save_control_plane(context: str) -> Path:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"controlPlane": {"context": context}}))
+    return path
+
+
+@contextlib.contextmanager
+def _kube_errors() -> Iterator[None]:
+    """Turn kubeconfig and API errors into one-line click errors."""
+    try:
+        yield
+    except k8s_config.ConfigException as e:
+        raise click.ClickException(f"Kubeconfig could not be loaded: {e}") from e
+    except k8s.ApiException as e:
+        raise click.ClickException(_api_error(e)) from e
 
 
 def _cluster_admin_token(api_client: k8s.ApiClient) -> tuple[str, bytes]:

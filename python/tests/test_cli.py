@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The ccluster command prints its usage, and register wires an infra plane's
-cluster-admin token into a CCLInfraPlane on the control plane, without a cluster."""
+"""The ccluster command prints its usage, init saves the control plane, and register wires
+an infra plane's cluster-admin token into a CCLInfraPlane on it, without a cluster."""
 
 import base64
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from click.testing import CliRunner
 from kubernetes.client import ApiException
 from kubernetes.config import ConfigException
+from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
 from ccluster import cli
 from ccluster.cli import main
@@ -22,6 +24,14 @@ KUBECONFIG_SERVER = "https://127.0.0.1:6443"
 
 def invoke(*args):
     return CliRunner().invoke(main, list(args), prog_name="ccluster")
+
+
+@pytest.fixture(autouse=True)
+def config_file(tmp_path, monkeypatch):
+    """Point every test at its own config file, which does not exist yet."""
+    path = tmp_path / "ccluster" / "config.yaml"
+    monkeypatch.setenv("CCLUSTER_CONFIG", str(path))
+    return path
 
 
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"]])
@@ -110,17 +120,81 @@ class FakeCCLClient:
         )
 
 
+def new_client_from_config(context):
+    """Fakes kubeconfig loading: only the contexts cp and ip exist."""
+    if context not in ("cp", "ip"):
+        raise ConfigException(f"Expected object with name {context}")
+    return SimpleNamespace(context=context, configuration=SimpleNamespace(host=KUBECONFIG_SERVER))
+
+
+class FakeDynamicClient:
+    """Fakes API discovery: CCLInfraPlane is served only where serves_ccluster is set."""
+
+    serves_ccluster = True
+
+    def __init__(self, api_client):
+        self.resources = SimpleNamespace(get=self._get)
+
+    def _get(self, api_version, kind):
+        if not FakeDynamicClient.serves_ccluster:
+            raise ResourceNotFoundError(f"No matches found for {api_version}/{kind}")
+        return SimpleNamespace(kind=kind)
+
+
 @pytest.fixture
-def infra(monkeypatch):
+def kubeconfig(monkeypatch):
+    FakeDynamicClient.serves_ccluster = True
+    monkeypatch.setattr(cli.k8s_config, "new_client_from_config", new_client_from_config)
+    monkeypatch.setattr(cli, "DynamicClient", FakeDynamicClient)
+
+
+def test_init_saves_the_control_plane(kubeconfig, config_file):
+    result = invoke("init", "--control-plane", "cp")
+    assert result.exit_code == 0, result.output
+    assert result.output == f"Initialized ccluster with control plane cp (saved to {config_file})\n"
+    assert yaml.safe_load(config_file.read_text()) == {"controlPlane": {"context": "cp"}}
+
+
+def test_init_again_replaces_the_control_plane(kubeconfig, config_file):
+    assert invoke("init", "-cp", "cp").exit_code == 0
+    assert invoke("init", "-cp", "ip").exit_code == 0
+    assert yaml.safe_load(config_file.read_text()) == {"controlPlane": {"context": "ip"}}
+
+
+def test_init_rejects_unknown_context(kubeconfig, config_file):
+    result = invoke("init", "-cp", "nope")
+    assert result.exit_code == 1
+    assert "Kubeconfig could not be loaded" in result.output
+    assert not config_file.exists()
+
+
+def test_init_rejects_cluster_without_ccluster_api(kubeconfig, config_file):
+    FakeDynamicClient.serves_ccluster = False
+    result = invoke("init", "-cp", "cp")
+    assert result.exit_code == 1
+    assert "Control plane cp does not serve CCLInfraPlane" in result.output
+    assert not config_file.exists()
+
+
+def test_init_requires_control_plane(kubeconfig):
+    result = invoke("init")
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+
+
+def test_config_path_follows_xdg_config_home(tmp_path, monkeypatch):
+    monkeypatch.delenv("CCLUSTER_CONFIG")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cli._config_path() == tmp_path / "ccluster" / "config.yaml"
+
+
+@pytest.fixture
+def infra(kubeconfig, monkeypatch, config_file):
+    """An infra plane to register, with init already run against the control plane cp."""
     plane = InfraPlane()
     FakeCCLClient.instances = []
-
-    def new_client_from_config(context):
-        if context not in ("cp", "ip"):
-            raise ConfigException(f"Expected object with name {context}")
-        return SimpleNamespace(context=context, configuration=SimpleNamespace(host=KUBECONFIG_SERVER))
-
-    monkeypatch.setattr(cli.k8s_config, "new_client_from_config", new_client_from_config)
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("controlPlane:\n  context: cp\n")
     monkeypatch.setattr(cli.k8s, "CoreV1Api", plane.core)
     monkeypatch.setattr(cli.k8s, "RbacAuthorizationV1Api", plane.rbac)
     monkeypatch.setattr(cli, "CCLClient", FakeCCLClient)
@@ -131,8 +205,7 @@ def infra(monkeypatch):
 
 def test_register_creates_admin_token_and_infraplane(infra):
     result = invoke(
-        "register", "edge-1", "--namespace", "tenant-a",
-        "--control-plane", "cp", "--infra-plane", "ip",
+        "register", "edge-1", "--namespace", "tenant-a", "--infra-plane", "ip",
     )
     assert result.exit_code == 0, result.output
     assert result.output == f"Registered CCLInfraPlane tenant-a/edge-1 for {KUBECONFIG_SERVER}\n"
@@ -159,7 +232,7 @@ def test_register_creates_admin_token_and_infraplane(infra):
 
 def test_register_short_options_and_server_override(infra):
     result = invoke(
-        "register", "edge-1", "-ns", "tenant-a", "-cp", "cp", "-ip", "ip",
+        "register", "edge-1", "-ns", "tenant-a", "-ip", "ip",
         "--server", "https://edge-1:6443",
     )
     assert result.exit_code == 0, result.output
@@ -168,7 +241,7 @@ def test_register_short_options_and_server_override(infra):
 
 def test_register_again_reuses_existing_objects(infra):
     infra.existing = {"ServiceAccount", "ClusterRoleBinding", "Secret"}
-    result = invoke("register", "edge-1", "-ns", "tenant-a", "-cp", "cp", "-ip", "ip")
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "ip")
     assert result.exit_code == 0, result.output
     assert infra.created == []
     assert FakeCCLClient.instances[0].applied["bearer_token"] == TOKEN
@@ -176,16 +249,31 @@ def test_register_again_reuses_existing_objects(infra):
 
 def test_register_fails_when_token_never_arrives(infra):
     infra.populated = False
-    result = invoke("register", "edge-1", "-ns", "tenant-a", "-cp", "cp", "-ip", "ip")
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "kube-system/ccluster-manager-token was not given a token" in result.output
     assert FakeCCLClient.instances == []
 
 
 def test_register_reports_unknown_context(infra):
-    result = invoke("register", "edge-1", "-ns", "tenant-a", "-cp", "cp", "-ip", "nope")
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "nope")
     assert result.exit_code == 1
     assert "Kubeconfig could not be loaded" in result.output
+
+
+def test_register_needs_init(infra, config_file):
+    config_file.unlink()
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1
+    assert "No control plane is configured; run ccluster init first" in result.output
+    assert infra.created == []
+
+
+def test_register_rejects_invalid_config(infra, config_file):
+    config_file.write_text("controlPlane: [")
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1
+    assert "is not valid YAML" in result.output
 
 
 def test_register_reports_api_errors(infra, monkeypatch):
@@ -193,14 +281,14 @@ def test_register_reports_api_errors(infra, monkeypatch):
         raise ApiException(status=403, reason="Forbidden")
 
     monkeypatch.setattr(FakeCCLClient, "ensure_namespace", forbidden)
-    result = invoke("register", "edge-1", "-ns", "tenant-a", "-cp", "cp", "-ip", "ip")
+    result = invoke("register", "edge-1", "-ns", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "API request failed (403): Forbidden" in result.output
 
 
-@pytest.mark.parametrize("missing", ["-ns", "-cp", "-ip"])
-def test_register_requires_namespace_and_both_planes(infra, missing):
-    args = {"-ns": "tenant-a", "-cp": "cp", "-ip": "ip"}
+@pytest.mark.parametrize("missing", ["-ns", "-ip"])
+def test_register_requires_namespace_and_infra_plane(infra, missing):
+    args = {"-ns": "tenant-a", "-ip": "ip"}
     del args[missing]
     result = invoke("register", "edge-1", *[x for kv in args.items() for x in kv])
     assert result.exit_code == 2

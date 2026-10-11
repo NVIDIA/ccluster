@@ -196,12 +196,12 @@ dependencies = [
     { name = "click" },
     { name = "kubernetes" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -209,13 +209,11 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "kubernetes", specifier = ">=30" },
     { name = "pydantic", specifier = ">=2.11" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "pyyaml", specifier = ">=6" },
-]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "certifi"
