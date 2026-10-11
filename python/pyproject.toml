@@ -18,6 +18,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+    "click>=8.1",
     "kubernetes>=30",
     "pydantic>=2.11",
 ]
@@ -29,6 +30,9 @@ classifiers = [
     "Topic :: System :: Clustering",
     "Typing :: Typed",
 ]
+
+[project.scripts]
+ccluster = "ccluster.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/NVIDIA/ccluster"

@@ -8,6 +8,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
+- `ccluster-py` installs a `ccluster` command built on click. It has no subcommands yet
+  and prints its usage.
 - `CCLComponentSet` status gains `componentSyncs`, which reports Argo CD's health and sync
   verdict for each released component and whether that verdict was reached on the spec the
   operator wrote.

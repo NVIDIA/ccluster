@@ -182,6 +182,15 @@ then uninstalls the set's charts in reverse order, one at a time, so the object 
 one has disappeared.
 `examples/create_component_set.py` is the same as a command.
 
+## Command line
+
+The package installs a `ccluster` command, built on click. It has no subcommands yet and
+prints its usage:
+
+```bash
+ccluster --help
+```
+
 ## What is generated from what
 
 | Python | Source | Via |
@@ -195,8 +204,8 @@ The CRD models carry controller-gen's constraints (name patterns, length and ite
 and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart
 values add nothing on the way from Go: optional scalars become `None` defaults.
 
-`ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
-(`entry`, `component`), `examples/` and `tests/` are hand-written.
+`ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
+command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.
 
 ## Regenerating
 
