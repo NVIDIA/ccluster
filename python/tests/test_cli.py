@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The ccluster command prints its usage and version."""
+"""The ccluster command prints its usage and version, and lists its subcommands."""
 
 import pytest
 from click.testing import CliRunner
@@ -20,3 +20,21 @@ def test_prints_version():
     result = CliRunner().invoke(main, ["--version"], prog_name="ccluster")
     assert result.exit_code == 0, result.output
     assert "version" in result.output
+
+
+def test_lists_register():
+    result = CliRunner().invoke(main, ["--help"], prog_name="ccluster")
+    assert result.exit_code == 0, result.output
+    assert "register" in result.output
+
+
+def test_register_describes_itself():
+    result = CliRunner().invoke(main, ["register", "--help"], prog_name="ccluster")
+    assert result.exit_code == 0, result.output
+    assert "Register a cluster with the control plane." in result.output
+
+
+def test_register_does_nothing_yet():
+    result = CliRunner().invoke(main, ["register"], prog_name="ccluster")
+    assert result.exit_code == 0, result.output
+    assert result.output == ""

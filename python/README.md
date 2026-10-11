@@ -184,8 +184,9 @@ one has disappeared.
 
 ## Command line
 
-The package installs a `ccluster` command, built on click. It has no subcommands yet and
-prints its usage:
+The package installs a `ccluster` command, built on click. Run without a subcommand, it
+prints its usage. `ccluster register`, which will register a cluster with the control
+plane, is a placeholder that does nothing yet.
 
 ```bash
 ccluster --help

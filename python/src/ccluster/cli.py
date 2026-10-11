@@ -3,8 +3,8 @@
 
 """The ccluster command line.
 
-main is the click group installed as the `ccluster` executable. It has no subcommands
-yet; run without one, it prints its usage.
+main is the click group installed as the `ccluster` executable; run without a
+subcommand, it prints its usage. register is a placeholder that does nothing yet.
 """
 
 from __future__ import annotations
@@ -22,3 +22,8 @@ def main(ctx: click.Context) -> None:
     """Manage ccluster infra planes and component sets."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
+
+
+@main.command()
+def register() -> None:
+    """Register a cluster with the control plane."""
