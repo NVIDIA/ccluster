@@ -185,12 +185,28 @@ one has disappeared.
 ## Command line
 
 The package installs a `ccluster` command, built on click. Run without a subcommand, it
-prints its usage. `ccluster register`, which will register a cluster with the control
-plane, is a placeholder that does nothing yet.
+prints its usage.
+
+`ccluster register` registers an infra-plane cluster with the control plane, reaching both
+through kubeconfig contexts:
 
 ```bash
-ccluster --help
+ccluster register edge-1 -ns tenant-a -cp kind-ccluster-cp -ip kind-ccluster-ip \
+    --server https://ccluster-ip-control-plane:6443
 ```
+
+On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`, binds it
+to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
+the same rights `argocd cluster add` grants), and reads the long-lived token the token
+controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
+it creates the namespace if needed and calls `apply_infraplane` with that token and the
+cluster CA. Anyone who can read `<name>-credentials` there is cluster-admin on the infra
+plane, so keep read access to that namespace's Secrets tight. Running it again reuses the
+same token.
+
+`--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
+the kubeconfig. Set it when that address is only reachable from your workstation, as with
+kind, whose kubeconfig points at `127.0.0.1`.
 
 ## What is generated from what
 

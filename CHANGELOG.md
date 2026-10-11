@@ -8,8 +8,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [Unreleased]
 
 ### Added
-- `ccluster-py` installs a `ccluster` command built on click. Its `register` subcommand,
-  which will register a cluster with the control plane, is a placeholder for now.
+- `ccluster-py` installs a `ccluster` command built on click. `ccluster register NAME -ns NS
+  -cp CONTEXT -ip CONTEXT [--server URL]` creates a cluster-admin ServiceAccount token on the
+  infra-plane cluster and registers it with the control plane as the CCLInfraPlane NAME.
 - `CCLComponentSet` status gains `componentSyncs`, which reports Argo CD's health and sync
   verdict for each released component and whether that verdict was reached on the spec the
   operator wrote.
