@@ -33,6 +33,14 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the rewritten source, which renders the same manifests, so the rewrite alone starts no
   sync.
 
+### Removed
+- **Breaking:** `supplementalGroupIds` is removed from the `compute_deployment`,
+  `inference_deployment` and `job_deployment` values. It added the host GIDs that AMD GPU
+  device nodes need, and no supported accelerator uses it. `inference_deployment` now
+  renders no pod `securityContext`. With the list empty it rendered
+  `securityContext: null`, which server-side apply rejects, so Argo CD never created the
+  Rollout.
+
 ### Fixed
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
   left over from the previous spec: it waits until Argo CD's `status.sync.comparedTo`
