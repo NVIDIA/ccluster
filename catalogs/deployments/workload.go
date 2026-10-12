@@ -42,10 +42,6 @@ type Workload struct {
 	// EnvVars are set in the container, after the chart's own variables.
 	EnvVars map[string]string `json:"envVars,omitempty"`
 
-	// SupplementalGroupIDs are added to the pod's security context, for accelerators
-	// whose device nodes are owned by a group other than the container's.
-	SupplementalGroupIDs []int64 `json:"supplementalGroupIds,omitempty"`
-
 	// DevShmSize is the size of the /dev/shm tmpfs, as a Kubernetes quantity. The
 	// chart ships 512Mi.
 	DevShmSize *string `json:"devShmSize,omitempty"`

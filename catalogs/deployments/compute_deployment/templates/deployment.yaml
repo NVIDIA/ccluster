@@ -166,14 +166,6 @@ spec:
 
       securityContext:
         fsGroup: 1001
-        # Need to add extra group ids if we are using an AMD gpu as the group id is not consistent
-        # More details on why this is need is found here: https://github.com/CentML/platform/issues/1917
-        {{- if .Values.supplementalGroupIds }}
-        supplementalGroups:
-          {{- range .Values.supplementalGroupIds }}
-          - {{ . }}
-          {{- end }}
-        {{- end }}
       tolerations:
         - effect: NoSchedule
           key: dedicated_compute

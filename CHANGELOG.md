@@ -34,6 +34,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   sync.
 
 ### Removed
+- **Breaking:** `supplementalGroupIds` is removed from the `compute_deployment`,
+  `inference_deployment` and `job_deployment` values. It added the host GIDs that AMD GPU
+  device nodes need, and no supported accelerator uses it. `inference_deployment` now
+  renders no pod `securityContext`. With the list empty it rendered
+  `securityContext: null`, which server-side apply rejects, so Argo CD never created the
+  Rollout.
 - **Breaking:** `compute_deployment` drops `sshUsername`, `sshPassword` and
   `sshGithubUsername`, and the Secret that held the password. `sshPublicKey` is now
   required and is the only way to log in, as it already was for every compute deployment
