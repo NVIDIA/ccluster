@@ -47,6 +47,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   TTL controller deleted a finished Job, self-heal created it again and it ran again. The
   finished Job now stays until the CCLComponentSet is deleted; its pods stay unless pod
   garbage collection deletes them first.
+- `inference_deployment` without `supplementalGroupIds` no longer fails to sync. The
+  Rollout carried `securityContext: null`, which server-side apply rejects, so Argo CD
+  never created it. The pod `securityContext` is now left out when there are no groups.
 
 ## [0.0.5] - 2026-10-05
 
