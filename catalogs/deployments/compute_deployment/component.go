@@ -60,18 +60,9 @@ type Values struct {
 	// into the pod. Required.
 	SSHInjectorImage string `json:"sshInjectorImage"`
 
-	// SSHUsername is the login name the launcher accepts.
-	SSHUsername *string `json:"sshUsername,omitempty"`
-
-	// SSHPassword is a login password, stored in a Secret. One of SSHPassword,
-	// SSHGithubUsername or SSHPublicKey is required.
-	SSHPassword *string `json:"sshPassword,omitempty"`
-
-	// SSHGithubUsername makes the launcher accept that GitHub user's public keys.
-	SSHGithubUsername *string `json:"sshGithubUsername,omitempty"`
-
-	// SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap.
-	SSHPublicKey *string `json:"sshPublicKey,omitempty"`
+	// SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap. It is the
+	// only way to log in. Required.
+	SSHPublicKey string `json:"sshPublicKey"`
 }
 
 // New returns the compute_deployment chart entry, installed into namespace with
@@ -84,8 +75,8 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
-// Validate implements catalogs.Validator: the required values that are unset, and that
-// at least one way to log in is configured.
+// Validate implements catalogs.Validator: the required values that are unset, and the
+// values that are malformed.
 func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
@@ -93,6 +84,7 @@ func (v Values) Validate() error {
 			deployments.Field{Name: "domain", Value: v.Domain},
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},
 			deployments.Field{Name: "sshInjectorImage", Value: v.SSHInjectorImage},
+			deployments.Field{Name: "sshPublicKey", Value: v.SSHPublicKey},
 		)),
 		deployments.ValidateVolumeMounts(v.VolumeMounts),
 	}
@@ -113,11 +105,5 @@ func (v Values) Validate() error {
 			errs = append(errs, err)
 		}
 	}
-	if !set(v.SSHPassword) && !set(v.SSHGithubUsername) && !set(v.SSHPublicKey) {
-		errs = append(errs, fmt.Errorf("%w: one of sshPassword, sshGithubUsername or sshPublicKey",
-			deployments.ErrMissingValue))
-	}
 	return errors.Join(errs...)
 }
-
-func set(s *string) bool { return s != nil && *s != "" }

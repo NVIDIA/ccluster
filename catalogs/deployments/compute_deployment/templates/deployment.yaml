@@ -109,27 +109,6 @@ spec:
           - name: "SSH_PUBLIC_KEY_FILE"
             value: "/authorized_keys"
           {{- end }}
-    
-          # if the customer has provided a github username, we need to set it as an env var
-          {{- if .Values.sshGithubUsername }}
-          - name: "SSH_GITHUB_USERNAME"
-            value: {{ .Values.sshGithubUsername | quote }}
-          {{- end }}
-
-          # if  the customer has provided a username we need to set it as an env var
-          {{- if .Values.sshUsername }}
-          - name: "SSH_USERNAME"
-            value: {{ .Values.sshUsername | quote }}
-          {{- end }}
-
-          # if the customer has provided a password we need to load the secret into an env var
-          {{- if .Values.sshPassword }}
-          - name: "SSH_PASSWORD"
-            valueFrom:
-              secretKeyRef:
-                key: ssh_password
-                name: ssh-password-{{ .Values.deploymentId }}
-          {{- end }}
 
           image: "{{ .Values.imageUrl }}"
           command:

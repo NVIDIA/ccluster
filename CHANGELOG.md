@@ -33,6 +33,12 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the rewritten source, which renders the same manifests, so the rewrite alone starts no
   sync.
 
+### Removed
+- **Breaking:** `compute_deployment` drops `sshUsername`, `sshPassword` and
+  `sshGithubUsername`, and the Secret that held the password. `sshPublicKey` is now
+  required and is the only way to log in, as it already was for every compute deployment
+  the platform creates.
+
 ### Fixed
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
   left over from the previous spec: it waits until Argo CD's `status.sync.comparedTo`

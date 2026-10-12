@@ -233,22 +233,10 @@ class Values(BaseModel):
     SSHInjectorImage carries the compute-ssh launcher that an init container copies
     into the pod. Required.
     """
-    ssh_username: Annotated[str | None, Field(alias="sshUsername")] = None
+    ssh_public_key: Annotated[str, Field(alias="sshPublicKey")]
     """
-    SSHUsername is the login name the launcher accepts.
-    """
-    ssh_password: Annotated[str | None, Field(alias="sshPassword")] = None
-    """
-    SSHPassword is a login password, stored in a Secret. One of SSHPassword,
-    SSHGithubUsername or SSHPublicKey is required.
-    """
-    ssh_github_username: Annotated[str | None, Field(alias="sshGithubUsername")] = None
-    """
-    SSHGithubUsername makes the launcher accept that GitHub user's public keys.
-    """
-    ssh_public_key: Annotated[str | None, Field(alias="sshPublicKey")] = None
-    """
-    SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap.
+    SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap. It is the
+    only way to log in. Required.
     """
 
 
