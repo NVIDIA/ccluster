@@ -87,16 +87,6 @@ spec:
       priorityClassName: {{ .Values.priorityClassName | quote }}
       {{- end }}
       # Security is enforced at namespace level via PSA "baseline".
-      {{- /* Without groups the key is left out: an empty securityContext renders as null, which server-side apply rejects for a Rollout. */}}
-      {{- with .Values.supplementalGroupIds }}
-      securityContext:
-        # Need to add extra group ids if we are using an AMD gpu as the group id is not consistent
-        # More details on why this is need is found here: https://github.com/CentML/platform/issues/1917
-        supplementalGroups:
-          {{- range . }}
-          - {{ . }}
-          {{- end }}
-      {{- end }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

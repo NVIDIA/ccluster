@@ -260,13 +260,6 @@ class Values(BaseModel):
     """
     EnvVars are set in the container, after the chart's own variables.
     """
-    supplemental_group_ids: Annotated[
-        list[int] | None, Field(alias="supplementalGroupIds")
-    ] = None
-    """
-    SupplementalGroupIDs are added to the pod's security context, for accelerators
-    whose device nodes are owned by a group other than the container's.
-    """
     dev_shm_size: Annotated[str | None, Field(alias="devShmSize")] = None
     """
     DevShmSize is the size of the /dev/shm tmpfs, as a Kubernetes quantity. The
