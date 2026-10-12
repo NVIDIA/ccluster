@@ -23,14 +23,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
-	"github.com/NVIDIA/ccluster/catalogs"
-	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
 // errNotReady is what a switchVerifier reports while it is off.
 var errNotReady = errors.New("not ready")
 
-// switchVerifier is a catalogs.Verifier the specs flip by hand, and which records the
+// switchVerifier is a check the specs flip by hand, and which records the
 // spec it was handed, so the controller's contract - run every Verifier against the
 // CCLClusterConfig, report the outcome - is tested without seventeen real charts.
 type switchVerifier struct {
@@ -77,12 +75,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		reconciler = &CCLClusterConfigReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Components: []components.Component{
-				{Chart: chartA, Verifier: a},
-				{Chart: chartB, Verifier: b},
-				// A tenant chart: no Verifier, and therefore not counted.
-				{Chart: "catalogs/deployments/c", Verifier: nil},
-			},
+			Verifiers: registry(
+				Verifier{Chart: chartA, Verify: a.Verify},
+				Verifier{Chart: chartB, Verify: b.Verify},
+			),
 		}
 
 		config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
@@ -188,10 +184,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 			close(met)
 		}()
 		rendezvous := &meetingVerifier{arrived: &arrived, met: met}
-		reconciler.Components = []components.Component{
-			{Chart: chartA, Verifier: rendezvous},
-			{Chart: chartB, Verifier: rendezvous},
-		}
+		reconciler.Verifiers = registry(
+			Verifier{Chart: chartA, Verify: rendezvous.Verify},
+			Verifier{Chart: chartB, Verify: rendezvous.Verify},
+		)
 
 		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -202,10 +198,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 
 	It("reports a panicking Verifier as failing without stopping the others", func() {
 		a.ready.Store(true)
-		reconciler.Components = []components.Component{
-			{Chart: chartA, Verifier: a},
-			{Chart: chartB, Verifier: panicVerifier{}},
-		}
+		reconciler.Verifiers = registry(
+			Verifier{Chart: chartA, Verify: a.Verify},
+			Verifier{Chart: chartB, Verify: panicVerifier{}.Verify},
+		)
 
 		_, err := reconciler.Reconcile(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
@@ -222,7 +218,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		// Waiting the real verifyTimeout out would make the suite slow; the deadline
 		// being there is the contract.
 		probe := &deadlineVerifier{}
-		reconciler.Components = []components.Component{{Chart: chartA, Verifier: probe}}
+		reconciler.Verifiers = registry(Verifier{Chart: chartA, Verify: probe.Verify})
 
 		start := time.Now()
 		_, err := reconciler.Reconcile(ctx, request)
@@ -298,10 +294,11 @@ func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclust
 	return nil
 }
 
-// Compile-time check that the test doubles are what the controller consumes.
-var (
-	_ catalogs.Verifier = &switchVerifier{}
-	_ catalogs.Verifier = &meetingVerifier{}
-	_ catalogs.Verifier = panicVerifier{}
-	_ catalogs.Verifier = &deadlineVerifier{}
-)
+// registry registers verifiers in order.
+func registry(verifiers ...Verifier) *Registry {
+	r := &Registry{}
+	for _, v := range verifiers {
+		r.Register(v.Chart, v.Verify)
+	}
+	return r
+}

@@ -214,25 +214,28 @@ the cluster's domain, which is also its SPIFFE trust domain. It is created once 
 exists — which is after the cluster has been registered with the control plane — and the
 operator is idle until then.
 
-### Verifiers live with the catalog
+### Checks live with the catalog, registration with the operator
 
-`catalogs/components` registers the charts in one list per catalog directory, and `All`
-concatenates them. Each `ClusterBase` entry carries, beside the chart's `Values`, the
-`Verifier` the operator runs for it; the operator is handed `ClusterBase` alone (the
-other lists carry `nil`, since nothing verifies them):
+A cluster_base chart package defines its check beside its `Values`, as a plain exported
+`Verify` function. The operator owns everything else: the signature and its contract,
 
 ```go
-type Verifier interface {
-    Verify(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClusterConfigSpec) error
-}
+type VerifyFunc func(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClusterConfigSpec) error
 ```
 
-Every cluster_base chart starts with `catalogs.DefaultVerifier`, which passes without
+the registry, how checks run, and how their outcome is reported. The catalog never imports
+controller code; `internal/controller/ip/verifiers.go` imports the chart packages and
+registers one check per chart in `ClusterBaseVerifiers()`, next to the RBAC markers the checks
+need; a chart is registered at most once, so its chart path identifies its result.
+`TestClusterBaseVerifiers` fails when the registry and `components.ClusterBase` disagree,
+so no cluster_base chart goes unverified.
+
+Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to
 look at. The contract those checks will follow is fixed now: they read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
-auto-mode; an Argo CD-based check would fail in self-mode. A Verifier returns `nil` when
+auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when
 the component passes, and otherwise an error whose text says why, which the condition
 shows next to the chart; the CCLClusterConfig spec is what it compares the cluster
 against.
@@ -240,7 +243,7 @@ against.
 ### The controller
 
 `CCLClusterConfigReconciler` (`internal/controller/ip/cclclusterconfig_controller.go`)
-runs every Verifier against the spec, concurrently. Each Verifier runs under its own
+runs every registered Verifier against the spec, concurrently. Each Verifier runs under its own
 30-second deadline, and a panic in one is recovered; both count as that component
 failing, so one faulty check can neither crash the operator nor hold up the others. The
 outcome is one condition:
@@ -623,7 +626,7 @@ infra-plane operator periodically re-verifies the live state it does not write (
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Every cluster_base chart still carries `catalogs.DefaultVerifier`;
+- **Real Verifiers.** Every cluster_base chart is still registered with `alwaysVerified`;
   the checks themselves (SPIRE's trust domain against `spec.domain`, workload readiness,
   issuer readiness) are not written yet.
 - **The control plane does not read `CCLClusterConfig`.** An infra-plane's verification

@@ -25,7 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
-	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
 // Condition types and reasons reported on CCLClusterConfig.status.
@@ -59,14 +58,14 @@ type CCLClusterConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// Components is the catalog registry the Verifiers are taken from, normally
-	// components.ClusterBase. Entries without a Verifier are skipped. Injectable so tests can
-	// drive the controller with a registry of their own.
-	Components []components.Component
+	// Verifiers is the registry of checks the controller runs, normally
+	// ClusterBaseVerifiers(). Injectable so tests can drive the controller with a registry
+	// of their own.
+	Verifiers *Registry
 }
 
 // RBAC is what the controller itself needs. A Verifier that reads a kind adds a marker
-// for it here; controller-gen only reads markers in this package. Everything stays
+// for it here or beside its registration in verifiers.go; controller-gen only reads markers in this package. Everything stays
 // read-only: the operator writes nothing but CCLClusterConfig status.
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs/status,verbs=get;update;patch
@@ -120,7 +119,7 @@ type failure struct {
 }
 
 // verify runs every registered Verifier against spec and returns how many there were
-// and the charts whose Verifier returned an error, in catalog order.
+// and the charts whose Verifier returned an error, in registration order.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's cached client, which is safe for concurrent use, so the pass takes as long
@@ -138,25 +137,22 @@ func (r *CCLClusterConfigReconciler) verify(
 ) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
-	errs := make([]error, len(r.Components))
+	verifiers := r.Verifiers.Verifiers()
+	errs := make([]error, len(verifiers))
 	var wg sync.WaitGroup
-	for i, component := range r.Components {
-		if component.Verifier == nil {
-			continue
-		}
-		total++
+	for i, v := range verifiers {
 		wg.Go(func() {
 			defer func() {
 				if p := recover(); p != nil {
 					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
-						"chart", component.Chart, "stack", string(debug.Stack()))
+						"chart", v.Chart, "stack", string(debug.Stack()))
 					errs[i] = fmt.Errorf("verifier panicked: %v", p)
 				}
 			}()
 
 			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 			defer cancel()
-			errs[i] = component.Verifier.Verify(verifyCtx, r, spec)
+			errs[i] = v.Verify(verifyCtx, r, spec)
 			if errs[i] != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 				errs[i] = fmt.Errorf("timed out after %s: %w", verifyTimeout, errs[i])
 			}
@@ -164,12 +160,12 @@ func (r *CCLClusterConfigReconciler) verify(
 	}
 	wg.Wait()
 
-	for i, component := range r.Components {
-		if component.Verifier != nil && errs[i] != nil {
-			failing = append(failing, failure{chart: component.Chart, err: errs[i]})
+	for i, v := range verifiers {
+		if errs[i] != nil {
+			failing = append(failing, failure{chart: v.Chart, err: errs[i]})
 		}
 	}
-	return total, failing
+	return len(verifiers), failing
 }
 
 // verifiedCondition turns the verification outcome into the Verified condition.
