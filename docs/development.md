@@ -119,10 +119,11 @@ When adding or changing a component:
 - A `cluster_base` component is also registered with the ip operator's verifier registry,
   `ClusterBaseVerifiers()` in `internal/controller/ip/verifiers.go`, in `components.ClusterBase`
   order (`TestClusterBaseVerifiers` fails otherwise). Start with `alwaysVerified`. A check
-  of the chart's own is an exported `Verify` function in the chart package with the
-  `ip.VerifyFunc` signature (the chart package never imports controller code), reads live
-  objects only (never Argo CD or Helm state), and reading a kind needs a
-  `+kubebuilder:rbac` marker in `internal/controller/ip` and `make manifests`.
+  of the chart's own is an exported `Verify` function beside `New` in the chart's
+  `component.go` with the `ip.VerifyFunc` signature (see `spire_crds`; the chart package
+  never imports controller code), reads live objects only (never Argo CD or Helm state),
+  and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`, the
+  kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`.
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).

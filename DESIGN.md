@@ -232,7 +232,7 @@ so no cluster_base chart goes unverified.
 
 Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to
-look at. The contract those checks will follow is fixed now: they read **live objects
+look at, as spire_crds does with `catalogs.CRDsEstablished`. Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when
@@ -626,8 +626,9 @@ infra-plane operator periodically re-verifies the live state it does not write (
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Every cluster_base chart is still registered with `alwaysVerified`;
-  the checks themselves (SPIRE's trust domain against `spec.domain`, workload readiness,
+- **Real Verifiers.** Only spire_crds has a check of its own (its CRDs are Established);
+  every other cluster_base chart is still registered with `alwaysVerified`, so the
+  remaining checks (SPIRE's trust domain against `spec.domain`, workload readiness,
   issuer readiness) are not written yet.
 - **The control plane does not read `CCLClusterConfig`.** An infra-plane's verification
   result stays in that cluster; surfacing it on the `CCLInfraPlane` would need the cp to
