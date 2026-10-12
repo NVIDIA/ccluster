@@ -116,11 +116,13 @@ When adding or changing a component:
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
   choices, not a universally deployable default.
-- A `cluster_base` component is registered in `components.ClusterBase` with a `catalogs.Verifier`
-  beside its `Values` (`TestClusterBaseHasVerifiers` fails otherwise). Start with
-  `catalogs.DefaultVerifier`; a check of the chart's own reads live objects only (never
-  Argo CD or Helm state), and reading a kind needs a `+kubebuilder:rbac` marker in
-  `internal/controller/ip` and `make manifests`.
+- A `cluster_base` component is also registered with the ip operator's verifier registry,
+  `ClusterBaseVerifiers()` in `internal/controller/ip/verifiers.go`, in `components.ClusterBase`
+  order (`TestClusterBaseVerifiers` fails otherwise). Start with `alwaysVerified`. A check
+  of the chart's own is an exported `Verify` function in the chart package with the
+  `ip.VerifyFunc` signature (the chart package never imports controller code), reads live
+  objects only (never Argo CD or Helm state), and reading a kind needs a
+  `+kubebuilder:rbac` marker in `internal/controller/ip` and `make manifests`.
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).

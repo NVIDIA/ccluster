@@ -10,7 +10,8 @@ SPDX-License-Identifier: Apache-2.0
 //
 // Adding a chart is three steps: create its directory with the Helm chart and a
 // component.go declaring Chart, Values and New, add one line to its directory's group
-// below (with catalogs.DefaultVerifier in ClusterBase), and run make python-generate.
+// below, and run make python-generate. A cluster_base chart is also registered with the
+// infra-plane operator's verifier registry in internal/controller/ip.
 // TestAllCoversTheTree fails when the directory and the list disagree, and the chart's
 // path under catalogs/ becomes its path under ccluster.catalogs in Python without
 // further registration.
@@ -22,7 +23,6 @@ package components
 import (
 	"slices"
 
-	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
@@ -50,57 +50,53 @@ import (
 )
 
 // Component is one chart: its directory relative to the repository root, which is also
-// the path Argo CD resolves and the chart's Python package; the zero value of its Values
-// type, from which its schema is reflected; and, for cluster_base charts, the Verifier
-// the infra-plane operator runs to check the component is installed and configured.
-// Every cluster_base chart starts with catalogs.DefaultVerifier, which always passes, until
-// it has a check of its own. Verifier is nil for the tenant charts, which nothing verifies.
+// the path Argo CD resolves and the chart's Python package; and the zero value of its
+// Values type, from which its schema is reflected.
 type Component struct {
-	Chart    string
-	Values   any
-	Verifier catalogs.Verifier
+	Chart  string
+	Values any
 }
 
 // NamespaceBase is the per-tenant namespace baseline the deployments charts assume is
 // in place.
 var NamespaceBase = []Component{
-	{namespacebase.Chart, namespacebase.Values{}, nil},
+	{namespacebase.Chart, namespacebase.Values{}},
 }
 
 // ClusterBase is the platform components every infra-plane cluster gets, sorted by
-// chart. Each carries the Verifier the infra-plane operator runs for it.
+// chart. The infra-plane operator's verifier registry must cover exactly these.
 var ClusterBase = []Component{
-	{argorollouts.Chart, argorollouts.Values{}, catalogs.DefaultVerifier{}},
-	{certmanager.Chart, certmanager.Values{}, catalogs.DefaultVerifier{}},
-	{externaldns.Chart, externaldns.Values{}, catalogs.DefaultVerifier{}},
-	{finalstack.Chart, finalstack.Values{}, catalogs.DefaultVerifier{}},
-	{fluentbit.Chart, fluentbit.Values{}, catalogs.DefaultVerifier{}},
-	{gpuoperator.Chart, gpuoperator.Values{}, catalogs.DefaultVerifier{}},
-	{ingressnginx.Chart, ingressnginx.Values{}, catalogs.DefaultVerifier{}},
-	{istio.Chart, istio.Values{}, catalogs.DefaultVerifier{}},
-	{keda.Chart, keda.Values{}, catalogs.DefaultVerifier{}},
-	{kubeprometheusstack.Chart, kubeprometheusstack.Values{}, catalogs.DefaultVerifier{}},
-	{longhorn.Chart, longhorn.Values{}, catalogs.DefaultVerifier{}},
-	{metricsserver.Chart, metricsserver.Values{}, catalogs.DefaultVerifier{}},
-	{networkoperator.Chart, networkoperator.Values{}, catalogs.DefaultVerifier{}},
-	{otelcollector.Chart, otelcollector.Values{}, catalogs.DefaultVerifier{}},
-	{prometheusadapter.Chart, prometheusadapter.Values{}, catalogs.DefaultVerifier{}},
-	{spire.Chart, spire.Values{}, catalogs.DefaultVerifier{}},
-	{spirecrds.Chart, spirecrds.Values{}, catalogs.DefaultVerifier{}},
+	{argorollouts.Chart, argorollouts.Values{}},
+	{certmanager.Chart, certmanager.Values{}},
+	{externaldns.Chart, externaldns.Values{}},
+	{finalstack.Chart, finalstack.Values{}},
+	{fluentbit.Chart, fluentbit.Values{}},
+	{gpuoperator.Chart, gpuoperator.Values{}},
+	{ingressnginx.Chart, ingressnginx.Values{}},
+	{istio.Chart, istio.Values{}},
+	{keda.Chart, keda.Values{}},
+	{kubeprometheusstack.Chart, kubeprometheusstack.Values{}},
+	{longhorn.Chart, longhorn.Values{}},
+	{metricsserver.Chart, metricsserver.Values{}},
+	{networkoperator.Chart, networkoperator.Values{}},
+	{otelcollector.Chart, otelcollector.Values{}},
+	{prometheusadapter.Chart, prometheusadapter.Values{}},
+	{spire.Chart, spire.Values{}},
+	{spirecrds.Chart, spirecrds.Values{}},
 }
 
 // Deployments is the tenant workload charts, sorted by chart.
 var Deployments = []Component{
-	{computedeployment.Chart, computedeployment.Values{}, nil},
-	{dynamodeployment.Chart, dynamodeployment.Values{}, nil},
-	{inferencedeployment.Chart, inferencedeployment.Values{}, nil},
-	{jobdeployment.Chart, jobdeployment.Values{}, nil},
+	{computedeployment.Chart, computedeployment.Values{}},
+	{dynamodeployment.Chart, dynamodeployment.Values{}},
+	{inferencedeployment.Chart, inferencedeployment.Values{}},
+	{jobdeployment.Chart, jobdeployment.Values{}},
 }
 
 // Resources is the cluster and tenant resources the workloads use, sorted by chart.
 var Resources = []Component{
-	{kaigpuqueues.Chart, kaigpuqueues.Values{}, nil},
-	{persistentvolume.Chart, persistentvolume.Values{}, nil},
+	{kaigpuqueues.Chart, kaigpuqueues.Values{}},
+	{persistentvolume.Chart, persistentvolume.Values{}},
 }
 
 // All is every chart in the catalog: the groups above, concatenated in that order. The

@@ -99,8 +99,8 @@ var _ = Describe("IP operator", Ordered, func() {
 	})
 
 	// The quickstart example is the CCLClusterConfig under test, so the documented
-	// object is the one proven to work. Every cluster_base component still carries the
-	// default Verifier, so the condition must come up True - which proves the chart's
+	// object is the one proven to work. Every cluster_base component is still registered
+	// with the default check, so the condition must come up True - which proves the chart's
 	// CRD and RBAC let a real manager reconcile the singleton and write its status.
 	It("should report the cluster_base components verified", func() {
 		By("applying the quickstart CCLClusterConfig")

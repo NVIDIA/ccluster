@@ -14,9 +14,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 - The first ccluster-ip-operator controller: it runs every `catalogs/cluster_base`
   component's `Verifier` against the `CCLClusterConfig` and reports the outcome as its
   `Verified` condition, naming each failing chart with the error its Verifier returned.
-  `catalogs.Verifier` is registered per `cluster_base` chart in `components.ClusterBase`;
-  every chart starts with `catalogs.DefaultVerifier`, which always passes, and real checks
-  follow. The ip ClusterRole is now generated from `internal/controller/ip`.
+  Each `cluster_base` chart is registered in the operator's verifier registry
+  (`internal/controller/ip`) with a check its chart package defines; every chart starts
+  with one that always passes, and real checks follow. The ip ClusterRole is now generated from `internal/controller/ip`.
 - `dynamo_deployment` gains `kvTransfer`, which selects the NIXL backend of the
   disaggregated pools, UCX or LIBFABRIC. LIBFABRIC requires `kvTransfer.efa`, which gives
   every worker one EFA device through DRA.

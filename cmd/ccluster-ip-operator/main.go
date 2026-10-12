@@ -19,7 +19,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
-	"github.com/NVIDIA/ccluster/catalogs/components"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
 	"github.com/NVIDIA/ccluster/internal/manager"
 )
@@ -48,9 +47,9 @@ func main() {
 // setupControllers registers every controller owned by the infra-plane operator.
 func setupControllers(mgr ctrl.Manager) error {
 	if err := (&ip.CCLClusterConfigReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Components: components.ClusterBase,
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Verifiers: ip.ClusterBaseVerifiers(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLClusterConfig: %w", err)
 	}

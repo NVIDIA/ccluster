@@ -27,7 +27,7 @@ Setup lives in `internal/controller/cp/suite_test.go` and, for the infra-plane o
 `internal/controller/ip/suite_test.go`. `make test` supplies the envtest assets and
 performs manifest generation, formatting and vetting before running tests.
 
-The ip suite drives `CCLClusterConfigReconciler` with an injected registry of test
+The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of test
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
 outcome) is proven without the seventeen real charts.
 

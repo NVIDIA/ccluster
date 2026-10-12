@@ -90,20 +90,3 @@ func TestGroupsMatchTheirDirectories(t *testing.T) {
 		}
 	}
 }
-
-// TestClusterBaseHasVerifiers: the infra-plane operator verifies every ClusterBase
-// component, so a cluster_base chart without a Verifier would silently be left out of
-// the check. The other groups are the other way round: nothing verifies them, and a
-// Verifier there would be dead code.
-func TestClusterBaseHasVerifiers(t *testing.T) {
-	for _, c := range ClusterBase {
-		if c.Verifier == nil {
-			t.Errorf("%s: cluster_base component without a Verifier", c.Chart)
-		}
-	}
-	for _, c := range slices.Concat(NamespaceBase, Deployments, Resources) {
-		if c.Verifier != nil {
-			t.Errorf("%s: Verifier on a chart outside cluster_base", c.Chart)
-		}
-	}
-}
