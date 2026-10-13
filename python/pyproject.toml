@@ -18,8 +18,10 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+    "click>=8.1",
     "kubernetes>=30",
     "pydantic>=2.11",
+    "pyyaml>=6",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -29,6 +31,9 @@ classifiers = [
     "Topic :: System :: Clustering",
     "Typing :: Typed",
 ]
+
+[project.scripts]
+ccluster = "ccluster.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/NVIDIA/ccluster"
@@ -43,7 +48,6 @@ module-name = "ccluster"
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "pyyaml>=6",
 ]
 
 [tool.pytest.ini_options]

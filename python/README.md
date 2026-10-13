@@ -182,6 +182,51 @@ then uninstalls the set's charts in reverse order, one at a time, so the object 
 one has disappeared.
 `examples/create_component_set.py` is the same as a command.
 
+## Command line
+
+The package installs a `ccluster` command, built on click. Run without a subcommand, it
+prints its usage.
+
+Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
+that it serves the ccluster API, and saves the context name to
+`~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
+named by `$CCLUSTER_CONFIG`). Only the context name is saved; credentials stay in the
+kubeconfig. Run it again to switch control planes.
+
+```bash
+ccluster init -cp kind-ccluster-cp
+```
+
+`ccluster register` then registers an infra-plane cluster, also named by its kubeconfig
+context, with that control plane:
+
+```bash
+ccluster register edge-1 -n tenant-a -ip kind-ccluster-ip \
+    --server https://ccluster-ip-control-plane:6443
+```
+
+On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`, binds it
+to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
+the same rights `argocd cluster add` grants), and reads the long-lived token the token
+controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
+it creates the namespace if needed and calls `apply_infraplane` with that token and the
+cluster CA. Anyone who can read `<name>-credentials` there is cluster-admin on the infra
+plane, so keep read access to that namespace's Secrets tight. Running it again reuses the
+same token.
+
+`--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
+the kubeconfig. Set it when that address is only reachable from your workstation, as with
+kind, whose kubeconfig points at `127.0.0.1`.
+
+`ccluster unregister` reverses `register` on the control plane: it deletes the
+CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. The infra
+plane is not touched; its ServiceAccount and token stay, so registering the cluster again
+reuses them.
+
+```bash
+ccluster unregister edge-1 -n tenant-a
+```
+
 ## What is generated from what
 
 | Python | Source | Via |
@@ -195,8 +240,8 @@ The CRD models carry controller-gen's constraints (name patterns, length and ite
 and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart
 values add nothing on the way from Go: optional scalars become `None` defaults.
 
-`ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/catalogs/__init__.py`
-(`entry`, `component`), `examples/` and `tests/` are hand-written.
+`ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
+command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.
 
 ## Regenerating
 
