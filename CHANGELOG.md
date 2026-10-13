@@ -7,6 +7,8 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-12
+
 ### Added
 - `CCLComponentSet` status gains `componentSyncs`, which reports Argo CD's health and sync
   verdict for each released component and whether that verdict was reached on the spec the
@@ -295,7 +297,8 @@ Template for future releases:
 ### Security
 -->
 
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/NVIDIA/ccluster/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/NVIDIA/ccluster/compare/v0.0.2...v0.0.3
