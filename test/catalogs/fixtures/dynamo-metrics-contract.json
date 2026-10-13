@@ -1,0 +1,228 @@
+{
+  "source": {
+    "repository": "CentML/platform",
+    "revision": "32a382723374a768c43ce4581afe8fe9b1044207",
+    "path": "catalog/src/catalog/dynamo_deployment/templates/service-monitor.yaml"
+  },
+  "roles": {
+    "frontend": {
+      "namespace": "user-1340",
+      "serviceNamespace": "user-1340",
+      "service": {
+        "selector": {
+          "platform.centml.ai/deployment-id": "1732",
+          "ccluster.nvidia.com/component-type": "frontend"
+        },
+        "ports": [
+          {
+            "name": "metrics",
+            "port": 8000,
+            "targetPort": 8000
+          }
+        ]
+      },
+      "monitor": {
+        "selector": {
+          "matchLabels": {
+            "platform.centml.ai/deployment-id": "1732",
+            "app.kubernetes.io/name": "test-dynamo-frontend-metrics"
+          }
+        },
+        "endpoints": [
+          {
+            "port": "metrics",
+            "path": "/metrics",
+            "interval": "15s",
+            "relabelings": [
+              {
+                "targetLabel": "deployment_id",
+                "replacement": "1732",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_platform_centml_ai_revision_number"
+                ],
+                "targetLabel": "revision_number",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_ccluster_nvidia_com_component_type"
+                ],
+                "targetLabel": "component",
+                "action": "replace"
+              }
+            ],
+            "metricRelabelings": [
+              {
+                "targetLabel": "deployment_id",
+                "replacement": "1732",
+                "action": "replace"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "worker": {
+      "namespace": "user-1340",
+      "serviceNamespace": "user-1340",
+      "service": {
+        "selector": {
+          "platform.centml.ai/deployment-id": "1732",
+          "ccluster.nvidia.com/component-type": "worker"
+        },
+        "ports": [
+          {
+            "name": "metrics",
+            "port": 9090,
+            "targetPort": 9090
+          }
+        ]
+      },
+      "monitor": {
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "test-dynamo-worker-metrics",
+            "platform.centml.ai/deployment-id": "1732"
+          }
+        },
+        "endpoints": [
+          {
+            "port": "metrics",
+            "path": "/metrics",
+            "interval": "15s",
+            "relabelings": [
+              {
+                "targetLabel": "deployment_id",
+                "replacement": "1732",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_platform_centml_ai_revision_number"
+                ],
+                "targetLabel": "revision_number",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_ccluster_nvidia_com_component_type"
+                ],
+                "targetLabel": "component",
+                "action": "replace"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "prefill": {
+      "namespace": "user-1340",
+      "serviceNamespace": "user-1340",
+      "service": {
+        "selector": {
+          "platform.centml.ai/deployment-id": "1732",
+          "ccluster.nvidia.com/component-type": "prefill"
+        },
+        "ports": [
+          {
+            "name": "metrics",
+            "port": 9090,
+            "targetPort": 9090
+          }
+        ]
+      },
+      "monitor": {
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "test-dynamo-prefill-metrics",
+            "platform.centml.ai/deployment-id": "1732"
+          }
+        },
+        "endpoints": [
+          {
+            "port": "metrics",
+            "path": "/metrics",
+            "interval": "15s",
+            "relabelings": [
+              {
+                "targetLabel": "deployment_id",
+                "replacement": "1732",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_platform_centml_ai_revision_number"
+                ],
+                "targetLabel": "revision_number",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_ccluster_nvidia_com_component_type"
+                ],
+                "targetLabel": "component",
+                "action": "replace"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "decode": {
+      "namespace": "user-1340",
+      "serviceNamespace": "user-1340",
+      "service": {
+        "selector": {
+          "platform.centml.ai/deployment-id": "1732",
+          "ccluster.nvidia.com/component-type": "decode"
+        },
+        "ports": [
+          {
+            "name": "metrics",
+            "port": 9090,
+            "targetPort": 9090
+          }
+        ]
+      },
+      "monitor": {
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "test-dynamo-decode-metrics",
+            "platform.centml.ai/deployment-id": "1732"
+          }
+        },
+        "endpoints": [
+          {
+            "port": "metrics",
+            "path": "/metrics",
+            "interval": "15s",
+            "relabelings": [
+              {
+                "targetLabel": "deployment_id",
+                "replacement": "1732",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_platform_centml_ai_revision_number"
+                ],
+                "targetLabel": "revision_number",
+                "action": "replace"
+              },
+              {
+                "sourceLabels": [
+                  "__meta_kubernetes_pod_label_ccluster_nvidia_com_component_type"
+                ],
+                "targetLabel": "component",
+                "action": "replace"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

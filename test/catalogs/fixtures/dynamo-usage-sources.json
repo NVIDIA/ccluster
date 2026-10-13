@@ -1,0 +1,175 @@
+{
+  "source": {
+    "repository": "CentML/platform",
+    "revision": "32a382723374a768c43ce4581afe8fe9b1044207",
+    "path": "api/src/services/dynamo_usage.py"
+  },
+  "metrics": [
+    {
+      "metric": "DYNAMO_TTFT",
+      "source": "dynamo_frontend_time_to_first_token_seconds",
+      "roles": [
+        "frontend"
+      ],
+      "kind": "histogram"
+    },
+    {
+      "metric": "DYNAMO_TPOT",
+      "source": "vllm:request_time_per_output_token_seconds",
+      "roles": [
+        "worker",
+        "decode"
+      ],
+      "kind": "histogram"
+    },
+    {
+      "metric": "DYNAMO_REQUEST_LATENCY",
+      "source": "dynamo_frontend_request_duration_seconds",
+      "roles": [
+        "frontend"
+      ],
+      "kind": "histogram"
+    },
+    {
+      "metric": "DYNAMO_OUTPUT_THROUGHPUT",
+      "source": "dynamo_frontend_output_tokens_total",
+      "roles": [
+        "frontend"
+      ],
+      "kind": "rate"
+    },
+    {
+      "metric": "DYNAMO_REQUESTS",
+      "source": "dynamo_frontend_requests_total",
+      "roles": [
+        "frontend"
+      ],
+      "kind": "outcomes"
+    },
+    {
+      "metric": "DYNAMO_QUEUE_DEPTH",
+      "source": "vllm:num_requests_waiting",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "sum"
+    },
+    {
+      "metric": "DYNAMO_RUNNING_REQUESTS",
+      "source": "vllm:num_requests_running",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "gauge"
+    },
+    {
+      "metric": "DYNAMO_KV_CACHE",
+      "source": "vllm:kv_cache_usage_perc",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "gauge"
+    },
+    {
+      "metric": "DYNAMO_KV_THROUGHPUT",
+      "source": "vllm:nixl_bytes_transferred_sum",
+      "roles": [
+        "decode"
+      ],
+      "kind": "rate"
+    },
+    {
+      "metric": "DYNAMO_KV_TRANSFER_LATENCY",
+      "source": "vllm:nixl_xfer_time_seconds",
+      "roles": [
+        "decode"
+      ],
+      "kind": "histogram"
+    },
+    {
+      "metric": "DYNAMO_KV_TRANSFERS",
+      "source": "vllm:nixl_xfer_time_seconds_count",
+      "roles": [
+        "decode"
+      ],
+      "kind": "rate"
+    },
+    {
+      "metric": "DYNAMO_KV_FAILURES",
+      "source": "vllm:nixl_num_failed_transfers_total",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "rate"
+    },
+    {
+      "metric": "DYNAMO_TARGETS",
+      "source": "up",
+      "roles": [
+        "frontend",
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "gauge"
+    },
+    {
+      "metric": "KEDA_ACTIVE_REQUESTS",
+      "source": "dynamo_frontend_active_requests",
+      "roles": [
+        "frontend"
+      ],
+      "kind": "gauge"
+    }
+  ],
+  "external": [
+    {
+      "metric": "CPU",
+      "source": "container_cpu_usage_seconds_total",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "cpu"
+    },
+    {
+      "metric": "MEMORY",
+      "source": "container_memory_working_set_bytes",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "memory"
+    },
+    {
+      "metric": "GPU",
+      "source": "DCGM_FI_PROF_GR_ENGINE_ACTIVE",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "gpu"
+    },
+    {
+      "metric": "GPU_MEMORY",
+      "source": "DCGM_FI_DEV_FB_USED",
+      "roles": [
+        "worker",
+        "prefill",
+        "decode"
+      ],
+      "kind": "gpu"
+    }
+  ]
+}

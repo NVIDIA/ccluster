@@ -9,6 +9,25 @@ SPDX-License-Identifier: Apache-2.0
 {{- printf "%s-frontend" .Values.name -}}
 {{- end -}}
 
+{{/* The Dynamo operator defaults the worker system/metrics port to 9090. */}}
+{{- define "dynamo.workerMetricsPort" -}}
+{{- index (.Values.envVars | default dict) "DYN_SYSTEM_PORT" | default "9090" | int -}}
+{{- end -}}
+
+{{/* Target relabeling also labels Prometheus-generated up. Read revision and role from
+     each discovered Pod so old and new revisions remain distinct during a rollout. */}}
+{{- define "dynamo.metricsLabels" -}}
+- targetLabel: deployment_id
+  replacement: {{ .Values.deploymentId | quote }}
+  action: replace
+- sourceLabels: [__meta_kubernetes_pod_label_platform_centml_ai_revision_number]
+  targetLabel: revision_number
+  action: replace
+- sourceLabels: [__meta_kubernetes_pod_label_ccluster_nvidia_com_component_type]
+  targetLabel: component
+  action: replace
+{{- end -}}
+
 {{/* Runtime env shared by the Frontend and every worker role. */}}
 {{- define "dynamo.runtimeEnv" -}}
 - name: DYN_EVENT_PLANE

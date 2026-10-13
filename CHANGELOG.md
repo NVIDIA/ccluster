@@ -46,6 +46,9 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   the platform creates.
 
 ### Fixed
+- Dynamo metrics now include worker, prefill and decode targets, with deployment,
+  Pod revision and component labels on every series including `up`. Frontend scraping
+  honors `DYN_HTTP_SVC_METRICS_PATH` and workers honor `DYN_SYSTEM_PORT`.
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
   left over from the previous spec: it waits until Argo CD's `status.sync.comparedTo`
   names the spec the operator wrote and no operation, including a PostSync hook, is
