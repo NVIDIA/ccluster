@@ -7,6 +7,11 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 
 ## [Unreleased]
 
+### Added
+- `spire_crds` has the first real check, `spirecrds.Verify`: it checks that the three SPIRE CRDs are
+  Established, through the new `catalogs.CRDsEstablished` helper. The ip operator can now
+  read CustomResourceDefinitions.
+
 ## [0.0.6] - 2026-10-12
 
 ### Added

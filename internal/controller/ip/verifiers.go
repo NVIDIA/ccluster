@@ -125,6 +125,6 @@ func ClusterBaseVerifiers() *Registry {
 	r.Register(otelcollector.Chart, alwaysVerified)
 	r.Register(prometheusadapter.Chart, alwaysVerified)
 	r.Register(spire.Chart, alwaysVerified)
-	r.Register(spirecrds.Chart, alwaysVerified)
+	r.Register(spirecrds.Chart, spirecrds.Verify)
 	return r
 }

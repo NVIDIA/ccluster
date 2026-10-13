@@ -7,6 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package spirecrds
 
 import (
+	"context"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
@@ -39,4 +43,19 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// CRDs are the CustomResourceDefinitions the upstream spire-crds chart installs, which
+// the spire chart's controller manager and final_stack's ClusterSPIFFEIDs depend on.
+var CRDs = []string{
+	"clusterfederatedtrustdomains.spire.spiffe.io",
+	"clusterspiffeids.spire.spiffe.io",
+	"clusterstaticentries.spire.spiffe.io",
+}
+
+// Verify checks that every CRD in CRDs is Established. The chart installs nothing else
+// and nothing in it depends on the cluster's domain, so there is no configuration to
+// compare against the CCLClusterConfig spec.
+func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	return catalogs.CRDsEstablished(ctx, r, CRDs...)
 }
