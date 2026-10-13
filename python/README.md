@@ -201,7 +201,7 @@ ccluster init -cp kind-ccluster-cp
 context, with that control plane:
 
 ```bash
-ccluster register edge-1 -ns tenant-a -ip kind-ccluster-ip \
+ccluster register edge-1 -n tenant-a -ip kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
 
@@ -224,7 +224,7 @@ plane is not touched; its ServiceAccount and token stay, so registering the clus
 reuses them.
 
 ```bash
-ccluster unregister edge-1 -ns tenant-a
+ccluster unregister edge-1 -n tenant-a
 ```
 
 ## What is generated from what

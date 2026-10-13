@@ -99,7 +99,7 @@ def init(control_plane: str) -> None:
 @click.argument("name")
 @click.option(
     "--namespace",
-    "-ns",
+    "-n",
     required=True,
     help="Control-plane namespace for the CCLInfraPlane and its credentials Secret; "
     "created if it does not exist.",
@@ -157,7 +157,7 @@ def register(
 @click.argument("name")
 @click.option(
     "--namespace",
-    "-ns",
+    "-n",
     required=True,
     help="Control-plane namespace of the CCLInfraPlane.",
 )
