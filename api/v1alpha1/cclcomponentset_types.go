@@ -16,8 +16,9 @@ import (
 // It is embedded into ComponentSpec inline, so chart, namespace and values remain
 // component-level fields on the wire. It exists as a type so that the catalog packages
 // under catalogs/ can build one from a typed, per-chart values struct — see
-// catalogs.Entry. Nothing validates a submitted CCLComponentSet against those typed
-// schemas: values here is as untyped as it has always been.
+// catalogs.Entry. The API server does not validate values against those typed schemas:
+// values here is as untyped as it has always been. The control-plane operator checks
+// them before deploying anything, and reports the outcome in the Validated condition.
 type ComponentEntry struct {
 	// chart is the chart's directory, relative to the root of the catalog repository.
 	//
@@ -37,8 +38,10 @@ type ComponentEntry struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Namespace string `json:"namespace"`
 
-	// values overrides the chart's defaults. It is passed to Helm verbatim; the
-	// operator does not interpret or validate it against the chart.
+	// values overrides the chart's defaults. It is passed to Helm verbatim. The
+	// operator checks it against the chart's typed values first - keys the chart's
+	// type does not describe are allowed - and deploys nothing for a CCLComponentSet
+	// whose values fail.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Values *apiextensionsv1.JSON `json:"values,omitempty"`
@@ -56,7 +59,9 @@ type ComponentSpec struct {
 	Name string `json:"name"`
 
 	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-	// in the same namespace as this CCLComponentSet, and must already be Available -
+	// in the same namespace as this CCLComponentSet, every component must name the same
+	// one - a CCLComponentSet spanning several infra planes is not supported yet - and
+	// it must already be Available -
 	// that is, its cluster credentials have been mirrored into the Argo CD namespace,
 	// which is what lets the generated Application address the cluster by name.
 	// +required
@@ -95,12 +100,15 @@ type CCLComponentSetStatus struct {
 	// conditions represent the current state of the CCLComponentSet resource.
 	//
 	// Condition types reported by the control-plane operator:
-	//   - "Validated": every component's infraPlaneRef resolves to an Available
-	//     CCLInfraPlane.
+	//   - "Validated": the spec passed the operator's checks - every chart is in the
+	//     catalog, every component's values pass that chart's checks, every
+	//     component names the same CCLInfraPlane and it is Available, and no generated
+	//     Argo CD Application name belongs to another CCLComponentSet. Nothing is
+	//     deployed until it is True.
 	//   - "ComponentsApplied": the Argo CD Applications for the components released so
-	//     far have been written.
+	//     far have been written. Deprecated: moving to status fields.
 	//   - "Progressing": whether the rollout has finished, and which component it is
-	//     waiting on if it has not.
+	//     waiting on if it has not. Deprecated: moving to status fields.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -155,7 +163,7 @@ type ComponentSyncStatus struct {
 // CCLComponentSet is the Schema for the cclcomponentsets API.
 //
 // It describes a bundle of Helm charts from the ccluster catalog, each with its own
-// values and its own destination cluster, rolled out in a fixed order. The operator does
+// values, rolled out in a fixed order onto one infra-plane cluster. The operator does
 // not install anything itself: it creates one Argo CD Application per component, in
 // order, and Argo CD does the work.
 type CCLComponentSet struct {

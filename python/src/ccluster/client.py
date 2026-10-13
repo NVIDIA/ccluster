@@ -254,9 +254,13 @@ class CCLClient:
     ) -> CCLComponentSet:
         """Create or update the CCLComponentSet called name.
 
-        components deploy in list order, each onto the CCLInfraPlane its infraPlaneRef
-        names; those planes must live in the client's namespace and already be Available.
-        One set may target several planes. Build components with
+        components deploy in list order onto the CCLInfraPlane their infraPlaneRefs
+        name. Every component must name the same plane, which must exist in the
+        client's namespace and be Available; a set spanning several planes is not
+        supported yet. The operator also checks every component's values against its
+        chart, deploys nothing for a set that fails any check, and reports the outcome
+        as the set's Validated condition.
+        Build components with
         ccluster.catalogs.component. Applying under the client's field manager means
         calling again with a different list updates the set in place.
 

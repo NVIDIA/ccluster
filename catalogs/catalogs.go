@@ -11,19 +11,23 @@ SPDX-License-Identifier: Apache-2.0
 // compile-time checking of the values it sets. There is no catalog-side mirror of the
 // API types: New returns the API type itself.
 //
-// # Nothing here is enforced at admission time
+// # Enforced at reconcile time, not admission time
 //
 // The CCLComponentSet CRD stores values as an untyped JSON blob with
-// x-kubernetes-preserve-unknown-fields. A CCLComponentSet written by hand bypasses these
-// types entirely and is forwarded to Helm verbatim, placeholders and all. These packages
-// help the callers that go through them; they are not a guarantee about what is in the
-// cluster.
+// x-kubernetes-preserve-unknown-fields, so the API server accepts whatever is written.
+// The control-plane operator checks every component against these types before it
+// deploys anything: it decodes the values into the chart's Values type and runs its
+// Validator, and a CCLComponentSet that fails is reported Validated=False rather than
+// forwarded to Helm. Entry runs the same Validator for Go callers, earlier. Keys a
+// Values type does not model pass both checks.
 //
 // # Conventions for adding a chart
 //
 // A component package exports a Chart constant, a Values struct and a New function. It
 // does not name itself: the component's name within a CCLComponentSet is the caller's, and
-// so is the namespace it installs into.
+// so is the namespace it installs into. Every chart is registered with the control-plane
+// operator's validator registry (internal/controller/cp), which is how its Values type
+// and Validator are applied to CCLComponentSets however they were written.
 //
 // A catalogs/cluster_base chart package may also export a Verify function, which checks
 // from live objects that the component is installed and configured for the cluster it
@@ -53,9 +57,10 @@ import (
 )
 
 // Validator is implemented by a chart's Values when the chart cannot be installed
-// without some of them. Entry calls Validate on any values that implement it, which is
-// the only point at which a missing required value is caught — the API server does not
-// check them, and Helm only fails once the chart is already being installed.
+// without some of them. Entry calls Validate on any values that implement it, and the
+// control-plane operator calls it on every CCLComponentSet component before deploying
+// it — the API server does not check them, and Helm only fails once the chart is
+// already being installed.
 type Validator interface {
 	Validate() error
 }

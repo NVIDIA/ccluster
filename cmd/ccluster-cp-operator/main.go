@@ -90,6 +90,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
+		Validators:      cp.CatalogValidators(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}

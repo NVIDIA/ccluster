@@ -26,7 +26,8 @@ type stubChartValues struct {
 }
 
 // validatingValues implements catalogs.Validator, the way kai_gpu_queues' and the
-// deployments charts' Values do. It is the only hook by which a chart's required values are ever checked.
+// deployments charts' Values do. It is how a chart's required values are checked, by
+// Entry here and by the control-plane operator for every CCLComponentSet.
 type validatingValues struct {
 	stubValues
 	err error

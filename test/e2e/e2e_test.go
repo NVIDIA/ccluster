@@ -552,7 +552,7 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(func(g Gomega) {
 				g.Expect(componentSetCondition(componentSetName, conditionValidated, "status")).To(Equal("True"))
 				g.Expect(componentSetCondition(componentSetName, conditionValidated, "reason")).
-					To(Equal("ComponentsAccepted"))
+					To(Equal("SpecValid"))
 			}, 2*time.Minute).Should(Succeed())
 
 			By("deleting both CRs while the operator can still run their finalizers")

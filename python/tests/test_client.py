@@ -444,7 +444,7 @@ def component_set_body(*conditions, generation=1, observed_generation=1):
     }
 
 
-VALIDATED = ("Validated", "True", "ComponentsAccepted")
+VALIDATED = ("Validated", "True", "SpecValid")
 APPLIED = ("ComponentsApplied", "True", "ApplicationsCreated")
 SYNCING = ("Progressing", "True", "WaveSyncing")
 COMPLETE = ("Progressing", "False", "RolloutComplete")

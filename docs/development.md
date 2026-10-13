@@ -107,7 +107,8 @@ When adding or changing a component:
   the API types or add a separate required-values parameter.
 - Optional scalars are pointers with `omitempty`, so explicit `false` survives marshaling.
   Required fields are non-pointer without `omitempty`. Add `Values.Validate()` when needed;
-  `catalogs.Entry` calls it. Hand-written CRs bypass this validation.
+  `catalogs.Entry` calls it for Go callers, and the cp operator calls it for every
+  CCLComponentSet.
 - Register the component in `catalogs/components/components.go`, in the list for its
   directory (`NamespaceBase`, `ClusterBase`, `Deployments` or `Resources`); `All`
   concatenates them, `hack/pyschema` and the tests read it, and `TestAllCoversTheTree`
@@ -116,6 +117,11 @@ When adding or changing a component:
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
   choices, not a universally deployable default.
+- Register every component with the cp operator's validator registry,
+  `CatalogValidators()` in `internal/controller/cp/validators.go`, in `components.All`
+  order (`TestCatalogValidators` fails otherwise), usually as
+  `Values[<chart>.Values]()`. A component that is not registered fails `Validated` with
+  `UnknownChart` and is never deployed.
 - A `cluster_base` component is also registered with the ip operator's verifier registry,
   `ClusterBaseVerifiers()` in `internal/controller/ip/verifiers.go`, in `components.ClusterBase`
   order (`TestClusterBaseVerifiers` fails otherwise). Start with `alwaysVerified`. A check

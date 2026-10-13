@@ -112,8 +112,9 @@ has marked the plane `Available`.
 `apply_component_set` server-side applies a `CCLComponentSet` in the client's namespace
 from a list of components built with `catalogs.component`, each with a chart's typed
 `Values` where the defaults are not wanted. Each component's `infraPlaneRef`
-names the registered cluster it deploys to, so one set may span several planes; those
-planes must be in the client's namespace and already `Available`. List order is rollout
+names the registered cluster it deploys to. Every component of a set must name the same
+plane, which must be in the client's namespace and already `Available`; a set spanning
+several planes is not supported yet. List order is rollout
 order. Because the set is applied under the same `ccluster-py` field manager, calling
 `apply_component_set` again with a different list updates it in place. The client's
 namespace is the set's own, on the control plane; a component's own namespace is on its

@@ -304,9 +304,11 @@ Each component is one Helm chart on one cluster:
   of every `CCLComponentSet` deploys from one catalog at one revision. A chart edit is
   therefore invisible until it is *pushed* to that revision — Argo CD's repo-server clones
   the repository itself.
-- **`infraPlaneRef` is same-namespace**, and the CCLInfraPlane must already be `Available`
-  *for its current generation*, because the Application addresses its destination **by
-  name** and that name only exists once the cluster Secret has been mirrored — and because
+- **`infraPlaneRef` is same-namespace, and every component names the same one.** A
+  `CCLComponentSet` spanning several infra planes is not supported yet; the field stays per
+  component so that lifting the limitation needs no schema change. The CCLInfraPlane must
+  already be `Available` *for its current generation*, because the Application addresses
+  its destination **by name** and that name only exists once the cluster Secret has been mirrored — and because
   `Available` is what guarantees the namespace's AppProject exists for the Application to
   belong to. The generation is part of it because a condition outlives the spec it was
   computed for: a plane whose `clusterCredentialsRef` has just changed still reports the
@@ -315,7 +317,8 @@ Each component is one Helm chart on one cluster:
 - **`values` preserves the component's Helm configuration.** It is `apiextensionsv1.JSON`
   with `x-kubernetes-preserve-unknown-fields`, serialized as canonical YAML in Argo CD's
   `helm.values`. This preserves explicit nulls in the recorded comparison. The operator
-  does not validate values against the chart.
+  validates values against the chart's typed `Values` before deploying anything
+  (see [Validation](#validation)).
 
 `chart`, `namespace` and `values` are grouped into a `ComponentEntry` struct, embedded into
 `ComponentSpec` with `json:",inline"`. The embed is anonymous because `encoding/json` inlines
@@ -323,7 +326,7 @@ only anonymous fields, so the three stay component-level fields on the wire and 
 is purely a Go-side one. It exists so the catalog packages can produce a `ComponentEntry`
 from a typed, per-chart values struct.
 
-### The typed catalog, and what it does not guarantee
+### The typed catalog
 
 Each chart under `catalogs/` has a Go package
 alongside it declaring its values as typed structs, plus a `New(namespace, values)` that
@@ -341,11 +344,10 @@ plausible set of all three — sample names and namespaces, chart defaults for e
 struct, and the rollout order carried over from the legacy Python catalog's sync waves — so that a caller has something to copy rather than an empty page.
 
 **None of this is enforced at admission.** The CRD's `values` is as untyped as it ever was, so
-a hand-written `CCLComponentSet` bypasses the typed layer entirely and is forwarded to Helm
-verbatim. The concrete hazard is a chart with required values, such as `kai_gpu_queues`, whose
-queues each need a name and a quota: a `CCLComponentSet` that omits them is accepted, and the
-mistake surfaces only when Argo CD syncs the chart. The only check is a `Values` type's `Validate()`,
-called by `catalogs.Entry` — which a caller only reaches by going through the Go layer.
+the API server accepts a `CCLComponentSet` whatever its values. The operator enforces the
+typed layer at reconcile time instead (see [Validation](#validation)), for every
+`CCLComponentSet` however it was written; `catalogs.Entry` runs the same `Validate()` for
+Go callers, earlier.
 
 The alternative, a discriminated union of every chart's schema inside `ComponentSpec`, would have
 bought API-server rejection at the cost of putting every chart's schema into the CRD, where
@@ -359,6 +361,43 @@ Applications.
 Ordering is **positional** rather than a `dependsOn` graph because nothing yet needs to
 express one. If that changes, the existing list order remains a valid topological order, so
 adding dependencies will not invalidate objects written today.
+
+### Validation
+
+Before writing anything to Argo CD, the operator sanity-checks the spec and reports the
+outcome as the `Validated` condition. It is meant to catch obvious mistakes, not to predict
+whether the rollout will succeed:
+
+| Check | Reason when it fails |
+| --- | --- |
+| Every `chart` is a catalog chart | `UnknownChart` |
+| Every component's values pass its chart's check | `InvalidValues` |
+| Every component names the same CCLInfraPlane | `MultipleInfraPlanes` |
+| That CCLInfraPlane exists in the namespace | `InfraPlaneNotFound` |
+| It is `Available` for its current generation | `InfraPlaneNotReady` |
+| No generated Application name belongs to another CCLComponentSet | `NameConflict` |
+
+Every check runs on every pass, and the message lists every failure, so one edit can fix them
+all. The reason is that of the first failing check in the order above. When all of them pass,
+the condition is `True/SpecValid`.
+
+The value checks come from a registry the cp operator owns, `CatalogValidators()` in
+`internal/controller/cp/validators.go`. It registers one check per catalog chart and
+`TestCatalogValidators` keeps it equal to `components.All`, so a chart that is not
+registered is not a catalog chart. A check decodes the values into the chart's `Values`
+type and runs its `Validate()` when it has one. Decoding is lenient: keys the type does not
+model pass, because a chart accepts more than its Go type describes, but a modelled key of
+the wrong JSON type fails.
+
+While `Validated` is `False`, nothing is written, patched or pruned. Applications already
+released keep the last valid spec, and the other conditions are set to
+`False/NotValidated` for the current generation, so none is left standing from an older
+one. No retry is scheduled: an edit, or a watched CCLInfraPlane or Application, triggers
+the next pass.
+
+A CCLInfraPlane whose status is behind its spec is reported as `InfraPlaneNotReady` with a
+message saying so, rather than "not yet Available": its `Available` condition still reads
+`True` from the previous spec, and that is what `kubectl` prints.
 
 ### The generated Application
 
@@ -570,7 +609,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | CRD | Condition | Meaning |
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
-| `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
+| `CCLComponentSet` | `Validated` | The spec passed the operator's checks (§4, Validation). Reasons: `SpecValid`, `UnknownChart`, `InvalidValues`, `MultipleInfraPlanes`, `InfraPlaneNotFound`, `InfraPlaneNotReady`, `NameConflict`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
 | `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |

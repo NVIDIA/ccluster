@@ -66,7 +66,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		}
 
 		// components is the two-component spec most specs use: one plain, one with
-		// values, on two different infra planes.
+		// values, on the one infra plane a CCLComponentSet supports.
 		components := func() []cclusternvidiacomv1alpha1.ComponentSpec {
 			return []cclusternvidiacomv1alpha1.ComponentSpec{
 				{
@@ -79,7 +79,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				},
 				{
 					Name:          secondComponent,
-					InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeB},
+					InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
 					ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
 						Chart:     "catalogs/cluster_base/keda",
 						Namespace: "keda",
@@ -307,6 +307,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Scheme:          k8sClient.Scheme(),
 				CatalogRepoURL:  repoURL,
 				CatalogRevision: revision,
+				Validators:      CatalogValidators(),
 			}
 		})
 
@@ -370,7 +371,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should create only the first component's Application until it is healthy", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 
 			componentSet := settle()
@@ -398,7 +398,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should never withdraw a released component that becomes unhealthy", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -416,7 +415,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should pass component values through as a Helm values document", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -435,7 +433,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should leave the sync policy to Argo CD", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 
@@ -453,7 +450,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should target the component's infra plane from the operator's catalog flags", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 
@@ -568,7 +564,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should restore an Application spec after it drifts", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
@@ -592,7 +587,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// wants - so the component completes on manifests nobody asked for, for good.
 		It("should restore a source field the operator does not model, and not complete until it has", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
@@ -634,7 +628,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// Component reports must identify comparisons that no longer match the desired spec.
 		It("should report every released component, and mark a verdict about an older spec", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 
@@ -674,7 +667,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should prune the Application of a component removed from the spec", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -701,8 +693,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		})
 
 		It("should report InfraPlaneNotFound and apply nothing when a plane is missing", func() {
-			createInfraPlane(planeA, true)
-			// planeB is deliberately absent.
+			// planeA is deliberately absent.
 			createComponentSet(components())
 
 			componentSet := settle()
@@ -710,25 +701,112 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			validated := conditionOf(componentSet, conditionTypeValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
 			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotFound))
-			Expect(validated.Message).To(ContainSubstring(planeB))
+			Expect(validated.Message).To(ContainSubstring(planeA))
 
 			Expect(applicationExists(firstComponent)).To(BeFalse())
 		})
 
-		It("should report InfraPlaneNotReady until the plane becomes Available", func() {
+		// One infra plane per CCLComponentSet is a limitation of the current design.
+		It("should reject components spread over more than one infra plane", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, false)
+			createInfraPlane(planeB, true)
+			spec := components()
+			spec[1].InfraPlaneRef.Name = planeB
+			createComponentSet(spec)
+
+			componentSet := settle()
+
+			validated := conditionOf(componentSet, conditionTypeValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(reasonMultipleInfraPlanes))
+			Expect(validated.Message).To(ContainSubstring(planeA + ", " + planeB))
+			Expect(validated.Message).To(ContainSubstring("not supported yet"))
+			Expect(applicationExists(firstComponent)).To(BeFalse())
+		})
+
+		It("should report every invalid component and apply nothing", func() {
+			createInfraPlane(planeA, true)
+			spec := components()
+			// A modelled key of the wrong JSON type.
+			spec[1].Values = &apiextensionsv1.JSON{
+				Raw: []byte(`{"keda":{"operator":{"replicaCount":"two"}}}`),
+			}
+			spec[0].Chart = "catalogs/cluster_base/not_a_chart"
+			createComponentSet(spec)
+
+			componentSet := settle()
+
+			validated := conditionOf(componentSet, conditionTypeValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(reasonUnknownChart))
+			Expect(validated.Message).To(ContainSubstring("not_a_chart"))
+			Expect(validated.Message).To(ContainSubstring(`component "` + secondComponent + `"`))
+
+			Expect(applicationExists(firstComponent)).To(BeFalse())
+			Expect(applicationExists(secondComponent)).To(BeFalse())
+		})
+
+		It("should accept keys a chart's Values type does not model", func() {
+			createInfraPlane(planeA, true)
+			spec := components()[:1]
+			spec[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"unmodelled":{"anything":true}}`)}
+			createComponentSet(spec)
+
+			Expect(conditionOf(settle(), conditionTypeValidated).Status).
+				To(Equal(metav1.ConditionTrue))
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+		})
+
+		// An invalid edit must not leave the conditions of the last valid generation
+		// standing beside it, and must not touch what that generation released.
+		It("should mark every condition for an invalid edit and leave released Applications alone", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			before := getApplication(firstComponent).Spec
+
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{
+				Raw: []byte(`{"argo-rollouts":"not an object"}`),
+			}
+			componentSet.Spec.Components = componentSet.Spec.Components[:1]
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeValidated).Reason).
+				To(Equal(reasonInvalidValues))
+			for _, conditionType := range []string{
+				conditionTypeValidated, conditionTypeComponentsApplied, conditionTypeProgressing,
+			} {
+				c := conditionOf(componentSet, conditionType)
+				Expect(c.ObservedGeneration).To(Equal(componentSet.Generation), conditionType)
+				if conditionType != conditionTypeValidated {
+					Expect(c.Status).To(Equal(metav1.ConditionFalse), conditionType)
+					Expect(c.Reason).To(Equal(reasonNotValidated), conditionType)
+				}
+			}
+
+			By("neither patching the first Application nor pruning the removed second")
+			Expect(getApplication(firstComponent).Spec).To(Equal(before))
+			Expect(applicationExists(secondComponent)).To(BeTrue())
+		})
+
+		It("should report InfraPlaneNotReady until the plane becomes Available", func() {
+			createInfraPlane(planeA, false)
 			createComponentSet(components())
 
 			componentSet := settle()
 			validated := conditionOf(componentSet, conditionTypeValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
 			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotReady))
+			Expect(applicationExists(firstComponent)).To(BeFalse())
 
 			By("making the plane Available")
 			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 			Expect(k8sClient.Get(ctx,
-				types.NamespacedName{Name: planeB, Namespace: namespace}, infraPlane)).To(Succeed())
+				types.NamespacedName{Name: planeA, Namespace: namespace}, infraPlane)).To(Succeed())
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
 				Type:               conditionTypeAvailable,
 				Status:             metav1.ConditionTrue,
@@ -756,7 +834,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// condition outlives the spec it was computed for.
 		It("should wait for a CCLInfraPlane whose status is behind its spec", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			Expect(conditionOf(settle(), conditionTypeValidated).Status).
 				To(Equal(metav1.ConditionTrue))
@@ -793,7 +870,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should report which component the rollout is waiting on", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 
 			componentSet := settle()
@@ -880,7 +956,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// A previous spec's Healthy/Synced status must not release the next component.
 		It("should not release the next component on a verdict reached for the previous spec", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -934,7 +1009,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should wait for pending and running operations despite a Healthy and Synced verdict", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
@@ -976,7 +1050,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should block rollout on a failed PostSync hook despite a Healthy and Synced verdict", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
@@ -1006,7 +1079,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should not attribute the previous source's failure to the current spec", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Degraded", "OutOfSync")
@@ -1045,7 +1117,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should not block a converged new Git revision on an older revision's failed sync", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
@@ -1077,7 +1148,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should report a failed sync and resume when a later sync of the same spec succeeds", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded, "OutOfSync")
@@ -1129,7 +1199,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// component after it.
 		It("should write a changed spec while Argo CD has an operation in flight", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -1192,7 +1261,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			}
 
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 
@@ -1311,12 +1379,11 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 
 			requests := reconciler.componentSetsForInfraPlane(ctx,
 				&cclusternvidiacomv1alpha1.CCLInfraPlane{
-					ObjectMeta: metav1.ObjectMeta{Name: planeB, Namespace: namespace},
+					ObjectMeta: metav1.ObjectMeta{Name: planeA, Namespace: namespace},
 				})
 			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: componentSetKey}))
 
@@ -1345,7 +1412,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should tear the components down in reverse order", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
@@ -1386,7 +1452,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should requeue while a component is still terminating", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 
@@ -1408,7 +1473,6 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		It("should refuse to touch an Application owned by another CCLComponentSet", func() {
 			createInfraPlane(planeA, true)
-			createInfraPlane(planeB, true)
 
 			By("planting an Application whose back-reference points at a CCLComponentSet elsewhere")
 			planted := &argocdv1alpha1.Application{
@@ -1430,9 +1494,13 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 			componentSet := settle()
 
-			applied := conditionOf(componentSet, conditionTypeComponentsApplied)
-			Expect(applied.Status).To(Equal(metav1.ConditionFalse))
-			Expect(applied.Reason).To(Equal(reasonApplicationConflict))
+			validated := conditionOf(componentSet, conditionTypeValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(reasonNameConflict))
+			Expect(validated.Message).To(ContainSubstring("other-namespace/" + componentSetName))
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
+				To(Equal(reasonNotValidated))
+			Expect(applicationExists(secondComponent)).To(BeFalse())
 
 			By("leaving the foreign Application untouched")
 			Expect(getApplication(firstComponent).Spec.Source.RepoURL).

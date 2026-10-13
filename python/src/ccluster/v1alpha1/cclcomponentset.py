@@ -14,7 +14,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 class LocalObjectReference(BaseModel):
     """
     infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-    in the same namespace as this CCLComponentSet, and must already be Available -
+    in the same namespace as this CCLComponentSet, every component must name the same
+    one - a CCLComponentSet spanning several infra planes is not supported yet - and
+    it must already be Available -
     that is, its cluster credentials have been mirrored into the Argo CD namespace,
     which is what lets the generated Application address the cluster by name.
     """
@@ -49,7 +51,9 @@ class ComponentSpec(BaseModel):
     ]
     """
     infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
-    in the same namespace as this CCLComponentSet, and must already be Available -
+    in the same namespace as this CCLComponentSet, every component must name the same
+    one - a CCLComponentSet spanning several infra planes is not supported yet - and
+    it must already be Available -
     that is, its cluster credentials have been mirrored into the Argo CD namespace,
     which is what lets the generated Application address the cluster by name.
     """
@@ -71,8 +75,10 @@ class ComponentSpec(BaseModel):
     """
     values: Any | None = None
     """
-    values overrides the chart's defaults. It is passed to Helm verbatim; the
-    operator does not interpret or validate it against the chart.
+    values overrides the chart's defaults. It is passed to Helm verbatim. The
+    operator checks it against the chart's typed values first - keys the chart's
+    type does not describe are allowed - and deploys nothing for a CCLComponentSet
+    whose values fail.
     """
 
 
@@ -218,12 +224,15 @@ class CCLComponentSetStatus(BaseModel):
     conditions represent the current state of the CCLComponentSet resource.
 
     Condition types reported by the control-plane operator:
-      - "Validated": every component's infraPlaneRef resolves to an Available
-        CCLInfraPlane.
+      - "Validated": the spec passed the operator's checks - every chart is in the
+        catalog, every component's values pass that chart's checks, every
+        component names the same CCLInfraPlane and it is Available, and no generated
+        Argo CD Application name belongs to another CCLComponentSet. Nothing is
+        deployed until it is True.
       - "ComponentsApplied": the Argo CD Applications for the components released so
-        far have been written.
+        far have been written. Deprecated: moving to status fields.
       - "Progressing": whether the rollout has finished, and which component it is
-        waiting on if it has not.
+        waiting on if it has not. Deprecated: moving to status fields.
 
     The status of each condition is one of True, False, or Unknown.
     """

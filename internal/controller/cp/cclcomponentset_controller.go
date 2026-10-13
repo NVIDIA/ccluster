@@ -8,6 +8,8 @@ package cp
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -29,19 +31,33 @@ import (
 
 // Condition types and reasons reported on CCLComponentSet.status.
 const (
-	// conditionTypeValidated reports whether every component's infraPlaneRef resolves
-	// to a CCLInfraPlane that Argo CD can already reach.
+	// conditionTypeValidated reports whether the spec passed the operator's sanity
+	// checks: catalog charts, valid values, a single CCLInfraPlane that exists and is
+	// Available, and free Application names. Nothing is written to Argo CD until it is
+	// True.
 	conditionTypeValidated = "Validated"
 	// conditionTypeProgressing reports on the rollout: false once every component has
-	// synced the spec the operator wrote and is healthy.
+	// synced the spec the operator wrote and is healthy. Deprecated: rollout state is
+	// moving to status fields.
 	conditionTypeProgressing = "Progressing"
 	// conditionTypeComponentsApplied reports on the Argo CD Applications that deploy
-	// the components onto their infra-plane clusters.
+	// the components onto their infra-plane clusters. Deprecated: write outcomes are
+	// moving to status fields.
 	conditionTypeComponentsApplied = "ComponentsApplied"
 
-	reasonComponentsAccepted = "ComponentsAccepted"
-	reasonInfraPlaneNotFound = "InfraPlaneNotFound"
-	reasonInfraPlaneNotReady = "InfraPlaneNotReady"
+	// Validated reasons, in the order their checks run. A failing Validated carries the
+	// reason of the first failing check.
+	reasonSpecValid           = "SpecValid"
+	reasonUnknownChart        = "UnknownChart"
+	reasonInvalidValues       = "InvalidValues"
+	reasonMultipleInfraPlanes = "MultipleInfraPlanes"
+	reasonInfraPlaneNotFound  = "InfraPlaneNotFound"
+	reasonInfraPlaneNotReady  = "InfraPlaneNotReady"
+	reasonNameConflict        = "NameConflict"
+
+	// reasonNotValidated marks the conditions that were not evaluated because Validated
+	// is False, so none of them is left standing from an older generation.
+	reasonNotValidated = "NotValidated"
 
 	reasonWaveSyncing     = "WaveSyncing"
 	reasonWaveSyncFailed  = "WaveSyncFailed"
@@ -95,6 +111,10 @@ type CCLComponentSetReconciler struct {
 	// root; the repository and revision themselves are not settable per component.
 	CatalogRepoURL  string
 	CatalogRevision string
+
+	// Validators is the registry of value checks, one per catalog chart, normally
+	// CatalogValidators(). A component whose chart is not registered fails validation.
+	Validators *ValidatorRegistry
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete
@@ -104,11 +124,14 @@ type CCLComponentSetReconciler struct {
 
 // Reconcile projects a CCLComponentSet onto a set of Argo CD Applications:
 //
-//  1. Every component's infraPlaneRef is resolved. The CCLInfraPlane must exist and be
-//     Available, because the generated Applications address their destination cluster by
-//     name, and that name only exists once its cluster Secret has been mirrored. An
-//     Available CCLInfraPlane also guarantees its namespace's AppProject exists, so the
-//     project is never checked here. Reported as the Validated condition.
+//  1. The spec is sanity-checked: every chart is a catalog chart whose values pass its
+//     registered check, every component names the same CCLInfraPlane, that plane exists
+//     and is Available, and no generated Application name belongs to another
+//     CCLComponentSet. The plane must be Available because the generated Applications
+//     address their destination cluster by name, and that name only exists once its
+//     cluster Secret has been mirrored. An Available CCLInfraPlane also guarantees its
+//     namespace's AppProject exists, so the project is never checked here. Reported as
+//     the Validated condition; nothing is written to Argo CD until it is True.
 //  2. One Argo CD Application is written per released component, into the
 //     CCLComponentSet's own namespace under that project. Reported as the
 //     ComponentsApplied condition.
@@ -146,16 +169,22 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			r.Patch(ctx, &componentSet, client.MergeFrom(base)))
 	}
 
-	reason, message, err := r.resolveInfraPlanes(ctx, &componentSet)
+	reason, message, err := r.validate(ctx, &componentSet)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if reason != "" {
-		// No requeue: only an edit to the CCLComponentSet or its CCLInfraPlanes can
-		// resolve this, and both are watched.
-		log.Info("Did not apply CCLComponentSet", "reason", reason, "message", message)
+		// No requeue: only an edit to the CCLComponentSet, its CCLInfraPlane or the
+		// conflicting Application can resolve this, and all three are watched. Nothing
+		// is written, patched or pruned; released Applications keep the last valid spec.
+		log.Info("Did not validate CCLComponentSet", "reason", reason, "message", message)
+		notEvaluated := "Not evaluated: the CCLComponentSet is not Validated"
 		return ctrl.Result{}, r.setConditions(ctx, &componentSet, componentSet.DeepCopy(),
-			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
+			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message),
+			condition(conditionTypeComponentsApplied, metav1.ConditionFalse,
+				reasonNotValidated, notEvaluated),
+			condition(conditionTypeProgressing, metav1.ConditionFalse,
+				reasonNotValidated, notEvaluated))
 	}
 
 	// The Applications already generated are both the record of what has been
@@ -183,8 +212,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	conditions := []metav1.Condition{
 		condition(conditionTypeValidated, metav1.ConditionTrue,
-			reasonComponentsAccepted, fmt.Sprintf(
-				"All %d components reference an available CCLInfraPlane",
+			reasonSpecValid, fmt.Sprintf("All %d components passed validation",
 				len(componentSet.Spec.Components))),
 		condition(conditionTypeComponentsApplied, appliedStatus, appliedReason, appliedMessage),
 	}
@@ -210,56 +238,128 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, retryErr
 }
 
-// resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
-// CCLComponentSet's namespace and is Available for its current generation.
+// validate sanity-checks componentSet before anything is written for it.
 //
-// An empty reason means every component resolved. A non-empty reason is a condition to
-// report, not an error to retry; a returned error is a genuine API failure.
-func (r *CCLComponentSetReconciler) resolveInfraPlanes(
+// Every check runs and every failure is reported, so one edit can fix them all: the
+// message lists them, and the reason is the first failing check's, in the order the
+// reason constants are declared. An empty reason means the spec is valid. A non-empty
+// reason is a condition to report, not an error to retry; a returned error is a genuine
+// API failure.
+func (r *CCLComponentSetReconciler) validate(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 ) (reason, message string, err error) {
-	// Components frequently share an infra plane; each distinct one is only looked up
-	// once. The cache makes the Get cheap, but not free.
-	checked := make(map[string]struct{}, len(componentSet.Spec.Components))
+	type failure struct{ reason, message string }
+	var failures []failure
+	fail := func(reason, format string, args ...any) {
+		failures = append(failures, failure{reason, fmt.Sprintf(format, args...)})
+	}
 
 	for _, component := range componentSet.Spec.Components {
-		name := component.InfraPlaneRef.Name
-		if _, done := checked[name]; done {
+		validate, known := r.Validators.Lookup(component.Chart)
+		if !known {
+			fail(reasonUnknownChart, "component %q: chart %q is not in the catalog",
+				component.Name, component.Chart)
 			continue
 		}
-		checked[name] = struct{}{}
-
-		var infraPlane cclusternvidiacomv1alpha1.CCLInfraPlane
-		key := client.ObjectKey{Namespace: componentSet.Namespace, Name: name}
-		switch err := r.Get(ctx, key, &infraPlane); {
-		case apierrors.IsNotFound(err):
-			return reasonInfraPlaneNotFound, fmt.Sprintf(
-				"Component %q references CCLInfraPlane %q, which does not exist",
-				component.Name, name), nil
-		case err != nil:
-			return "", "", err
-		}
-
-		// Neither case is an error: the CCLInfraPlane may simply not have been
-		// reconciled yet, and its watch brings us back when it is.
-		//
-		// They are reported apart because a plane whose status is behind its spec
-		// still prints Available=True - the printer column shows the condition as it
-		// stands - so calling it "not yet Available" sends whoever reads the status
-		// after a problem that is not there.
-		if infraPlane.Status.ObservedGeneration < infraPlane.Generation {
-			return reasonInfraPlaneNotReady, fmt.Sprintf(
-				"Component %q references CCLInfraPlane %q, whose status has not caught up "+
-					"with its spec", component.Name, name), nil
-		}
-		if !apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable) {
-			return reasonInfraPlaneNotReady, fmt.Sprintf(
-				"Component %q references CCLInfraPlane %q, which is not yet Available",
-				component.Name, name), nil
+		if err := validate(component.Values); err != nil {
+			fail(reasonInvalidValues, "component %q: %v", component.Name, err)
 		}
 	}
 
+	// One CCLInfraPlane per CCLComponentSet is a limitation of the current design, not
+	// of the API: infraPlaneRef stays per component so that lifting it needs no schema
+	// change.
+	var planes []string
+	for _, component := range componentSet.Spec.Components {
+		if name := component.InfraPlaneRef.Name; !slices.Contains(planes, name) {
+			planes = append(planes, name)
+		}
+	}
+	if len(planes) > 1 {
+		fail(reasonMultipleInfraPlanes, "components reference CCLInfraPlanes %s: a "+
+			"CCLComponentSet spanning more than one infra plane is not supported yet",
+			strings.Join(planes, ", "))
+	}
+
+	for _, name := range planes {
+		reason, message, err := r.checkInfraPlane(ctx, componentSet.Namespace, name)
+		if err != nil {
+			return "", "", err
+		}
+		if reason != "" {
+			fail(reason, "%s", message)
+		}
+	}
+
+	for _, component := range componentSet.Spec.Components {
+		name := applicationName(componentSet.Name, component.Name)
+		application := &argocdv1alpha1.Application{}
+		err := r.Get(ctx, client.ObjectKey{Namespace: componentSet.Namespace, Name: name}, application)
+		switch {
+		case apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err):
+			// Free, or Argo CD is not installed, which ComponentsApplied reports.
+			continue
+		case err != nil:
+			return "", "", err
+		}
+		if !componentSetOwner.ownedBy(application, componentSet) {
+			annotations := application.GetAnnotations()
+			fail(reasonNameConflict, "component %q: Application %q belongs to CCLComponentSet %s/%s",
+				component.Name, name, annotations[annotationComponentSetNamespace],
+				annotations[annotationComponentSetName])
+		}
+	}
+
+	if len(failures) == 0 {
+		return "", "", nil
+	}
+	order := []string{
+		reasonUnknownChart, reasonInvalidValues, reasonMultipleInfraPlanes,
+		reasonInfraPlaneNotFound, reasonInfraPlaneNotReady, reasonNameConflict,
+	}
+	for _, candidate := range order {
+		if slices.ContainsFunc(failures, func(f failure) bool { return f.reason == candidate }) {
+			reason = candidate
+			break
+		}
+	}
+	messages := make([]string, 0, len(failures))
+	for _, f := range failures {
+		messages = append(messages, f.message)
+	}
+	return reason, strings.Join(messages, "; "), nil
+}
+
+// checkInfraPlane checks that the CCLInfraPlane called name exists in namespace and is
+// Available for its current generation. An empty reason means it is.
+func (r *CCLComponentSetReconciler) checkInfraPlane(
+	ctx context.Context,
+	namespace, name string,
+) (reason, message string, err error) {
+	var infraPlane cclusternvidiacomv1alpha1.CCLInfraPlane
+	switch err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &infraPlane); {
+	case apierrors.IsNotFound(err):
+		return reasonInfraPlaneNotFound, fmt.Sprintf("CCLInfraPlane %q does not exist", name), nil
+	case err != nil:
+		return "", "", err
+	}
+
+	// Neither case is an error: the CCLInfraPlane may simply not have been reconciled
+	// yet, and its watch brings us back when it is.
+	//
+	// They are reported apart because a plane whose status is behind its spec still
+	// prints Available=True - the printer column shows the condition as it stands - so
+	// calling it "not yet Available" sends whoever reads the status after a problem
+	// that is not there.
+	if infraPlane.Status.ObservedGeneration < infraPlane.Generation {
+		return reasonInfraPlaneNotReady, fmt.Sprintf(
+			"CCLInfraPlane %q, whose status has not caught up with its spec", name), nil
+	}
+	if !apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable) {
+		return reasonInfraPlaneNotReady, fmt.Sprintf(
+			"CCLInfraPlane %q is not yet Available", name), nil
+	}
 	return "", "", nil
 }
 

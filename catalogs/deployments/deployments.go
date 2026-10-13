@@ -17,8 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 // from the release namespace instead of taking a user id.
 //
 // Every Values type here implements catalogs.Validator. The checks are the ones the
-// chart cannot make itself - required values, port ranges, path rules - and only run for
-// callers that go through the Go (or generated Python) types; see the catalogs package.
+// chart cannot make itself - required values, port ranges, path rules. The control-plane
+// operator runs them on every CCLComponentSet before deploying it, and catalogs.Entry
+// runs them for Go callers; see the catalogs package.
 package deployments
 
 import (
