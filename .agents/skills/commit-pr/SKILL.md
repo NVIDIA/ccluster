@@ -1,6 +1,6 @@
 ---
 name: commit-pr
-description: Commit work in ccluster and open a pull request. Use whenever the user asks to commit, write a commit message, push, or open/raise a PR. Covers branch naming, DCO sign-off, the plain-text commit body format, the Conventional Commit PR title, pre-commit checks and the CHANGELOG entry.
+description: Commit work in ccluster and open a pull request. Use whenever the user asks to commit, write a commit message, push, or open/raise a PR. Covers branch naming, DCO sign-off, the plain-text commit body format, the Conventional Commit PR title, pre-commit checks and the changelog fragment.
 ---
 
 # Commit and open a pull request
@@ -36,19 +36,22 @@ changed.
 `make python-build` dirties `python/pyproject.toml` with the local version. Do not commit
 that change: run `git checkout python/pyproject.toml` first.
 
-## 3. CHANGELOG
+## 3. Changelog fragment
 
-`CHANGELOG.md` follows Keep a Changelog. If the change is visible to a user of the
-operators, charts, catalog or Python package, add a bullet under `## [Unreleased]` in the
-matching subsection (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`).
-Mark incompatible changes `**Breaking:**`. Internal refactors, CI and docs-only changes
-usually need no entry. Stage the CHANGELOG with the same commit.
+PRs never edit `CHANGELOG.md`. If the change is visible to a user of the operators,
+charts, catalog or Python package, add one file `changelog.d/<short-topic>.md`, named after
+the branch topic, holding Keep a Changelog subsections (`Added`, `Changed`, `Deprecated`,
+`Removed`, `Fixed`, `Security`) and their bullets, with no version heading. Mark
+incompatible changes `**Breaking:**`. [`changelog.d/README.md`](../../../changelog.d/README.md)
+has the format. Internal refactors, CI and docs-only changes usually need no fragment.
+Stage the fragment with the same commit.
 
-The changelog is **append-only between releases**. Add your entry; do not reword,
-reorder, merge or delete entries other people wrote, and never touch a released
-version's section. The only exception is your own entry from the same unreleased cycle,
-which you may amend (for instance when a follow-up PR changes what you shipped). The
-`release` skill is the one place the `Unreleased` list gets consolidated.
+A fragment is a new file, so it never conflicts with a release and always ships in the
+first release cut after the PR merges; an edit to `CHANGELOG.md` can be merged by git
+into a section that was released while the PR was open. Do not edit other people's
+fragments. You may amend your own while it is still in `changelog.d/` (for instance when
+a follow-up PR changes what you shipped); once a release has collected it, add a new one.
+The `release` skill is the one place fragments are consolidated into `CHANGELOG.md`.
 
 ## 4. Stage and commit
 
