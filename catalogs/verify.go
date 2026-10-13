@@ -16,10 +16,12 @@ import (
 )
 
 // CRDsEstablished checks that every named CustomResourceDefinition exists and is
-// Established, meaning the API server serves its kind. It returns nil when all of them
-// are, and otherwise one error naming each CRD that is missing or not yet established,
-// so the condition message lists them all rather than the first. A read that fails for
-// any other reason is returned as it is.
+// Established, meaning the API server serves its kind, and is not being deleted: a CRD
+// keeps Established=True while its deletion waits on remaining custom resources, yet
+// the API server already refuses new ones. It returns nil when every CRD passes, and
+// otherwise one error naming each CRD that is missing, being deleted or not yet
+// established, so the condition message lists them all rather than the first. A read
+// that fails for any other reason is returned as it is.
 //
 // r must be able to read apiextensions.k8s.io/v1 CustomResourceDefinitions: the
 // operator's scheme registers the kind and its ClusterRole grants get, list and watch.
@@ -34,7 +36,10 @@ func CRDsEstablished(ctx context.Context, r client.Reader, names ...string) erro
 			}
 			return fmt.Errorf("reading CRD %s: %w", name, err)
 		}
-		if !established(&crd) {
+		switch {
+		case !crd.DeletionTimestamp.IsZero():
+			problems = append(problems, fmt.Sprintf("CRD %s being deleted", name))
+		case !established(&crd):
 			problems = append(problems, fmt.Sprintf("CRD %s not established", name))
 		}
 	}

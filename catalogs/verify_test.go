@@ -34,6 +34,15 @@ func crd(name string, status apiextensionsv1.ConditionStatus) *apiextensionsv1.C
 	return c
 }
 
+// deleting marks c as deleted while a finalizer still holds it, as the API server does
+// when custom resources of the CRD remain.
+func deleting(c *apiextensionsv1.CustomResourceDefinition) *apiextensionsv1.CustomResourceDefinition {
+	now := metav1.Now()
+	c.DeletionTimestamp = &now
+	c.Finalizers = []string{"customresourcecleanup.apiextensions.k8s.io"}
+	return c
+}
+
 // TestCRDsEstablished covers the states of a CRD envtest cannot cheaply hold still: an
 // API server establishes a CRD as soon as it accepts it.
 func TestCRDsEstablished(t *testing.T) {
@@ -65,6 +74,12 @@ func TestCRDsEstablished(t *testing.T) {
 			name:    "no Established condition yet",
 			objects: []client.Object{crd("a.example.com", ""), crd("b.example.com", "True")},
 			want:    "CRD a.example.com not established",
+		},
+		{
+			// Established stays True while deletion waits on remaining custom resources.
+			name:    "one CRD being deleted",
+			objects: []client.Object{deleting(crd("a.example.com", "True")), crd("b.example.com", "True")},
+			want:    "CRD a.example.com being deleted",
 		},
 		{
 			// Every problem is named, so a user sees the whole gap at once.
