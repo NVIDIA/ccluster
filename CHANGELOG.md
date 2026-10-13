@@ -4,8 +4,8 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+Changes merged since the latest release are in [`changelog.d/`](changelog.d/), one file per
+pull request, until a release collects them here.
 
 ### Added
 - `spire_crds` has the first real check, `spirecrds.Verify`: it checks that the three SPIRE CRDs are
@@ -15,13 +15,6 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 ## [0.0.6] - 2026-10-12
 
 ### Added
-- `ccluster-py` installs a `ccluster` command built on click. `ccluster init -cp CONTEXT`
-  saves the control plane's kubeconfig context after checking it serves the ccluster API.
-  `ccluster register NAME -n NS -ip CONTEXT [--server URL]` then creates a cluster-admin
-  ServiceAccount token on the infra-plane cluster and registers it with that control plane as
-  the CCLInfraPlane NAME.
-  `ccluster unregister NAME -n NS` deletes the CCLInfraPlane and its credentials Secret,
-  leaving the infra plane's ServiceAccount and token in place.
 - `CCLComponentSet` status gains `componentSyncs`, which reports Argo CD's health and sync
   verdict for each released component and whether that verdict was reached on the spec the
   operator wrote.
@@ -309,7 +302,6 @@ Template for future releases:
 ### Security
 -->
 
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...HEAD
 [0.0.6]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/NVIDIA/ccluster/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...v0.0.4

@@ -9,8 +9,9 @@ A release is one reviewed pull request followed by one GitHub Release, and this 
 all of it except the approval:
 
 1. **Phase 1, prepare.** Cut `release/vX.Y.Z` from `main`, agree the version with the
-   user, consolidate the `Unreleased` changelog entries under `X.Y.Z`, write the version
-   to the `VERSION` file, commit, and open the release PR with the `release` label.
+   user, consolidate the `changelog.d/` fragments into `CHANGELOG.md` under `X.Y.Z`,
+   write the version to the `VERSION` file, commit, and open the release PR with the
+   `release` label.
 2. **Approval.** Another maintainer reviews and merges the PR. The skill never merges it.
    The label makes CI run the full e2e tier, so the release commit is the one commit
    proven against real Argo CD.
@@ -58,10 +59,10 @@ the skill asks.
 
 - Latest release: `LAST` from Step 0 (`v0.0.0` if none; the first release is then `v0.1.0`
   unless the user says otherwise).
-- Read `## [Unreleased]` in `CHANGELOG.md`. Following Semantic Versioning on the `0.y.z`
-  line: any `**Breaking:**` entry or `Removed` section, or anything under `Added` or
-  `Changed`, suggests a minor bump; only `Fixed`, `Security` or `Deprecated` suggests a
-  patch bump.
+- Read every fragment in `changelog.d/` (all `*.md` except `README.md`). Following
+  Semantic Versioning on the `0.y.z` line: any `**Breaking:**` entry or `Removed`
+  section, or anything under `Added` or `Changed`, suggests a minor bump; only `Fixed`,
+  `Security` or `Deprecated` suggests a patch bump.
 - Cross-check against the merged PR titles since the last release
   (`git log --format='%s' ${LAST:+$LAST..}main`) so a `feat` or `!` title that never got a
   changelog entry is not missed; it needs one, see Step 3.
@@ -79,27 +80,32 @@ git checkout -b release/vX.Y.Z
 
 ### Step 3. Consolidate the changelog
 
-`CHANGELOG.md` follows Keep a Changelog. Between releases, PRs only **append** entries
-under `## [Unreleased]`; the release is the one point where that list is edited.
+`CHANGELOG.md` follows Keep a Changelog. Between releases, PRs never edit it: each adds a
+fragment `changelog.d/<short-topic>.md` (format in `changelog.d/README.md`). The release is
+the one point where fragments become changelog entries.
 
-- Read the full `Unreleased` section.
-- Add an entry for any user-visible merged PR since the last release that has none, from
-  its title and body. Do not invent detail that is not in them.
-- Consolidate: merge entries that describe the same feature from different angles, drop
-  entries superseded within the same cycle (a thing added and then renamed ships once,
-  under its final name), and keep one bullet per user-facing change. Keep the
-  `**Breaking:**` markers. Preserve the subsection order Added, Changed, Deprecated,
-  Removed, Fixed, Security and delete empty subsections.
-- Rename the heading to `## [X.Y.Z] - YYYY-MM-DD` (today, UTC) and insert a fresh, empty
-  `## [Unreleased]` above it.
-- Maintain the comparison links at the bottom of the file:
+- Read every fragment: `ls changelog.d/*.md | grep -v README.md`.
+- Add an entry for any user-visible merged PR since the last release that has no
+  fragment, from its title and body. Do not invent detail that is not in them.
+- Consolidate into one new section: merge entries that describe the same feature from
+  different angles, drop entries superseded within the same cycle (a thing added and then
+  renamed ships once, under its final name), and keep one bullet per user-facing change.
+  Keep the `**Breaking:**` markers. Preserve the subsection order Added, Changed,
+  Deprecated, Removed, Fixed, Security and leave out empty subsections.
+- Insert the section as `## [X.Y.Z] - YYYY-MM-DD` (today, UTC) above the latest released
+  version, below the preamble.
+- Delete the fragments it consumed, keeping `README.md`:
+  `git rm $(ls changelog.d/*.md | grep -v README.md)`. A PR that merges while the release
+  PR is open leaves its fragment on `main` for the next release. If you update the release
+  branch from `main`, consolidate and delete any fragment that arrives with it.
+- Add the comparison link for the new version at the top of the link list at the bottom
+  of the file:
 
 ```
-[Unreleased]: https://github.com/NVIDIA/ccluster/compare/vX.Y.Z...HEAD
 [X.Y.Z]: https://github.com/NVIDIA/ccluster/compare/vPREV...vX.Y.Z
 ```
 
-For the first release the second link is
+For the first release the link is
 `https://github.com/NVIDIA/ccluster/releases/tag/vX.Y.Z`.
 
 For a release candidate the heading is `## [X.Y.Z-rc.N] - date`. When the final release
@@ -115,7 +121,7 @@ The root `VERSION` file is the only committed version. Write the bare version to
 ```bash
 echo X.Y.Z > VERSION            # or X.Y.Z-rc.N
 make check-version VERSION=X.Y.Z
-git status --short              # only CHANGELOG.md and VERSION may be modified
+git status --short              # only CHANGELOG.md, VERSION and deleted changelog.d/ fragments
 ```
 
 Nothing else is bumped. `charts/*/chart/Chart.yaml` stays at `0.0.0-dev` and
@@ -128,7 +134,7 @@ The release PR has a fixed title, no description, and the `release` label. The t
 the squash-merge subject; the changelog is the description, so the PR body is empty.
 
 ```bash
-git add CHANGELOG.md VERSION
+git add CHANGELOG.md VERSION changelog.d
 git commit -s -m "release: new ccluster version vX.Y.Z"
 git push -u origin release/vX.Y.Z
 gh pr create --title "release: new ccluster version vX.Y.Z" --body "" --label release

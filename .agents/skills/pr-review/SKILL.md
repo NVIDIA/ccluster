@@ -65,10 +65,10 @@ findings: they will be overwritten.
 need is only proven by `make test-e2e`. Table tests are for states envtest cannot reach,
 not for coverage. Check that assertions test the contract, not the implementation.
 
-**Docs and metadata.** `CHANGELOG.md` has an `Unreleased` entry for user-visible changes,
-and the PR only adds entries: rewording, reordering or removing someone else's
-`Unreleased` entry, or touching a released version's section, is a finding, because the
-changelog is append-only until the `release` skill consolidates it.
+**Docs and metadata.** A user-visible change adds a fragment `changelog.d/<short-topic>.md`
+in the format of `changelog.d/README.md`. Outside a release PR, any edit to
+`CHANGELOG.md` or to someone else's fragment is a finding: only the `release` skill
+moves fragments into the changelog.
 `AGENTS.md`, `DESIGN.md` and `README.md` still describe what the code now does. The PR
 title is a valid Conventional Commit and the body follows the plain-text format (prose,
 blank line, hyphen bullets, no Markdown), since it becomes the commit message.
