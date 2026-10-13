@@ -40,6 +40,10 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
   renders no pod `securityContext`. With the list empty it rendered
   `securityContext: null`, which server-side apply rejects, so Argo CD never created the
   Rollout.
+- **Breaking:** `compute_deployment` drops `sshUsername`, `sshPassword` and
+  `sshGithubUsername`, and the Secret that held the password. `sshPublicKey` is now
+  required and is the only way to log in, as it already was for every compute deployment
+  the platform creates.
 
 ### Fixed
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
