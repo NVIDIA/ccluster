@@ -80,3 +80,41 @@ The monitoring changes leave the DynamoGraphDeployment Pod templates unchanged.
 Existing frontend monitor names and metric relabeling are retained. Rolling back
 removes worker scraping and the new target labels, so Usage availability falls
 back to its prior behavior without changing model Pods.
+
+## Loading protection and rollout
+
+Autoscaled aggregated workers have an additional KEDA `Value` trigger. It emits
+1 while a non-Ready `VllmDecodeWorker` has been started by the kubelet for less
+than 1800 seconds, with no restarts or deletion timestamp. The HPA then proposes
+the current replica count; a higher active-request recommendation still wins.
+Fixed pools and disaggregated serving do not receive this hold. Missing KSM data
+returns 0, so the hold depends on observability being available.
+
+`make test-catalogs` evaluates the rendered query with real promtool against 16
+scenarios, including the exact 1800-second boundary, long scheduling delays,
+unscheduled Pods, duplicate scrapes, frontend isolation and missing labels. It
+also renders the actual pinned kube-prometheus-stack dependency and checks the
+resulting KSM container arguments and ServiceMonitor discovery selectors.
+
+The Prometheus catalog exports exactly these Pod labels by default:
+`platform.centml.ai/deployment-id`, `platform.centml.ai/revision-number`,
+`ccluster.nvidia.com/component-type`, and `nvidia.com/dynamo-component`.
+An installation overriding `metricLabelsAllowlist` must retain these labels (or
+already export all Pod labels). Apply the cluster-base change first and verify
+the resulting `kube_pod_labels` series before enabling the workload hold. This
+changes KSM arguments and rolls KSM, not model Pods. A workload-only rollback
+can keep the additive KSM labels; rolling KSM back first disables the hold and
+resource attribution until the labels return.
+
+The shared Go/Python HPA model and both Helm charts now reject cooldowns outside
+0–3600 and Helm rejects non-integer values. Audit persisted ComponentSet values
+before upgrading and correct values outside that range. Valid wire values and
+defaults remain compatible with old clients/catalogs; Dynamo preserves explicit
+0, while inference retains its existing 0-to-1800 behavior. A rollback restores
+the older validation without requiring a state migration.
+
+AWS EFA acceptance must additionally demonstrate that replica count holds while
+a worker loads, active requests can still scale up, and scale-down resumes after
+Ready plus the configured HPA stabilization window (or the bounded loading
+grace expires). Confirm the operator's actual `nvidia.com/dynamo-component`
+labels and KEDA-generated HPA; query tests alone do not prove either controller.

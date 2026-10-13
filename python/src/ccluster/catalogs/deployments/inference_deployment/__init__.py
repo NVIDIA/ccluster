@@ -72,11 +72,13 @@ class HPA(BaseModel):
     2^53. The chart ships 2^53, which effectively disables the trigger, and renders
     any value outside that range as 2^53.
     """
-    cooldown_period: Annotated[int | None, Field(alias="cooldownPeriod")] = None
+    cooldown_period: Annotated[
+        int | None, Field(alias="cooldownPeriod", ge=0, le=3600)
+    ] = None
     """
-    CooldownPeriod is how many seconds KEDA waits after the last active trigger
-    before scaling down. The chart ships 1800. inference_deployment renders 0 as
-    1800; dynamo_deployment renders 0 as 0.
+    CooldownPeriod is the scale-down delay in seconds, from 0 to 3600. The
+    chart ships 1800. Dynamo applies it to HPA scale-down stabilization and
+    preserves 0; inference uses KEDA cooldown and renders 0 as 1800.
     """
 
 

@@ -18,6 +18,11 @@ kube-prometheus-stack:
     config:
       route: {}
       receivers: []
+  kube-state-metrics:
+    # Required for Dynamo loading hold and Usage resource attribution. Keep these
+    # entries when supplying a custom allowlist; avoid exporting every Pod label.
+    metricLabelsAllowlist:
+      - pods=[platform.centml.ai/deployment-id,platform.centml.ai/revision-number,ccluster.nvidia.com/component-type,nvidia.com/dynamo-component]
   grafana:
     enabled: false
   prometheus:
