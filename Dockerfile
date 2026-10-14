@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Build the manager binary.
+# Build the operator images and the compute-ssh launcher image.
 #
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the build, so under
 # `docker buildx build --platform linux/amd64,linux/arm64` Go cross-compiles natively via
@@ -9,8 +9,9 @@
 FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
-# CMD selects which operator to build: ccluster-cp-operator or ccluster-ip-operator.
-# The resulting binary is always named "manager" so the ENTRYPOINT below is shared.
+# CMD selects the binary under cmd/ to build: ccluster-cp-operator, ccluster-ip-operator
+# or compute-ssh. The resulting binary is always named "manager"; the compute-ssh stage
+# renames it.
 ARG CMD=ccluster-cp-operator
 
 WORKDIR /workspace
@@ -50,7 +51,23 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go-licenses save ./cmd/${CMD} --save_path licenses/go --ignore github.com/NVIDIA/ccluster && \
     mkdir -p licenses/go/stdlib && cp "$(go env GOROOT)/LICENSE" licenses/go/stdlib/
 
-# Use distroless as minimal base image to package the manager binary
+# The compute-ssh launcher, built with --build-arg CMD=compute-ssh --target compute-ssh.
+# compute_deployment's init container runs `/compute-ssh install <path>`, so the binary
+# path is part of the chart's contract.
+FROM gcr.io/distroless/static:nonroot AS compute-ssh
+LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.title="ccluster compute-ssh" \
+      org.opencontainers.image.description="SSH server that compute_deployment copies into the user container" \
+      org.opencontainers.image.licenses="Apache-2.0"
+COPY --from=builder /workspace/manager /compute-ssh
+COPY LICENSE THIRD_PARTY_NOTICES.md /licenses/
+COPY --from=builder /workspace/licenses/go /licenses/go
+USER 65532:65532
+
+ENTRYPOINT ["/compute-ssh"]
+
+# Use distroless as minimal base image to package the manager binary. This is the last
+# stage, so a build without --target produces an operator image.
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 # org.opencontainers.image.source is what links the GHCR package to the repository, so

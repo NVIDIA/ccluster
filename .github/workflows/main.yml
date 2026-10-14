@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Publish every merge to main, keyed by commit hash: both operator images as :<sha> and
-# both charts as <next>-dev.<sha> (pointing at the :<sha> images), all to GHCR.
+# Publish every merge to main, keyed by commit hash: both operator images and the
+# compute-ssh launcher image as :<sha>, and both charts as <next>-dev.<sha> (pointing at
+# the :<sha> operator images), all to GHCR.
 #
 # This is the build half of the release flow. release.yml never builds an image; it
 # retags what this workflow pushed. It also lets an unreleased main commit be deployed:
@@ -55,7 +56,7 @@ jobs:
 
       # GHCR namespaces are lowercase while github.repository_owner is "NVIDIA". Passing
       # REGISTRY also makes a fork publish into its own namespace.
-      - name: Build and push both images
+      - name: Build and push the images
         run: >
           make docker-buildx REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           BUILDX_ARGS="--cache-from type=gha,scope=images --cache-to type=gha,scope=images,mode=max"

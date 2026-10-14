@@ -7,8 +7,11 @@ and PRs use [commit-pr](../.agents/skills/commit-pr/SKILL.md). Deployment mechan
 
 ## Images and caching
 
-One Dockerfile builds both binaries, selected by `CMD`. Its build stage runs on
-`BUILDPLATFORM` and cross-compiles with `TARGETOS` / `TARGETARCH`, avoiding emulation.
+One Dockerfile builds every binary under `cmd/`, selected by `CMD`. The last stage is the
+operator image; the compute-ssh launcher image is the `compute-ssh` target
+(`--build-arg CMD=compute-ssh --target compute-ssh`), and `compute_deployment`'s init
+container depends on its `/compute-ssh` path. The build stage runs on `BUILDPLATFORM`
+and cross-compiles with `TARGETOS` / `TARGETARCH`, avoiding emulation.
 Go module and build caches are BuildKit cache mounts shared by successive builds on the
 builder. Do not add `go build -a`, which defeats incremental compilation.
 
@@ -18,13 +21,13 @@ CI retains image layers through `--cache-from/--cache-to type=gha`, passed via
 `reproducible-containers/buildkit-cache-dance`: staging multiple cache copies exhausted
 runner disk space. Cache mounts currently persist on the builder, not across CI runs.
 
-Use `make docker-build-cp` / `docker-build-ip` for local images. The corresponding
-`docker-buildx-*` targets build and push for `PLATFORMS` (default
-`linux/amd64,linux/arm64`); `make docker-buildx` does both. It always pushes because the
-multi-architecture manifest cannot be loaded into the local image store.
+Use `make docker-build-cp` / `docker-build-ip` / `docker-build-compute-ssh` for local
+images. The corresponding `docker-buildx-*` targets build and push for `PLATFORMS`
+(default `linux/amd64,linux/arm64`); `make docker-buildx` does all three. It always pushes
+because the multi-architecture manifest cannot be loaded into the local image store.
 
-`REGISTRY` defaults to `ghcr.io/nvidia`. `IMG_CP` and `IMG_IP` name the separate images;
-`IMG_TAG` defaults to the 12-character commit hash with `-dirty` for uncommitted changes.
+`REGISTRY` defaults to `ghcr.io/nvidia`. `IMG_CP`, `IMG_IP` and `IMG_COMPUTE_SSH` name the
+separate images; `IMG_TAG` defaults to the 12-character commit hash with `-dirty` for uncommitted changes.
 Do not introduce `:latest` or `:dev` tags. Kubernetes defaults `:latest` to pull policy
 `Always`, which defeats locally loaded kind images; commit tags use `IfNotPresent` by
 default. Reloading the same tag requires a Deployment restart.
@@ -33,7 +36,7 @@ default. Reloading the same tag requires a Deployment restart.
 
 | Artifact | Name/location |
 | --- | --- |
-| Images | `ghcr.io/nvidia/ccluster-{cp,ip}-operator` |
+| Images | `ghcr.io/nvidia/ccluster-{cp,ip}-operator`, `ghcr.io/nvidia/ccluster-compute-ssh` |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-{cp,ip}` |
 | Python | PyPI `ccluster-py`, imported as `ccluster` |
 | Catalog | This repository, selected by catalog revision |
@@ -42,8 +45,11 @@ The root `VERSION` file is the committed release version. A release PR changes i
 with the changelog; the release workflow stamps artifacts from its tag and
 `make check-version` checks that the two agree. Operator `Chart.yaml` versions stay
 `0.0.0-dev`, and `python/pyproject.toml` stays `0.0.0.dev0` in the committed tree.
+The exception is `compute_deployment`'s default `sshInjectorImage`: catalogs are read
+from git, so the release PR writes the launcher tag into its `values.yaml` next to
+`VERSION`, and a test fails when the two differ.
 
-- Every merge to `main` runs `main.yml`, publishing images as `:<sha>` and charts as
+- Every merge to `main` runs `main.yml`, publishing all three images as `:<sha>` and charts as
   `<next>-dev.<sha>`, where `next` is the committed version with its patch incremented.
   The packaged chart points at that image hash and catalog commit.
 - Publishing a GitHub Release `vX.Y.Z` runs `release.yml`. It retags the images already

@@ -186,6 +186,7 @@ dists to the release. Nothing in the tree is bumped.
 | Artifact | Location |
 | --- | --- |
 | Operator images | `ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z`, `ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z` (also tagged with the commit hash) |
+| compute-ssh launcher image | `ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z` (also tagged with the commit hash); `compute_deployment` defaults to it |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
 | Python package | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/), imported as `ccluster` |
 | Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |

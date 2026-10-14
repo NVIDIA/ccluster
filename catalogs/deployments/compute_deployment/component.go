@@ -56,9 +56,10 @@ type Values struct {
 	// VolumeMounts are additional existing claims mounted into the container.
 	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
 
-	// SSHInjectorImage carries the compute-ssh launcher that an init container copies
-	// into the pod. Required.
-	SSHInjectorImage string `json:"sshInjectorImage"`
+	// SSHInjectorImage carries the compute-ssh launcher (cmd/compute-ssh) that an init
+	// container copies into the pod. The image must provide /compute-ssh. Unset, the
+	// chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's VERSION.
+	SSHInjectorImage *string `json:"sshInjectorImage,omitempty"`
 
 	// SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap. It is the
 	// only way to log in. Required.
@@ -83,10 +84,13 @@ func (v Values) Validate() error {
 		deployments.MissingError(deployments.Missing(
 			deployments.Field{Name: "domain", Value: v.Domain},
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},
-			deployments.Field{Name: "sshInjectorImage", Value: v.SSHInjectorImage},
 			deployments.Field{Name: "sshPublicKey", Value: v.SSHPublicKey},
 		)),
 		deployments.ValidateVolumeMounts(v.VolumeMounts),
+	}
+	if v.SSHInjectorImage != nil && *v.SSHInjectorImage == "" {
+		errs = append(errs, fmt.Errorf("%w: sshInjectorImage is empty; leave it unset for the default",
+			deployments.ErrInvalidValue))
 	}
 	if v.RevisionNumber != nil && *v.RevisionNumber < 0 {
 		errs = append(errs, fmt.Errorf("%w: revisionNumber %d is negative",
