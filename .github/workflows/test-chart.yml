@@ -56,6 +56,9 @@ jobs:
           # the operator writes next to each CCLComponentSet.
           grep -q "application.namespaces: '\*'" /tmp/cp.yaml
           grep -q 'name: argocd-cmd-params-cm$' /tmp/cp.yaml
+          # ecr-anywhere rewrites the namespace base's ecr-image-pull Secret on every
+          # write; without this the namespace base never reports Synced.
+          grep -q 'resource.customizations.ignoreDifferences.Secret:' /tmp/cp.yaml
           grep -q 'applications.argoproj.io' /tmp/cp.yaml
           grep -q 'applicationsets.argoproj.io' /tmp/cp.yaml
           grep -q 'appprojects.argoproj.io' /tmp/cp.yaml

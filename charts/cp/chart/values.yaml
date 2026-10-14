@@ -250,3 +250,21 @@ argo-cd:
       ## manage Applications cluster-wide; the application controller's ClusterRole
       ## already covers every namespace.
       application.namespaces: "*"
+
+    cm:
+      ## Leave the data of ecr-anywhere managed image pull Secrets out of the diff.
+      ##
+      ## catalogs/namespace_base renders the ecr-image-pull Secret with placeholder
+      ## data and the ecr-anywhere.centml.ai/managed label. On a cluster that runs
+      ## ecr-anywhere, its mutating webhook replaces that data with ECR credentials on
+      ## every create and update, so the live Secret never matches the chart.
+      ## Server-side diff leaves webhook changes out of its predicted state and reports
+      ## the same difference. The namespace base then stays OutOfSync, self-heal keeps
+      ## re-syncing it, and because the operator releases the next component only on
+      ## Healthy *and* Synced, its CCLComponentSet never completes the rollout.
+      ##
+      ## Only Secrets carrying the label are matched. A sync still writes the
+      ## placeholder, and the webhook replaces it in the same request.
+      resource.customizations.ignoreDifferences.Secret: |
+        jqPathExpressions:
+        - select(.metadata.labels["ecr-anywhere.centml.ai/managed"] == "true") | .data
