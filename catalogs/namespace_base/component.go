@@ -29,7 +29,7 @@ type Values struct{}
 
 // New returns the namespace_base chart entry for namespace. It should be the first
 // component of a tenant's CCLComponentSet, since the workload charts rely on the
-// ecr-image-pull Secret and the model cache claim it creates.
+// model cache claim it creates.
 func New(
 	namespace string,
 	values Values,

@@ -190,8 +190,10 @@ spec:
               readOnly: {{ $mount.readOnly | default false }}
             {{- end }}
       enableServiceLinks: false
+      {{- with include "imagePullSecrets" .Values | trim }}
       imagePullSecrets:
-        {{- include "imagePullSecrets" .Values | trim | nindent 8 }}
+        {{- . | nindent 8 }}
+      {{- end }}
       tolerations:
         - effect: NoSchedule
           key: dedicated_compute

@@ -163,8 +163,10 @@ spec:
               subPath: authorized_keys
               name: authorized-keys
           {{- end }}
+      {{- with include "imagePullSecrets" .Values | trim }}
       imagePullSecrets:
-        {{- include "imagePullSecrets" .Values | trim | nindent 8 }}
+        {{- . | nindent 8 }}
+      {{- end }}
 
       securityContext:
         fsGroup: 1001

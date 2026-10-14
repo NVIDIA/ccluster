@@ -30,8 +30,7 @@ type Workload struct {
 	ImageURL string `json:"imageUrl"`
 
 	// ImagePullSecret, when set, creates a dockerconfigjson Secret for ImageURL's
-	// registry and adds it to the pod's imagePullSecrets, next to the namespace's
-	// ecr-image-pull secret.
+	// registry and adds it to the pod's imagePullSecrets.
 	ImagePullSecret *ImagePullSecret `json:"imagePullSecret,omitempty"`
 
 	// ImagePullSecretNames are Secrets in the release namespace, added to the pod's

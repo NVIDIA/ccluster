@@ -151,8 +151,7 @@ class Values(BaseModel):
     ] = None
     """
     ImagePullSecret, when set, creates a dockerconfigjson Secret for ImageURL's
-    registry and adds it to the pod's imagePullSecrets, next to the namespace's
-    ecr-image-pull secret.
+    registry and adds it to the pod's imagePullSecrets.
     """
     image_pull_secret_names: Annotated[
         list[str] | None, Field(alias="imagePullSecretNames")
