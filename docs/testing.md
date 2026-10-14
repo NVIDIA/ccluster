@@ -14,6 +14,7 @@ by changed path. See [Development](development.md) for generation and cluster se
 | Quick e2e | `make test-e2e` | Helm deployment, operator ServiceAccount RBAC and running watch wiring for both operators, without Argo CD reconciliation. |
 | Full e2e | `make test-e2e-full` | Quick tier plus real Argo CD rollout, ordered release/teardown, drift repair, values updates and tenancy. |
 | Charts | `make helm-generate`, `make helm-lint` | Generated chart consistency and rendering. CI also checks the vendored Argo CD CRDs and server-side diff setting. |
+| Catalog metrics | `make test-catalogs` | Dynamo chart contracts and real local Prometheus scraping; see [metrics parity](dynamo-metrics-parity.md) for the runtime acceptance boundary. |
 | Python | `make python-generate`, `make python-test` | Generated model consistency, example round-tripping and catalog value serialization. |
 | Manual host manager | `make run-cp` | Fast iteration under your kubeconfig identity; does not prove operator RBAC. |
 
