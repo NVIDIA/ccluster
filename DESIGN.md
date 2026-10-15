@@ -71,7 +71,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different

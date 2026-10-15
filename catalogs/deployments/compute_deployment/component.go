@@ -56,9 +56,10 @@ type Values struct {
 	// VolumeMounts are additional existing claims mounted into the container.
 	VolumeMounts []deployments.VolumeMount `json:"volumeMounts,omitempty"`
 
-	// SSHInjectorImage carries the compute-ssh launcher (cmd/compute-ssh) that an init
-	// container copies into the pod. The image must provide /compute-ssh. Unset, the
-	// chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's VERSION.
+	// SSHInjectorImage carries the compute-ssh launcher (compute-ssh/ in this chart)
+	// that an init container copies into the pod. The image must provide /compute-ssh.
+	// Unset, the chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's
+	// VERSION.
 	SSHInjectorImage *string `json:"sshInjectorImage,omitempty"`
 
 	// SSHPublicKey is an authorized_keys entry, mounted from a ConfigMap. It is the

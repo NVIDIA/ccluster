@@ -7,10 +7,11 @@ and PRs use [commit-pr](../.agents/skills/commit-pr/SKILL.md). Deployment mechan
 
 ## Images and caching
 
-One Dockerfile builds every binary under `cmd/`, selected by `CMD`. The last stage is the
-operator image; the compute-ssh launcher image is the `compute-ssh` target
-(`--build-arg CMD=compute-ssh --target compute-ssh`), and `compute_deployment`'s init
-container depends on its `/compute-ssh` path. The build stage runs on `BUILDPLATFORM`
+One Dockerfile builds every binary in this repository, selected by `PKG`, the Go package
+path (`./cmd/ccluster-cp-operator`, `./catalogs/deployments/compute_deployment/compute-ssh`).
+The last stage is the operator image; the compute-ssh launcher image is the `compute-ssh`
+target (`--target compute-ssh`), and `compute_deployment`'s init container depends on its
+`/compute-ssh` path. The build stage runs on `BUILDPLATFORM`
 and cross-compiles with `TARGETOS` / `TARGETARCH`, avoiding emulation.
 Go module and build caches are BuildKit cache mounts shared by successive builds on the
 builder. Do not add `go build -a`, which defeats incremental compilation.
@@ -91,7 +92,9 @@ The workflow files are the source of truth for exact path filters. Keep filters 
 with each job's inputs when changing build or generation dependencies.
 
 - `lint` covers Go and linter inputs; `test` and `test-e2e` cover Go, build, deployment
-  and test inputs.
+  and test inputs. `test-e2e` builds every image: the suite builds the operators and a
+  workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
+  PR rather than `main.yml`.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
 - The filtered `lint`, `test`, `test-e2e` and `test-python` jobs include `VERSION`, so a

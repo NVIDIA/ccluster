@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Image URLs to use for all building/pushing image targets. The two operators and the
 # compute-ssh launcher ship as separate images, built from the same Dockerfile via
-# --build-arg CMD.
+# --build-arg PKG, the Go package path.
 #
 # Every image is tagged with the commit it was built from - there is no :dev or :latest.
 # A release never rebuilds: `make docker-retag VERSION=X.Y.Z` adds the version tag to the
@@ -206,17 +206,19 @@ docker-build: docker-build-cp docker-build-ip ## Build both manager images.
 
 .PHONY: docker-build-cp
 docker-build-cp: ## Build docker image with the ccluster-cp-operator manager.
-	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} .
+	$(CONTAINER_TOOL) build --build-arg PKG=./cmd/ccluster-cp-operator -t ${IMG_CP} .
 
 .PHONY: docker-build-ip
 docker-build-ip: ## Build docker image with the ccluster-ip-operator manager.
-	$(CONTAINER_TOOL) build --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} .
+	$(CONTAINER_TOOL) build --build-arg PKG=./cmd/ccluster-ip-operator -t ${IMG_IP} .
 
 # The launcher is not part of docker-build: no operator deploy needs it, and
-# compute_deployment pulls it from IMG_COMPUTE_SSH's registry.
+# compute_deployment pulls it from IMG_COMPUTE_SSH's registry. Its source sits beside the
+# chart that runs it.
+COMPUTE_SSH_PKG := ./catalogs/deployments/compute_deployment/compute-ssh
 .PHONY: docker-build-compute-ssh
 docker-build-compute-ssh: ## Build the compute-ssh launcher image.
-	$(CONTAINER_TOOL) build --build-arg CMD=compute-ssh --target compute-ssh -t ${IMG_COMPUTE_SSH} .
+	$(CONTAINER_TOOL) build --build-arg PKG=$(COMPUTE_SSH_PKG) --target compute-ssh -t ${IMG_COMPUTE_SSH} .
 
 # A locally built image is invisible to a Kind cluster until it is loaded onto the
 # node - that, not a bad tag, is the usual cause of ErrImagePull on a `:dev` image.
@@ -260,15 +262,15 @@ docker-buildx: docker-buildx-cp docker-buildx-ip docker-buildx-compute-ssh ## Bu
 
 .PHONY: docker-buildx-cp
 docker-buildx-cp: ## Build and push the multi-platform ccluster-cp-operator image.
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-cp-operator -t ${IMG_CP} $(BUILDX_ARGS) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg PKG=./cmd/ccluster-cp-operator -t ${IMG_CP} $(BUILDX_ARGS) .
 
 .PHONY: docker-buildx-ip
 docker-buildx-ip: ## Build and push the multi-platform ccluster-ip-operator image.
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=ccluster-ip-operator -t ${IMG_IP} $(BUILDX_ARGS) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg PKG=./cmd/ccluster-ip-operator -t ${IMG_IP} $(BUILDX_ARGS) .
 
 .PHONY: docker-buildx-compute-ssh
 docker-buildx-compute-ssh: ## Build and push the multi-platform compute-ssh launcher image.
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg CMD=compute-ssh --target compute-ssh -t ${IMG_COMPUTE_SSH} $(BUILDX_ARGS) .
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg PKG=$(COMPUTE_SSH_PKG) --target compute-ssh -t ${IMG_COMPUTE_SSH} $(BUILDX_ARGS) .
 
 # Releasing an image is a retag, not a rebuild. `imagetools create` copies the manifest
 # list already in the registry under a second tag, server-side: nothing is pulled, and the

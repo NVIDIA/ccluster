@@ -223,9 +223,10 @@ class Values(BaseModel):
     """
     ssh_injector_image: Annotated[str | None, Field(alias="sshInjectorImage")] = None
     """
-    SSHInjectorImage carries the compute-ssh launcher (cmd/compute-ssh) that an init
-    container copies into the pod. The image must provide /compute-ssh. Unset, the
-    chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's VERSION.
+    SSHInjectorImage carries the compute-ssh launcher (compute-ssh/ in this chart)
+    that an init container copies into the pod. The image must provide /compute-ssh.
+    Unset, the chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's
+    VERSION.
     """
     ssh_public_key: Annotated[str, Field(alias="sshPublicKey")]
     """
