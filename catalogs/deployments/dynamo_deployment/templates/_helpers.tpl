@@ -70,10 +70,40 @@ SPDX-License-Identifier: Apache-2.0
 {{- end }}
 {{- end -}}
 
-{{- define "dynamo.kaiQueueLabel" -}}
-{{- if .kaiQueue }}
-kai.scheduler/queue: {{ .kaiQueue | quote }}
-{{- end }}
+{{/* Add the keys every Dynamo pod carries to the .annotations and .labels dicts, next to
+     the pod's own. Renders nothing. */}}
+{{- define "dynamo.setPodMetadata" -}}
+{{- $values := .Values -}}
+{{- $deploymentID := toString $values.deploymentId -}}
+{{- $revision := $values.revisionNumber | int64 | toString -}}
+{{- $_ := set .annotations "sidecar.istio.io/inject" "false" -}}
+{{- $_ := set .annotations "platform.centml.ai/deployment-id" $deploymentID -}}
+{{- $_ := set .annotations "platform.centml.ai/revision-number" $revision -}}
+{{- if not $values.enableLogging -}}
+{{- $_ := set .annotations "platform.centml.ai/log-exclude" "true" -}}
+{{- end -}}
+{{- $_ := set .labels "platform.centml.ai/deployment-id" $deploymentID -}}
+{{- $_ := set .labels "platform.centml.ai/revision-number" $revision -}}
+{{- with $values.kaiQueue -}}
+{{- $_ := set $.labels "kai.scheduler/queue" (toString .) -}}
+{{- end -}}
+{{- range $key, $value := $values.userAnnotations -}}
+{{- $_ := set $.annotations (printf "ccluster.nvidia.com/user-%s" $key) (toString $value) -}}
+{{- $_ := set $.labels (printf "ccluster.nvidia.com/user-%s" $key) (toString $value) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Render a pod's labels or annotations: the chart's own keys in .chart, then each key
+     of .caller (podLabels or podAnnotations) the chart does not set. The chart's value
+     wins, so a caller cannot move a selector or a key another chart reads. */}}
+{{- define "dynamo.podMetadata" -}}
+{{- $merged := .chart -}}
+{{- range $key, $value := .caller -}}
+{{- if not (hasKey $merged $key) -}}
+{{- $_ := set $merged $key (toString $value) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $merged -}}
 {{- end -}}
 
 {{- define "dynamo.kaiPodScheduling" -}}
@@ -144,33 +174,19 @@ priorityClassName: {{ .priorityClassName | quote }}
   # Omit replicas because KEDA owns the aggregated worker count.
   scalingAdapter: {}
   podTemplate:
+    {{- /* Worker-level rollout settings consumed by the operator. dynamo.setPodMetadata
+           also opts the pod out of sidecar injection: raw Frontend/Worker TCP is
+           incompatible with STRICT mesh mTLS. */}}
+    {{- $annotations := dict
+          "nvidia.com/deployment-rolling-update-max-surge" (.Values.rolloutStrategy.maxSurge | int | toString)
+          "nvidia.com/deployment-rolling-update-max-unavailable" (.Values.rolloutStrategy.maxUnavailable | int | toString) }}
+    {{- $labels := dict "ccluster.nvidia.com/component-type" "worker" }}
+    {{- include "dynamo.setPodMetadata" (dict "Values" .Values "annotations" $annotations "labels" $labels) }}
     metadata:
       annotations:
-        # Worker-level rollout settings consumed by the operator.
-        nvidia.com/deployment-rolling-update-max-surge: "{{ .Values.rolloutStrategy.maxSurge | int }}"
-        nvidia.com/deployment-rolling-update-max-unavailable: "{{ .Values.rolloutStrategy.maxUnavailable | int }}"
-        # Raw Frontend/Worker TCP is incompatible with STRICT mesh mTLS.
-        sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-        platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
-        {{- if not .Values.enableLogging }}
-        platform.centml.ai/log-exclude: "true"
-        {{- end }}
-        {{- if .Values.userAnnotations }}
-        {{- range $key, $value := .Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "dynamo.podMetadata" (dict "chart" $annotations "caller" .Values.podAnnotations) | nindent 8 }}
       labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-        platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
-        ccluster.nvidia.com/component-type: worker
-        {{- include "dynamo.kaiQueueLabel" .Values | nindent 8 }}
-        {{- if .Values.userAnnotations }}
-        {{- range $key, $value := .Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "dynamo.podMetadata" (dict "chart" $labels "caller" .Values.podLabels) | nindent 8 }}
     spec:
       {{- include "dynamo.kaiPodScheduling" .Values | nindent 6 }}
       {{- if .Values.enableNodeModelCache }}
@@ -295,34 +311,19 @@ priorityClassName: {{ .priorityClassName | quote }}
   type: {{ $role }}
   replicas: {{ $pool.replicas | default 1 | int }}
   podTemplate:
+    {{- $annotations := dict
+          "nvidia.com/deployment-rolling-update-max-surge" ($root.Values.rolloutStrategy.maxSurge | int | toString)
+          "nvidia.com/deployment-rolling-update-max-unavailable" ($root.Values.rolloutStrategy.maxUnavailable | int | toString) }}
+    {{- $labels := dict "ccluster.nvidia.com/component-type" (toString $role) }}
+    {{- if $efa }}
+    {{- $_ := set $labels "ccluster.nvidia.com/kv-transfer" "efa" }}
+    {{- end }}
+    {{- include "dynamo.setPodMetadata" (dict "Values" $root.Values "annotations" $annotations "labels" $labels) }}
     metadata:
       annotations:
-        nvidia.com/deployment-rolling-update-max-surge: "{{ $root.Values.rolloutStrategy.maxSurge | int }}"
-        nvidia.com/deployment-rolling-update-max-unavailable: "{{ $root.Values.rolloutStrategy.maxUnavailable | int }}"
-        sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
-        platform.centml.ai/revision-number: "{{ $root.Values.revisionNumber | int64 }}"
-        {{- if not $root.Values.enableLogging }}
-        platform.centml.ai/log-exclude: "true"
-        {{- end }}
-        {{- if $root.Values.userAnnotations }}
-        {{- range $key, $value := $root.Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "dynamo.podMetadata" (dict "chart" $annotations "caller" $root.Values.podAnnotations) | nindent 8 }}
       labels:
-        platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
-        platform.centml.ai/revision-number: "{{ $root.Values.revisionNumber | int64 }}"
-        ccluster.nvidia.com/component-type: {{ $role }}
-        {{- if $efa }}
-        ccluster.nvidia.com/kv-transfer: efa
-        {{- end }}
-        {{- include "dynamo.kaiQueueLabel" $root.Values | nindent 8 }}
-        {{- if $root.Values.userAnnotations }}
-        {{- range $key, $value := $root.Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "dynamo.podMetadata" (dict "chart" $labels "caller" $root.Values.podLabels) | nindent 8 }}
     spec:
       {{- include "dynamo.kaiPodScheduling" $root.Values | nindent 6 }}
       {{- if $efa }}

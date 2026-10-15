@@ -37,33 +37,18 @@ spec:
       type: frontend
       replicas: 1
       podTemplate:
+        {{- /* dynamo.setPodMetadata opts the Frontend out of the user namespace's Istio
+               sidecar injection. The streaming response path (Worker → Frontend) is raw
+               TCP on an OS-assigned ephemeral port (see requestPlane in values.yaml),
+               which cannot be pre-declared for auto-mTLS. */}}
+        {{- $annotations := dict }}
+        {{- $labels := dict "ccluster.nvidia.com/component-type" "frontend" }}
+        {{- include "dynamo.setPodMetadata" (dict "Values" .Values "annotations" $annotations "labels" $labels) }}
         metadata:
           annotations:
-            # Opt the Frontend out of the user namespace's Istio sidecar
-            # injection. The streaming response path (Worker → Frontend) is
-            # raw TCP on an OS-assigned ephemeral port (see requestPlane in
-            # values.yaml), which cannot be pre-declared for auto-mTLS.
-            sidecar.istio.io/inject: "false"
-            platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-            platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
-            {{- if not .Values.enableLogging }}
-            platform.centml.ai/log-exclude: "true"
-            {{- end }}
-            {{- if .Values.userAnnotations }}
-            {{- range $key, $value := .Values.userAnnotations }}
-            ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-            {{- end }}
-            {{- end }}
+            {{- include "dynamo.podMetadata" (dict "chart" $annotations "caller" .Values.podAnnotations) | nindent 12 }}
           labels:
-            platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-            platform.centml.ai/revision-number: "{{ .Values.revisionNumber | int64 }}"
-            ccluster.nvidia.com/component-type: frontend
-            {{- include "dynamo.kaiQueueLabel" .Values | nindent 12 }}
-            {{- if .Values.userAnnotations }}
-            {{- range $key, $value := .Values.userAnnotations }}
-            ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-            {{- end }}
-            {{- end }}
+            {{- include "dynamo.podMetadata" (dict "chart" $labels "caller" .Values.podLabels) | nindent 12 }}
         spec:
           {{- include "dynamo.kaiPodScheduling" .Values | nindent 10 }}
           containers:

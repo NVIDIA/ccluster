@@ -65,6 +65,16 @@ type Workload struct {
 	// UserAnnotations are copied onto the workload and its pods as both labels and
 	// annotations, each key prefixed ccluster.nvidia.com/user-.
 	UserAnnotations map[string]string `json:"userAnnotations,omitempty"`
+
+	// PodLabels are added verbatim to the labels of every pod the chart creates. A key
+	// the chart sets itself keeps the chart's value. They carry the caller's own
+	// metadata, such as the keys its log pipeline or usage metering reads, and must
+	// never carry tenant input: that belongs in UserAnnotations.
+	PodLabels map[string]string `json:"podLabels,omitempty"`
+
+	// PodAnnotations are added verbatim to the annotations of every pod the chart
+	// creates, on the same terms as PodLabels.
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
 }
 
 // Validate reports the required values that are unset and the nested values that are

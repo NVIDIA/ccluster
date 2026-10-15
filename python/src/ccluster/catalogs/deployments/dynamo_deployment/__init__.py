@@ -476,6 +476,20 @@ class Values(BaseModel):
     UserAnnotations are copied onto every pod as both labels and annotations, each
     key prefixed ccluster.nvidia.com/user-.
     """
+    pod_labels: Annotated[dict[str, str] | None, Field(alias="podLabels")] = None
+    """
+    PodLabels are added verbatim to the labels of the Frontend and every worker pod.
+    A key the chart sets itself keeps the chart's value. They carry the caller's own
+    metadata, such as the keys its log pipeline or usage metering reads, and must
+    never carry tenant input: that belongs in UserAnnotations.
+    """
+    pod_annotations: Annotated[dict[str, str] | None, Field(alias="podAnnotations")] = (
+        None
+    )
+    """
+    PodAnnotations are added verbatim to the annotations of the Frontend and every
+    worker pod, on the same terms as PodLabels.
+    """
 
 
 # CHART is the chart directory, relative to the root of the catalog repository.
