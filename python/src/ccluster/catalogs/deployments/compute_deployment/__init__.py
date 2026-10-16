@@ -221,10 +221,12 @@ class Values(BaseModel):
     """
     VolumeMounts are additional existing claims mounted into the container.
     """
-    ssh_injector_image: Annotated[str, Field(alias="sshInjectorImage")]
+    ssh_injector_image: Annotated[str | None, Field(alias="sshInjectorImage")] = None
     """
-    SSHInjectorImage carries the compute-ssh launcher that an init container copies
-    into the pod. Required.
+    SSHInjectorImage carries the compute-ssh launcher (compute-ssh/ in this chart)
+    that an init container copies into the pod. The image must provide /compute-ssh.
+    Unset, the chart uses ghcr.io/nvidia/ccluster-compute-ssh at this repository's
+    VERSION.
     """
     ssh_public_key: Annotated[str, Field(alias="sshPublicKey")]
     """

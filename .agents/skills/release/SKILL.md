@@ -120,9 +120,16 @@ The root `VERSION` file is the only committed version. Write the bare version to
 
 ```bash
 echo X.Y.Z > VERSION            # or X.Y.Z-rc.N
+sed -i.bak 's|^sshInjectorImage: ghcr.io/nvidia/ccluster-compute-ssh:.*|sshInjectorImage: ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z|' \
+  catalogs/deployments/compute_deployment/values.yaml && rm catalogs/deployments/compute_deployment/values.yaml.bak
 make check-version VERSION=X.Y.Z
-git status --short              # only CHANGELOG.md, VERSION and deleted changelog.d/ fragments
+go test ./catalogs/deployments/compute_deployment/
+git status --short              # only CHANGELOG.md, VERSION, that values.yaml and deleted changelog.d/ fragments
 ```
+
+The `compute_deployment` default launcher image is the one catalog value that names a
+release: catalogs are read from git, so the release workflow cannot stamp it. Its test
+fails when the tag and `VERSION` differ.
 
 Nothing else is bumped. `charts/*/chart/Chart.yaml` stays at `0.0.0-dev` and
 `python/pyproject.toml` at `0.0.0.dev0`; the release workflow stamps every artifact from
@@ -188,7 +195,7 @@ gh run view "$RUN" --json jobs --jq '.jobs[].steps[] | select(.conclusion=="fail
 
 Judge the run by its steps, not its overall conclusion: the post-job cache-save step has
 been failing with "no space left on device" after the push steps succeeded. If "Build and
-push both images" and "Package and push both charts" passed, the artifacts exist and the
+push the images" and "Package and push both charts" passed, the artifacts exist and the
 release can proceed. If either of those failed, stop and report.
 
 Write the release notes: the `## [X.Y.Z]` section of `CHANGELOG.md` at `MERGE_SHA`, from
@@ -210,6 +217,7 @@ tag triggers nothing, and the single `gh release create` is the whole step. Neve
 ```bash
 docker buildx imagetools inspect ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z
 docker buildx imagetools inspect ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z
+docker buildx imagetools inspect ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z
 helm show chart oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z
 helm show chart oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
 pip index versions ccluster-py
@@ -225,6 +233,8 @@ published: do not delete the release; fix the PyPI publisher and
 
 Before Phase 1, confirm with the user that the one-time setup exists, because the
 workflow cannot create it: a PyPI *pending publisher* for `ccluster-py` pointing at this
-repository, workflow `release.yml`, environment `pypi`; and the four GHCR packages
-(`ccluster-cp-operator`, `ccluster-ip-operator`, `charts/ccluster-cp`,
-`charts/ccluster-ip`) set to public if anonymous pulls are expected.
+repository, workflow `release.yml`, environment `pypi`; and the GHCR packages
+(`ccluster-cp-operator`, `ccluster-ip-operator`, `ccluster-compute-ssh`,
+`charts/ccluster-cp`, `charts/ccluster-ip`) set to public if anonymous pulls are
+expected. `ccluster-compute-ssh` must be public for `compute_deployment`'s default
+launcher image to pull on any cluster.

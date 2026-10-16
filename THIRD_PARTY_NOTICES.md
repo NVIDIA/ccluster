@@ -11,11 +11,12 @@ substitute for the license text shipped with each upstream project.
 > before a release. Chart versions are pinned in `charts/cp/chart/Chart.yaml` and the
 > corresponding `catalogs/**/Chart.yaml` files.
 
-## Operator images
+## Images
 
-The `ccluster-cp-operator` and `ccluster-ip-operator` images contain one statically
-linked Go binary. It includes the Go standard library (BSD-3-Clause) and Go modules
-licensed under Apache-2.0, BSD-3-Clause, MIT and ISC. The image ships the full license
+The `ccluster-cp-operator`, `ccluster-ip-operator` and `ccluster-compute-ssh` images
+each contain one statically linked Go binary. It includes the Go standard library
+(BSD-3-Clause) and Go modules licensed under Apache-2.0, BSD-2-Clause, BSD-3-Clause, MIT
+and ISC. The image ships the full license
 and NOTICE file of each of them under `/licenses/go`, collected from the exact module
 versions at build time, together with this file and the project `LICENSE` under
 `/licenses`. The Go module versions are pinned in [`go.mod`](go.mod) and

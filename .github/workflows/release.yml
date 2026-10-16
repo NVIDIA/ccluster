@@ -10,6 +10,7 @@
 #
 # Artifacts:
 #   ghcr.io/<owner>/ccluster-{cp,ip}-operator:X.Y.Z   (retag of :<sha>)
+#   ghcr.io/<owner>/ccluster-compute-ssh:X.Y.Z         (retag of :<sha>)
 #   oci://ghcr.io/<owner>/charts/ccluster-{cp,ip}      (chart version X.Y.Z, appVersion X.Y.Z)
 #   PyPI ccluster-py==X.Y.Z                            (trusted publishing, `pypi` environment)
 #   the chart tarballs and Python dists attached to the GitHub Release

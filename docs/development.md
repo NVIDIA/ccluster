@@ -128,8 +128,33 @@ When adding or changing a component:
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
-  archives. This is separate from the generated operator-chart ignore files.
+  archives. List any image source subdirectory too. This is separate from the generated
+  operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.
+
+### Images built beside a chart
+
+When a catalog chart runs a binary built in this repository, the binary's source lives
+in a subdirectory of that chart. The chart's templates and the binary share a contract:
+paths inside the image, subcommands and environment variables. Keeping both in one
+directory puts a contract change in one diff. `compute_deployment/compute-ssh/` is the
+only such image today. Operator binaries stay in `cmd/`.
+
+- The subdirectory is `package main`. It is not a catalog component: it has no
+  `Chart.yaml`, no entry in `components.All` and no Python model.
+  `TestAllCoversTheTree` skips directories without a `Chart.yaml`.
+- The binary does not import the chart's package. That package imports `api/v1alpha1`
+  through `catalogs.Entry`, which would link API machinery into the image.
+- The chart's `.helmignore` lists the subdirectory, so nothing in it reaches `.Files`
+  or a chart archive.
+- The shared Dockerfile builds the image, and it is published with the operator images.
+  The chart's default tag is the root `VERSION`; see
+  [Build and release contracts](build-and-release.md).
+- Between releases, the chart's default image is the launcher at `VERSION`, while a dev
+  chart renders the catalog at its own commit. A change to the contract must keep the
+  chart working with that launcher until the next release. To try an unreleased
+  launcher, set the chart's image value (`sshInjectorImage` for `compute_deployment`) to
+  the `:<sha>` image `main.yml` pushed for that commit.
 
 ## Python generation
 
