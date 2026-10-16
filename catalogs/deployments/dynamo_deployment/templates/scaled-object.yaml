@@ -79,4 +79,26 @@ spec:
             deployment_id="{{ .Values.deploymentId }}"
           }
         ) or on() vector(0)
+{{- if lt (int .Values.hpa.minReplicas) (int .Values.hpa.maxReplicas) }}
+  # Value 1 holds the current replica count while an aggregated worker loads.
+  # Start the bounded grace at kubelet start, excluding failed or deleting Pods.
+  # Requires the kube-prometheus-stack catalog's Pod metric label allowlist.
+  - type: prometheus
+    metricType: Value
+    metadata:
+      serverAddress: 'http://prometheus-op-kube-prometh-prometheus.prometheus.svc.cluster.local:9090'
+      metricName: "{{ .Values.name }}-readiness-hold"
+      threshold: "1"
+      activationThreshold: "1"
+      query: >-
+        (count(
+          (max by (pod) (kube_pod_status_ready{namespace="{{ .Release.Namespace }}",condition="false"}) == 1)
+          and on(pod) (
+            max by (pod) (kube_pod_labels{namespace="{{ .Release.Namespace }}",label_platform_centml_ai_deployment_id="{{ .Values.deploymentId }}",label_nvidia_com_dynamo_component="VllmDecodeWorker"})
+            unless on(pod) kube_pod_deletion_timestamp{namespace="{{ .Release.Namespace }}"}
+          )
+          and on(pod) (time() - kube_pod_start_time{namespace="{{ .Release.Namespace }}"} < 1800)
+          unless on(pod) (kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}"} > 0)
+        ) > bool 0) or on() vector(0)
+{{- end }}
 {{- end }}

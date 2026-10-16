@@ -30,6 +30,12 @@ jobs:
       - name: Lint the charts
         run: make helm-lint
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Verify catalog metrics contracts
+        run: make test-catalogs
+
       # Render both charts and confirm the resources the rest of the repo depends on
       # by name are present. test/e2e and the AGENTS.md recipes hardcode these.
       - name: Render the charts

@@ -63,10 +63,10 @@ type HPA struct {
 	// any value outside that range as 2^53.
 	AverageValue *int64 `json:"averageValue,omitempty"`
 
-	// CooldownPeriod is how many seconds KEDA waits after the last active trigger
-	// before scaling down. The chart ships 1800. inference_deployment renders 0 as
-	// 1800; dynamo_deployment renders 0 as 0.
-	CooldownPeriod *int64 `json:"cooldownPeriod,omitempty"`
+	// CooldownPeriod is the scale-down delay in seconds, from 0 to 3600. The
+	// chart ships 1800. Dynamo applies it to HPA scale-down stabilization and
+	// preserves 0; inference uses KEDA cooldown and renders 0 as 1800.
+	CooldownPeriod *int64 `json:"cooldownPeriod,omitempty" jsonschema:"minimum=0,maximum=3600"`
 }
 
 // Bounds returns the effective replica bounds, with the chart defaults filled in.
@@ -102,8 +102,8 @@ func (h *HPA) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: hpa.averageValue %d is outside 1-%d",
 			ErrInvalidValue, *h.AverageValue, MaxAverageValue))
 	}
-	if h.CooldownPeriod != nil && *h.CooldownPeriod < 0 {
-		errs = append(errs, fmt.Errorf("%w: hpa.cooldownPeriod %d is negative",
+	if h.CooldownPeriod != nil && (*h.CooldownPeriod < 0 || *h.CooldownPeriod > 3600) {
+		errs = append(errs, fmt.Errorf("%w: hpa.cooldownPeriod %d is outside 0-3600",
 			ErrInvalidValue, *h.CooldownPeriod))
 	}
 	return errors.Join(errs...)

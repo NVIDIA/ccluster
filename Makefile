@@ -687,6 +687,12 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 python-test: uv ## Run the python/ package's tests.
 	cd python && "$(UV)" sync --quiet && "$(UV)" run pytest
 
+.PHONY: test-catalogs
+test-catalogs: uv helm ## Test catalog rendering and metrics with a local Prometheus; no cluster needed.
+	bash hack/install-prometheus-test-tools.sh "$(LOCALBIN)/prometheus-3.4.1"
+	HELM="$(HELM)" PROMETHEUS_TEST_TOOLS="$(LOCALBIN)/prometheus-3.4.1" \
+		"$(UV)" run --project python pytest test/catalogs -q
+
 ##@ Dependencies
 
 ## Location to install dependencies to

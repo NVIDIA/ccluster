@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: test-dynamo
+deploymentId: '1732'
+imageUrl: nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.5.1
+domain: example.test
+model: Qwen/Qwen3-0.6B
+revisionNumber: 2
+workerPool:
+  resources:
+    limits:
+      cpu: '1'
+      memory: 500Mi
+      acceleratorCount: 1
+    requests:
+      cpu: '1'
+      memory: 250Mi
+      acceleratorCount: 1
+containerPort: 8000
+kserveGrpcMetricsPort: 8788
+requestPlane: tcp
+extraArgv: []
+envVars: {}
+backendProtocol: HTTP
+rolloutStrategy:
+  maxSurge: 0
+  maxUnavailable: 1
+hpa:
+  minReplicas: 1
+  maxReplicas: 1

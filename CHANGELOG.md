@@ -53,6 +53,14 @@ pull request, until a release collects them here.
   the platform creates.
 
 ### Fixed
+- Autoscaled aggregated Dynamo workers hold scale-down while loading, for up to
+  1800 seconds after kubelet start. The Prometheus catalog exports the Pod labels
+  required by the hold and Dynamo Usage resource attribution.
+- **Breaking:** Shared inference/Dynamo `hpa.cooldownPeriod` values outside 0–3600 are rejected
+  by Go, generated Python models and Helm before reaching KEDA/HPA.
+- Dynamo metrics now include worker, prefill and decode targets, with deployment,
+  Pod revision and component labels on every series including `up`. Frontend scraping
+  honors `DYN_HTTP_SVC_METRICS_PATH` and workers honor `DYN_SYSTEM_PORT`.
 - A CCLComponentSet no longer releases the next component on a `Healthy`/`Synced` verdict
   left over from the previous spec: it waits until Argo CD's `status.sync.comparedTo`
   names the spec the operator wrote and no operation, including a PostSync hook, is

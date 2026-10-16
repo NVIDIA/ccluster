@@ -12,10 +12,21 @@ from pydantic import BaseModel, ValidationError
 from ccluster import catalogs
 from ccluster.catalogs import namespace_base
 from ccluster.catalogs.cluster_base import gpu_operator
-from ccluster.catalogs.deployments import inference_deployment
+from ccluster.catalogs.deployments import dynamo_deployment, inference_deployment
 from ccluster.catalogs.resources import kai_gpu_queues
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("model", [dynamo_deployment.HPA, inference_deployment.HPA])
+@pytest.mark.parametrize("cooldown", [-1, 0, 1800, 3600, 3601, None])
+def test_hpa_cooldown_bounds(model, cooldown):
+    if cooldown is not None and not 0 <= cooldown <= 3600:
+        with pytest.raises(ValidationError):
+            model(cooldownPeriod=cooldown)
+    else:
+        result = model(cooldownPeriod=cooldown).model_dump(by_alias=True, exclude_none=True)
+        assert result.get("cooldownPeriod") == cooldown
 
 
 def chart_dirs():

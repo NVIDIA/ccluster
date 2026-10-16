@@ -2,24 +2,9 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */ -}}
-{{- /*
-Scrapes the Dynamo Frontend's native Prometheus metrics (dynamo_frontend_*) into the
-cluster Prometheus so the KEDA ScaledObject (scaled-object.yaml) can query active
-Frontend requests for the decode worker.
-
-Mirrors inference_deployment's service_monitor.yaml (a Service + ServiceMonitor) so it rides the
-same, proven Prometheus discovery path. A constant `deployment_id` label is projected
-onto every series so the ScaledObject queries isolate this deployment.
-
-Metrics port depends on backendProtocol. In HTTP mode the Frontend serves /metrics on
-containerPort (the `http` listener) alongside the OpenAI API. In GRPC mode that listener
-serves gRPC, and Dynamo's HTTP metrics/health endpoint moves to `--grpc-metrics-port`
-(kserveGrpcMetricsPort, 8788) — see dgd.yaml. Targeting the wrong port would
-make Prometheus scrape gRPC as HTTP and every KEDA query resolve to zero, so we select the
-port by protocol. targetPort is numeric (the metrics listener is not always a declared
-containerPort); the Service selector pins to the standardized frontend component-type
-plus our deployment-id label so only the Frontend pod is scraped.
-*/ -}}
+{{/* Frontend metrics share the HTTP listener, or use the separate GRPC health/metrics
+listener. Workers expose metrics on the operator's system port. Numeric target ports
+also cover listeners that are not declared as container ports. */}}
 {{- $metricsPort := .Values.containerPort | int -}}
 {{- if eq (.Values.backendProtocol | default "HTTP") "GRPC" -}}
 {{- $metricsPort = .Values.kserveGrpcMetricsPort | int -}}
@@ -53,9 +38,52 @@ spec:
       app.kubernetes.io/name: {{ .Values.name }}-frontend-metrics
   endpoints:
     - port: metrics
-      path: /metrics
+      path: {{ index (.Values.envVars | default dict) "DYN_HTTP_SVC_METRICS_PATH" | default "/metrics" | quote }}
       interval: 15s
+      relabelings:
+        {{- include "dynamo.metricsLabels" . | nindent 8 }}
       metricRelabelings:
         - targetLabel: deployment_id
           replacement: "{{ .Values.deploymentId }}"
           action: replace
+{{- $root := . -}}
+{{- $roles := list "worker" -}}
+{{- if eq (.Values.servingMode | default "aggregated") "disaggregated" -}}
+{{- $roles = list "prefill" "decode" -}}
+{{- end -}}
+{{- range $role := $roles }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $root.Values.name }}-{{ $role }}-metrics
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
+    app.kubernetes.io/name: {{ $root.Values.name }}-{{ $role }}-metrics
+spec:
+  selector:
+    platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
+    ccluster.nvidia.com/component-type: {{ $role }}
+  ports:
+    - name: metrics
+      port: {{ include "dynamo.workerMetricsPort" $root }}
+      targetPort: {{ include "dynamo.workerMetricsPort" $root }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $root.Values.name }}-{{ $role }}-metrics
+  namespace: {{ $root.Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $root.Values.name }}-{{ $role }}-metrics
+      platform.centml.ai/deployment-id: "{{ $root.Values.deploymentId }}"
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      relabelings:
+        {{- include "dynamo.metricsLabels" $root | nindent 8 }}
+{{- end }}
