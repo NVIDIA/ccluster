@@ -3,7 +3,10 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-package cp
+// Package driftregistry is the registry of catalog charts' drift: fields of their objects
+// that are allowed to differ from the rendered chart, which the cp operator writes into
+// each Application as Argo CD ignoreDifferences.
+package driftregistry
 
 import (
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
@@ -36,8 +39,9 @@ import (
 
 // DriftFunc is the signature of a chart's drift: Argo CD ignoreDifferences rules for the
 // fields of its objects that are allowed to drift from the rendered chart. The rules
-// themselves are a plain function in the chart's package, conventionally named Drift; the chart package does not import this one, and Register checks the
-// signature at compile time.
+// themselves are a plain function in the chart's package, conventionally named Drift;
+// the chart package does not import this one, and Register checks the signature at
+// compile time.
 //
 // The rules name fields of the chart's objects that a controller on the infra-plane
 // cluster owns by design, so the rendered value is never the live one and a full diff
@@ -50,17 +54,17 @@ func noDrift() []argocdv1alpha1.ResourceIgnoreDifferences {
 	return nil
 }
 
-// DriftRegistry maps a chart to its drift rules. The zero value
+// Registry maps a chart to its drift rules. The zero value
 // has no rules for any chart.
-type DriftRegistry struct {
+type Registry struct {
 	registry.Registry[DriftFunc]
 }
 
 // Drift returns the registry of every catalog chart's drift rules. TestDrift fails when
 // it and components.All disagree. A chart diffed in full registers noDrift; one with
 // rules registers its package's Drift.
-func Drift() DriftRegistry {
-	var r DriftRegistry
+func Drift() Registry {
+	var r Registry
 	r.Register(namespacebase.Chart, noDrift)
 	r.Register(argorollouts.Chart, noDrift)
 	r.Register(certmanager.Chart, noDrift)

@@ -33,6 +33,7 @@ import (
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 )
 
 var _ = Describe("CCLComponentSet Controller", func() {
@@ -312,7 +313,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Scheme:          k8sClient.Scheme(),
 				CatalogRepoURL:  repoURL,
 				CatalogRevision: revision,
-				Drift:           Drift(),
+				Drift:           driftregistry.Drift(),
 			}
 		})
 
