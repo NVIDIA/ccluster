@@ -32,36 +32,32 @@ spec:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
         platform.centml.ai/workload_type: compute
   template:
+    {{- $annotations := dict
+          "sidecar.istio.io/inject" "false"
+          "platform.centml.ai/deployment-id" (toString .Values.deploymentId) }}
+    {{- $labels := dict
+          "platform.centml.ai/deployment-id" (toString .Values.deploymentId)
+          "platform.centml.ai/workload_type" "compute"
+          "ccluster.nvidia.com/component-type" "user-container" }}
+    {{- with .Values.revisionNumber }}
+    {{- $_ := set $annotations "platform.centml.ai/revision-number" (. | int64 | toString) }}
+    {{- $_ := set $labels "platform.centml.ai/revision-number" (. | int64 | toString) }}
+    {{- end }}
+    {{- if not .Values.enableLogging }}
+    {{- $_ := set $annotations "platform.centml.ai/log-exclude" "true" }}
+    {{- end }}
+    {{- with .Values.kaiQueue }}
+    {{- $_ := set $labels "kai.scheduler/queue" (toString .) }}
+    {{- end }}
+    {{- range $key, $value := .Values.userAnnotations }}
+    {{- $_ := set $annotations (printf "ccluster.nvidia.com/user-%s" $key) (toString $value) }}
+    {{- $_ := set $labels (printf "ccluster.nvidia.com/user-%s" $key) (toString $value) }}
+    {{- end }}
     metadata:
       annotations:
-        sidecar.istio.io/inject: "false"
-        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-        {{- with .Values.revisionNumber }}
-        platform.centml.ai/revision-number: "{{ . | int64 }}"
-        {{- end }}
-        {{- if not .Values.enableLogging }}
-        platform.centml.ai/log-exclude: "true"
-        {{- end }}
-        {{- if .Values.userAnnotations }}
-        {{- range $key, $value := .Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "podMetadata" (dict "chart" $annotations "caller" .Values.podAnnotations) | nindent 8 }}
       labels:
-        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-        {{- with .Values.revisionNumber }}
-        platform.centml.ai/revision-number: "{{ . | int64 }}"
-        {{- end }}
-        platform.centml.ai/workload_type: compute
-        ccluster.nvidia.com/component-type: user-container
-        {{- if .Values.kaiQueue }}
-        kai.scheduler/queue: {{ .Values.kaiQueue | quote }}
-        {{- end }}
-        {{- if .Values.userAnnotations }}
-        {{- range $key, $value := .Values.userAnnotations }}
-        ccluster.nvidia.com/user-{{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "podMetadata" (dict "chart" $labels "caller" .Values.podLabels) | nindent 8 }}
     spec:
       {{- if .Values.schedulerName }}
       schedulerName: {{ .Values.schedulerName }}
