@@ -225,13 +225,13 @@ type VerifyFunc func(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClust
 
 the registry, how checks run, and how their outcome is reported. The catalog never imports
 controller code; `internal/registry/verifier_registry` imports the chart packages and
-registers one check per chart in `Verifiers()`, while the RBAC markers the checks
+registers one check per chart in `verifierregistry.Get()`, while the RBAC markers the checks
 need stay in `internal/controller/ip`; a chart is registered at most once, so its chart path
 identifies its result. Every per-chart registry lives under `internal/registry/`, in a
-`*_registry` package embedding the generic `registry.Registry`, a map from chart path to a
-function with `Register` and `Lookup`; failing charts are reported sorted by chart.
-`TestVerifiers` fails when the registry and `components.ClusterBase` disagree,
-so no cluster_base chart goes unverified.
+`*_registry` package whose `Get()` returns its `Registry`, a type embedding the generic
+`registry.Registry`: a map from chart path to a function with `Register` and `Lookup`.
+Failing charts are reported sorted by chart. `TestGet` fails when the registry and
+`components.ClusterBase` disagree, so no cluster_base chart goes unverified.
 
 Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to

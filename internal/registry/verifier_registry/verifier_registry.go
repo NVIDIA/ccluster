@@ -69,12 +69,12 @@ type Registry struct {
 	registry.Registry[VerifyFunc]
 }
 
-// Verifiers returns the registry of every catalogs/cluster_base chart's check.
-// TestVerifiers fails when it and components.ClusterBase disagree. A chart without a
+// Get returns the registry of every catalogs/cluster_base chart's check.
+// TestGet fails when it and components.ClusterBase disagree. A chart without a
 // check of its own registers alwaysVerified; one with a check registers its package's
 // Verify. A check that reads a kind needs a +kubebuilder:rbac marker in
 // internal/controller/ip.
-func Verifiers() *Registry {
+func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, alwaysVerified)
 	r.Register(certmanager.Chart, alwaysVerified)

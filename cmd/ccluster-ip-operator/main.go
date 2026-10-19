@@ -53,7 +53,7 @@ func setupControllers(mgr ctrl.Manager) error {
 	if err := (&ip.CCLClusterConfigReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
-		Verifiers: verifierregistry.Verifiers(),
+		Verifiers: verifierregistry.Get(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLClusterConfig: %w", err)
 	}
