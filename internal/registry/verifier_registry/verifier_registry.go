@@ -64,7 +64,8 @@ func alwaysVerified(context.Context, client.Reader, cclusternvidiacomv1alpha1.CC
 }
 
 // Registry is the set of Verifiers the CCLClusterConfig controller runs, one per chart, so
-// a chart identifies its result. The controller reports failing charts sorted by chart.
+// a chart identifies its result. The controller reports failing charts in registration
+// order.
 type Registry struct {
 	registry.Registry[VerifyFunc]
 }

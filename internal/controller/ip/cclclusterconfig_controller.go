@@ -9,9 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,13 +122,13 @@ type failure struct {
 }
 
 // verify runs every registered Verifier against spec and returns how many there were
-// and the charts whose Verifier returned an error, sorted by chart.
+// and the charts whose Verifier returned an error, in registration order.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's cached client, which is safe for concurrent use, so the pass takes as long
 // as the slowest check rather than the sum of all of them. Results are collected by
-// position in chart order so the failing list, and with it the condition message, is
-// deterministic whatever order the registry and the goroutines produce.
+// position in registration order so the failing list, and with it the condition message,
+// is deterministic whatever order the goroutines finish in.
 //
 // Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
 // recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
@@ -142,11 +140,11 @@ func (r *CCLClusterConfigReconciler) verify(
 ) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
-	charts := slices.Sorted(maps.Keys(r.Verifiers.Registry))
+	charts := r.Verifiers.Charts()
 	errs := make([]error, len(charts))
 	var wg sync.WaitGroup
 	for i, chart := range charts {
-		verify := r.Verifiers.Registry[chart]
+		verify, _ := r.Verifiers.Lookup(chart)
 		wg.Go(func() {
 			defer func() {
 				if p := recover(); p != nil {

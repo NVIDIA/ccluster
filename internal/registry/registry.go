@@ -12,15 +12,19 @@ package registry
 import (
 	"fmt"
 	"reflect"
+	"slices"
 )
 
-// Registry maps a chart path, relative to the repository root, to a function of type F.
-// Ranging over it visits every registration in no particular order. The zero value is an
-// empty registry.
+// Registry maps a chart path, relative to the repository root, to a function of type F,
+// and remembers the order charts were registered in. The zero value is an empty
+// registry.
 //
 // Registration happens while an operator is being wired up, before its manager starts;
 // a Registry is not safe for Register calls concurrent with a running controller.
-type Registry[F any] map[string]F
+type Registry[F any] struct {
+	charts []string
+	funcs  map[string]F
+}
 
 // Register adds f for chart. It panics on an empty chart, a nil f, or a chart registered
 // twice: each is a wiring bug, caught at startup rather than at reconcile time.
@@ -32,17 +36,24 @@ func (r *Registry[F]) Register(chart string, f F) {
 	if v := reflect.ValueOf(f); !v.IsValid() || (v.Kind() == reflect.Func && v.IsNil()) {
 		panic(fmt.Sprintf("registry: Register %s with a nil %T", chart, f))
 	}
-	if _, registered := (*r)[chart]; registered {
+	if _, registered := r.funcs[chart]; registered {
 		panic(fmt.Sprintf("registry: %s registered twice (%T)", chart, f))
 	}
-	if *r == nil {
-		*r = make(Registry[F])
+	if r.funcs == nil {
+		r.funcs = make(map[string]F)
 	}
-	(*r)[chart] = f
+	r.charts = append(r.charts, chart)
+	r.funcs[chart] = f
 }
 
 // Lookup returns chart's function, and whether chart is registered.
 func (r Registry[F]) Lookup(chart string) (F, bool) {
-	f, ok := r[chart]
+	f, ok := r.funcs[chart]
 	return f, ok
+}
+
+// Charts returns every registered chart in registration order. The slice is the
+// caller's own.
+func (r Registry[F]) Charts() []string {
+	return slices.Clone(r.charts)
 }

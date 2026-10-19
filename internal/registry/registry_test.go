@@ -5,7 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package registry
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 type testFunc func() string
 
@@ -49,5 +52,25 @@ func TestLookup(t *testing.T) {
 	}
 	if _, ok := r.Lookup("catalogs/cluster_base/b"); ok {
 		t.Error("Lookup found an unregistered chart")
+	}
+}
+
+func TestCharts(t *testing.T) {
+	var r Registry[testFunc]
+	if got := r.Charts(); len(got) != 0 {
+		t.Errorf("Charts of the zero Registry = %v, want none", got)
+	}
+
+	r.Register("catalogs/cluster_base/b", a)
+	r.Register("catalogs/cluster_base/a", a)
+	want := []string{"catalogs/cluster_base/b", "catalogs/cluster_base/a"}
+	got := r.Charts()
+	if !slices.Equal(got, want) {
+		t.Errorf("Charts = %v, want registration order %v", got, want)
+	}
+
+	got[0] = "changed"
+	if r.Charts()[0] != want[0] {
+		t.Error("Charts shares its slice with the registry")
 	}
 }
