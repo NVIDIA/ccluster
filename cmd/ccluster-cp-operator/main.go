@@ -91,7 +91,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
-		Drift:           driftregistry.Drift(),
+		Drift:           driftregistry.Get(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}

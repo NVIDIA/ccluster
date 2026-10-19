@@ -124,12 +124,13 @@ When adding or changing a component:
   never imports controller code), reads live objects only (never Argo CD or Helm state),
   and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`, the
   kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`.
-- Every component is also registered with the cp operator's drift registry, `Drift()` in
-  `internal/registry/drift_registry`, which must cover exactly `components.All` (`TestDrift`
-  fails otherwise). Start with `noDrift`. A field that a controller on the infra-plane cluster
-  rewrites by design, such as istiod's webhook `failurePolicy`, keeps the Application
-  `OutOfSync` and stalls the rollout; export a `Drift` function beside `New` with the
-  `driftregistry.DriftFunc` signature (see `istio`), naming objects rather than whole kinds.
+- Every component is also registered with the cp operator's drift registry,
+  `driftregistry.Get()` in `internal/registry/drift_registry`, which must cover exactly
+  `components.All` (`TestGet` fails otherwise). Start with `noDrift`. A field that a
+  controller on the infra-plane cluster rewrites by design, such as istiod's webhook
+  `failurePolicy`, keeps the Application `OutOfSync` and stalls the rollout; export a
+  `Drift` function beside `New` with the `driftregistry.DriftFunc` signature (see `istio`),
+  naming objects rather than whole kinds.
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).

@@ -98,7 +98,7 @@ type CCLComponentSetReconciler struct {
 	CatalogRevision string
 
 	// Drift is the registry of charts' drift rules, written as Argo CD ignoreDifferences,
-	// normally driftregistry.Drift(). The zero value diffs every chart in full.
+	// normally driftregistry.Get(). The zero value diffs every chart in full.
 	Drift driftregistry.Registry
 }
 

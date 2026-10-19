@@ -391,14 +391,15 @@ Application is non-cascading: Argo CD's record disappears and the chart stays in
 unmanaged on the infra-plane cluster.
 
 `IgnoreDifferences` comes from the drift registry, built like the ip operator's Verifiers
-(§3a) on the generic `registry.Registry`: `Drift()` in `internal/registry/drift_registry`
-registers one `DriftFunc` per catalog chart, and `TestDrift` fails unless it covers exactly
-`components.All`. A chart diffed in full registers `noDrift`; one with fields that a
-controller on the infra-plane cluster owns by design registers a `Drift` function from its
-own package. istio is the case: istiod patches its validating webhooks' `failurePolicy` from the rendered `Ignore` to
-`Fail` once it serves, so a full diff never reports `Synced` and stalls every later wave. A
-chart with rules also gets `RespectIgnoreDifferences=true`; without it every sync, self-heal's
-included, applies the rendered value again and the owning controller patches it back. Rules
+(§3a) on the generic `registry.Registry`: `driftregistry.Get()` in
+`internal/registry/drift_registry` registers one `DriftFunc` per catalog chart, and
+`TestGet` fails unless it covers exactly `components.All`. A chart diffed in full registers
+`noDrift`; one with fields that a controller on the infra-plane cluster owns by design
+registers a `Drift` function from its own package. istio is the case: istiod patches its
+validating webhooks' `failurePolicy` from the rendered `Ignore` to `Fail` once it serves, so
+a full diff never reports `Synced` and stalls every later wave. A chart with rules also gets
+`RespectIgnoreDifferences=true`; without it every sync, self-heal's included, applies the
+rendered value again and the owning controller patches it back. Rules
 name objects, not only kinds, so drift elsewhere still shows. Neither callers nor the CRD can
 add rules.
 

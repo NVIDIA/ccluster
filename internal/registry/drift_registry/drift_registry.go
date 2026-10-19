@@ -60,10 +60,10 @@ type Registry struct {
 	registry.Registry[DriftFunc]
 }
 
-// Drift returns the registry of every catalog chart's drift rules. TestDrift fails when
+// Get returns the registry of every catalog chart's drift rules. TestGet fails when
 // it and components.All disagree. A chart diffed in full registers noDrift; one with
 // rules registers its package's Drift.
-func Drift() Registry {
+func Get() Registry {
 	var r Registry
 	r.Register(namespacebase.Chart, noDrift)
 	r.Register(argorollouts.Chart, noDrift)

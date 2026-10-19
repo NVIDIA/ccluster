@@ -313,7 +313,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Scheme:          k8sClient.Scheme(),
 				CatalogRepoURL:  repoURL,
 				CatalogRevision: revision,
-				Drift:           driftregistry.Drift(),
+				Drift:           driftregistry.Get(),
 			}
 		})
 
