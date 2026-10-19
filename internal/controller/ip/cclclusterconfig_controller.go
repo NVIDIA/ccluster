@@ -62,8 +62,8 @@ type CCLClusterConfigReconciler struct {
 	Scheme *runtime.Scheme
 
 	// Verifiers is the registry of checks the controller runs, normally
-	// verifierregistry.ClusterBaseVerifiers(). Injectable so tests can drive the controller with a registry
-	// of their own.
+	// verifierregistry.Verifiers(). Injectable so tests can drive the controller with a
+	// registry of their own.
 	Verifiers *verifierregistry.Registry
 }
 
