@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
 // Condition types and reasons reported on CCLClusterConfig.status.
@@ -61,14 +62,15 @@ type CCLClusterConfigReconciler struct {
 	Scheme *runtime.Scheme
 
 	// Verifiers is the registry of checks the controller runs, normally
-	// ClusterBaseVerifiers(). Injectable so tests can drive the controller with a registry
+	// verifierregistry.ClusterBaseVerifiers(). Injectable so tests can drive the controller with a registry
 	// of their own.
-	Verifiers *Registry
+	Verifiers *verifierregistry.Registry
 }
 
 // RBAC is what the controller itself needs. A Verifier that reads a kind adds a marker
-// for it here or beside its registration in verifiers.go; controller-gen only reads markers in this package. Everything stays
-// read-only: the operator writes nothing but CCLClusterConfig status.
+// for it here; controller-gen only reads markers in this package, not in the verifier
+// registry. Everything stays read-only: the operator writes nothing but
+// CCLClusterConfig status.
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch

@@ -3,7 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-package ip
+// Package verifierregistry is the registry of cluster_base charts' checks, which the ip
+// operator's CCLClusterConfig controller runs.
+package verifierregistry
 
 import (
 	"context"
@@ -71,7 +73,7 @@ type Registry struct {
 // check. TestClusterBaseVerifiers fails when it and components.ClusterBase disagree. A
 // chart without a check of its own registers alwaysVerified; one with a check registers
 // its package's Verify. A check that reads a kind needs a +kubebuilder:rbac marker in
-// this package.
+// internal/controller/ip.
 func ClusterBaseVerifiers() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, alwaysVerified)

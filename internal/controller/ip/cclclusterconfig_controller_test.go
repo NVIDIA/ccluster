@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
 // errNotReady is what a switchVerifier reports while it is off.
@@ -75,7 +76,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		reconciler = &CCLClusterConfigReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Verifiers: verifierRegistry(map[string]VerifyFunc{
+			Verifiers: verifierRegistry(map[string]verifierregistry.VerifyFunc{
 				chartA: a.Verify,
 				chartB: b.Verify,
 			}),
@@ -184,7 +185,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 			close(met)
 		}()
 		rendezvous := &meetingVerifier{arrived: &arrived, met: met}
-		reconciler.Verifiers = verifierRegistry(map[string]VerifyFunc{
+		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{
 			chartA: rendezvous.Verify,
 			chartB: rendezvous.Verify,
 		})
@@ -198,7 +199,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 
 	It("reports a panicking Verifier as failing without stopping the others", func() {
 		a.ready.Store(true)
-		reconciler.Verifiers = verifierRegistry(map[string]VerifyFunc{
+		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{
 			chartA: a.Verify,
 			chartB: panicVerifier{}.Verify,
 		})
@@ -218,7 +219,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		// Waiting the real verifyTimeout out would make the suite slow; the deadline
 		// being there is the contract.
 		probe := &deadlineVerifier{}
-		reconciler.Verifiers = verifierRegistry(map[string]VerifyFunc{chartA: probe.Verify})
+		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{chartA: probe.Verify})
 
 		start := time.Now()
 		_, err := reconciler.Reconcile(ctx, request)
@@ -295,8 +296,8 @@ func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclust
 }
 
 // verifierRegistry registers verifiers by chart.
-func verifierRegistry(verifiers map[string]VerifyFunc) *Registry {
-	r := &Registry{}
+func verifierRegistry(verifiers map[string]verifierregistry.VerifyFunc) *verifierregistry.Registry {
+	r := &verifierregistry.Registry{}
 	for chart, verify := range verifiers {
 		r.Register(chart, verify)
 	}
