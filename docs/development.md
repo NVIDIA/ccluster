@@ -117,8 +117,8 @@ When adding or changing a component:
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
   choices, not a universally deployable default.
 - A `cluster_base` component is also registered with the ip operator's verifier registry,
-  `ClusterBaseVerifiers()` in `internal/controller/ip/verifiers.go`, in `components.ClusterBase`
-  order (`TestClusterBaseVerifiers` fails otherwise). Start with `alwaysVerified`. A check
+  `ClusterBaseVerifiers()` in `internal/controller/ip/verifiers.go`, which must cover exactly
+  `components.ClusterBase` (`TestClusterBaseVerifiers` fails otherwise). Start with `alwaysVerified`. A check
   of the chart's own is an exported `Verify` function beside `New` in the chart's
   `component.go` with the `ip.VerifyFunc` signature (see `spire_crds`; the chart package
   never imports controller code), reads live objects only (never Argo CD or Helm state),

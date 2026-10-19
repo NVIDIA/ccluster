@@ -9,7 +9,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | Path | Purpose |
 | --- | --- |
 | `cmd/ccluster-{cp,ip}-operator/` | Separate binaries for separate clusters; cp drives Argo CD, ip verifies `catalogs/cluster_base` against `CCLClusterConfig`. |
-| `internal/controller/{cp,ip}/` | Per-operator controllers; shared bootstrap is in `internal/manager/`. |
+| `internal/controller/{cp,ip}/` | Per-operator controllers; shared bootstrap is in `internal/manager/`, and the generic per-chart registry they build on in `internal/registry/`. |
 | `api/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
 | `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |

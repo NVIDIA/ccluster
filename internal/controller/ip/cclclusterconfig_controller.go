@@ -9,7 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -120,13 +122,13 @@ type failure struct {
 }
 
 // verify runs every registered Verifier against spec and returns how many there were
-// and the charts whose Verifier returned an error, in registration order.
+// and the charts whose Verifier returned an error, sorted by chart.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's cached client, which is safe for concurrent use, so the pass takes as long
 // as the slowest check rather than the sum of all of them. Results are collected by
-// position so the failing list, and with it the condition message, is deterministic
-// whatever order the goroutines finish in.
+// position in chart order so the failing list, and with it the condition message, is
+// deterministic whatever order the registry and the goroutines produce.
 //
 // Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
 // recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
@@ -138,22 +140,23 @@ func (r *CCLClusterConfigReconciler) verify(
 ) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
-	verifiers := r.Verifiers.Verifiers()
-	errs := make([]error, len(verifiers))
+	charts := slices.Sorted(maps.Keys(r.Verifiers.Registry))
+	errs := make([]error, len(charts))
 	var wg sync.WaitGroup
-	for i, v := range verifiers {
+	for i, chart := range charts {
+		verify := r.Verifiers.Registry[chart]
 		wg.Go(func() {
 			defer func() {
 				if p := recover(); p != nil {
 					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
-						"chart", v.Chart, "stack", string(debug.Stack()))
+						"chart", chart, "stack", string(debug.Stack()))
 					errs[i] = fmt.Errorf("verifier panicked: %v", p)
 				}
 			}()
 
 			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 			defer cancel()
-			errs[i] = v.Verify(verifyCtx, r, spec)
+			errs[i] = verify(verifyCtx, r, spec)
 			if errs[i] != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 				errs[i] = fmt.Errorf("timed out after %s: %w", verifyTimeout, errs[i])
 			}
@@ -161,12 +164,12 @@ func (r *CCLClusterConfigReconciler) verify(
 	}
 	wg.Wait()
 
-	for i, v := range verifiers {
+	for i, chart := range charts {
 		if errs[i] != nil {
-			failing = append(failing, failure{chart: v.Chart, err: errs[i]})
+			failing = append(failing, failure{chart: chart, err: errs[i]})
 		}
 	}
-	return len(verifiers), failing
+	return len(charts), failing
 }
 
 // verifiedCondition turns the verification outcome into the Verified condition.
