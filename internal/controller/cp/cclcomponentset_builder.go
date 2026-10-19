@@ -57,7 +57,7 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	syncOptions := []string{"CreateNamespace=true", "ServerSideApply=true"}
 
 	var ignored []argocdv1alpha1.ResourceIgnoreDifferences
-	if rules, ok := r.IgnoreDifferences.Lookup(component.Chart); ok {
+	if rules, ok := r.Drift.Lookup(component.Chart); ok {
 		ignored = rules()
 	}
 	if len(ignored) > 0 {

@@ -12,24 +12,24 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
-// TestCatalogIgnoreDifferences: rules are looked up by the chart a component names, so a
+// TestDrift: rules are looked up by the chart a component names, so a
 // catalog chart missing from the registry would silently be diffed in full, and a
 // registered chart outside components.All would never match a component. The registry
 // keeps components.All order, so a missing or extra chart is easy to place.
-func TestCatalogIgnoreDifferences(t *testing.T) {
+func TestDrift(t *testing.T) {
 	want := make([]string, 0, len(components.All))
 	for _, c := range components.All {
 		want = append(want, c.Chart)
 	}
-	if got := CatalogIgnoreDifferences().Charts(); !slices.Equal(got, want) {
+	if got := Drift().Charts(); !slices.Equal(got, want) {
 		t.Errorf("registered charts %v\nwant components.All %v", got, want)
 	}
 }
 
-// TestIgnoreDifferencesSelectFields: a rule without a kind or a field ignores nothing,
+// TestDriftSelectsFields: a rule without a kind or a field ignores nothing,
 // and the chart it was written for never converges.
-func TestIgnoreDifferencesSelectFields(t *testing.T) {
-	drift := CatalogIgnoreDifferences()
+func TestDriftSelectsFields(t *testing.T) {
+	drift := Drift()
 	for _, chart := range drift.Charts() {
 		rules, _ := drift.Lookup(chart)
 		for _, rule := range rules() {

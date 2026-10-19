@@ -96,9 +96,9 @@ type CCLComponentSetReconciler struct {
 	CatalogRepoURL  string
 	CatalogRevision string
 
-	// IgnoreDifferences is the registry of charts' Argo CD ignoreDifferences rules,
-	// normally CatalogIgnoreDifferences(). The zero value diffs every chart in full.
-	IgnoreDifferences IgnoreDifferencesRegistry
+	// Drift is the registry of charts' drift rules, written as Argo CD ignoreDifferences,
+	// normally Drift(). The zero value diffs every chart in full.
+	Drift DriftRegistry
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete

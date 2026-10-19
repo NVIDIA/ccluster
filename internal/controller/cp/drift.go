@@ -34,57 +34,56 @@ import (
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
-// IgnoreDifferencesFunc is the signature of a chart's Argo CD ignoreDifferences rules.
-// The rules themselves are a plain function in the chart's package, conventionally named
-// IgnoreDifferences; the chart package does not import this one, and Register checks the
+// DriftFunc is the signature of a chart's drift: Argo CD ignoreDifferences rules for the
+// fields of its objects that are allowed to drift from the rendered chart. The rules
+// themselves are a plain function in the chart's package, conventionally named Drift; the chart package does not import this one, and Register checks the
 // signature at compile time.
 //
 // The rules name fields of the chart's objects that a controller on the infra-plane
 // cluster owns by design, so the rendered value is never the live one and a full diff
 // would keep the Application OutOfSync, stalling every later component. Each call
 // returns a new slice: the operator writes it into an Application spec.
-type IgnoreDifferencesFunc func() []argocdv1alpha1.ResourceIgnoreDifferences
+type DriftFunc func() []argocdv1alpha1.ResourceIgnoreDifferences
 
-// noIgnoreDifferences is registered for a chart whose objects are diffed in full.
-func noIgnoreDifferences() []argocdv1alpha1.ResourceIgnoreDifferences {
+// noDrift is registered for a chart whose objects are diffed in full.
+func noDrift() []argocdv1alpha1.ResourceIgnoreDifferences {
 	return nil
 }
 
-// IgnoreDifferencesRegistry maps a chart to its ignoreDifferences rules. The zero value
+// DriftRegistry maps a chart to its drift rules. The zero value
 // has no rules for any chart.
-type IgnoreDifferencesRegistry struct {
-	registry.Registry[IgnoreDifferencesFunc]
+type DriftRegistry struct {
+	registry.Registry[DriftFunc]
 }
 
-// CatalogIgnoreDifferences returns the registry of every catalog chart's
-// ignoreDifferences rules. TestCatalogIgnoreDifferences fails when it and components.All
-// disagree. A chart diffed in full registers noIgnoreDifferences; one with
-// rules registers its package's IgnoreDifferences.
-func CatalogIgnoreDifferences() IgnoreDifferencesRegistry {
-	var r IgnoreDifferencesRegistry
-	r.Register(namespacebase.Chart, noIgnoreDifferences)
-	r.Register(argorollouts.Chart, noIgnoreDifferences)
-	r.Register(certmanager.Chart, noIgnoreDifferences)
-	r.Register(externaldns.Chart, noIgnoreDifferences)
-	r.Register(finalstack.Chart, noIgnoreDifferences)
-	r.Register(fluentbit.Chart, noIgnoreDifferences)
-	r.Register(gpuoperator.Chart, noIgnoreDifferences)
-	r.Register(ingressnginx.Chart, noIgnoreDifferences)
-	r.Register(istio.Chart, istio.IgnoreDifferences)
-	r.Register(keda.Chart, noIgnoreDifferences)
-	r.Register(kubeprometheusstack.Chart, noIgnoreDifferences)
-	r.Register(longhorn.Chart, noIgnoreDifferences)
-	r.Register(metricsserver.Chart, noIgnoreDifferences)
-	r.Register(networkoperator.Chart, noIgnoreDifferences)
-	r.Register(otelcollector.Chart, noIgnoreDifferences)
-	r.Register(prometheusadapter.Chart, noIgnoreDifferences)
-	r.Register(spire.Chart, noIgnoreDifferences)
-	r.Register(spirecrds.Chart, noIgnoreDifferences)
-	r.Register(computedeployment.Chart, noIgnoreDifferences)
-	r.Register(dynamodeployment.Chart, noIgnoreDifferences)
-	r.Register(inferencedeployment.Chart, noIgnoreDifferences)
-	r.Register(jobdeployment.Chart, noIgnoreDifferences)
-	r.Register(kaigpuqueues.Chart, noIgnoreDifferences)
-	r.Register(persistentvolume.Chart, noIgnoreDifferences)
+// Drift returns the registry of every catalog chart's drift rules. TestDrift fails when
+// it and components.All disagree. A chart diffed in full registers noDrift; one with
+// rules registers its package's Drift.
+func Drift() DriftRegistry {
+	var r DriftRegistry
+	r.Register(namespacebase.Chart, noDrift)
+	r.Register(argorollouts.Chart, noDrift)
+	r.Register(certmanager.Chart, noDrift)
+	r.Register(externaldns.Chart, noDrift)
+	r.Register(finalstack.Chart, noDrift)
+	r.Register(fluentbit.Chart, noDrift)
+	r.Register(gpuoperator.Chart, noDrift)
+	r.Register(ingressnginx.Chart, noDrift)
+	r.Register(istio.Chart, istio.Drift)
+	r.Register(keda.Chart, noDrift)
+	r.Register(kubeprometheusstack.Chart, noDrift)
+	r.Register(longhorn.Chart, noDrift)
+	r.Register(metricsserver.Chart, noDrift)
+	r.Register(networkoperator.Chart, noDrift)
+	r.Register(otelcollector.Chart, noDrift)
+	r.Register(prometheusadapter.Chart, noDrift)
+	r.Register(spire.Chart, noDrift)
+	r.Register(spirecrds.Chart, noDrift)
+	r.Register(computedeployment.Chart, noDrift)
+	r.Register(dynamodeployment.Chart, noDrift)
+	r.Register(inferencedeployment.Chart, noDrift)
+	r.Register(jobdeployment.Chart, noDrift)
+	r.Register(kaigpuqueues.Chart, noDrift)
+	r.Register(persistentvolume.Chart, noDrift)
 	return r
 }

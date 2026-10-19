@@ -117,8 +117,8 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
-// IgnoreDifferences returns the fields of this chart's objects that istiod owns once it
-// runs. The cp operator registers it with the IgnoreDifferencesFunc signature.
+// Drift returns the fields of this chart's objects that istiod owns once it runs, as
+// Argo CD ignoreDifferences rules. The cp operator registers it as a DriftFunc.
 //
 // The istiod and istio-base subcharts render their validating webhooks with
 // failurePolicy Ignore, so that the API server fails open until istiod serves, and
@@ -127,7 +127,7 @@ func New(
 // Synced. The rules name the two webhooks rather than the kind, so drift on any other
 // webhook still shows. istiod's name depends on its revision and the global Istio
 // namespace, which Values does not set; istio-base's is fixed.
-func IgnoreDifferences() []argocdv1alpha1.ResourceIgnoreDifferences {
+func Drift() []argocdv1alpha1.ResourceIgnoreDifferences {
 	return []argocdv1alpha1.ResourceIgnoreDifferences{
 		webhookFailurePolicy("istio-validator-istio-system"), // istiod
 		webhookFailurePolicy("istiod-default-validator"),     // istio-base

@@ -308,11 +308,11 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		BeforeEach(func() {
 			reconciler = &CCLComponentSetReconciler{
-				Client:            k8sClient,
-				Scheme:            k8sClient.Scheme(),
-				CatalogRepoURL:    repoURL,
-				CatalogRevision:   revision,
-				IgnoreDifferences: CatalogIgnoreDifferences(),
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
+				Drift:           Drift(),
 			}
 		})
 
@@ -551,7 +551,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			settle()
 
 			application := getApplication(istio.Name)
-			Expect(application.Spec.IgnoreDifferences).To(Equal(istio.IgnoreDifferences()))
+			Expect(application.Spec.IgnoreDifferences).To(Equal(istio.Drift()))
 			Expect(application.Spec.SyncPolicy.SyncOptions).To(ConsistOf(
 				"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"),
 				"without it every sync reapplies Ignore and istiod patches Fail back")

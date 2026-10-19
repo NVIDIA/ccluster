@@ -378,7 +378,7 @@ Destination: { Name: "<componentSet.Namespace>-<component.InfraPlaneRef.Name>",
                Namespace: component.Namespace },
 SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
               SyncOptions: ["CreateNamespace=true", "ServerSideApply=true"] },
-IgnoreDifferences: <the chart's IgnoreDifferencesFunc, if registered>(),
+IgnoreDifferences: <the chart's DriftFunc, if registered>(),
 ```
 
 Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
@@ -390,14 +390,12 @@ plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which delet
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
 unmanaged on the infra-plane cluster.
 
-`IgnoreDifferences` comes from a registry built, like the ip operator's Verifiers (§3a), on
-the generic `registry.Registry`: `CatalogIgnoreDifferences()` in
-`internal/controller/cp/ignore_differences.go` registers one `IgnoreDifferencesFunc` per
-catalog chart, and `TestCatalogIgnoreDifferences` fails unless it covers exactly
-`components.All`. A chart diffed in full registers
-`noIgnoreDifferences`; one with fields that a controller on the infra-plane cluster owns by
-design registers an `IgnoreDifferences` function from its own package. istio is the
-case: istiod patches its validating webhooks' `failurePolicy` from the rendered `Ignore` to
+`IgnoreDifferences` comes from the drift registry, built like the ip operator's Verifiers
+(§3a) on the generic `registry.Registry`: `Drift()` in `internal/controller/cp/drift.go`
+registers one `DriftFunc` per catalog chart, and `TestDrift` fails unless it covers exactly
+`components.All`. A chart diffed in full registers `noDrift`; one with fields that a
+controller on the infra-plane cluster owns by design registers a `Drift` function from its
+own package. istio is the case: istiod patches its validating webhooks' `failurePolicy` from the rendered `Ignore` to
 `Fail` once it serves, so a full diff never reports `Synced` and stalls every later wave. A
 chart with rules also gets `RespectIgnoreDifferences=true`; without it every sync, self-heal's
 included, applies the rendered value again and the owning controller patches it back. Rules
