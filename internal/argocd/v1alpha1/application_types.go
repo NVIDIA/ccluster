@@ -121,6 +121,36 @@ type ApplicationSpec struct {
 	Destination ApplicationDestination `json:"destination"`
 
 	SyncPolicy *SyncPolicy `json:"syncPolicy,omitempty"`
+
+	// ignoreDifferences are fields Argo CD leaves out of its diff, for fields another
+	// controller on the destination cluster owns by design.
+	IgnoreDifferences []ResourceIgnoreDifferences `json:"ignoreDifferences,omitempty"`
+}
+
+// ResourceIgnoreDifferences selects resources by group, kind and, optionally, name and
+// namespace, and names the fields of theirs Argo CD does not diff. Every field Argo CD
+// defines is modelled, so a rule reads back exactly as written.
+type ResourceIgnoreDifferences struct {
+	// group is the resource's API group; empty for the core group.
+	Group string `json:"group,omitempty"`
+
+	// kind is the resource's kind.
+	Kind string `json:"kind"`
+
+	// name restricts the rule to one resource. Empty matches every resource of the kind.
+	Name string `json:"name,omitempty"`
+
+	// namespace restricts the rule to one namespace. Empty for cluster-scoped resources.
+	Namespace string `json:"namespace,omitempty"`
+
+	// jsonPointers are RFC 6901 pointers to the ignored fields.
+	JSONPointers []string `json:"jsonPointers,omitempty"`
+
+	// jqPathExpressions are jq paths to the ignored fields.
+	JQPathExpressions []string `json:"jqPathExpressions,omitempty"`
+
+	// managedFieldsManagers ignores every field these field managers own.
+	ManagedFieldsManagers []string `json:"managedFieldsManagers,omitempty"`
 }
 
 // ApplicationSource locates a chart in a Git repository. Argo CD also supports Helm and
@@ -353,14 +383,16 @@ type ApplicationSyncStatus struct {
 }
 
 // ComparedTo is what Argo CD compared the live state against. Argo CD also records
-// sources and ignoreDifferences here; the operator writes a single source and no
-// ignoreDifferences, so neither is modelled.
+// sources here; the operator writes a single source, so that is not modelled.
 type ComparedTo struct {
 	// source is the source of the compared manifests.
 	Source ApplicationSource `json:"source,omitempty"`
 
 	// destination is the cluster and namespace they were compared in.
 	Destination ApplicationDestination `json:"destination,omitempty"`
+
+	// ignoreDifferences are the rules the comparison left out of its diff.
+	IgnoreDifferences []ResourceIgnoreDifferences `json:"ignoreDifferences,omitempty"`
 }
 
 // ApplicationList contains a list of Application.

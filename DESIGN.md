@@ -378,6 +378,7 @@ Destination: { Name: "<componentSet.Namespace>-<component.InfraPlaneRef.Name>",
                Namespace: component.Namespace },
 SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
               SyncOptions: ["CreateNamespace=true", "ServerSideApply=true"] },
+IgnoreDifferences: <the chart's IgnoreDifferencesFunc, if registered>(),
 ```
 
 Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
@@ -388,6 +389,20 @@ an Application name; the ownership check remains for a manifest copied in from e
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
 unmanaged on the infra-plane cluster.
+
+`IgnoreDifferences` comes from a registry built, like the ip operator's Verifiers (§3a), on
+the generic `registry.Registry`: `CatalogIgnoreDifferences()` in
+`internal/controller/cp/ignore_differences.go` registers one `IgnoreDifferencesFunc` per
+catalog chart, and `TestCatalogIgnoreDifferences` fails unless it covers exactly
+`components.All`. A chart diffed in full registers
+`noIgnoreDifferences`; one with fields that a controller on the infra-plane cluster owns by
+design registers an `IgnoreDifferences` function from its own package. istio is the
+case: istiod patches its validating webhooks' `failurePolicy` from the rendered `Ignore` to
+`Fail` once it serves, so a full diff never reports `Synced` and stalls every later wave. A
+chart with rules also gets `RespectIgnoreDifferences=true`; without it every sync, self-heal's
+included, applies the rendered value again and the owning controller patches it back. Rules
+name objects, not only kinds, so drift elsewhere still shows. Neither callers nor the CRD can
+add rules.
 
 Self-heal creates again any rendered object that disappears from the infra-plane cluster,
 so a chart must not render an object that deletes itself. `job_deployment` sets no
@@ -492,10 +507,10 @@ spec that produced it. A string is one scalar and is replaced whole.
 
 Comparison has the following rules:
 
-- Compare `comparedTo.source` and `comparedTo.destination`, not `comparedTo` as a whole.
-  `comparedTo.ignoreDifferences` and `comparedTo.sources` are neither written nor read by
-  the operator, which writes exactly one source and no ignoreDifferences. Destination is
-  modelled in full.
+- Compare `comparedTo.source`, `comparedTo.destination` and `comparedTo.ignoreDifferences`,
+  not `comparedTo` as a whole. `comparedTo.sources` is neither written nor read by the
+  operator, which writes exactly one source. Destination and ignoreDifferences are modelled
+  in full, so a comparison made before a chart's rules applied does not finish it.
 - Retain unmodelled source keys on read so a field such as `helm.valueFiles` affects both
   spec reconciliation and completion. Replacing `/spec` clears source drift. Argo CD's
   status patch then removes those keys from `comparedTo` by diffing old and new status.

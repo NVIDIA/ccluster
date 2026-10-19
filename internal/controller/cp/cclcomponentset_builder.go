@@ -46,6 +46,27 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 ) argocdv1alpha1.ApplicationSpec {
+	// ServerSideApply is not optional for this catalog. Argo CD's default client-side
+	// apply records the manifest in the kubectl.kubernetes.io/last-applied-configuration
+	// annotation and diffs against it, but an annotation cannot hold a large object -
+	// argo-rollouts' rollouts.argoproj.io CRD is ~600KB - so the copy is truncated and the
+	// diff never converges. The resource then sits OutOfSync forever despite syncing
+	// successfully, which stalls every later component. It needs
+	// controller.diff.server.side on the application controller to match; the cp chart
+	// sets that.
+	syncOptions := []string{"CreateNamespace=true", "ServerSideApply=true"}
+
+	var ignored []argocdv1alpha1.ResourceIgnoreDifferences
+	if rules, ok := r.IgnoreDifferences.Lookup(component.Chart); ok {
+		ignored = rules()
+	}
+	if len(ignored) > 0 {
+		// Without it ignoreDifferences only hides the drift: every sync, self-heal's
+		// included, still applies the rendered value, and the controller that owns
+		// the field patches it back.
+		syncOptions = append(syncOptions, "RespectIgnoreDifferences=true")
+	}
+
 	return argocdv1alpha1.ApplicationSpec{
 		// The namespace's project, which the CCLInfraPlane controller created before it
 		// reported the plane Available. It is what permits an Application in this
@@ -76,17 +97,9 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 				Prune:    true,
 				SelfHeal: true,
 			},
-			// ServerSideApply is not optional for this catalog. Argo CD's default
-			// client-side apply records the manifest in the
-			// kubectl.kubernetes.io/last-applied-configuration annotation and diffs
-			// against it, but an annotation cannot hold a large object -
-			// argo-rollouts' rollouts.argoproj.io CRD is ~600KB - so the copy is
-			// truncated and the diff never converges. The resource then sits
-			// OutOfSync forever despite syncing successfully, which stalls every
-			// later component. It needs controller.diff.server.side on the
-			// application controller to match; the cp chart sets that.
-			SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
+			SyncOptions: syncOptions,
 		},
+		IgnoreDifferences: ignored,
 	}
 }
 
@@ -107,7 +120,7 @@ func helmValues(values *apiextensionsv1.JSON) *argocdv1alpha1.ApplicationSourceH
 }
 
 // comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-// desired source and destination.
+// desired source, destination and ignoreDifferences.
 //
 // Argo CD records sync status, comparedTo and health from the same comparison.
 // Matching its inputs ties those statuses to the desired configuration without tracking
@@ -119,12 +132,14 @@ func comparedToMatchesSpec(
 		return false
 	}
 	// ApplicationSource keeps the keys it does not model, so this sees a source Argo CD
-	// rendered from something the operator did not write. Destination is modelled in
-	// full. comparedTo.ignoreDifferences and comparedTo.sources are neither written nor
-	// read: the operator writes no ignoreDifferences and exactly one source.
+	// rendered from something the operator did not write. Destination and
+	// ignoreDifferences are modelled in full; a comparison made before a rule applied
+	// still reports the drift the rule hides. comparedTo.sources is neither written nor
+	// read: the operator writes exactly one source.
 	comparedTo := app.Status.Sync.ComparedTo
 	return equality.Semantic.DeepEqual(comparedTo.Source, desired.Source) &&
-		equality.Semantic.DeepEqual(comparedTo.Destination, desired.Destination)
+		equality.Semantic.DeepEqual(comparedTo.Destination, desired.Destination) &&
+		equality.Semantic.DeepEqual(comparedTo.IgnoreDifferences, desired.IgnoreDifferences)
 }
 
 // finished reports that a released component has converged on the current spec.

@@ -95,6 +95,10 @@ type CCLComponentSetReconciler struct {
 	// root; the repository and revision themselves are not settable per component.
 	CatalogRepoURL  string
 	CatalogRevision string
+
+	// IgnoreDifferences is the registry of charts' Argo CD ignoreDifferences rules,
+	// normally CatalogIgnoreDifferences(). The zero value diffs every chart in full.
+	IgnoreDifferences IgnoreDifferencesRegistry
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete

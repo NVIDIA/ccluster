@@ -86,10 +86,11 @@ func setupControllers(mgr ctrl.Manager) error {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
 	if err := (&cp.CCLComponentSetReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		CatalogRepoURL:  catalogRepoURL,
-		CatalogRevision: catalogRevision,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		CatalogRepoURL:    catalogRepoURL,
+		CatalogRevision:   catalogRevision,
+		IgnoreDifferences: cp.CatalogIgnoreDifferences(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}

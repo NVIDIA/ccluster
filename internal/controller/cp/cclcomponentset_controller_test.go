@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
@@ -207,6 +208,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			if mutate != nil {
 				mutate(source)
 			}
+			// Argo CD records the rules it compared with beside the source.
+			ignoreDifferences, _, err := unstructured.NestedSlice(raw.Object, "spec", "ignoreDifferences")
+			Expect(err).NotTo(HaveOccurred())
 
 			application := getApplication(component)
 			status := map[string]any{
@@ -215,8 +219,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 					"status":   sync,
 					"revision": resolvedRevision,
 					"comparedTo": map[string]any{
-						"source":      source,
-						"destination": application.Spec.Destination,
+						"source":            source,
+						"destination":       application.Spec.Destination,
+						"ignoreDifferences": ignoreDifferences,
 					},
 				},
 				"reconciledAt": metav1.Now(),
@@ -303,10 +308,11 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		BeforeEach(func() {
 			reconciler = &CCLComponentSetReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
-				CatalogRepoURL:  repoURL,
-				CatalogRevision: revision,
+				Client:            k8sClient,
+				Scheme:            k8sClient.Scheme(),
+				CatalogRepoURL:    repoURL,
+				CatalogRevision:   revision,
+				IgnoreDifferences: CatalogIgnoreDifferences(),
 			}
 		})
 
@@ -524,6 +530,49 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/spire_crds"))
 			Expect(application.Spec.Destination.Namespace).To(Equal("spire-system"))
 			Expect(applicationExists("spire")).To(BeFalse())
+		})
+
+		// istiod patches its validating webhooks' failurePolicy from the rendered Ignore to
+		// Fail once it serves. Diffed, the istio Application never reports Synced and
+		// every later wave stalls behind it.
+		It("should ignore istiod's webhook failurePolicy, and wait for a comparison that did", func() {
+			mesh, err := istio.New("istio-system", istio.Values{})
+			Expect(err).NotTo(HaveOccurred())
+			specs := components()
+			specs[0] = cclusternvidiacomv1alpha1.ComponentSpec{
+				Name:           istio.Name,
+				InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
+				ComponentEntry: mesh,
+			}
+
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(specs)
+			settle()
+
+			application := getApplication(istio.Name)
+			Expect(application.Spec.IgnoreDifferences).To(Equal(istio.IgnoreDifferences()))
+			Expect(application.Spec.SyncPolicy.SyncOptions).To(ConsistOf(
+				"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"),
+				"without it every sync reapplies Ignore and istiod patches Fail back")
+
+			By("holding the rollout on a comparison made before the rules applied")
+			reportCurrentComparison(istio.Name, argocdv1alpha1.HealthStatusHealthy,
+				argocdv1alpha1.SyncStatusSynced)
+			Expect(k8sClient.Patch(ctx, getApplication(istio.Name), client.RawPatch(types.MergePatchType,
+				[]byte(`{"status":{"sync":{"comparedTo":{"ignoreDifferences":null}}}}`)))).To(Succeed())
+			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			Expect(progressing.Message).To(ContainSubstring("waiting for Argo CD to compare"))
+			Expect(applicationExists(secondComponent)).To(BeFalse())
+
+			By("releasing the next wave once Argo CD compared with them")
+			release(istio.Name)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
+
+			By("leaving charts without rules diffed in full")
+			keda := getApplication(secondComponent)
+			Expect(keda.Spec.IgnoreDifferences).To(BeEmpty())
+			Expect(keda.Spec.SyncPolicy.SyncOptions).NotTo(ContainElement("RespectIgnoreDifferences=true"))
 		})
 
 		It("should reject duplicate component names", func() {

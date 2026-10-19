@@ -9,6 +9,7 @@ package istio
 import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
 const (
@@ -114,4 +115,30 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// IgnoreDifferences returns the fields of this chart's objects that istiod owns once it
+// runs. The cp operator registers it with the IgnoreDifferencesFunc signature.
+//
+// The istiod and istio-base subcharts render their validating webhooks with
+// failurePolicy Ignore, so that the API server fails open until istiod serves, and
+// istiod's webhook controller then patches it to Fail. Diffed, that is permanent drift
+// which self-heal reverts and istiod restores, and the Application never reports
+// Synced. The rules name the two webhooks rather than the kind, so drift on any other
+// webhook still shows. istiod's name depends on its revision and the global Istio
+// namespace, which Values does not set; istio-base's is fixed.
+func IgnoreDifferences() []argocdv1alpha1.ResourceIgnoreDifferences {
+	return []argocdv1alpha1.ResourceIgnoreDifferences{
+		webhookFailurePolicy("istio-validator-istio-system"), // istiod
+		webhookFailurePolicy("istiod-default-validator"),     // istio-base
+	}
+}
+
+func webhookFailurePolicy(name string) argocdv1alpha1.ResourceIgnoreDifferences {
+	return argocdv1alpha1.ResourceIgnoreDifferences{
+		Group:             "admissionregistration.k8s.io",
+		Kind:              "ValidatingWebhookConfiguration",
+		Name:              name,
+		JQPathExpressions: []string{".webhooks[]?.failurePolicy"},
+	}
 }
