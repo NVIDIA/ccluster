@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A single-component istio CCLComponentSet sized for the kind e2e cluster: kind's CNI
+# paths rather than the chart's k3s defaults, one istiod replica without autoscaling (the
+# cluster has no metrics-server, and Argo CD reports an HPA without metrics as Degraded),
+# and small requests in place of istiod's 2Gi.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLComponentSet
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  components:
+    - name: istio
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/istio
+      namespace: istio-system
+      values:
+        istiod:
+          pilot:
+            autoscaleEnabled: false
+            autoscaleMin: 1
+            replicaCount: 1
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+        istio-cni:
+          cni:
+            cniConfDir: /etc/cni/net.d
+            cniBinDir: /opt/cni/bin

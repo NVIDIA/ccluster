@@ -115,3 +115,24 @@ func New(
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
 }
+
+// Drift returns the fields of this chart's objects that istiod owns once it runs. The cp
+// operator registers it in its drift registry.
+//
+// The istiod and istio-base subcharts render their validating webhooks with
+// failurePolicy Ignore, so that the API server fails open until istiod serves, and
+// istiod's webhook controller then patches it to Fail. Diffed, that is permanent drift
+// which self-heal reverts and istiod restores, and the Application never reports
+// Synced. The rule selects the two webhooks by their entry names, which are fixed:
+// istiod's configuration is named after its revision and the global Istio namespace,
+// either of which a CCLComponentSet can set. Drift on any other webhook still shows.
+func Drift() []catalogs.DriftSpec {
+	return []catalogs.DriftSpec{{
+		Group: "admissionregistration.k8s.io",
+		Kind:  "ValidatingWebhookConfiguration",
+		JQPaths: []string{
+			// rev.validation.istio.io is istiod's; validation.istio.io is istio-base's.
+			`.webhooks[]? | select(.name == "rev.validation.istio.io" or .name == "validation.istio.io") | .failurePolicy`,
+		},
+	}}
+}

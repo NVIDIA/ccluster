@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
@@ -46,6 +47,29 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 ) argocdv1alpha1.ApplicationSpec {
+	// ServerSideApply is not optional for this catalog. Argo CD's default client-side
+	// apply records the manifest in the kubectl.kubernetes.io/last-applied-configuration
+	// annotation and diffs against it, but an annotation cannot hold a large object -
+	// argo-rollouts' rollouts.argoproj.io CRD is ~600KB - so the copy is truncated and the
+	// diff never converges. The resource then sits OutOfSync forever despite syncing
+	// successfully, which stalls every later component. It needs
+	// controller.diff.server.side on the application controller to match; the cp chart
+	// sets that.
+	syncOptions := []string{"CreateNamespace=true", "ServerSideApply=true"}
+
+	var ignored []argocdv1alpha1.ResourceIgnoreDifferences
+	if r.Drift != nil {
+		if rules, ok := r.Drift.Lookup(component.Chart); ok {
+			ignored = ignoreDifferences(rules())
+		}
+	}
+	if len(ignored) > 0 {
+		// Without it ignoreDifferences only hides the drift: every sync, self-heal's
+		// included, still applies the rendered value, and the controller that owns
+		// the field patches it back.
+		syncOptions = append(syncOptions, "RespectIgnoreDifferences=true")
+	}
+
 	return argocdv1alpha1.ApplicationSpec{
 		// The namespace's project, which the CCLInfraPlane controller created before it
 		// reported the plane Available. It is what permits an Application in this
@@ -76,17 +100,9 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 				Prune:    true,
 				SelfHeal: true,
 			},
-			// ServerSideApply is not optional for this catalog. Argo CD's default
-			// client-side apply records the manifest in the
-			// kubectl.kubernetes.io/last-applied-configuration annotation and diffs
-			// against it, but an annotation cannot hold a large object -
-			// argo-rollouts' rollouts.argoproj.io CRD is ~600KB - so the copy is
-			// truncated and the diff never converges. The resource then sits
-			// OutOfSync forever despite syncing successfully, which stalls every
-			// later component. It needs controller.diff.server.side on the
-			// application controller to match; the cp chart sets that.
-			SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true"},
+			SyncOptions: syncOptions,
 		},
+		IgnoreDifferences: ignored,
 	}
 }
 
@@ -106,8 +122,26 @@ func helmValues(values *apiextensionsv1.JSON) *argocdv1alpha1.ApplicationSourceH
 	return &argocdv1alpha1.ApplicationSourceHelm{Values: string(document)}
 }
 
+// ignoreDifferences writes a chart's drift rules as Argo CD ignoreDifferences. A rule
+// names no object, so it applies to every object of its kind that the Application
+// manages.
+func ignoreDifferences(rules []catalogs.DriftSpec) []argocdv1alpha1.ResourceIgnoreDifferences {
+	if len(rules) == 0 {
+		return nil
+	}
+	ignored := make([]argocdv1alpha1.ResourceIgnoreDifferences, 0, len(rules))
+	for _, rule := range rules {
+		ignored = append(ignored, argocdv1alpha1.ResourceIgnoreDifferences{
+			Group:             rule.Group,
+			Kind:              rule.Kind,
+			JQPathExpressions: rule.JQPaths,
+		})
+	}
+	return ignored
+}
+
 // comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-// desired source and destination.
+// desired source, destination and ignoreDifferences.
 //
 // Argo CD records sync status, comparedTo and health from the same comparison.
 // Matching its inputs ties those statuses to the desired configuration without tracking
@@ -119,12 +153,14 @@ func comparedToMatchesSpec(
 		return false
 	}
 	// ApplicationSource keeps the keys it does not model, so this sees a source Argo CD
-	// rendered from something the operator did not write. Destination is modelled in
-	// full. comparedTo.ignoreDifferences and comparedTo.sources are neither written nor
-	// read: the operator writes no ignoreDifferences and exactly one source.
+	// rendered from something the operator did not write. Destination and
+	// ignoreDifferences are modelled in full; a comparison made before a rule applied
+	// still reports the drift the rule hides. comparedTo.sources is neither written nor
+	// read: the operator writes exactly one source.
 	comparedTo := app.Status.Sync.ComparedTo
 	return equality.Semantic.DeepEqual(comparedTo.Source, desired.Source) &&
-		equality.Semantic.DeepEqual(comparedTo.Destination, desired.Destination)
+		equality.Semantic.DeepEqual(comparedTo.Destination, desired.Destination) &&
+		equality.Semantic.DeepEqual(comparedTo.IgnoreDifferences, desired.IgnoreDifferences)
 }
 
 // finished reports that a released component has converged on the current spec.
@@ -549,8 +585,9 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 				wave, component.Name)
 
 		case !comparedToMatchesSpec(application, desired):
-			// The latest comparison does not match the desired source and destination,
-			// so its health and sync statuses cannot establish completion.
+			// The latest comparison does not match the desired source, destination and
+			// ignoreDifferences, so its health and sync statuses cannot establish
+			// completion.
 			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
 				"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
 					"operator wrote", wave, component.Name), application)

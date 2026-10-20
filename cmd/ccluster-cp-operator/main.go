@@ -20,6 +20,7 @@ import (
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
+	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -90,6 +91,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
+		Drift:           driftregistry.Get(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}

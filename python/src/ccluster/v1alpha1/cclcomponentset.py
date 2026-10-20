@@ -110,8 +110,8 @@ class ComponentSyncStatus(BaseModel):
     compared_to_matches_spec: Annotated[bool, Field(alias="comparedToMatchesSpec")]
     """
     comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-    desired source and destination. While false, health and sync do not establish
-    convergence on the desired configuration.
+    desired source, destination and ignoreDifferences. While false, health and sync do
+    not establish convergence on the desired configuration.
     """
     health: str | None = None
     """

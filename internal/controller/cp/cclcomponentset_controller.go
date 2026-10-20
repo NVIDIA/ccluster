@@ -25,6 +25,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 )
 
 // Condition types and reasons reported on CCLComponentSet.status.
@@ -95,6 +96,10 @@ type CCLComponentSetReconciler struct {
 	// root; the repository and revision themselves are not settable per component.
 	CatalogRepoURL  string
 	CatalogRevision string
+
+	// Drift is the registry of charts' drift rules, written as Argo CD ignoreDifferences,
+	// normally driftregistry.Get(). Nil diffs every chart in full.
+	Drift *driftregistry.Registry
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete

@@ -378,6 +378,7 @@ Destination: { Name: "<componentSet.Namespace>-<component.InfraPlaneRef.Name>",
                Namespace: component.Namespace },
 SyncPolicy: { Automated: {Prune: true, SelfHeal: true},
               SyncOptions: ["CreateNamespace=true", "ServerSideApply=true"] },
+IgnoreDifferences: <the chart's DriftFunc, if registered>(),
 ```
 
 Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
@@ -388,6 +389,21 @@ an Application name; the ownership check remains for a manifest copied in from e
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
 unmanaged on the infra-plane cluster.
+
+`IgnoreDifferences` comes from the drift registry, built like the ip operator's Verifiers
+(§3a) on the generic `registry.Registry`: `driftregistry.Get()` in
+`internal/registry/drift_registry` registers one `DriftFunc` per catalog chart, and
+`TestGet` fails unless it covers exactly `components.All`. A chart diffed in full registers
+`noDrift`; one with fields that a controller on the infra-plane cluster owns by design
+registers a `Drift` function from its own package. istio is the case: istiod patches its
+validating webhooks' `failurePolicy` from the rendered `Ignore` to `Fail` once it serves, so
+a full diff never reports `Synced` and stalls every later wave. A chart with rules also gets
+`RespectIgnoreDifferences=true`; without it every sync, self-heal's included, applies the
+rendered value again and the owning controller patches it back. A rule
+(`catalogs.DriftSpec`) names a kind and jq paths but no object, since chart values can rename
+objects; its jq selects fields by something the chart keeps fixed, such as a webhook's
+entry name, so drift elsewhere still shows. Neither callers nor the CRD can
+add rules.
 
 Self-heal creates again any rendered object that disappears from the infra-plane cluster,
 so a chart must not render an object that deletes itself. `job_deployment` sets no
@@ -473,8 +489,8 @@ The operator settles this by reading what Argo CD compared, not by tracking the 
 asks for. `status.sync.status`, `status.sync.comparedTo` and `status.health.status` are
 written from the output of one comparison, in consecutive statements of one Argo CD
 reconcile. A component is finished when its Application's `spec` is the one
-`applicationSpec()` builds, `status.sync.comparedTo` names that source and destination,
-and the verdict beside them is `Synced` and `Healthy`. It must also have no pending or
+`applicationSpec()` builds, `status.sync.comparedTo` names that source, destination and
+ignoreDifferences, and the verdict beside them is `Synced` and `Healthy`. It must also have no pending or
 running operation and no terminal failure attributed to that source and resolved revision.
 Argo CD excludes hooks from aggregate health and sync, so a `Healthy`/`Synced` verdict
 can coexist with a running or failed PostSync hook. There is no sync receipt to catch and
@@ -492,10 +508,10 @@ spec that produced it. A string is one scalar and is replaced whole.
 
 Comparison has the following rules:
 
-- Compare `comparedTo.source` and `comparedTo.destination`, not `comparedTo` as a whole.
-  `comparedTo.ignoreDifferences` and `comparedTo.sources` are neither written nor read by
-  the operator, which writes exactly one source and no ignoreDifferences. Destination is
-  modelled in full.
+- Compare `comparedTo.source`, `comparedTo.destination` and `comparedTo.ignoreDifferences`,
+  not `comparedTo` as a whole. `comparedTo.sources` is neither written nor read by the
+  operator, which writes exactly one source. Destination and ignoreDifferences are modelled
+  in full, so a comparison made before a chart's rules applied does not finish it.
 - Retain unmodelled source keys on read so a field such as `helm.valueFiles` affects both
   spec reconciliation and completion. Replacing `/spec` clears source drift. Argo CD's
   status patch then removes those keys from `comparedTo` by diffing old and new status.
@@ -514,8 +530,8 @@ Comparison has the following rules:
   excluded from aggregate health and sync, so `Healthy`/`Synced` can precede the completion
   of a PostSync hook.
 - Report a terminal `Failed` or `Error` operation as `WaveSyncFailed`, but only once
-  `comparedTo` names the current source and destination and no operation is pending or
-  running. Attribute the failure using `operationState.syncResult.source`; when both
+  `comparedTo` names the current source, destination and ignoreDifferences and no
+  operation is pending or running. Attribute the failure using `operationState.syncResult.source`; when both
   resolved revisions are known, `syncResult.revision` must equal `status.sync.revision`.
   An early error without a sync result falls back to the captured `operation.sync.source`;
   a failure with neither source cannot be attributed. Comparison and operation state
@@ -526,7 +542,7 @@ Comparison has the following rules:
   join and no first spec change to wait for.
 - Rebuild `status.componentSyncs` from the released Applications each pass. The
   `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
-  source and destination. Controller decisions use Applications directly, so a failed
+  source, destination and ignoreDifferences. Controller decisions use Applications directly, so a failed
   status write leaves a stale report without blocking rollout recovery.
 
 Every pass writes the spec of every released component, and no component's operation holds
