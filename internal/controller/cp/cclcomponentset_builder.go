@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
@@ -58,7 +59,7 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 
 	var ignored []argocdv1alpha1.ResourceIgnoreDifferences
 	if rules, ok := r.Drift.Lookup(component.Chart); ok {
-		ignored = rules()
+		ignored = ignoreDifferences(rules())
 	}
 	if len(ignored) > 0 {
 		// Without it ignoreDifferences only hides the drift: every sync, self-heal's
@@ -117,6 +118,24 @@ func helmValues(values *apiextensionsv1.JSON) *argocdv1alpha1.ApplicationSourceH
 		return &argocdv1alpha1.ApplicationSourceHelm{Values: string(values.Raw)}
 	}
 	return &argocdv1alpha1.ApplicationSourceHelm{Values: string(document)}
+}
+
+// ignoreDifferences writes a chart's drift rules as Argo CD ignoreDifferences. A rule
+// names no object, so it applies to every object of its kind that the Application
+// manages.
+func ignoreDifferences(rules []catalogs.Drift) []argocdv1alpha1.ResourceIgnoreDifferences {
+	if len(rules) == 0 {
+		return nil
+	}
+	ignored := make([]argocdv1alpha1.ResourceIgnoreDifferences, 0, len(rules))
+	for _, rule := range rules {
+		ignored = append(ignored, argocdv1alpha1.ResourceIgnoreDifferences{
+			Group:             rule.Group,
+			Kind:              rule.Kind,
+			JQPathExpressions: rule.JQPaths,
+		})
+	}
+	return ignored
 }
 
 // comparedToMatchesSpec reports whether Argo CD's latest comparison used the

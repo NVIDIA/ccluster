@@ -21,7 +21,8 @@ func TestGet(t *testing.T) {
 	for _, c := range components.All {
 		want = append(want, c.Chart)
 	}
-	if got := Get().Charts(); !slices.Equal(got, want) {
+	drift := Get()
+	if got := drift.Charts(); !slices.Equal(got, want) {
 		t.Errorf("registered charts %v\nwant components.All %v", got, want)
 	}
 }
@@ -33,8 +34,7 @@ func TestDriftSelectsFields(t *testing.T) {
 	for _, chart := range drift.Charts() {
 		rules, _ := drift.Lookup(chart)
 		for _, rule := range rules() {
-			if rule.Kind == "" ||
-				len(rule.JSONPointers)+len(rule.JQPathExpressions)+len(rule.ManagedFieldsManagers) == 0 {
+			if rule.Kind == "" || len(rule.JQPaths) == 0 {
 				t.Errorf("%s: rule %+v selects no kind or no field", chart, rule)
 			}
 		}

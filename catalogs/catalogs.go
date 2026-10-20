@@ -33,6 +33,11 @@ SPDX-License-Identifier: Apache-2.0
 // This package does not import operator code: the dependency runs from the operator to
 // the catalog only.
 //
+// A chart package may also export a Drift function returning []Drift: fields of its
+// objects that a controller on the infra-plane cluster owns by design. The control-plane
+// operator registers it in its drift registry (internal/registry/drift_registry) and
+// writes the rules into the chart's Argo CD Application.
+//
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
 // the zero value — and several charts here need to set a flag to false against a chart
@@ -60,6 +65,25 @@ import (
 // check them, and Helm only fails once the chart is already being installed.
 type Validator interface {
 	Validate() error
+}
+
+// Drift names fields of a chart's objects that a controller on the infra-plane cluster
+// owns by design, so the rendered value is never the live one. The control-plane
+// operator writes each Drift into the chart's Argo CD Application as an ignoreDifferences
+// rule, which Argo CD applies to every object of the kind that the Application manages.
+//
+// A rule does not name objects: chart values can change their names. JQPaths narrows
+// the rule to the right fields with a jq select on something the chart keeps stable
+// whatever its values, such as a webhook's entry name.
+type Drift struct {
+	// Group is the objects' API group; empty for the core group.
+	Group string
+
+	// Kind is the objects' kind.
+	Kind string
+
+	// JQPaths are jq paths to the ignored fields, evaluated against each object.
+	JQPaths []string
 }
 
 // Entry builds the CRD's chart entry from a chart's typed values. It is what every

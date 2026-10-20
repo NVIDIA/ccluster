@@ -9,6 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package driftregistry
 
 import (
+	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
@@ -33,12 +34,12 @@ import (
 	namespacebase "github.com/NVIDIA/ccluster/catalogs/namespace_base"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	persistentvolume "github.com/NVIDIA/ccluster/catalogs/resources/persistent_volume"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
-// DriftFunc is the signature of a chart's drift: Argo CD ignoreDifferences rules for the
-// fields of its objects that are allowed to drift from the rendered chart. The rules
+// DriftFunc is the signature of a chart's drift: rules for the fields of its objects that
+// are allowed to drift from the rendered chart, which the operator writes as Argo CD
+// ignoreDifferences. The rules
 // themselves are a plain function in the chart's package, conventionally named Drift;
 // the chart package does not import this one, and Register checks the signature at
 // compile time.
@@ -47,10 +48,10 @@ import (
 // cluster owns by design, so the rendered value is never the live one and a full diff
 // would keep the Application OutOfSync, stalling every later component. Each call
 // returns a new slice: the operator writes it into an Application spec.
-type DriftFunc func() []argocdv1alpha1.ResourceIgnoreDifferences
+type DriftFunc func() []catalogs.Drift
 
 // noDrift is registered for a chart whose objects are diffed in full.
-func noDrift() []argocdv1alpha1.ResourceIgnoreDifferences {
+func noDrift() []catalogs.Drift {
 	return nil
 }
 

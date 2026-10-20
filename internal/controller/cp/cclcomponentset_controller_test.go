@@ -552,7 +552,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			settle()
 
 			application := getApplication(istio.Name)
-			Expect(application.Spec.IgnoreDifferences).To(Equal(istio.Drift()))
+			rules := istio.Drift()
+			want := make([]argocdv1alpha1.ResourceIgnoreDifferences, 0, len(rules))
+			for _, rule := range rules {
+				want = append(want, argocdv1alpha1.ResourceIgnoreDifferences{
+					Group: rule.Group, Kind: rule.Kind, JQPathExpressions: rule.JQPaths,
+				})
+			}
+			Expect(application.Spec.IgnoreDifferences).To(Equal(want),
+				"every rule applies to its whole kind, so it names no object")
 			Expect(application.Spec.SyncPolicy.SyncOptions).To(ConsistOf(
 				"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"),
 				"without it every sync reapplies Ignore and istiod patches Fail back")
