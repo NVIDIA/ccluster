@@ -95,7 +95,8 @@ points at a `Secret` in the **same namespace** holding that cluster's Argo CD cr
 the usual `server`, `config`, and optionally `tlsClientConfig` keys.
 
 `CCLInfraPlaneReconciler` (`internal/controller/cp/cclinfraplane_controller.go`) mirrors that
-Secret into the Argo CD namespace (`--argocd-namespace`) under the name
+Secret into the Argo CD namespace (`--argocd-namespace`, by default the operator's own,
+where the cp chart installs Argo CD) under the name
 **`<namespace>-<name>`**, labelled `argocd.argoproj.io/secret-type: cluster`, which is how
 Argo CD discovers clusters. Cluster Secrets are the one thing Argo CD reads only from its own
 namespace — there is no "clusters in any namespace" — so they stay there, and the prefix is

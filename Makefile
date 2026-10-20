@@ -192,7 +192,7 @@ build-ip: manifests generate fmt vet ## Build the ccluster-ip-operator binary.
 
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
-	go run ./cmd/ccluster-cp-operator
+	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd)
 
 .PHONY: run-ip
 run-ip: manifests generate fmt vet ## Run ccluster-ip-operator from your host.
@@ -393,9 +393,9 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # generated from the kustomize overlays by `make helm-generate` — see the Helm
 # section below.
 
-# The chart's argo-cd dependency installs into the RELEASE namespace, not the
-# `argocd` the operator defaults to, so deploy-cp overrides --argocd-namespace to
-# match. manager.args is restated in full because `--set manager.args[1]=...` builds
+# The operator looks for Argo CD in its own namespace, the release namespace, where
+# the chart's argo-cd dependency installs it. Set ARGOCD_NAMESPACE for an existing
+# Argo CD elsewhere. manager.args is restated in full because `--set manager.args[1]=...` builds
 # a sparse list and nulls index 0, silently dropping --leader-elect.
 # The one target that names both clusters: deploy-cp and deploy-ip on their own still
 # act on the current kubeconfig context, so they can be pointed anywhere.
@@ -411,7 +411,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
-		--set-json 'manager.args=["--leader-elect","--argocd-namespace=$(HELM_NAMESPACE_CP)","--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
+		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -467,6 +467,11 @@ HELM_TIMEOUT ?= 5m
 # Set ARGOCD=false to install the cp operator without Argo CD, e.g. into a cluster
 # that already runs it, or for hermetic tests that must not pull the Argo CD images.
 ARGOCD ?= true
+# The namespace of an existing Argo CD, for deploy-cp ARGOCD=false and run-cp. Empty
+# means the operator's own namespace; run-cp, which has none, then uses `argocd`.
+ARGOCD_NAMESPACE ?=
+# A literal comma cannot appear inside $(if).
+COMMA := ,
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.

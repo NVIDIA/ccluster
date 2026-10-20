@@ -261,7 +261,9 @@ without deleting CRs, run `make helm-adopt-crds-cp`, then deploy. `make install`
 the host-manager loop with `make run-cp`, where no chart is installed.
 
 `make deploy-cp ARGOCD=false` skips the dependency when Argo CD already exists or is
-intentionally absent. The operator must tolerate the Application CRD being absent at
+intentionally absent. The operator looks for Argo CD in its own namespace unless
+`--argocd-namespace` is set: pass an existing Argo CD's namespace as `ARGOCD_NAMESPACE`.
+`make run-cp` has no namespace of its own and uses `ARGOCD_NAMESPACE`, or `argocd`. The operator must tolerate the Application CRD being absent at
 startup. Argo CD clones `CATALOG_REPO_URL` itself; a private catalog requires credentials,
 provided through `GITHUB_TOKEN` to `make deploy-cp`. Missing credentials surface as
 Application comparison errors. Use `CATALOG_REVISION` to select the catalog commit or tag.

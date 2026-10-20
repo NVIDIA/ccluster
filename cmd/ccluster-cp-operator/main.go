@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -28,8 +29,14 @@ var scheme = runtime.NewScheme()
 
 // argoCDNamespace is registered on flag.CommandLine in main and read in
 // setupControllers. manager.Run owns flag.Parse, and calls SetupControllers only after
-// it, so the value is settled by the time a controller reads it.
+// it, so the value is settled by the time a controller reads it. setupControllers
+// replaces an empty value with the operator's own namespace.
 var argoCDNamespace string
+
+// serviceAccountNamespaceFile holds the namespace of the Pod it is mounted into, beside
+// the ServiceAccount token the operator authenticates with. controller-runtime reads the
+// same file for the leader-election namespace.
+const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 // catalogRepoURL and catalogRevision locate the chart catalog the generated
 // Applications deploy from. Set by flags, for the same reason as argoCDNamespace.
@@ -53,9 +60,10 @@ func main() {
 	// Registered before manager.Run, which parses flag.CommandLine. This flag is
 	// specific to the control-plane operator, so it does not belong in
 	// internal/manager alongside the operator-agnostic ones.
-	flag.StringVar(&argoCDNamespace, "argocd-namespace", "argocd",
+	flag.StringVar(&argoCDNamespace, "argocd-namespace", "",
 		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes, "+
-			"and the AppProject for each of their namespaces, are written there.")
+			"and the AppProject for each of their namespaces, are written there. Empty means "+
+			"the operator's own namespace, where the cp chart installs Argo CD.")
 	flag.StringVar(&catalogRepoURL, "catalog-repo-url", "https://github.com/NVIDIA/ccluster",
 		"The Git repository holding the chart catalog. Argo CD's repo-server must be able to clone it.")
 	flag.StringVar(&catalogRevision, "catalog-revision", "main",
@@ -78,6 +86,12 @@ func main() {
 // wired up here by hand — the CLI only knows how to inject into cmd/main.go,
 // which this project does not have.
 func setupControllers(mgr ctrl.Manager) error {
+	namespace, err := resolveArgoCDNamespace(argoCDNamespace, serviceAccountNamespaceFile)
+	if err != nil {
+		return err
+	}
+	argoCDNamespace = namespace
+
 	if err := (&cp.CCLInfraPlaneReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
@@ -97,4 +111,22 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	// +kubebuilder:scaffold:builder
 	return nil
+}
+
+// resolveArgoCDNamespace returns flagValue, or if it is empty the namespace in
+// namespaceFile, the operator's own. Outside a Pod there is no such file, and the
+// namespace has to be given.
+func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	data, err := os.ReadFile(namespaceFile)
+	if err != nil {
+		return "", fmt.Errorf("--argocd-namespace is unset and the operator's own namespace is unknown: %w", err)
+	}
+	namespace := strings.TrimSpace(string(data))
+	if namespace == "" {
+		return "", fmt.Errorf("--argocd-namespace is unset and %s is empty", namespaceFile)
+	}
+	return namespace, nil
 }

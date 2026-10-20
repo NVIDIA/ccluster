@@ -48,7 +48,7 @@ export KUBECONFIG=~/.kube/my-cluster.yaml
 ```
 
 If the cluster already runs Argo CD, install the operator on its own with
-`make deploy-cp ARGOCD=false`.
+`make deploy-cp ARGOCD=false ARGOCD_NAMESPACE=<its namespace>`, such as `argocd`.
 
 The `make deploy-*` targets install the charts from this checkout with a locally built
 image. Released versions are published to GHCR and can be installed without a clone:
