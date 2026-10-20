@@ -121,6 +121,56 @@ type CCLComponentSetStatus struct {
 	// +listMapKey=name
 	// +optional
 	ComponentSyncs []ComponentSyncStatus `json:"componentSyncs,omitempty"`
+	// componentStatuses reports each component's state in its chart's own terms, such
+	// as a Job that succeeded or a Pod in CrashLoopBackOff, as last observed through
+	// Argo CD. It is observed periodically rather than on every change, so it can lag
+	// behind componentSyncs; lastObservedTime says how far.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	ComponentStatuses []ComponentStatus `json:"componentStatuses,omitempty"`
+}
+
+// ComponentState is a component's coarse state.
+// +kubebuilder:validation:Enum=Pending;Starting;Running;Failing;Succeeded;Failed;Unknown
+type ComponentState string
+
+const (
+	// ComponentStatePending: waiting on something before it can start, such as an
+	// earlier component, nodes to schedule its Pods on, or a volume to bind.
+	ComponentStatePending ComponentState = "Pending"
+	// ComponentStateStarting: making progress towards running, such as syncing,
+	// pulling images, or initializing.
+	ComponentStateStarting ComponentState = "Starting"
+	// ComponentStateRunning: up and healthy.
+	ComponentStateRunning ComponentState = "Running"
+	// ComponentStateFailing: unhealthy but able to recover, such as a container in
+	// CrashLoopBackOff.
+	ComponentStateFailing ComponentState = "Failing"
+	// ComponentStateSucceeded: a run-to-completion component finished successfully.
+	ComponentStateSucceeded ComponentState = "Succeeded"
+	// ComponentStateFailed: a run-to-completion component finished unsuccessfully.
+	ComponentStateFailed ComponentState = "Failed"
+	// ComponentStateUnknown: the state could not be determined.
+	ComponentStateUnknown ComponentState = "Unknown"
+)
+
+// ComponentStatus is one component's state, as its chart reports it.
+// +kubebuilder:title=ComponentStatus
+type ComponentStatus struct {
+	// name identifies the component in spec.components.
+	Name string `json:"name"`
+	// state is the component's coarse state.
+	State ComponentState `json:"state"`
+	// reason is a CamelCase, machine-readable refinement of state, such as
+	// CrashLoopBackOff or ImagePullBackOff.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// message is a human-readable explanation of state.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// lastObservedTime is when the state was last observed.
+	LastObservedTime metav1.Time `json:"lastObservedTime"`
 }
 
 // The condition types the control-plane operator reports in CCLComponentSet.status.

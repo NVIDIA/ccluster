@@ -44,6 +44,13 @@ SPDX-License-Identifier: Apache-2.0
 // however they were written, not only to those built through Entry; until the
 // control-plane operator calls it, hand-written CCLComponentSets still bypass them.
 //
+// A chart package may also export a Status function, which reports the component's
+// state in the chart's own terms from ObservedResources: its objects, their children,
+// live manifests and events, as the control plane observed them through Argo CD. It is a
+// pure function of what it is handed and does no I/O. Its signature and contract are
+// statusregistry.StatusFunc's; the control-plane operator registers it in its status
+// registry (internal/registry/status_registry).
+//
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
 // the zero value — and several charts here need to set a flag to false against a chart

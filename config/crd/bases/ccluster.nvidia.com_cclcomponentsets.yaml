@@ -138,6 +138,52 @@ spec:
           status:
             description: status defines the observed state of CCLComponentSet
             properties:
+              componentStatuses:
+                description: |-
+                  componentStatuses reports each component's state in its chart's own terms, such
+                  as a Job that succeeded or a Pod in CrashLoopBackOff, as last observed through
+                  Argo CD. It is observed periodically rather than on every change, so it can lag
+                  behind componentSyncs; lastObservedTime says how far.
+                items:
+                  description: ComponentStatus is one component's state, as its chart
+                    reports it.
+                  properties:
+                    lastObservedTime:
+                      description: lastObservedTime is when the state was last observed.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human-readable explanation of state.
+                      type: string
+                    name:
+                      description: name identifies the component in spec.components.
+                      type: string
+                    reason:
+                      description: |-
+                        reason is a CamelCase, machine-readable refinement of state, such as
+                        CrashLoopBackOff or ImagePullBackOff.
+                      type: string
+                    state:
+                      description: state is the component's coarse state.
+                      enum:
+                      - Pending
+                      - Starting
+                      - Running
+                      - Failing
+                      - Succeeded
+                      - Failed
+                      - Unknown
+                      type: string
+                  required:
+                  - lastObservedTime
+                  - name
+                  - state
+                  title: ComponentStatus
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               componentSyncs:
                 description: |-
                   componentSyncs reports the latest observed Application state for each released

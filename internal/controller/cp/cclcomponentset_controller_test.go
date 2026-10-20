@@ -29,12 +29,15 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
+	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	statusregistry "github.com/NVIDIA/ccluster/internal/registry/status_registry"
 )
 
 var _ = Describe("CCLComponentSet Controller", func() {
@@ -1555,6 +1558,121 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(reconciler.componentSetForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: namespace},
 			})).To(BeEmpty())
+		})
+
+		Context("reporting component status", func() {
+			observedAt := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+			statusReconciler := func(observer ResourceObserver, statuses *statusregistry.Registry) *ComponentStatusReconciler {
+				return &ComponentStatusReconciler{
+					Client:   k8sClient,
+					Rollout:  reconciler,
+					Statuses: statuses,
+					Observer: observer,
+					now:      func() time.Time { return observedAt },
+				}
+			}
+
+			// reconcileStatus runs one status pass and returns the requeue interval and the
+			// reported statuses.
+			reconcileStatus := func(r *ComponentStatusReconciler) (time.Duration, []cclusternvidiacomv1alpha1.ComponentStatus) {
+				GinkgoHelper()
+
+				result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).NotTo(HaveOccurred())
+				refreshed := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				Expect(k8sClient.Get(ctx, componentSetKey, refreshed)).To(Succeed())
+				return result.RequeueAfter, refreshed.Status.ComponentStatuses
+			}
+
+			reports := func(state cclusternvidiacomv1alpha1.ComponentState, reason string) statusregistry.StatusFunc {
+				return func(cclusternvidiacomv1alpha1.ComponentEntry, catalogs.ObservedResources) catalogs.Status {
+					return catalogs.Status{State: state, Reason: reason, Message: "reported by the test"}
+				}
+			}
+
+			BeforeEach(func() {
+				createInfraPlane(planeA, true)
+				createInfraPlane(planeB, true)
+				createComponentSet(components())
+				settle()
+			})
+
+			It("should report a component Pending until released and Starting until Argo CD compares it", func() {
+				observer := &fakeObserver{}
+				requeue, statuses := reconcileStatus(statusReconciler(observer, statusregistry.Get()))
+
+				Expect(statuses).To(HaveLen(2))
+				Expect(statuses[0].Name).To(Equal(firstComponent))
+				Expect(statuses[0].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStateStarting))
+				Expect(statuses[0].Reason).To(Equal(reasonAwaitingComparison))
+				Expect(statuses[1].Name).To(Equal(secondComponent))
+				Expect(statuses[1].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStatePending))
+				Expect(statuses[1].Reason).To(Equal(reasonNotReleased))
+				Expect(statuses[0].LastObservedTime.Time).To(BeTemporally("==", observedAt))
+				Expect(requeue).To(Equal(statusPollSettling))
+				Expect(observer.observed).To(BeEmpty(), "nothing is observed before Argo CD has compared")
+			})
+
+			It("should report what the chart reports once Argo CD has compared the current spec", func() {
+				release(firstComponent)
+				before := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				Expect(k8sClient.Get(ctx, componentSetKey, before)).To(Succeed())
+
+				statuses := &statusregistry.Registry{}
+				statuses.Register("catalogs/cluster_base/argo_rollouts",
+					reports(cclusternvidiacomv1alpha1.ComponentStateRunning, "Ready"))
+				statuses.Register("catalogs/cluster_base/keda",
+					reports(cclusternvidiacomv1alpha1.ComponentStateSucceeded, "Done"))
+				observer := &fakeObserver{}
+				r := statusReconciler(observer, statuses)
+
+				requeue, reported := reconcileStatus(r)
+				Expect(reported[0].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStateRunning))
+				Expect(reported[0].Reason).To(Equal("Ready"))
+				Expect(reported[0].Message).To(Equal("reported by the test"))
+				Expect(reported[1].Reason).To(Equal(reasonAwaitingComparison))
+				Expect(requeue).To(Equal(statusPollSettling))
+				Expect(observer.observed).To(ConsistOf(apiclient.ApplicationRef{
+					Namespace: namespace,
+					Name:      applicationName(componentSetName, firstComponent),
+					Project:   projectName(namespace),
+				}))
+
+				By("leaving the rollout's own status alone")
+				after := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				Expect(k8sClient.Get(ctx, componentSetKey, after)).To(Succeed())
+				Expect(after.Status.Conditions).To(Equal(before.Status.Conditions))
+				Expect(after.Status.ComponentSyncs).To(Equal(before.Status.ComponentSyncs))
+
+				By("polling rarely once every component has settled")
+				reportCurrentComparison(secondComponent, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+				requeue, reported = reconcileStatus(r)
+				Expect(reported[1].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStateSucceeded))
+				Expect(requeue).To(Equal(statusPollSettled))
+			})
+
+			It("should report a component it cannot observe as Unknown", func() {
+				release(firstComponent)
+				observer := &fakeObserver{err: errors.New("resource tree not cached yet")}
+				statuses := &statusregistry.Registry{}
+				statuses.Register("catalogs/cluster_base/argo_rollouts",
+					reports(cclusternvidiacomv1alpha1.ComponentStateRunning, "Ready"))
+
+				_, reported := reconcileStatus(statusReconciler(observer, statuses))
+				Expect(reported[0].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStateUnknown))
+				Expect(reported[0].Reason).To(Equal(reasonStatusUnavailable))
+				Expect(reported[0].Message).To(ContainSubstring("resource tree not cached yet"))
+			})
+
+			It("should report the catalog's default for a chart without a status function", func() {
+				release(firstComponent)
+
+				_, reported := reconcileStatus(statusReconciler(&fakeObserver{}, statusregistry.Get()))
+				Expect(reported[0].State).To(Equal(cclusternvidiacomv1alpha1.ComponentStateUnknown))
+				Expect(reported[0].Reason).To(Equal(statusregistry.ReasonStatusNotImplemented))
+			})
 		})
 
 		It("should tear the components down in reverse order", func() {

@@ -98,6 +98,51 @@ class CCLComponentSetSpec(BaseModel):
     """
 
 
+class State(Enum):
+    """
+    state is the component's coarse state.
+    """
+
+    pending = "Pending"
+    starting = "Starting"
+    running = "Running"
+    failing = "Failing"
+    succeeded = "Succeeded"
+    failed = "Failed"
+    unknown = "Unknown"
+
+
+class ComponentStatus(BaseModel):
+    """
+    ComponentStatus is one component's state, as its chart reports it.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    last_observed_time: Annotated[AwareDatetime, Field(alias="lastObservedTime")]
+    """
+    lastObservedTime is when the state was last observed.
+    """
+    message: str | None = None
+    """
+    message is a human-readable explanation of state.
+    """
+    name: str
+    """
+    name identifies the component in spec.components.
+    """
+    reason: str | None = None
+    """
+    reason is a CamelCase, machine-readable refinement of state, such as
+    CrashLoopBackOff or ImagePullBackOff.
+    """
+    state: State
+    """
+    state is the component's coarse state.
+    """
+
+
 class ComponentSyncStatus(BaseModel):
     """
     ComponentSyncStatus reports the latest observed Application state.
@@ -206,6 +251,15 @@ class CCLComponentSetStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+    component_statuses: Annotated[
+        list[ComponentStatus] | None, Field(alias="componentStatuses")
+    ] = None
+    """
+    componentStatuses reports each component's state in its chart's own terms, such
+    as a Job that succeeded or a Pod in CrashLoopBackOff, as last observed through
+    Argo CD. It is observed periodically rather than on every change, so it can lag
+    behind componentSyncs; lastObservedTime says how far.
+    """
     component_syncs: Annotated[
         list[ComponentSyncStatus] | None, Field(alias="componentSyncs")
     ] = None

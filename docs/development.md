@@ -148,6 +148,16 @@ When adding or changing a component:
   which decodes a component's stored values into the chart's `Values` type, leniently,
   and runs its `Validate`. A check the `Values` type cannot express is a `ValidateFunc` of
   the chart's own.
+- Every component is also registered with the cp operator's status registry,
+  `statusregistry.Get()` in `internal/registry/status_registry`, which must cover exactly
+  `components.All` (`TestGet` fails otherwise). Start with `unknownStatus`. To report the
+  component's state, export a `Status` function beside `New` with the
+  `statusregistry.StatusFunc` signature. It is pure: it receives the component's
+  `ComponentEntry` and `catalogs.ObservedResources` (its objects and their children, with
+  live manifests, events and Argo CD's health) and returns a `catalogs.Status`. Use
+  `OfKind` and `ChildrenOf` to find objects, expect a nil `Manifest` for one that has gone,
+  and keep the message short. See
+  [component status](../DESIGN.md#component-status).
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
@@ -474,6 +484,9 @@ may update the account, such as admin or an SSO user with `role:admin`:
 
 The same steps recover a bundled installation whose token and initial admin Secret are
 both gone; the hook Job then logs them instead of creating a token.
+
+Until the token exists, every released component reports `Unknown/StatusUnavailable` in
+`status.componentStatuses`; the rollout itself does not need it.
 
 ### Updating and removing an installation
 

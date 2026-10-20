@@ -27,6 +27,7 @@ import (
 	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	statusregistry "github.com/NVIDIA/ccluster/internal/registry/status_registry"
 	"github.com/NVIDIA/ccluster/internal/remote"
 	// +kubebuilder:scaffold:imports
 )
@@ -191,17 +192,20 @@ func setupControllers(mgr ctrl.Manager) error {
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
-	if err := (&cp.CCLComponentSetReconciler{
+	rollout := &cp.CCLComponentSetReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 		Drift:           driftregistry.Get(),
-		ArgoCDServer:    argoCDServer,
 
 		MaxConcurrentReconciles: componentSetMaxConcurrentReconciles,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := rollout.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
+	}
+	if err := setupComponentStatus(mgr, rollout, argoCDServer); err != nil {
+		return err
 	}
 	// +kubebuilder:scaffold:builder
 	return nil
@@ -305,4 +309,20 @@ func newArgoCDServerClient(mgr ctrl.Manager) (*apiclient.Client, error) {
 		return nil, fmt.Errorf("unable to create the argocd-server client: %w", err)
 	}
 	return argoCDServer, nil
+}
+
+// setupComponentStatus registers the component status controller, which reads each
+// released component through argoCDServer.
+func setupComponentStatus(
+	mgr ctrl.Manager, rollout *cp.CCLComponentSetReconciler, argoCDServer *apiclient.Client,
+) error {
+	if err := (&cp.ComponentStatusReconciler{
+		Client:   mgr.GetClient(),
+		Rollout:  rollout,
+		Statuses: statusregistry.Get(),
+		Observer: cp.NewArgoCDObserver(argoCDServer),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create controller ComponentStatus: %w", err)
+	}
+	return nil
 }

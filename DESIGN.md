@@ -742,8 +742,7 @@ server's certificate, which is self-signed unless one is configured. Redirecting
 Service takes about the access needed to read the token's Secret beside it, so
 verification would add little; TLS still keeps the token off the wire. The operator
 builds the client at startup, without contacting argocd-server, and hands it to the
-`CCLComponentSet` reconciler. Nothing reads through it yet: it is the data source for
-per-component status (§8).
+component status controller (§7), which reads through it.
 
 ## 5. Ordering: release by withholding
 
@@ -918,7 +917,7 @@ shows the order the operator is working through.
 
 ### Watches
 
-Neither controller uses `Owns()` — owner references cannot cross namespaces, and for the
+No controller uses `Owns()` — owner references cannot cross namespaces, and for the
 same-namespace Applications garbage collection would defeat the ordered teardown. Both use
 `Watches` with map functions instead:
 
@@ -935,13 +934,75 @@ same-namespace Applications garbage collection would defeat the ordered teardown
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
+- The component status controller watches `CCLComponentSet` spec changes and the same
+  `Application`s.
 
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
-an Application, and those arrive as events. Teardown has a 15s retry of its own. The
-infra-plane operator periodically re-verifies the live state it does not write, apart from
-its labelled LoadBalancer Services, which it watches (§3a), and
-the `CCLInfraPlane` controller retries a `CCLClusterConfig` it could not write every
-minute, with a slower resync behind its watch (§3).
+an Application, and those arrive as events. Teardown has a 15s retry of its own. Component
+status also polls, because a Pod failing changes no Application field. The infra-plane
+operator periodically re-verifies the live state it does not write, apart from its
+labelled LoadBalancer Services, which it watches (§3a), and the `CCLInfraPlane` controller
+retries a `CCLClusterConfig` it could not write every minute, with a slower resync behind
+its watch (§3).
+
+### Component status
+
+`status.componentStatuses` reports each component in its chart's own terms: a `state` of
+`Pending`, `Starting`, `Running`, `Failing`, `Succeeded`, `Failed` or `Unknown`, a CamelCase
+`reason` such as `CrashLoopBackOff`, a `message`, and `lastObservedTime`.
+
+| State | Meaning |
+| --- | --- |
+| `Pending` | Waiting on something before it can start: an earlier component, nodes for its Pods, a volume to bind. |
+| `Starting` | Making progress towards running: syncing, pulling images, initializing. |
+| `Running` | Up and healthy. |
+| `Failing` | Unhealthy but able to recover, such as a container in CrashLoopBackOff. |
+| `Succeeded` / `Failed` | A run-to-completion component has finished. |
+| `Unknown` | The state could not be determined. |
+
+A chart decides its own state, the same way the other per-chart registries work. A chart
+package may export a `Status` function beside `New`.
+`internal/registry/status_registry` owns its signature,
+
+```go
+type StatusFunc func(entry v1alpha1.ComponentEntry, observed catalogs.ObservedResources) catalogs.Status
+```
+
+and registers one per chart in `statusregistry.Get()`. `TestGet` holds it to `components.All`.
+Every chart starts on `unknownStatus`, which reports `Unknown/StatusNotImplemented`
+without looking.
+
+A status function is pure. `ComponentStatusReconciler`
+(`internal/controller/cp/componentstatus_controller.go`) does every read beforehand. It
+reads the Application's resource tree through argocd-server (§4), then each node's live
+manifest and events, and hands the result over as `catalogs.ObservedResources`. That is a
+plain value built from Kubernetes types only, so the catalog imports nothing from Argo CD.
+Rendered objects and their children, such as Pods, are both observed. A node that has
+gone since the tree was cached keeps its place with a nil manifest. Any other failed read
+fails the observation, so a chart is never handed a partial one.
+
+Two states come from the controller rather than the chart, because they are the rollout's
+own:
+- **`Pending/NotReleased`:** a component whose Application is still withheld.
+- **`Starting/AwaitingComparison`:** a component whose Application Argo CD has not yet
+  compared against the spec the operator wrote. This is the same `comparedToMatchesSpec`
+  test the rollout uses.
+
+If a component can't be observed, it is `Unknown/StatusUnavailable` with the error, for
+example when argocd-server is down, the token is missing or the tree isn't cached yet.
+A function that panics or returns a state the CRD refuses also gives `Unknown`, with
+`StatusPanicked` or `InvalidStatus`. Components are observed concurrently, each under a
+30-second deadline.
+
+It is a separate controller from the rollout, so slow reads, or argocd-server being
+unavailable, never hold up a release. It writes only `status.componentStatuses`, with a
+merge patch.
+
+Its inputs are not watchable, so it polls: every 30 seconds while any component is
+`Pending`, `Starting`, `Failing` or `Unknown`, and every five minutes once all are
+`Running`, `Succeeded` or `Failed`. It also runs on spec changes and Application events.
+Its own status writes, and the rollout controller's, are filtered out by
+`GenerationChangedPredicate`.
 
 Every Application status write, Argo CD's periodic refresh included, reconciles its
 CCLComponentSet, so that controller's load grows with the number of Applications. A pass
@@ -989,9 +1050,12 @@ runs one worker (§3).
   name; a Service not labelled, such as a compute deployment's SSH Service, gets none, and
   nothing answers for `<domain>` itself or for names directly under it. Turning DNS off
   leaves the `DNSEndpoint`s, and so the records, behind.
-- **Component status.** Nothing reports a component's state in its own terms yet: a Job
-  that succeeded, a Pod in CrashLoopBackOff. The argocd-server client (§4) is the data
-  source it will use.
+- **Per-chart status functions.** Every chart is registered with `unknownStatus`, so every
+  released component reports `Unknown/StatusNotImplemented` once Argo CD has compared it
+  (§7). The pod-level states the platform derives today, such as Pulling,
+  CrashLoopBackOff, OOMKilled and ScaledToZero, still have to be written per chart. So do
+  Job completion, Rollout phase, DynamoGraphDeployment state and PVC binding. No status
+  is aggregated across components either.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a
