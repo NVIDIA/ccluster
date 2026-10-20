@@ -483,8 +483,12 @@ apart the few failures a caller can act on by status and message: an unauthorize
 token, a deleted Application, a tree not yet cached, and a node gone since the tree was
 read.
 
-The cp operator builds the client at startup from its `--argocd-server-*` and
-`--argocd-token-secret` flags, without contacting argocd-server, and hands it to the
+Argo CD runs in the cp operator's own cluster, so the client reaches argocd-server through
+its Service, `--argocd-server-service` in the Argo CD namespace, and does not verify the
+server's certificate, which is self-signed unless one is configured. Redirecting that
+Service takes about the access needed to read the token's Secret beside it, so
+verification would add little; TLS still keeps the token off the wire. The operator
+builds the client at startup, without contacting argocd-server, and hands it to the
 `CCLComponentSet` reconciler. Nothing reads through it yet: it is the data source for
 per-component status (§8).
 

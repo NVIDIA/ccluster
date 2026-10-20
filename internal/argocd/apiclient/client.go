@@ -20,7 +20,6 @@ package apiclient
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,7 +73,8 @@ func (s SecretKey) read(ctx context.Context, r client.Reader) ([]byte, error) {
 
 // Options configures a Client.
 type Options struct {
-	// ServerURL is argocd-server's base URL, such as https://argocd-server.argocd.svc.
+	// ServerURL is argocd-server's base URL, such as https://argocd-server.argocd.svc. It
+	// must be inside the cluster: the client does not verify the server's certificate.
 	ServerURL string
 
 	// Token is the Secret key holding the bearer token of the Argo CD account the
@@ -82,17 +82,7 @@ type Options struct {
 	// as the Secret changes, without a restart.
 	Token SecretKey
 
-	// CA, if set, is the Secret key holding the PEM bundle argocd-server's certificate
-	// is verified against, read on every new connection. If unset, the system roots
-	// are used.
-	CA *SecretKey
-
-	// InsecureSkipTLSVerify accepts any certificate argocd-server presents. It exists
-	// for the Argo CD the cp chart bundles, whose server generates a self-signed
-	// certificate no CA bundle can describe; the connection stays inside the cluster.
-	InsecureSkipTLSVerify bool
-
-	// Reader reads the Token and CA Secrets. The manager's cached client serves the
+	// Reader reads the Token Secret. The manager's cached client serves the
 	// reads from memory.
 	Reader client.Reader
 
@@ -127,16 +117,17 @@ func New(opts Options) (*Client, error) {
 	if opts.Token.Name == "" || opts.Token.Key == "" {
 		return nil, errors.New("argocd-server client needs a token Secret name and key")
 	}
-	if opts.CA != nil && opts.InsecureSkipTLSVerify {
-		return nil, errors.New("argocd-server client: a CA and InsecureSkipTLSVerify are mutually exclusive")
-	}
 
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = tlsConfig(opts)
+	// argocd-server runs in the operator's own cluster, and with no certificate configured
+	// it serves a self-signed one. Verifying it would protect the token only from someone
+	// who can redirect a Service in Argo CD's namespace, which takes about the access
+	// needed to read the token's Secret there. TLS still keeps the token off the wire.
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}
 
 	return &Client{
 		server: server,
@@ -144,56 +135,6 @@ func New(opts Options) (*Client, error) {
 		reader: opts.Reader,
 		http:   &http.Client{Transport: transport, Timeout: timeout},
 	}, nil
-}
-
-// tlsConfig returns the TLS settings for opts.
-//
-// A CA from a Secret cannot go into RootCAs, which is fixed when the transport is
-// built, before the cache that serves the Secret has started. Instead the standard
-// verification is switched off and VerifyConnection repeats it against the bundle read
-// at handshake time, so a rotated CA also takes effect without a restart.
-func tlsConfig(opts Options) *tls.Config {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	switch {
-	case opts.InsecureSkipTLSVerify:
-		cfg.InsecureSkipVerify = true
-	case opts.CA != nil:
-		ca, reader := *opts.CA, opts.Reader
-		cfg.InsecureSkipVerify = true // VerifyConnection verifies instead.
-		cfg.VerifyConnection = func(state tls.ConnectionState) error {
-			return verifyAgainst(ca, reader, state)
-		}
-	}
-	return cfg
-}
-
-// verifyAgainst verifies the server's certificate chain and name against the PEM bundle
-// in ca, as the standard verification would against RootCAs.
-func verifyAgainst(ca SecretKey, reader client.Reader, state tls.ConnectionState) error {
-	if len(state.PeerCertificates) == 0 {
-		return errors.New("argocd-server presented no certificate")
-	}
-	// The handshake has no context to inherit; the read is from the cache.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	bundle, err := ca.read(ctx, reader)
-	if err != nil {
-		return fmt.Errorf("reading argocd-server CA: %w", err)
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(bundle) {
-		return fmt.Errorf("argocd-server CA %s holds no PEM certificate", ca)
-	}
-	intermediates := x509.NewCertPool()
-	for _, cert := range state.PeerCertificates[1:] {
-		intermediates.AddCert(cert)
-	}
-	_, err = state.PeerCertificates[0].Verify(x509.VerifyOptions{
-		DNSName:       state.ServerName,
-		Roots:         roots,
-		Intermediates: intermediates,
-	})
-	return err
 }
 
 // ResourceTree returns every object app deployed, and the objects those created.

@@ -972,10 +972,10 @@ var _ = Describe("Manager", Ordered, func() {
 
 			// The upgrade above added Argo CD to an existing release, so the argocd-token
 			// dependency's post-upgrade hook created the operator's token, and deploy-cp
-			// pointed the operator at the new argocd-server. The token is checked against
-			// the URL the operator was given, from inside the server Pod, whose image has
-			// the CLI; the token goes over stdin rather than onto a command line.
-			It("should give the operator an Argo CD API token and argocd-server URL when installing Argo CD", func() {
+			// pointed the operator at the new argocd-server Service. The token is checked
+			// against that Service, from inside the server Pod, whose image has the CLI;
+			// the token goes over stdin rather than onto a command line.
+			It("should give the operator an Argo CD API token and argocd-server Service when installing Argo CD", func() {
 				token, err := utils.Run(exec.Command("kubectl", "get", "secret", "ccluster-cp-argocd-token",
 					"-n", namespace, "-o", "go-template={{ .data.token | base64decode }}"))
 				Expect(err).NotTo(HaveOccurred())
@@ -984,9 +984,8 @@ var _ = Describe("Manager", Ordered, func() {
 				args, err := utils.Run(exec.Command("kubectl", "get", "deploy/ccluster-cp-controller-manager",
 					"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}"))
 				Expect(err).NotTo(HaveOccurred())
+				Expect(args).To(ContainSubstring("--argocd-server-service=ccluster-cp-argocd-server"))
 				serverHost := fmt.Sprintf("ccluster-cp-argocd-server.%s.svc", namespace)
-				Expect(args).To(ContainSubstring("--argocd-server-url=https://" + serverHost))
-				Expect(args).To(ContainSubstring("--argocd-server-insecure-skip-tls-verify"))
 
 				cmd := exec.Command("kubectl", "exec", "-i", "-n", namespace, "deploy/ccluster-cp-argocd-server",
 					"--", "sh", "-c",

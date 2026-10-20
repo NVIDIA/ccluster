@@ -7,21 +7,13 @@ package apiclient
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +31,6 @@ var (
 	testApp = ApplicationRef{Namespace: "team-a", Name: "web", Project: "team-a"}
 
 	tokenKey = SecretKey{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: "token"}, Key: "token"}
-	caKey    = SecretKey{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: "ca"}, Key: "ca.crt"}
 
 	pod = ResourceRef{Version: "v1", Kind: "Pod", Namespace: "team-a", Name: "web-0", UID: "uid-1"}
 )
@@ -71,12 +62,12 @@ func secret(key SecretKey, value string) *corev1.Secret {
 	}
 }
 
-// newClient returns a Client for server that skips TLS verification and reads its token
-// from a fake cluster holding objs.
+// newClient returns a Client for server, whose certificate is self-signed like the one
+// argocd-server generates, reading its token from a fake cluster holding objs.
 func newClient(t *testing.T, server *httptest.Server, objs ...client.Object) (*Client, client.Client) {
 	t.Helper()
 	reader := fake.NewClientBuilder().WithObjects(objs...).Build()
-	c, err := New(Options{ServerURL: server.URL, Token: tokenKey, Reader: reader, InsecureSkipTLSVerify: true})
+	c, err := New(Options{ServerURL: server.URL, Token: tokenKey, Reader: reader})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -309,73 +300,6 @@ func TestToken(t *testing.T) {
 	}
 }
 
-// TestTLS: argocd-server's certificate is verified against the CA Secret, or the system
-// roots without one, unless verification is explicitly skipped.
-func TestTLS(t *testing.T) {
-	var received []request
-	server := fakeServer(t, http.StatusOK, `{}`, &received)
-	serverCA := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
-	otherCA := selfSignedCA(t)
-
-	for _, tc := range []struct {
-		name    string
-		ca      *string
-		skip    bool
-		wantErr bool
-	}{
-		{name: "matching CA", ca: &serverCA},
-		{name: "other CA", ca: &otherCA, wantErr: true},
-		{name: "CA Secret missing", ca: new(string), wantErr: true},
-		{name: "system roots", wantErr: true},
-		{name: "skip verification", skip: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			objs := []client.Object{secret(tokenKey, testToken)}
-			opts := Options{ServerURL: server.URL, Token: tokenKey, InsecureSkipTLSVerify: tc.skip}
-			if tc.ca != nil {
-				opts.CA = &caKey
-				if *tc.ca != "" {
-					objs = append(objs, secret(caKey, *tc.ca))
-				}
-			}
-			opts.Reader = fake.NewClientBuilder().WithObjects(objs...).Build()
-			c, err := New(opts)
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-
-			_, err = c.ResourceTree(context.Background(), testApp)
-			if (err != nil) != tc.wantErr {
-				t.Errorf("ResourceTree error = %v, want error: %v", err, tc.wantErr)
-			}
-		})
-	}
-}
-
-// selfSignedCA returns a PEM CA certificate unrelated to the one every httptest server
-// shares.
-func selfSignedCA(t *testing.T) string {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "other"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-}
-
 func TestNewRejectsBadOptions(t *testing.T) {
 	reader := fake.NewClientBuilder().Build()
 	valid := Options{ServerURL: "https://argocd-server", Token: tokenKey, Reader: reader}
@@ -393,7 +317,6 @@ func TestNewRejectsBadOptions(t *testing.T) {
 		{"no reader", func(o *Options) { o.Reader = nil }},
 		{"no token name", func(o *Options) { o.Token.Name = "" }},
 		{"no token key", func(o *Options) { o.Token.Key = "" }},
-		{"CA and skip verification", func(o *Options) { o.CA = &caKey; o.InsecureSkipTLSVerify = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := valid

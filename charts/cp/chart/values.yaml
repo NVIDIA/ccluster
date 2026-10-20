@@ -49,17 +49,13 @@ manager:
   ## it merges.
   ##
   ## The operator reads Application trees through argocd-server's API, as the Argo CD
-  ## account declared under `argo-cd.configs` below:
-  ## - --argocd-server-url defaults to https://argocd-server.<--argocd-namespace>.svc,
-  ##   a stock install's Service. The `argo-cd` subchart's is
-  ##   https://<release>-argocd-server.<release namespace>.svc.
+  ## account declared under `argo-cd.configs` below. Argo CD must run in this cluster:
+  ## - --argocd-server-service (default argocd-server, a stock install's) is
+  ##   argocd-server's Service in --argocd-namespace. The `argo-cd` subchart's is
+  ##   <release>-argocd-server, which `make deploy-cp` sets. The operator connects over
+  ##   HTTPS without verifying the server's certificate.
   ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
   ##   --argocd-namespace whose `token` key holds that account's token.
-  ## - argocd-server's certificate is verified against the system roots, or against the
-  ##   `ca.crt` key of --argocd-server-ca-secret. An argocd-server with no certificate
-  ##   configured, like the `argo-cd` subchart's, generates a self-signed one, which
-  ##   needs --argocd-server-insecure-skip-tls-verify.
-  ## `make deploy-cp` sets the URL and TLS flags for the `argo-cd` subchart.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
