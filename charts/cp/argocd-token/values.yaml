@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+## The Argo CD account to create the token for. The parent chart declares it in
+## argo-cd.configs.cm with the apiKey capability.
+account: ccluster-cp
+
+## The Secret the token is stored in, under the key "token", in the release namespace,
+## which is where the bundled Argo CD runs. The operator reads it from there.
+secretName: ccluster-cp-argocd-token
+
+## argocd-server's Service. Empty derives it the way the argo-cd chart names it:
+## <release>-argocd-server, or <release>-server when the release name contains "argocd".
+server: ""
+
+## Logs in to argocd-server and creates the token. Keep the tag at the bundled argo-cd
+## chart's appVersion, so the CLI matches the server.
+image:
+  repository: quay.io/argoproj/argocd
+  tag: v3.5.1
+  pullPolicy: IfNotPresent
+
+## Writes the token into the Secret; the Argo CD image has no kubectl.
+kubectlImage:
+  repository: registry.k8s.io/kubectl
+  tag: v1.35.0
+  pullPolicy: IfNotPresent

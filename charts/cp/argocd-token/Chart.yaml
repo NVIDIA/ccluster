@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Creates the cp operator's Argo CD API token when the ccluster-cp chart installs Argo CD
+# itself. A dependency of charts/cp/chart, enabled with its argo-cd dependency, and
+# vendored into the packaged ccluster-cp chart by `helm dependency build`. It lives outside
+# charts/cp/chart because `make helm-generate` rebuilds that chart's templates/.
+apiVersion: v2
+name: argocd-token
+description: Creates the ccluster-cp operator's Argo CD API token for a bundled Argo CD
+type: application
+version: 0.0.0-dev

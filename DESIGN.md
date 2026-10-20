@@ -468,8 +468,15 @@ The client authenticates as `ccluster-cp`, an Argo CD account the cp chart decla
 `apiKey` only (no password, no UI login) and one RBAC line, `applications, get, */*`.
 That one grant covers the three reads, for every project and namespace. The token is a
 bearer credential to that read access. It lives in a Secret in the Argo CD namespace,
-which the operator already reads, and is reread on every request, so it can be rotated
-in place. The client mirrors only the parts of the API it uses, like
+which the operator already reads, and is reread on every request, so it can be replaced
+in place. It does not expire and is created once. When the cp chart installs Argo CD, a
+post-install hook Job of its `argocd-token` dependency creates it, logging in as admin
+with `argocd-initial-admin-secret`, the one admin credential a fresh Argo CD always has.
+An existing Argo CD's admin credentials are not the chart's to hold, so there the user
+declares the account and stores a token in the Secret. Argo CD checks an account token
+against its live settings on every request, so neither case restarts Argo CD.
+
+The client mirrors only the parts of the API it uses, like
 `internal/argocd/v1alpha1`. It names the Application's namespace and project on every
 request, so argocd-server answers a deleted Application with 404, not 403. It tells
 apart the few failures a caller can act on by status and message: an unauthorized
@@ -682,9 +689,6 @@ infra-plane operator periodically re-verifies the live state it does not write (
 - **Component status.** Nothing reports a component's state in its own terms yet: a Job
   that succeeded, a Pod in CrashLoopBackOff. The argocd-server client (§4) is the data
   source it will use.
-- **Argo CD token bootstrap.** The cp chart declares the operator's Argo CD account, but
-  nothing creates its token at install time. `make argocd-token-cp` does that for a
-  development cluster; any other installation has to create one by hand.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a

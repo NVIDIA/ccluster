@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Creates the token once, after install or after the upgrade that adds Argo CD; every
+# later run finds it in the Secret and does nothing. The token never expires: it stays
+# valid until it is revoked, the account is removed, or Argo CD's signing key in
+# argocd-secret is replaced. To replace it, remove the Secret's "token" key and upgrade.
+#
+# It logs in as admin with argocd-initial-admin-secret, which a fresh Argo CD always has.
+# Deleting that Secret later is safe while the token stays valid. If both are gone, the
+# Job logs the manual steps and succeeds rather than failing an unrelated upgrade.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argocd-token.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "argocd-token.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.secretName }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      # Writes /work/patch.json for the container below: the token, or an empty patch
+      # when there is nothing to write. The kubectl image has no shell to decide.
+      initContainers:
+        - name: generate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: SERVER
+              value: {{ include "argocd-token.server" . | quote }}
+            - name: ACCOUNT
+              value: {{ .Values.account | quote }}
+            - name: SECRET
+              value: {{ .Values.secretName | quote }}
+          command: [sh, -c]
+          args:
+            - |
+              set -eu
+              patch=/work/patch.json
+              echo '{}' >"$patch"
+              if [ -s /token/token ]; then
+                echo "Secret $SECRET already holds a token for Argo CD account $ACCOUNT"
+                exit 0
+              fi
+              manual="create one with 'argocd account generate-token --account $ACCOUNT' and store it under the key \"token\" of Secret $SECRET"
+              if [ ! -s /admin/password ]; then
+                echo "argocd-initial-admin-secret not found, so no token was created: $manual"
+                exit 0
+              fi
+              config=/work/argocd-config
+              attempt=0
+              # argocd-server can still be starting when a post-upgrade hook runs.
+              until out="$(argocd login "$SERVER" --insecure --username admin \
+                  --password "$(cat /admin/password)" --config "$config" 2>&1)"; do
+                case "$out" in
+                  *"Invalid username or password"*)
+                    echo "argocd-initial-admin-secret no longer holds the admin password, so no token was created: $manual"
+                    exit 0 ;;
+                esac
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 60 ]; then
+                  echo "Failed to log in to $SERVER: $out" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              token="$(argocd account generate-token --account "$ACCOUNT" --config "$config")"
+              printf '{"stringData":{"token":"%s"}}' "$token" >"$patch"
+              echo "Created a token for Argo CD account $ACCOUNT"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: admin, mountPath: /admin, readOnly: true}
+            - {name: token, mountPath: /token, readOnly: true}
+            - {name: work, mountPath: /work}
+      containers:
+        - name: store
+          image: "{{ .Values.kubectlImage.repository }}:{{ .Values.kubectlImage.tag }}"
+          imagePullPolicy: {{ .Values.kubectlImage.pullPolicy }}
+          args:
+            - patch
+            - secret
+            - {{ .Values.secretName | quote }}
+            - --namespace={{ .Release.Namespace }}
+            - --type=merge
+            - --patch-file=/work/patch.json
+          env:
+            # kubectl's cache directory; the root filesystem is read-only.
+            - name: HOME
+              value: /work
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: admin
+          secret:
+            secretName: argocd-initial-admin-secret
+            optional: true
+        - name: token
+          secret:
+            secretName: {{ .Values.secretName }}
+            optional: true
+        - name: work
+          emptyDir:
+            medium: Memory

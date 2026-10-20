@@ -213,8 +213,10 @@ networkPolicy:
 ##
 ## Set `enabled: false` to install the operator into a cluster that already runs
 ## Argo CD, or for hermetic tests that must not pull the Argo CD images
-## (`make deploy-cp ARGOCD=false`). With an existing Argo CD outside the release
-## namespace, also set --argocd-namespace in `manager.args`.
+## (`make deploy-cp ARGOCD=false`). That also disables the argocd-token dependency:
+## an existing Argo CD needs the account and policy below declared in its own config,
+## and a token for it stored in Secret ccluster-cp-argocd-token in --argocd-namespace
+## (see docs/development.md).
 argo-cd:
   enabled: true
 
@@ -256,8 +258,8 @@ argo-cd:
     ## which is in the Application object. `apiKey` lets it hold API tokens; without
     ## `login` it has no password and cannot use the UI.
     ##
-    ## Nothing creates its token: generate one with `make argocd-token-cp`, which
-    ## stores it in the Secret the operator reads (see docs/development.md).
+    ## The argocd-token dependency creates its token after install and stores it in
+    ## Secret ccluster-cp-argocd-token, which the operator reads.
     cm:
       accounts.ccluster-cp: apiKey
 

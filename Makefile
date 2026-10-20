@@ -415,19 +415,6 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
-# The operator reads argocd-server's API as the read-only Argo CD account the cp chart
-# declares, with a token nothing else creates. This generates one through the bundled
-# argocd-server and stores it in ARGOCD_TOKEN_SECRET, replacing any token already there;
-# run it after deploy-cp. It needs the bundled Argo CD's argocd-initial-admin-secret.
-ARGOCD_ACCOUNT_CP ?= ccluster-cp
-ARGOCD_TOKEN_SECRET ?= ccluster-cp-argocd-token
-
-.PHONY: argocd-token-cp
-argocd-token-cp: ## Generate the cp operator's Argo CD API token and store it in a Secret (after deploy-cp).
-	KUBECTL="$(KUBECTL)" KUBE_CONTEXT="$(KUBE_CONTEXT_CP)" NAMESPACE=$(HELM_NAMESPACE_CP) \
-		SERVER_DEPLOYMENT=$(HELM_RELEASE_CP)-argocd-server ACCOUNT=$(ARGOCD_ACCOUNT_CP) \
-		TOKEN_SECRET=$(ARGOCD_TOKEN_SECRET) hack/argocd-token.sh
-
 .PHONY: undeploy-cp
 undeploy-cp: helm ## Undeploy ccluster-cp-operator. CRDs are retained (helm.sh/resource-policy: keep).
 	"$(HELM)" uninstall $(HELM_RELEASE_CP) $(HELM_CONTEXT_CP) \

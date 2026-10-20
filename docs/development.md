@@ -271,20 +271,41 @@ Application comparison errors. Use `CATALOG_REVISION` to select the catalog comm
 ### Argo CD API token
 
 The operator reads Applications' resource trees, live manifests and events from
-argocd-server's API as `ccluster-cp`, a read-only Argo CD account the cp chart declares
-(`argo-cd.configs` in `charts/cp/chart/values.yaml`). Nothing creates the account's token
-at install time. After `make deploy-cp`, generate one:
+argocd-server's API as `ccluster-cp`, a read-only Argo CD account. It authenticates with a
+token stored under the key `token` of Secret `ccluster-cp-argocd-token` in the Argo CD
+namespace (`--argocd-namespace`). The token does not expire and is created once.
+
+With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
+The chart declares the account and its RBAC line (`argo-cd.configs` in
+`charts/cp/chart/values.yaml`), and the `argocd-token` dependency
+(`charts/cp/argocd-token/`) runs a post-install and post-upgrade hook Job. The Job logs in
+as admin with `argocd-initial-admin-secret`, generates the token and stores it in the
+Secret. When the Secret already holds a token it does nothing, so deleting
+`argocd-initial-admin-secret` after installation is safe. To replace the token, remove the
+key and upgrade:
 
 ```bash
-make argocd-token-cp KUBE_CONTEXT_CP=kind-ccluster-cp
+kubectl -n ccluster-cp-system patch secret ccluster-cp-argocd-token --type=json \
+  -p '[{"op":"remove","path":"/data/token"}]'
+make deploy-cp KUBE_CONTEXT_CP=kind-ccluster-cp
 ```
 
-It logs in to the bundled argocd-server as admin, using `argocd-initial-admin-secret`, and
-stores the token under the key `token` of Secret `ccluster-cp-argocd-token` in
-`HELM_NAMESPACE_CP`, replacing any token already there. Rerun it to rotate the token.
-With `ARGOCD=false`, or once the initial admin Secret is deleted, create the token
-yourself with `argocd account generate-token --account ccluster-cp` and store it in that
-Secret. The other Argo CD must declare the account with the same RBAC line.
+Removing the key does not revoke the old token. Argo CD keeps accepting it until it is
+deleted: list the account's token IDs with `argocd account get --account ccluster-cp` and
+revoke with `argocd account delete-token --account ccluster-cp <id>`.
+
+With an existing Argo CD (`ARGOCD=false`), create the token once with an Argo CD login that
+may update the account, such as admin or an SSO user with `role:admin`:
+
+1. Declare the account in that Argo CD's `argocd-cm`: `accounts.ccluster-cp: apiKey`.
+2. Grant it read access in `argocd-rbac-cm`, for example as its own key
+   `policy.ccluster-cp.csv`: `p, ccluster-cp, applications, get, */*, allow`.
+3. Generate a token: `argocd account generate-token --account ccluster-cp`.
+4. Store it: `kubectl -n <argocd-namespace> create secret generic ccluster-cp-argocd-token
+   --from-literal=token=<token>`.
+
+The same steps recover a bundled installation whose token and initial admin Secret are
+both gone; the hook Job then logs them instead of creating a token.
 
 ### Updating and removing an installation
 

@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The Job's only Kubernetes access: writing the token into its Secret. It reads
+# argocd-initial-admin-secret and the existing token as mounted volumes, which needs no
+# RBAC, and logs in to Argo CD over the network.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argocd-token.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argocd-token.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ .Values.secretName | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argocd-token.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.secretName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.secretName }}
+    namespace: {{ .Release.Namespace }}

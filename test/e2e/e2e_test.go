@@ -969,6 +969,26 @@ var _ = Describe("Manager", Ordered, func() {
 				}, 2*time.Minute).Should(Succeed())
 			})
 
+			// The upgrade above added Argo CD to an existing release, so the argocd-token
+			// dependency's post-upgrade hook created the operator's token. It is checked
+			// against argocd-server itself, from inside the server Pod, whose image has
+			// the CLI; the token goes over stdin rather than onto a command line.
+			It("should create the operator's Argo CD API token when installing Argo CD", func() {
+				token, err := utils.Run(exec.Command("kubectl", "get", "secret", "ccluster-cp-argocd-token",
+					"-n", namespace, "-o", "go-template={{ .data.token | base64decode }}"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(token).NotTo(BeEmpty(), "the hook Job stored no token")
+
+				cmd := exec.Command("kubectl", "exec", "-i", "-n", namespace, "deploy/ccluster-cp-argocd-server",
+					"--", "sh", "-c",
+					`argocd account get-user-info --server localhost:8080 --insecure --auth-token "$(cat)"`)
+				cmd.Stdin = strings.NewReader(token)
+				out, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(ContainSubstring("Logged In: true"))
+				Expect(out).To(ContainSubstring("Username: ccluster-cp"))
+			})
+
 			// The specs above never touch a real Application: nothing creates one under
 			// the operator's own RBAC, and nothing exercises the rest of a rollout - Argo
 			// CD actually cloning the catalog, installing the chart, and the operator
