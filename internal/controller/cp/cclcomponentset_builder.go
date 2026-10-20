@@ -58,8 +58,10 @@ func (r *CCLComponentSetReconciler) applicationSpec(
 	syncOptions := []string{"CreateNamespace=true", "ServerSideApply=true"}
 
 	var ignored []argocdv1alpha1.ResourceIgnoreDifferences
-	if rules, ok := r.Drift.Lookup(component.Chart); ok {
-		ignored = ignoreDifferences(rules())
+	if r.Drift != nil {
+		if rules, ok := r.Drift.Lookup(component.Chart); ok {
+			ignored = ignoreDifferences(rules())
+		}
 	}
 	if len(ignored) > 0 {
 		// Without it ignoreDifferences only hides the drift: every sync, self-heal's

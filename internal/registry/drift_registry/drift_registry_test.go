@@ -21,8 +21,7 @@ func TestGet(t *testing.T) {
 	for _, c := range components.All {
 		want = append(want, c.Chart)
 	}
-	drift := Get()
-	if got := drift.Charts(); !slices.Equal(got, want) {
+	if got := Get().Charts(); !slices.Equal(got, want) {
 		t.Errorf("registered charts %v\nwant components.All %v", got, want)
 	}
 }

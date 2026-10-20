@@ -98,8 +98,8 @@ type CCLComponentSetReconciler struct {
 	CatalogRevision string
 
 	// Drift is the registry of charts' drift rules, written as Argo CD ignoreDifferences,
-	// normally driftregistry.Get(). The zero value diffs every chart in full.
-	Drift driftregistry.Registry
+	// normally driftregistry.Get(). Nil diffs every chart in full.
+	Drift *driftregistry.Registry
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete
