@@ -369,7 +369,7 @@ type ApplicationHealthStatus struct {
 // ApplicationSyncStatus is the sync half of an Application's status.
 //
 // Argo CD assigns status and comparedTo together from one comparison, so status describes
-// the recorded source and destination.
+// the recorded source, destination and ignoreDifferences.
 type ApplicationSyncStatus struct {
 	// status is the sync state. Argo CD's CRD requires it whenever status.sync is
 	// present, so it carries no omitempty.

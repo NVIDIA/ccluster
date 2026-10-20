@@ -128,8 +128,8 @@ type ComponentSyncStatus struct {
 	Name string `json:"name"`
 
 	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-	// desired source and destination. While false, health and sync do not establish
-	// convergence on the desired configuration.
+	// desired source, destination and ignoreDifferences. While false, health and sync do
+	// not establish convergence on the desired configuration.
 	ComparedToMatchesSpec bool `json:"comparedToMatchesSpec"`
 
 	// health is Argo CD's observed Application health, empty before its first comparison.

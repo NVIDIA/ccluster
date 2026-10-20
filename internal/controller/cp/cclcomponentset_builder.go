@@ -585,8 +585,9 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 				wave, component.Name)
 
 		case !comparedToMatchesSpec(application, desired):
-			// The latest comparison does not match the desired source and destination,
-			// so its health and sync statuses cannot establish completion.
+			// The latest comparison does not match the desired source, destination and
+			// ignoreDifferences, so its health and sync statuses cannot establish
+			// completion.
 			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
 				"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
 					"operator wrote", wave, component.Name), application)

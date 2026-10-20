@@ -489,8 +489,8 @@ The operator settles this by reading what Argo CD compared, not by tracking the 
 asks for. `status.sync.status`, `status.sync.comparedTo` and `status.health.status` are
 written from the output of one comparison, in consecutive statements of one Argo CD
 reconcile. A component is finished when its Application's `spec` is the one
-`applicationSpec()` builds, `status.sync.comparedTo` names that source and destination,
-and the verdict beside them is `Synced` and `Healthy`. It must also have no pending or
+`applicationSpec()` builds, `status.sync.comparedTo` names that source, destination and
+ignoreDifferences, and the verdict beside them is `Synced` and `Healthy`. It must also have no pending or
 running operation and no terminal failure attributed to that source and resolved revision.
 Argo CD excludes hooks from aggregate health and sync, so a `Healthy`/`Synced` verdict
 can coexist with a running or failed PostSync hook. There is no sync receipt to catch and
@@ -530,8 +530,8 @@ Comparison has the following rules:
   excluded from aggregate health and sync, so `Healthy`/`Synced` can precede the completion
   of a PostSync hook.
 - Report a terminal `Failed` or `Error` operation as `WaveSyncFailed`, but only once
-  `comparedTo` names the current source and destination and no operation is pending or
-  running. Attribute the failure using `operationState.syncResult.source`; when both
+  `comparedTo` names the current source, destination and ignoreDifferences and no
+  operation is pending or running. Attribute the failure using `operationState.syncResult.source`; when both
   resolved revisions are known, `syncResult.revision` must equal `status.sync.revision`.
   An early error without a sync result falls back to the captured `operation.sync.source`;
   a failure with neither source cannot be attributed. Comparison and operation state
@@ -542,7 +542,7 @@ Comparison has the following rules:
   join and no first spec change to wait for.
 - Rebuild `status.componentSyncs` from the released Applications each pass. The
   `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
-  source and destination. Controller decisions use Applications directly, so a failed
+  source, destination and ignoreDifferences. Controller decisions use Applications directly, so a failed
   status write leaves a stale report without blocking rollout recovery.
 
 Every pass writes the spec of every released component, and no component's operation holds
