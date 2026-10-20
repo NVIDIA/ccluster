@@ -76,10 +76,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		reconciler = &CCLClusterConfigReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Verifiers: verifierRegistry(map[string]verifierregistry.VerifyFunc{
-				chartA: a.Verify,
-				chartB: b.Verify,
-			}),
+			Verifiers: verifierRegistry(
+				registration{chartA, a.Verify},
+				registration{chartB, b.Verify},
+			),
 		}
 
 		config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
@@ -185,10 +185,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 			close(met)
 		}()
 		rendezvous := &meetingVerifier{arrived: &arrived, met: met}
-		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{
-			chartA: rendezvous.Verify,
-			chartB: rendezvous.Verify,
-		})
+		reconciler.Verifiers = verifierRegistry(
+			registration{chartA, rendezvous.Verify},
+			registration{chartB, rendezvous.Verify},
+		)
 
 		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -199,10 +199,10 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 
 	It("reports a panicking Verifier as failing without stopping the others", func() {
 		a.ready.Store(true)
-		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{
-			chartA: a.Verify,
-			chartB: panicVerifier{}.Verify,
-		})
+		reconciler.Verifiers = verifierRegistry(
+			registration{chartA, a.Verify},
+			registration{chartB, panicVerifier{}.Verify},
+		)
 
 		_, err := reconciler.Reconcile(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
@@ -219,7 +219,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		// Waiting the real verifyTimeout out would make the suite slow; the deadline
 		// being there is the contract.
 		probe := &deadlineVerifier{}
-		reconciler.Verifiers = verifierRegistry(map[string]verifierregistry.VerifyFunc{chartA: probe.Verify})
+		reconciler.Verifiers = verifierRegistry(registration{chartA, probe.Verify})
 
 		start := time.Now()
 		_, err := reconciler.Reconcile(ctx, request)
@@ -295,11 +295,17 @@ func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclust
 	return nil
 }
 
-// verifierRegistry registers verifiers by chart.
-func verifierRegistry(verifiers map[string]verifierregistry.VerifyFunc) *verifierregistry.Registry {
+// registration is one chart's Verifier, in the order a test registers it.
+type registration struct {
+	chart  string
+	verify verifierregistry.VerifyFunc
+}
+
+// verifierRegistry registers verifiers in the order given.
+func verifierRegistry(registrations ...registration) *verifierregistry.Registry {
 	r := &verifierregistry.Registry{}
-	for chart, verify := range verifiers {
-		r.Register(chart, verify)
+	for _, reg := range registrations {
+		r.Register(reg.chart, reg.verify)
 	}
 	return r
 }

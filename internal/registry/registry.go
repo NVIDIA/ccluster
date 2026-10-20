@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 // Package registry is the shared shape of the operators' per-chart registries: a chart
 // path mapped to a function whose signature the registry defines. A specific registry is
 // a named type embedding Registry with its own function type, such as the ip operator's
-// Verifiers.
+// verifierregistry.Registry.
 package registry
 
 import (
@@ -47,13 +47,13 @@ func (r *Registry[F]) Register(chart string, f F) {
 }
 
 // Lookup returns chart's function, and whether chart is registered.
-func (r Registry[F]) Lookup(chart string) (F, bool) {
+func (r *Registry[F]) Lookup(chart string) (F, bool) {
 	f, ok := r.funcs[chart]
 	return f, ok
 }
 
 // Charts returns every registered chart in registration order. The slice is the
 // caller's own.
-func (r Registry[F]) Charts() []string {
+func (r *Registry[F]) Charts() []string {
 	return slices.Clone(r.charts)
 }
