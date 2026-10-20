@@ -1930,8 +1930,9 @@ var _ = Describe("Manager", Ordered, func() {
 						To(Equal("RolloutComplete"))
 				}, 8*time.Minute, 5*time.Second).Should(Succeed())
 
-				// Without RespectIgnoreDifferences a sync would apply Ignore again and
-				// istiod would patch Fail back, so the field would flap.
+				// The result holds: nothing reports drift or reverts istiod's Fail. No sync
+				// runs while the Application is Synced, so this does not exercise
+				// RespectIgnoreDifferences; envtest checks the operator sets it.
 				By("verifying it stays Synced with istiod's failurePolicy left in place")
 				Consistently(func(g Gomega) {
 					webhookPolicies(g)
