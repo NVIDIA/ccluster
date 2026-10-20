@@ -236,7 +236,7 @@ or order, so no cluster_base chart goes unverified.
 
 Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to
-look at, as spire_crds does with `catalogs.CRDsEstablished`. Those checks read **live objects
+look at, as spire_crds does with `common.CRDsEstablished` from `catalogs/common`. Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when

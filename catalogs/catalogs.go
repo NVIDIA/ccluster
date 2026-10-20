@@ -29,6 +29,7 @@ SPDX-License-Identifier: Apache-2.0
 // from live objects that the component is installed and configured for the cluster it
 // runs in. Its signature and contract are verifierregistry.VerifyFunc's; the infra-plane
 // operator registers it in its verifier registry (internal/registry/verifier_registry).
+// Checks a Verify can share, such as CRDsEstablished, are in catalogs/common.
 // This package does not import operator code: the dependency runs from the operator to
 // the catalog only.
 //

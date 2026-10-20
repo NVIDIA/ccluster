@@ -13,6 +13,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	"github.com/NVIDIA/ccluster/catalogs/common"
 )
 
 const (
@@ -57,5 +58,5 @@ var CRDs = []string{
 // and nothing in it depends on the cluster's domain, so there is no configuration to
 // compare against the CCLClusterConfig spec.
 func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
-	return catalogs.CRDsEstablished(ctx, r, CRDs...)
+	return common.CRDsEstablished(ctx, r, CRDs...)
 }
