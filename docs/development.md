@@ -268,6 +268,24 @@ startup. Argo CD clones `CATALOG_REPO_URL` itself; a private catalog requires cr
 provided through `GITHUB_TOKEN` to `make deploy-cp`. Missing credentials surface as
 Application comparison errors. Use `CATALOG_REVISION` to select the catalog commit or tag.
 
+### Argo CD API token
+
+The operator reads Applications' resource trees, live manifests and events from
+argocd-server's API as `ccluster-cp`, a read-only Argo CD account the cp chart declares
+(`argo-cd.configs` in `charts/cp/chart/values.yaml`). Nothing creates the account's token
+at install time. After `make deploy-cp`, generate one:
+
+```bash
+make argocd-token-cp KUBE_CONTEXT_CP=kind-ccluster-cp
+```
+
+It logs in to the bundled argocd-server as admin, using `argocd-initial-admin-secret`, and
+stores the token under the key `token` of Secret `ccluster-cp-argocd-token` in
+`HELM_NAMESPACE_CP`, replacing any token already there. Rerun it to rotate the token.
+With `ARGOCD=false`, or once the initial admin Secret is deleted, create the token
+yourself with `argocd account generate-token --account ccluster-cp` and store it in that
+Secret. The other Argo CD must declare the account with the same RBAC line.
+
 ### Updating and removing an installation
 
 After loading a rebuilt image with `make load-cp`, restart the deployment when the image tag
