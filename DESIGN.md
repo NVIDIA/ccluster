@@ -483,7 +483,10 @@ apart the few failures a caller can act on by status and message: an unauthorize
 token, a deleted Application, a tree not yet cached, and a node gone since the tree was
 read.
 
-Nothing calls the client yet: it is the data source for per-component status (§8).
+The cp operator builds the client at startup from its `--argocd-server-*` and
+`--argocd-token-secret` flags, without contacting argocd-server, and hands it to the
+`CCLComponentSet` reconciler. Nothing reads through it yet: it is the data source for
+per-component status (§8).
 
 ## 5. Ordering: release by withholding
 

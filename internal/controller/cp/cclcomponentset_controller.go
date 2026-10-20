@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 )
@@ -100,6 +101,10 @@ type CCLComponentSetReconciler struct {
 	// Drift is the registry of charts' drift rules, written as Argo CD ignoreDifferences,
 	// normally driftregistry.Get(). Nil diffs every chart in full.
 	Drift *driftregistry.Registry
+
+	// ArgoCDServer reads what an Application deployed through argocd-server. Nothing
+	// reads through it yet.
+	ArgoCDServer *apiclient.Client
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete

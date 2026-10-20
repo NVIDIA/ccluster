@@ -13,11 +13,13 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
@@ -45,6 +47,22 @@ var (
 	catalogRevision string
 )
 
+// The argocd-server API the operator reads Application trees through, and the
+// Secrets in argoCDNamespace holding its token and, optionally, its CA. Set by flags,
+// for the same reason as argoCDNamespace.
+var (
+	argoCDServerURL      string
+	argoCDTokenSecret    string
+	argoCDCASecret       string
+	argoCDServerInsecure bool
+)
+
+// The keys of the token and CA Secrets.
+const (
+	argoCDTokenKey = "token"
+	argoCDCAKey    = "ca.crt"
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -68,6 +86,18 @@ func main() {
 		"The Git repository holding the chart catalog. Argo CD's repo-server must be able to clone it.")
 	flag.StringVar(&catalogRevision, "catalog-revision", "main",
 		"The revision of the catalog repository to deploy from: a branch, tag or commit SHA.")
+	flag.StringVar(&argoCDServerURL, "argocd-server-url", "",
+		"argocd-server's base URL. Empty means https://argocd-server.<argocd-namespace>.svc, "+
+			"the Service of a stock Argo CD install.")
+	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
+		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
+			"of the Argo CD account the operator reads argocd-server's API as.")
+	flag.StringVar(&argoCDCASecret, "argocd-server-ca-secret", "",
+		"The Secret in --argocd-namespace whose \""+argoCDCAKey+"\" key holds the PEM bundle "+
+			"argocd-server's certificate is verified against. Empty means the system roots.")
+	flag.BoolVar(&argoCDServerInsecure, "argocd-server-insecure-skip-tls-verify", false,
+		"Accept any certificate argocd-server presents, such as the self-signed one it "+
+			"generates when it has no other. Mutually exclusive with --argocd-server-ca-secret.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -92,6 +122,10 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	argoCDNamespace = namespace
 
+	argoCDServer, err := newArgoCDServerClient(mgr)
+	if err != nil {
+		return err
+	}
 	if err := (&cp.CCLInfraPlaneReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
@@ -106,6 +140,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 		Drift:           driftregistry.Get(),
+		ArgoCDServer:    argoCDServer,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}
@@ -129,4 +164,34 @@ func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
 		return "", fmt.Errorf("--argocd-namespace is unset and %s is empty", namespaceFile)
 	}
 	return namespace, nil
+}
+
+// newArgoCDServerClient returns the argocd-server client the flags describe. It reads
+// its Secrets through the manager's cached client, and does not contact argocd-server,
+// so a bad URL or TLS setting fails startup but an unreachable server does not.
+func newArgoCDServerClient(mgr ctrl.Manager) (*apiclient.Client, error) {
+	serverURL := argoCDServerURL
+	if serverURL == "" {
+		serverURL = fmt.Sprintf("https://argocd-server.%s.svc", argoCDNamespace)
+	}
+	opts := apiclient.Options{
+		ServerURL: serverURL,
+		Token: apiclient.SecretKey{
+			NamespacedName: types.NamespacedName{Namespace: argoCDNamespace, Name: argoCDTokenSecret},
+			Key:            argoCDTokenKey,
+		},
+		InsecureSkipTLSVerify: argoCDServerInsecure,
+		Reader:                mgr.GetClient(),
+	}
+	if argoCDCASecret != "" {
+		opts.CA = &apiclient.SecretKey{
+			NamespacedName: types.NamespacedName{Namespace: argoCDNamespace, Name: argoCDCASecret},
+			Key:            argoCDCAKey,
+		}
+	}
+	argoCDServer, err := apiclient.New(opts)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create the argocd-server client: %w", err)
+	}
+	return argoCDServer, nil
 }

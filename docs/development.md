@@ -272,8 +272,11 @@ Application comparison errors. Use `CATALOG_REVISION` to select the catalog comm
 
 The operator reads Applications' resource trees, live manifests and events from
 argocd-server's API as `ccluster-cp`, a read-only Argo CD account. It authenticates with a
-token stored under the key `token` of Secret `ccluster-cp-argocd-token` in the Argo CD
-namespace (`--argocd-namespace`). The token does not expire and is created once.
+token stored under the key `token` of Secret `ccluster-cp-argocd-token` (`--argocd-token-secret`)
+in the Argo CD namespace (`--argocd-namespace`). The token does not expire and is created
+once. The comment on `manager.args` in `charts/cp/chart/values.yaml` lists the flags that
+locate argocd-server and set how its certificate is verified; `make deploy-cp` sets them for
+the bundled Argo CD.
 
 With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
 The chart declares the account and its RBAC line (`argo-cd.configs` in
@@ -303,6 +306,11 @@ may update the account, such as admin or an SSO user with `role:admin`:
 3. Generate a token: `argocd account generate-token --account ccluster-cp`.
 4. Store it: `kubectl -n <argocd-namespace> create secret generic ccluster-cp-argocd-token
    --from-literal=token=<token>`.
+5. Point the operator at argocd-server, if its Service is not
+   `https://argocd-server.<argocd-namespace>.svc`, with `--argocd-server-url`. If its
+   certificate is not signed by a public CA, store the CA under the key `ca.crt` of a Secret
+   in the Argo CD namespace and pass `--argocd-server-ca-secret`; for its generated
+   self-signed certificate, pass `--argocd-server-insecure-skip-tls-verify`.
 
 The same steps recover a bundled installation whose token and initial admin Secret are
 both gone; the hook Job then logs them instead of creating a token.
