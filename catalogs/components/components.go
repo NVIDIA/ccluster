@@ -11,7 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 // Adding a chart is three steps: create its directory with the Helm chart and a
 // component.go declaring Chart, Values and New, add one line to its directory's group
 // below, and run make python-generate. A cluster_base chart is also registered with the
-// infra-plane operator's verifier registry in internal/controller/ip.
+// infra-plane operator's verifier registry in internal/registry/verifier_registry.
 // TestAllCoversTheTree fails when the directory and the list disagree, and the chart's
 // path under catalogs/ becomes its path under ccluster.catalogs in Python without
 // further registration.

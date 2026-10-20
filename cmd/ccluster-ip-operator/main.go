@@ -22,6 +22,7 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
 	"github.com/NVIDIA/ccluster/internal/manager"
+	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
 var scheme = runtime.NewScheme()
@@ -52,7 +53,7 @@ func setupControllers(mgr ctrl.Manager) error {
 	if err := (&ip.CCLClusterConfigReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
-		Verifiers: ip.ClusterBaseVerifiers(),
+		Verifiers: verifierregistry.Get(),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLClusterConfig: %w", err)
 	}

@@ -3,11 +3,12 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-package ip
+// Package verifierregistry is the registry of cluster_base charts' checks, which the ip
+// operator's CCLClusterConfig controller runs.
+package verifierregistry
 
 import (
 	"context"
-	"fmt"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -29,6 +30,7 @@ import (
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
+	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
 // VerifyFunc is the signature of a cluster_base chart's check. The check itself is a
@@ -61,53 +63,19 @@ func alwaysVerified(context.Context, client.Reader, cclusternvidiacomv1alpha1.CC
 	return nil
 }
 
-// Verifier is one registered check: the cluster_base chart it verifies, which is how
-// the outcome is reported, and the chart package's check.
-type Verifier struct {
-	Chart  string
-	Verify VerifyFunc
-}
-
-// Registry is the set of Verifiers the CCLClusterConfig controller runs, in registration
-// order, which is the order failing charts are reported in. Each chart is registered at
-// most once, so a chart identifies its result. The zero value is an empty registry.
-//
-// Registration happens while the operator is being wired up, before the manager starts;
-// a Registry is not safe for Register calls concurrent with a running controller.
+// Registry is the set of Verifiers the CCLClusterConfig controller runs, one per chart, so
+// a chart identifies its result. The controller reports failing charts in registration
+// order.
 type Registry struct {
-	verifiers []Verifier
+	registry.Registry[VerifyFunc]
 }
 
-// Register adds verify as the check for chart. It panics on an empty chart, a nil
-// verify, or a chart registered twice: each is a wiring bug, caught at startup rather
-// than reported as a verification result.
-func (r *Registry) Register(chart string, verify VerifyFunc) {
-	if chart == "" {
-		panic("ip: Register with an empty chart")
-	}
-	if verify == nil {
-		panic(fmt.Sprintf("ip: Register %s with a nil VerifyFunc", chart))
-	}
-	for _, v := range r.verifiers {
-		if v.Chart == chart {
-			panic(fmt.Sprintf("ip: %s registered twice", chart))
-		}
-	}
-	r.verifiers = append(r.verifiers, Verifier{Chart: chart, Verify: verify})
-}
-
-// Verifiers returns the registered Verifiers in registration order. The slice is the
-// caller's own.
-func (r *Registry) Verifiers() []Verifier {
-	return append([]Verifier(nil), r.verifiers...)
-}
-
-// ClusterBaseVerifiers returns the registry of every catalogs/cluster_base chart's
-// check, sorted by chart as components.ClusterBase is. TestClusterBaseVerifiers fails
-// when the two disagree. A chart without a check of its own registers alwaysVerified;
-// one with a check registers its package's Verify. A check that reads a kind needs a
-// +kubebuilder:rbac marker in this package.
-func ClusterBaseVerifiers() *Registry {
+// Get returns the registry of every catalogs/cluster_base chart's check.
+// TestGet fails when it and components.ClusterBase disagree. A chart without a
+// check of its own registers alwaysVerified; one with a check registers its package's
+// Verify. A check that reads a kind needs a +kubebuilder:rbac marker in
+// internal/controller/ip.
+func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, alwaysVerified)
 	r.Register(certmanager.Chart, alwaysVerified)

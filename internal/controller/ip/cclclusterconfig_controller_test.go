@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
 // errNotReady is what a switchVerifier reports while it is off.
@@ -75,9 +76,9 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		reconciler = &CCLClusterConfigReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Verifiers: registry(
-				Verifier{Chart: chartA, Verify: a.Verify},
-				Verifier{Chart: chartB, Verify: b.Verify},
+			Verifiers: verifierRegistry(
+				registration{chartA, a.Verify},
+				registration{chartB, b.Verify},
 			),
 		}
 
@@ -184,9 +185,9 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 			close(met)
 		}()
 		rendezvous := &meetingVerifier{arrived: &arrived, met: met}
-		reconciler.Verifiers = registry(
-			Verifier{Chart: chartA, Verify: rendezvous.Verify},
-			Verifier{Chart: chartB, Verify: rendezvous.Verify},
+		reconciler.Verifiers = verifierRegistry(
+			registration{chartA, rendezvous.Verify},
+			registration{chartB, rendezvous.Verify},
 		)
 
 		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -198,9 +199,9 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 
 	It("reports a panicking Verifier as failing without stopping the others", func() {
 		a.ready.Store(true)
-		reconciler.Verifiers = registry(
-			Verifier{Chart: chartA, Verify: a.Verify},
-			Verifier{Chart: chartB, Verify: panicVerifier{}.Verify},
+		reconciler.Verifiers = verifierRegistry(
+			registration{chartA, a.Verify},
+			registration{chartB, panicVerifier{}.Verify},
 		)
 
 		_, err := reconciler.Reconcile(ctx, request)
@@ -218,7 +219,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		// Waiting the real verifyTimeout out would make the suite slow; the deadline
 		// being there is the contract.
 		probe := &deadlineVerifier{}
-		reconciler.Verifiers = registry(Verifier{Chart: chartA, Verify: probe.Verify})
+		reconciler.Verifiers = verifierRegistry(registration{chartA, probe.Verify})
 
 		start := time.Now()
 		_, err := reconciler.Reconcile(ctx, request)
@@ -294,11 +295,17 @@ func (v *deadlineVerifier) Verify(ctx context.Context, _ client.Reader, _ cclust
 	return nil
 }
 
-// registry registers verifiers in order.
-func registry(verifiers ...Verifier) *Registry {
-	r := &Registry{}
-	for _, v := range verifiers {
-		r.Register(v.Chart, v.Verify)
+// registration is one chart's Verifier, in the order a test registers it.
+type registration struct {
+	chart  string
+	verify verifierregistry.VerifyFunc
+}
+
+// verifierRegistry registers verifiers in the order given.
+func verifierRegistry(registrations ...registration) *verifierregistry.Registry {
+	r := &verifierregistry.Registry{}
+	for _, reg := range registrations {
+		r.Register(reg.chart, reg.verify)
 	}
 	return r
 }

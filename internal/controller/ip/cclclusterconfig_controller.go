@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
 // Condition types and reasons reported on CCLClusterConfig.status.
@@ -59,14 +60,15 @@ type CCLClusterConfigReconciler struct {
 	Scheme *runtime.Scheme
 
 	// Verifiers is the registry of checks the controller runs, normally
-	// ClusterBaseVerifiers(). Injectable so tests can drive the controller with a registry
-	// of their own.
-	Verifiers *Registry
+	// verifierregistry.Get(). Injectable so tests can drive the controller with a
+	// registry of their own.
+	Verifiers *verifierregistry.Registry
 }
 
 // RBAC is what the controller itself needs. A Verifier that reads a kind adds a marker
-// for it here or beside its registration in verifiers.go; controller-gen only reads markers in this package. Everything stays
-// read-only: the operator writes nothing but CCLClusterConfig status.
+// for it here; controller-gen only reads markers in this package, not in the verifier
+// registry. Everything stays read-only: the operator writes nothing but
+// CCLClusterConfig status.
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
@@ -125,8 +127,8 @@ type failure struct {
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's cached client, which is safe for concurrent use, so the pass takes as long
 // as the slowest check rather than the sum of all of them. Results are collected by
-// position so the failing list, and with it the condition message, is deterministic
-// whatever order the goroutines finish in.
+// position in registration order so the failing list, and with it the condition message,
+// is deterministic whatever order the goroutines finish in.
 //
 // Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
 // recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
@@ -138,22 +140,23 @@ func (r *CCLClusterConfigReconciler) verify(
 ) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
-	verifiers := r.Verifiers.Verifiers()
-	errs := make([]error, len(verifiers))
+	charts := r.Verifiers.Charts()
+	errs := make([]error, len(charts))
 	var wg sync.WaitGroup
-	for i, v := range verifiers {
+	for i, chart := range charts {
+		verify, _ := r.Verifiers.Lookup(chart)
 		wg.Go(func() {
 			defer func() {
 				if p := recover(); p != nil {
 					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
-						"chart", v.Chart, "stack", string(debug.Stack()))
+						"chart", chart, "stack", string(debug.Stack()))
 					errs[i] = fmt.Errorf("verifier panicked: %v", p)
 				}
 			}()
 
 			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 			defer cancel()
-			errs[i] = v.Verify(verifyCtx, r, spec)
+			errs[i] = verify(verifyCtx, r, spec)
 			if errs[i] != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 				errs[i] = fmt.Errorf("timed out after %s: %w", verifyTimeout, errs[i])
 			}
@@ -161,12 +164,12 @@ func (r *CCLClusterConfigReconciler) verify(
 	}
 	wg.Wait()
 
-	for i, v := range verifiers {
+	for i, chart := range charts {
 		if errs[i] != nil {
-			failing = append(failing, failure{chart: v.Chart, err: errs[i]})
+			failing = append(failing, failure{chart: chart, err: errs[i]})
 		}
 	}
-	return len(verifiers), failing
+	return len(charts), failing
 }
 
 // verifiedCondition turns the verification outcome into the Verified condition.

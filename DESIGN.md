@@ -224,15 +224,19 @@ type VerifyFunc func(ctx context.Context, r client.Reader, cfg v1alpha1.CCLClust
 ```
 
 the registry, how checks run, and how their outcome is reported. The catalog never imports
-controller code; `internal/controller/ip/verifiers.go` imports the chart packages and
-registers one check per chart in `ClusterBaseVerifiers()`, next to the RBAC markers the checks
-need; a chart is registered at most once, so its chart path identifies its result.
-`TestClusterBaseVerifiers` fails when the registry and `components.ClusterBase` disagree,
-so no cluster_base chart goes unverified.
+controller code; `internal/registry/verifier_registry` imports the chart packages and
+registers one check per chart in `verifierregistry.Get()`, while the RBAC markers the checks
+need stay in `internal/controller/ip`; a chart is registered at most once, so its chart path
+identifies its result. Every per-chart registry lives under `internal/registry/`, in a
+`*_registry` package whose `Get()` returns its `Registry`, a type embedding the generic
+`registry.Registry`, which maps a chart path to a function with `Register`, `Lookup` and
+`Charts` (registered charts in registration order). Failing charts are reported in that
+order. `TestGet` fails when the registry and `components.ClusterBase` disagree, in content
+or order, so no cluster_base chart goes unverified.
 
 Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to
-look at, as spire_crds does with `catalogs.CRDsEstablished`. Those checks read **live objects
+look at, as spire_crds does with `common.CRDsEstablished` from `catalogs/common`. Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when

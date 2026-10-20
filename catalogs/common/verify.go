@@ -3,7 +3,10 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-package catalogs
+// Package common holds helpers shared by catalog chart packages, such as checks a
+// chart's Verify builds on. It imports no chart package, so every chart package can
+// import it.
+package common
 
 import (
 	"context"
