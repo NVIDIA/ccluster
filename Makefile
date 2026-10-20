@@ -131,8 +131,8 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 # Set E2E_FULL=true (or use test-e2e-full) to run every e2e spec. The quick tier
 # (default) skips the specs labelled "full" - the ones that need real Argo CD: a real
 # rollout, multi-component ordered release, reverse teardown, drift/selfHeal correction,
-# a values change rolling forward, the field ownership contract with Argo CD, and the
-# AppProject tenancy check. The full tier runs everything: the suite always deploys
+# a values change rolling forward, the field ownership contract with Argo CD, the
+# AppProject tenancy check, and istio converging despite istiod's webhook patches. The full tier runs everything: the suite always deploys
 # without Argo CD first and runs the quick specs, then the "with real Argo CD" container
 # in test/e2e/e2e_test.go upgrades the release to add Argo CD and runs the rest. So the
 # full tier is a strict superset of the quick one.
@@ -150,7 +150,7 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: test-e2e-full
-test-e2e-full: ## Run every e2e test: the quick tier, then real Argo CD rollout, ordered release, reverse teardown, drift correction, values roll-forward and tenancy. Slower; explicit only.
+test-e2e-full: ## Run every e2e test: the quick tier, then real Argo CD rollout, ordered release, reverse teardown, drift correction, values roll-forward, tenancy and istio's ignored drift. Slower; explicit only.
 	$(MAKE) test-e2e E2E_FULL=true
 
 .PHONY: cleanup-test-e2e

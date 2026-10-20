@@ -1852,6 +1852,103 @@ var _ = Describe("Manager", Ordered, func() {
 					"--wait=true", "--timeout=2m"))
 				Expect(err).NotTo(HaveOccurred())
 			})
+
+			// istio renders its validating webhooks with failurePolicy Ignore and istiod
+			// patches them to Fail once it serves, so without the chart's drift rules the
+			// Application never reports Synced and every later component waits on it.
+			// Envtest only proves the operator writes the rules; this proves Argo CD,
+			// given them, reports the live Fail as Synced and leaves it in place. It runs
+			// last: istio-cni chains itself into the node's CNI configuration.
+			It("should report istio Synced while istiod owns its webhooks' failurePolicy", func() {
+				const componentSetName = "e2e-istio"
+				const planeName = "e2e-istio-plane"
+				const credentialsName = "e2e-istio-plane-credentials"
+				applicationName := componentSetName + "-istio"
+
+				By("registering the control-plane cluster with itself as an infra plane")
+				_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic",
+					credentialsName,
+					"--from-literal=server=https://kubernetes.default.svc",
+					`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+					"-n", crNamespace))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+						credentialsName, "-n", crNamespace, "--ignore-not-found"))
+				})
+
+				applyCCLInfraPlane(planeName, credentialsName)
+				waitInfraPlaneAvailable(planeName)
+
+				By("creating a CCLComponentSet with the istio component")
+				applyIstioCCLComponentSet(componentSetName, planeName)
+
+				By("verifying the operator wrote the chart's drift rules into the Application")
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+						"-n", crNamespace, "-o", "jsonpath={.spec.ignoreDifferences[*].kind}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(out)).To(Equal("ValidatingWebhookConfiguration"))
+
+					out, err = utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+						"-n", crNamespace, "-o", "jsonpath={.spec.syncPolicy.syncOptions}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(ContainSubstring("RespectIgnoreDifferences=true"))
+				}, 2*time.Minute).Should(Succeed())
+
+				// The configurations' names depend on istiod's revision and namespace, so
+				// they are taken from the resources the Application reports managing.
+				By("finding the validating webhooks Argo CD manages for the component")
+				var webhooks []string
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+						"-n", crNamespace, "-o",
+						`jsonpath={.status.resources[?(@.kind=="ValidatingWebhookConfiguration")].name}`))
+					g.Expect(err).NotTo(HaveOccurred())
+					webhooks = strings.Fields(out)
+					g.Expect(webhooks).To(HaveLen(2), "expected istiod's and istio-base's webhooks")
+				}, 8*time.Minute).Should(Succeed())
+
+				// The chart renders Ignore. Fail on both is istiod's own patch, without which
+				// this spec would pass with no drift to ignore.
+				By("waiting for istiod to patch every webhook's failurePolicy to Fail")
+				webhookPolicies := func(g Gomega) {
+					for _, webhook := range webhooks {
+						out, err := utils.Run(exec.Command("kubectl", "get",
+							"validatingwebhookconfiguration", webhook,
+							"-o", "jsonpath={.webhooks[*].failurePolicy}"))
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(strings.Fields(out)).To(HaveEach("Fail"), "webhook %s", webhook)
+					}
+				}
+				Eventually(webhookPolicies, 8*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("waiting for Argo CD to report the Application Healthy and Synced")
+				Eventually(func(g Gomega) {
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
+						To(Equal("RolloutComplete"))
+				}, 8*time.Minute, 5*time.Second).Should(Succeed())
+
+				// Without RespectIgnoreDifferences a sync would apply Ignore again and
+				// istiod would patch Fail back, so the field would flap.
+				By("verifying it stays Synced with istiod's failurePolicy left in place")
+				Consistently(func(g Gomega) {
+					webhookPolicies(g)
+					sync, err := utils.Run(exec.Command("kubectl", "get", "application", applicationName,
+						"-n", crNamespace, "-o", "jsonpath={.status.sync.status}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
+				}, time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
+					"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=5m"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+					planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+				Expect(err).NotTo(HaveOccurred())
+			})
 		})
 	})
 })
@@ -1912,6 +2009,15 @@ func applyCCLComponentSet(name, planeName string) {
 func applyOrderedCCLComponentSet(name, planeName string) {
 	GinkgoHelper()
 	applyManifest("cclcomponentset_ordered.yaml", map[string]string{
+		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
+	})
+}
+
+// applyIstioCCLComponentSet creates a single-component istio CCLComponentSet targeting
+// planeName, with values that fit the kind e2e cluster.
+func applyIstioCCLComponentSet(name, planeName string) {
+	GinkgoHelper()
+	applyManifest("cclcomponentset_istio.yaml", map[string]string{
 		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
 	})
 }
