@@ -48,10 +48,10 @@ import (
 // cluster owns by design, so the rendered value is never the live one and a full diff
 // would keep the Application OutOfSync, stalling every later component. Each call
 // returns a new slice: the operator writes it into an Application spec.
-type DriftFunc func() []catalogs.Drift
+type DriftFunc func() []catalogs.DriftSpec
 
 // noDrift is registered for a chart whose objects are diffed in full.
-func noDrift() []catalogs.Drift {
+func noDrift() []catalogs.DriftSpec {
 	return nil
 }
 

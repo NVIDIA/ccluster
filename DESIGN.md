@@ -400,7 +400,7 @@ validating webhooks' `failurePolicy` from the rendered `Ignore` to `Fail` once i
 a full diff never reports `Synced` and stalls every later wave. A chart with rules also gets
 `RespectIgnoreDifferences=true`; without it every sync, self-heal's included, applies the
 rendered value again and the owning controller patches it back. A rule
-(`catalogs.Drift`) names a kind and jq paths but no object, since chart values can rename
+(`catalogs.DriftSpec`) names a kind and jq paths but no object, since chart values can rename
 objects; its jq selects fields by something the chart keeps fixed, such as a webhook's
 entry name, so drift elsewhere still shows. Neither callers nor the CRD can
 add rules.

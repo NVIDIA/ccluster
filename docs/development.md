@@ -130,7 +130,7 @@ When adding or changing a component:
   controller on the infra-plane cluster rewrites by design, such as istiod's webhook
   `failurePolicy`, keeps the Application `OutOfSync` and stalls the rollout; export a
   `Drift` function beside `New` with the `driftregistry.DriftFunc` signature, returning
-  `catalogs.Drift` rules (see `istio`). A rule names a kind and jq paths, not objects:
+  `catalogs.DriftSpec` rules (see `istio`). A rule names a kind and jq paths, not objects:
   narrow it with a jq `select` on something the chart keeps stable whatever its values,
   such as a webhook's entry name.
 - Do not render objects that delete themselves, such as a Job with

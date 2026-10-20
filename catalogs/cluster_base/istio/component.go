@@ -126,8 +126,8 @@ func New(
 // Synced. The rule selects the two webhooks by their entry names, which are fixed:
 // istiod's configuration is named after its revision and the global Istio namespace,
 // either of which a CCLComponentSet can set. Drift on any other webhook still shows.
-func Drift() []catalogs.Drift {
-	return []catalogs.Drift{{
+func Drift() []catalogs.DriftSpec {
+	return []catalogs.DriftSpec{{
 		Group: "admissionregistration.k8s.io",
 		Kind:  "ValidatingWebhookConfiguration",
 		JQPaths: []string{

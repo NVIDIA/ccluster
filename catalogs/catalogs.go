@@ -33,7 +33,7 @@ SPDX-License-Identifier: Apache-2.0
 // This package does not import operator code: the dependency runs from the operator to
 // the catalog only.
 //
-// A chart package may also export a Drift function returning []Drift: fields of its
+// A chart package may also export a Drift function returning []DriftSpec: fields of its
 // objects that a controller on the infra-plane cluster owns by design. The control-plane
 // operator registers it in its drift registry (internal/registry/drift_registry) and
 // writes the rules into the chart's Argo CD Application.
@@ -67,15 +67,15 @@ type Validator interface {
 	Validate() error
 }
 
-// Drift names fields of a chart's objects that a controller on the infra-plane cluster
+// DriftSpec names fields of a chart's objects that a controller on the infra-plane cluster
 // owns by design, so the rendered value is never the live one. The control-plane
-// operator writes each Drift into the chart's Argo CD Application as an ignoreDifferences
+// operator writes each DriftSpec into the chart's Argo CD Application as an ignoreDifferences
 // rule, which Argo CD applies to every object of the kind that the Application manages.
 //
 // A rule does not name objects: chart values can change their names. JQPaths narrows
 // the rule to the right fields with a jq select on something the chart keeps stable
 // whatever its values, such as a webhook's entry name.
-type Drift struct {
+type DriftSpec struct {
 	// Group is the objects' API group; empty for the core group.
 	Group string
 

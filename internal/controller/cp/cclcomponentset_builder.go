@@ -123,7 +123,7 @@ func helmValues(values *apiextensionsv1.JSON) *argocdv1alpha1.ApplicationSourceH
 // ignoreDifferences writes a chart's drift rules as Argo CD ignoreDifferences. A rule
 // names no object, so it applies to every object of its kind that the Application
 // manages.
-func ignoreDifferences(rules []catalogs.Drift) []argocdv1alpha1.ResourceIgnoreDifferences {
+func ignoreDifferences(rules []catalogs.DriftSpec) []argocdv1alpha1.ResourceIgnoreDifferences {
 	if len(rules) == 0 {
 		return nil
 	}
