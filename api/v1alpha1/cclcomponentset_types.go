@@ -108,12 +108,15 @@ type CCLComponentSetStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// observedGeneration is the .metadata.generation the conditions were computed from.
+	// observedGeneration is the .metadata.generation of the spec the operator last
+	// reconciled. componentSyncs always describes this generation. A condition can be
+	// older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
+	// pass that fails validation.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// componentSyncs reports the latest observed Application state for each released
-	// component.
+	// component, judged against the spec at status.observedGeneration.
 	// +listType=map
 	// +listMapKey=name
 	// +optional

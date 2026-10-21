@@ -325,13 +325,7 @@ func (r *CCLComponentSetReconciler) teardownNext(
 		return 0, err
 	}
 
-	owned := make(map[string]*argocdv1alpha1.Application, len(all))
-	for name, application := range all {
-		if componentSetOwner.ownedBy(application, componentSet) {
-			owned[name] = application
-		}
-	}
-
+	owned := ownedApplications(componentSet, all)
 	if len(owned) == 0 {
 		// Logged here rather than per pass, so a foreign Application does not
 		// produce a line on every requeue while teardown runs.
@@ -435,6 +429,24 @@ func liveApplications(
 	return live
 }
 
+// ownedApplications drops the Applications that back-reference another CCLComponentSet.
+//
+// The operator refuses to write one (ApplicationConflict) and never deletes one, so its
+// state says nothing about componentSet's spec. An unclaimed Application is kept: the
+// operator adopts it on its next write.
+func ownedApplications(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) map[string]*argocdv1alpha1.Application {
+	owned := make(map[string]*argocdv1alpha1.Application, len(applications))
+	for name, application := range applications {
+		if componentSetOwner.ownedBy(application, componentSet) {
+			owned[name] = application
+		}
+	}
+	return owned
+}
+
 // releaseCount decides how many of componentSet's components may be deployed right now.
 //
 // This is the ordering mechanism: a component's Application is not created until every
@@ -509,20 +521,21 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 	}
 }
 
-// reportComponentSyncs rebuilds status.componentSyncs from observed Applications.
-// Rebuilding drops removed components and replaces stale observations.
-func (r *CCLComponentSetReconciler) reportComponentSyncs(
+// componentSyncStatuses builds status.componentSyncs from observed Applications, one
+// entry per component that has one, in spec order. Callers replace the field with the
+// result, which drops removed components and stale observations.
+func (r *CCLComponentSetReconciler) componentSyncStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
-) {
-	reports := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
+) []cclusternvidiacomv1alpha1.ComponentSyncStatus {
+	statuses := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
 	for _, component := range componentSet.Spec.Components {
 		application := applications[applicationName(componentSet.Name, component.Name)]
 		if application == nil {
 			// Omit components without a live Application.
 			continue
 		}
-		reports = append(reports, cclusternvidiacomv1alpha1.ComponentSyncStatus{
+		statuses = append(statuses, cclusternvidiacomv1alpha1.ComponentSyncStatus{
 			Name:                  component.Name,
 			ComparedToMatchesSpec: comparedToMatchesSpec(application, r.applicationSpec(componentSet, component)),
 			Health:                application.HealthStatus(),
@@ -530,7 +543,7 @@ func (r *CCLComponentSetReconciler) reportComponentSyncs(
 			Message:               application.OperationMessage(),
 		})
 	}
-	componentSet.Status.ComponentSyncs = reports
+	return statuses
 }
 
 // currentSyncFailed reports a terminal failure for the source currently desired and

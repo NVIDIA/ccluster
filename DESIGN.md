@@ -541,8 +541,13 @@ Comparison has the following rules:
   resumes the rollout with no CCLComponentSet edit.
 - Judge Applications the operator has never written the same way. There is no state to
   join and no first spec change to wait for.
-- Rebuild `status.componentSyncs` from the released Applications each pass. The
-  `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
+- Rebuild `status.componentSyncs` and the `Progressing` condition on every pass, from one
+  list of released Applications, including a pass that fails validation or fails to apply.
+  `componentSyncs` has no generation of its own: `status.observedGeneration`, written in
+  the same patch, says which spec it describes. A report left over from an earlier pass
+  would describe a spec that is no longer desired. Leave out an Application whose
+  back-reference names another CCLComponentSet: the operator refuses to write it, so its
+  state says nothing about this spec. The `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
   source, destination and ignoreDifferences. Controller decisions use Applications directly, so a failed
   status write leaves a stale report without blocking rollout recovery.
 

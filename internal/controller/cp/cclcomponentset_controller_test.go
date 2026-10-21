@@ -50,6 +50,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			firstComponent  = "argo-rollouts"
 			secondComponent = "keda"
+
+			// otherNamespace is where a foreign CCLComponentSet's back-reference points.
+			otherNamespace = "other-namespace"
 		)
 
 		ctx := context.Background()
@@ -728,6 +731,100 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			componentSet = reconcileAndGet()
 			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
 			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+		})
+
+		// status.observedGeneration vouches for componentSyncs, and Progressing is read from
+		// the same Applications, so a pass that moves it on must rebuild both for that spec,
+		// even when the pass stops short.
+		It("should rebuild componentSyncs and Progressing on a pass that fails validation", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+			componentSet := reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).
+				To(Equal(reasonRolloutComplete))
+
+			By("moving the first component to a CCLInfraPlane that does not exist")
+			componentSet.Spec.Components[0].InfraPlaneRef.Name = "missing-plane"
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeValidated).Reason).
+				To(Equal(reasonInfraPlaneNotFound))
+			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
+			first := componentSet.Status.ComponentSyncs[0]
+			Expect(first.Name).To(Equal(firstComponent))
+			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
+				"a comparison against the previous destination was reported for this generation")
+			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
+
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(progressing.Reason).To(Equal(reasonWaveSyncing),
+				"the previous spec's completion was reported for this generation")
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+		})
+
+		It("should rebuild componentSyncs and Progressing on a pass that fails to apply", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			componentSet := reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+
+			By("changing the first component while the second's Application belongs elsewhere")
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			application := getApplication(secondComponent)
+			application.Annotations[annotationComponentSetNamespace] = otherNamespace
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
+				To(Equal(reasonApplicationConflict))
+			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1),
+				"the Application claimed by another CCLComponentSet was reported")
+			first := componentSet.Status.ComponentSyncs[0]
+			Expect(first.Name).To(Equal(firstComponent))
+			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
+				"a comparison against the previous values was reported for this generation")
+
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+		})
+
+		It("should leave an Application claimed by another CCLComponentSet out of the status", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
+				To(Equal(reasonRolloutComplete))
+
+			By("claiming the second component's Application for a CCLComponentSet elsewhere")
+			application := getApplication(secondComponent)
+			base := application.DeepCopy()
+			application.Annotations[annotationComponentSetNamespace] = otherNamespace
+			Expect(k8sClient.Patch(ctx, application, client.MergeFrom(base))).To(Succeed())
+
+			componentSet := reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
+				To(Equal(reasonApplicationConflict))
+			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
+			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.Reason).To(Equal(reasonWaveSyncing),
+				"the rollout was reported complete on an Application the operator refuses to write")
+			Expect(progressing.Message).To(ContainSubstring(secondComponent))
 		})
 
 		It("should prune the Application of a component removed from the spec", func() {
@@ -1475,7 +1572,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 					Namespace: namespace,
 					Annotations: map[string]string{
 						annotationComponentSetName:      componentSetName,
-						annotationComponentSetNamespace: "other-namespace",
+						annotationComponentSetNamespace: otherNamespace,
 					},
 				},
 				Spec: argocdv1alpha1.ApplicationSpec{

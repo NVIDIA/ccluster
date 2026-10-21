@@ -119,7 +119,8 @@ type CCLComponentSetReconciler struct {
 //     ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
 //     released and to report where the rollout has got to. Reported as the Progressing
-//     condition.
+//     condition and status.componentSyncs, on every pass, including one that stopped at
+//     step 1 or 2.
 //
 // Ordering is enforced by withholding a component's Application until everything before
 // it has finished - see releaseCount - rather than by an Argo CD sync strategy, which would
@@ -155,64 +156,83 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if reason != "" {
-		// No requeue: only an edit to the CCLComponentSet or its CCLInfraPlanes can
-		// resolve this, and both are watched.
-		log.Info("Did not apply CCLComponentSet", "reason", reason, "message", message)
-		return ctrl.Result{}, r.setConditions(ctx, &componentSet, componentSet.DeepCopy(),
-			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
-	}
 
 	// The Applications already generated are both the record of what has been
-	// released and the evidence for whether the next component may follow.
+	// released and the evidence for whether the next component may follow. They are
+	// read before validation is acted on, because the status reports them either way.
 	all, err := r.listApplications(ctx, &componentSet)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	applications := liveApplications(all)
 	statusBase := componentSet.DeepCopy()
-	released := r.releaseCount(&componentSet, applications)
 
-	changed, applyErr := r.reconcileApplications(ctx, &componentSet, released, applications)
-	appliedStatus, appliedReason, appliedMessage, retryErr :=
-		r.applicationsCondition(&componentSet, released, applyErr)
-
-	if applyErr == nil && changed {
-		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,
-			"released", released, "components", len(componentSet.Spec.Components))
-	}
-	if appliedStatus != metav1.ConditionTrue {
-		log.Info("Did not apply Argo CD Applications", "cclcomponentset", componentSet.Name,
-			"reason", appliedReason, "message", appliedMessage)
-	}
-
-	conditions := []metav1.Condition{
-		condition(conditionTypeValidated, metav1.ConditionTrue,
+	var conditions []metav1.Condition
+	var retryErr error
+	if reason != "" {
+		// No requeue: only an edit to the CCLComponentSet or its CCLInfraPlanes can
+		// resolve this, and both are watched.
+		log.Info("Did not apply CCLComponentSet", "reason", reason, "message", message)
+		conditions = append(conditions,
+			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
+	} else {
+		conditions = append(conditions, condition(conditionTypeValidated, metav1.ConditionTrue,
 			reasonComponentsAccepted, fmt.Sprintf(
 				"All %d components reference an available CCLInfraPlane",
-				len(componentSet.Spec.Components))),
-		condition(conditionTypeComponentsApplied, appliedStatus, appliedReason, appliedMessage),
-	}
+				len(componentSet.Spec.Components))))
 
-	// Only meaningful once the Applications exist; before that there is nothing to read
-	// back and the previous Progressing condition, if any, still stands. They are
-	// re-listed because reconcileApplications has just created some.
-	if applyErr == nil {
-		all, err = r.listApplications(ctx, &componentSet)
-		if err != nil {
+		var applied metav1.Condition
+		applied, retryErr = r.applyComponents(ctx, &componentSet, applications)
+		conditions = append(conditions, applied)
+
+		// Re-listed because applyComponents may have written some, even on a pass that
+		// then failed on a later component.
+		if all, err = r.listApplications(ctx, &componentSet); err != nil {
 			return ctrl.Result{}, err
 		}
 		applications = liveApplications(all)
-		r.reportComponentSyncs(&componentSet, applications)
-		progressStatus, progressReason, progressMessage := r.rolloutStatus(&componentSet, applications)
-		conditions = append(conditions, condition(
-			conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 	}
+
+	// Rebuilt on every pass, validated or not, from one list of Applications.
+	// componentSyncs has no generation of its own and status.observedGeneration vouches
+	// for it, so neither it nor Progressing may outlive the generation this write records.
+	// An Application claimed by another CCLComponentSet is left out of both.
+	reported := ownedApplications(&componentSet, applications)
+	componentSet.Status.ComponentSyncs = r.componentSyncStatuses(&componentSet, reported)
+	progressStatus, progressReason, progressMessage := r.rolloutStatus(&componentSet, reported)
+
+	conditions = append(conditions,
+		condition(conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 
 	if err := r.setConditions(ctx, &componentSet, statusBase, conditions...); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, retryErr
+}
+
+// applyComponents writes the Applications of the components released so far and returns
+// the ComponentsApplied condition. A returned error is retried after the status is
+// written; a missing CRD or a name conflict is reported in the condition instead.
+func (r *CCLComponentSetReconciler) applyComponents(
+	ctx context.Context,
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) (metav1.Condition, error) {
+	log := logf.FromContext(ctx)
+
+	released := r.releaseCount(componentSet, applications)
+	changed, applyErr := r.reconcileApplications(ctx, componentSet, released, applications)
+	status, reason, message, retryErr := r.applicationsCondition(componentSet, released, applyErr)
+
+	if applyErr == nil && changed {
+		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,
+			"released", released, "components", len(componentSet.Spec.Components))
+	}
+	if status != metav1.ConditionTrue {
+		log.Info("Did not apply Argo CD Applications", "cclcomponentset", componentSet.Name,
+			"reason", reason, "message", message)
+	}
+	return condition(conditionTypeComponentsApplied, status, reason, message), retryErr
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
@@ -323,7 +343,6 @@ func (r *CCLComponentSetReconciler) setConditions(
 	base *cclusternvidiacomv1alpha1.CCLComponentSet,
 	conditions ...metav1.Condition,
 ) error {
-
 	for _, c := range conditions {
 		c.ObservedGeneration = componentSet.Generation
 		apimeta.SetStatusCondition(&componentSet.Status.Conditions, c)
