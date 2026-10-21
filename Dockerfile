@@ -56,7 +56,15 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # compute_deployment's init container runs `/compute-ssh install <path>`, so the binary
 # path is part of the chart's contract.
 FROM nvcr.io/nvidia/distroless/static:v4.1.4 AS compute-ssh
+# REVISION is the commit, passed by the Makefile. The base image carries its own OCI
+# labels, so every one it sets is overridden here; see the operator stage below.
+ARG REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.url="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.documentation="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="" \
+      org.opencontainers.image.created="" \
       org.opencontainers.image.title="ccluster compute-ssh" \
       org.opencontainers.image.description="SSH server that compute_deployment copies into the user container" \
       org.opencontainers.image.licenses="Apache-2.0"
@@ -77,7 +85,19 @@ ENTRYPOINT ["/compute-ssh"]
 FROM nvcr.io/nvidia/distroless/static:v4.1.4
 # org.opencontainers.image.source is what links the GHCR package to the repository, so
 # the package inherits the repository's visibility and shows up on its Packages page.
+# The base image sets its own url, documentation, revision, version, created and title
+# labels, which would otherwise describe distroless rather than ccluster, so each is
+# overridden. A Dockerfile cannot remove an inherited label, only overwrite it. version
+# and created are left empty: a release retags the image built for its commit rather
+# than rebuilding it, so a version baked in at build time would be wrong, and the tag
+# carries it; a build timestamp would make every build of the same commit differ.
+ARG REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.url="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.documentation="https://github.com/NVIDIA/ccluster" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="" \
+      org.opencontainers.image.created="" \
       org.opencontainers.image.title="ccluster operator" \
       org.opencontainers.image.description="ccluster control-plane / infra-plane operator (see --build-arg PKG)" \
       org.opencontainers.image.licenses="Apache-2.0"

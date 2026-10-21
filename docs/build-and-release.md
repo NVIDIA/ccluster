@@ -16,6 +16,13 @@ and cross-compiles with `TARGETOS` / `TARGETARCH`, avoiding emulation.
 Go module and build caches are BuildKit cache mounts shared by successive builds on the
 builder. Do not add `go build -a`, which defeats incremental compilation.
 
+The runtime base image carries its own OCI labels, so both runtime stages overwrite every
+label it sets; an inherited label cannot be removed. The Makefile passes `REVISION` (the
+commit) for `org.opencontainers.image.revision`. `version` and `created` stay empty: a
+release retags the image built for its commit, so a baked-in version would be wrong, and a
+build timestamp would make builds of one commit differ. Build images through the Makefile
+targets so `REVISION` is set.
+
 CI retains image layers through `--cache-from/--cache-to type=gha`, passed via
 `BUILDX_ARGS`. `.dockerignore` admits Go sources, module files, `LICENSE` and
 `THIRD_PARTY_NOTICES.md`, so other documentation changes can reuse the build layer. Do not restore cache mounts through
