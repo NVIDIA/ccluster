@@ -276,7 +276,8 @@ token stored under the key `token` of Secret `ccluster-cp-argocd-token` (`--argo
 in the Argo CD namespace (`--argocd-namespace`). The token does not expire and is created
 once. The operator reaches argocd-server through its Service in the same namespace,
 `--argocd-server-service`, without verifying its certificate, so Argo CD must run in the
-operator's cluster. `make deploy-cp` sets the Service for the bundled Argo CD.
+operator's cluster. The chart's default `manager.args` name the bundled Argo CD's Service
+for the release name `ccluster-cp`; `make deploy-cp` sets it for `HELM_RELEASE_CP`.
 
 With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
 The chart declares the account and its RBAC line (`argo-cd.configs` in

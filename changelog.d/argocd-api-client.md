@@ -7,4 +7,4 @@
 - The cp operator reads argocd-server's API through its Service in the Argo CD namespace,
   which must be in the operator's cluster. New flags `--argocd-server-service` (default
   `argocd-server`) and `--argocd-token-secret` name the Service and the token Secret;
-  `make deploy-cp` sets the Service for the bundled Argo CD.
+  the cp chart's default arguments set the Service for the bundled Argo CD.

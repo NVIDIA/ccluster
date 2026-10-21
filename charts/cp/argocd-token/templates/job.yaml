@@ -7,7 +7,8 @@
 #
 # It logs in as admin with argocd-initial-admin-secret, which a fresh Argo CD always has.
 # Deleting that Secret later is safe while the token stays valid. If both are gone, the
-# Job logs the manual steps and succeeds rather than failing an unrelated upgrade.
+# Job waits out its retry budget for the Secret, then logs the manual steps and succeeds
+# rather than failing an unrelated upgrade.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -58,13 +59,24 @@ spec:
                 exit 0
               fi
               manual="create one with 'argocd account generate-token --account $ACCOUNT' and store it under the key \"token\" of Secret $SECRET"
-              if [ ! -s /admin/password ]; then
-                echo "argocd-initial-admin-secret not found, so no token was created: $manual"
-                exit 0
-              fi
               config=/work/argocd-config
+              # One budget for every step below: 60 attempts, 5s apart. Without --wait,
+              # Helm runs the hook as soon as the release's objects exist, while Argo CD
+              # may still be creating argocd-initial-admin-secret and argocd-server
+              # still starting. The kubelet fills the optional admin volume once that
+              # Secret appears.
               attempt=0
-              # argocd-server can still be starting when a post-upgrade hook runs.
+              retry() {
+                attempt=$((attempt + 1))
+                [ "$attempt" -lt 60 ] || return 1
+                sleep 5
+              }
+              until [ -s /admin/password ]; do
+                if ! retry; then
+                  echo "argocd-initial-admin-secret not found, so no token was created: $manual"
+                  exit 0
+                fi
+              done
               until out="$(argocd login "$SERVER" --insecure --username admin \
                   --password "$(cat /admin/password)" --config "$config" 2>&1)"; do
                 case "$out" in
@@ -72,14 +84,20 @@ spec:
                     echo "argocd-initial-admin-secret no longer holds the admin password, so no token was created: $manual"
                     exit 0 ;;
                 esac
-                attempt=$((attempt + 1))
-                if [ "$attempt" -ge 60 ]; then
+                if ! retry; then
                   echo "Failed to log in to $SERVER: $out" >&2
                   exit 1
                 fi
-                sleep 5
               done
-              token="$(argocd account generate-token --account "$ACCOUNT" --config "$config")"
+              # argocd-server can still be loading the account from argocd-cm after the
+              # upgrade that adds it.
+              until token="$(argocd account generate-token --account "$ACCOUNT" \
+                  --config "$config" 2>/work/error)"; do
+                if ! retry; then
+                  echo "Failed to create a token for Argo CD account $ACCOUNT: $(cat /work/error)" >&2
+                  exit 1
+                fi
+              done
               printf '{"stringData":{"token":"%s"}}' "$token" >"$patch"
               echo "Created a token for Argo CD account $ACCOUNT"
           securityContext:

@@ -52,14 +52,17 @@ manager:
   ## account declared under `argo-cd.configs` below. Argo CD must run in this cluster:
   ## - --argocd-server-service (default argocd-server, a stock install's) is
   ##   argocd-server's Service in --argocd-namespace. The `argo-cd` subchart's is
-  ##   <release>-argocd-server, which `make deploy-cp` sets. The operator connects over
-  ##   HTTPS without verifying the server's certificate.
+  ##   <release>-argocd-server, so the default below assumes the release name
+  ##   ccluster-cp; change it with the release name, and drop it for an existing
+  ##   Argo CD. The operator connects over HTTPS without verifying the server's
+  ##   certificate.
   ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
   ##   --argocd-namespace whose `token` key holds that account's token.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
     - --catalog-revision=main
+    - --argocd-server-service=ccluster-cp-argocd-server
 
   ## Image pull secrets, rendered as the pod's imagePullSecrets when non-empty.
   ## The ghcr.io/nvidia operator images are private, so anything outside GitHub
