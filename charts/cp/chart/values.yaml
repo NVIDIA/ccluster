@@ -37,10 +37,10 @@ manager:
   ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
   ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
   ## CCLComponentSet go into the CCLComponentSet's own namespace — see
-  ## `application.namespaces` below.) The default matches a stock Argo CD install. Note
-  ## that the `argo-cd` subchart below installs into this chart's RELEASE namespace,
-  ## not `argocd` — so when Argo CD comes from this chart, override this to the release
-  ## namespace. `make deploy-cp` does that for you.
+  ## `application.namespaces` below.) Unset, it is the operator's own namespace, the
+  ## release namespace, which is where the `argo-cd` subchart below installs Argo CD.
+  ## Set it only for an existing Argo CD in another namespace, such as `argocd`:
+  ##   - --argocd-namespace=argocd
   ##
   ## --catalog-repo-url and --catalog-revision are the Git repository and revision a
   ## CCLComponentSet's components are resolved against; each component's `chart` is a
@@ -49,7 +49,6 @@ manager:
   ## it merges.
   args:
     - --leader-elect
-    - --argocd-namespace=argocd
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
     - --catalog-revision=main
 
@@ -214,7 +213,8 @@ networkPolicy:
 ##
 ## Set `enabled: false` to install the operator into a cluster that already runs
 ## Argo CD, or for hermetic tests that must not pull the Argo CD images
-## (`make deploy-cp ARGOCD=false`).
+## (`make deploy-cp ARGOCD=false`). With an existing Argo CD outside the release
+## namespace, also set --argocd-namespace in `manager.args`.
 argo-cd:
   enabled: true
 

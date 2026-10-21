@@ -334,8 +334,8 @@ var _ = Describe("Manager", Ordered, func() {
 			const infraPlaneName = "e2e-infra-plane"
 			const credentialsName = "e2e-infra-plane-credentials"
 
-			// deploy-cp overrides --argocd-namespace to the release namespace, so the
-			// mirror lands alongside the manager rather than in `argocd`.
+			// deploy-cp leaves --argocd-namespace unset, so the operator uses its own
+			// namespace and the mirror lands alongside the manager.
 			const mirrorNamespace = namespace
 
 			By("creating the cluster credentials Secret the CCLInfraPlane references")
