@@ -209,7 +209,9 @@ func TestResourceEvents(t *testing.T) {
 // TestErrors: each failure argocd-server reports with an ordinary status code is told
 // apart by its message, and only where the request makes the case possible.
 func TestErrors(t *testing.T) {
-	gone := `{"error": "x", "code": 5, "message": "pods \"web-0\" not found"}`
+	// The body grpc-gateway writes for the NotFound argocd-server wraps when the live object
+	// is gone; its interceptor maps the wrapped Kubernetes error to 404.
+	gone := `{"code": 5, "message": "error getting resource: pods \"web-0\" not found", "details": []}`
 	for _, tc := range []struct {
 		name   string
 		op     string
