@@ -55,11 +55,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # --build-arg PKG=./catalogs/deployments/compute_deployment/compute-ssh --target compute-ssh.
 # compute_deployment's init container runs `/compute-ssh install <path>`, so the binary
 # path is part of the chart's contract.
-FROM gcr.io/distroless/static:nonroot AS compute-ssh
+FROM nvcr.io/nvidia/distroless/static:v4.1.4 AS compute-ssh
 LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
       org.opencontainers.image.title="ccluster compute-ssh" \
       org.opencontainers.image.description="SSH server that compute_deployment copies into the user container" \
       org.opencontainers.image.licenses="Apache-2.0"
+WORKDIR /
 COPY --from=builder /workspace/manager /compute-ssh
 COPY LICENSE THIRD_PARTY_NOTICES.md /licenses/
 COPY --from=builder /workspace/licenses/go /licenses/go
@@ -69,8 +70,11 @@ ENTRYPOINT ["/compute-ssh"]
 
 # Use distroless as minimal base image to package the manager binary. This is the last
 # stage, so a build without --target produces an operator image.
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+# Both runtime stages use NVIDIA's OSRB-approved distroless build from nvcr.io rather
+# than upstream gcr.io/distroless. Its default user is a named one and its default
+# workdir is /app, so each stage sets WORKDIR and a numeric USER for runAsNonRoot.
+# Refer to https://developer.download.nvidia.com/distroless-oss/index.html for more details
+FROM nvcr.io/nvidia/distroless/static:v4.1.4
 # org.opencontainers.image.source is what links the GHCR package to the repository, so
 # the package inherits the repository's visibility and shows up on its Packages page.
 LABEL org.opencontainers.image.source="https://github.com/NVIDIA/ccluster" \
