@@ -477,7 +477,7 @@ ARGOCD_NAMESPACE ?=
 # A literal comma cannot appear inside $(if).
 COMMA := ,
 # The manager arg deploy-cp adds for the bundled Argo CD.
-ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=$(HELM_RELEASE_CP)-argocd-server")
+ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=ccluster-cp-argocd-server")
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.
