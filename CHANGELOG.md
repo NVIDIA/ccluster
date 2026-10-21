@@ -7,6 +7,19 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 Changes merged since the latest release are in [`changelog.d/`](changelog.d/), one file per
 pull request, until a release collects them here.
 
+## [0.0.8] - 2026-10-21
+
+### Changed
+- The operator and `compute-ssh` images are built on NVIDIA's distroless base,
+  `nvcr.io/nvidia/distroless/static:v4.1.4`, instead of upstream
+  `gcr.io/distroless/static:nonroot`. They still run as UID 65532.
+  Their OCI labels describe ccluster rather than the base image:
+  `org.opencontainers.image.revision` is the commit the image was built from, and
+  `version` and `created` are empty, because a release retags rather than rebuilds.
+- The `final_stack` `letsencrypt-prod` ClusterIssuer no longer sets an ACME account
+  email, so clusters no longer register their Let's Encrypt account under a fixed
+  third-party address.
+
 ## [0.0.7] - 2026-10-21
 
 ### Added
@@ -340,6 +353,7 @@ Template for future releases:
 ### Security
 -->
 
+[0.0.8]: https://github.com/NVIDIA/ccluster/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/NVIDIA/ccluster/compare/v0.0.4...v0.0.5
