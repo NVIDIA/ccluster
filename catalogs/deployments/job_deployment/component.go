@@ -60,11 +60,16 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
+// chartEnv are the variables templates/job.yaml sets in the container, and
+// JOB_COMPLETION_INDEX, which the Job controller sets in each pod of the indexed Job.
+var chartEnv = []string{"JOB_COMPLETIONS", "JOB_COMPLETION_INDEX"}
+
 // Validate implements catalogs.Validator: the required values that are unset, and the
 // counts that are malformed.
 func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
+		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
 		v.ConfigFile.Validate(),
 		deployments.ValidateVolumeMounts(v.VolumeMounts),
 	}

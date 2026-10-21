@@ -87,12 +87,19 @@ spec:
                   protocol: TCP
               env:
                 # Frontend router mode. Default to kv (the aggregated +
-                # KV-router pattern); a caller-supplied env_vars entry wins.
+                # KV-router pattern); a caller-supplied envVars or secretEnvVars entry wins.
                 # Emit exactly once so glibc's getenv (first match in environ[])
                 # cannot be shadowed by a duplicate user env entry.
                 - name: DYN_ROUTER_MODE
+                  {{- with get (.Values.secretEnvVars | default dict) "DYN_ROUTER_MODE" }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .secretName | quote }}
+                      key: {{ .key | quote }}
+                  {{- else }}
                   # `| default dict` so an omitted/empty env_vars doesn't crash `index` on nil.
                   value: {{ index (.Values.envVars | default dict) "DYN_ROUTER_MODE" | default "kv" | quote }}
+                  {{- end }}
                 {{- include "dynamo.runtimeEnv" . | nindent 16 }}
                 # Preserve the 1.2.1 router defaults explicitly for the 1.4 upgrade.
                 - name: DYN_ROUTER_QUEUE_THRESHOLD
@@ -142,10 +149,7 @@ spec:
             {{- include "dynamo.pvcVolumes" .Values | trim | nindent 12 }}
           {{- end }}
           imagePullSecrets:
-            - name: ecr-image-pull
-            {{- if .Values.imagePullSecret }}
-            - name: {{ .Values.name }}-image-pull-secret
-            {{- end }}
+            {{- include "dynamo.imagePullSecrets" .Values | trim | nindent 12 }}
           # The Frontend is CPU-only, so it carries no GPU-type nodeAffinity
           # (that is only for the workers). It keeps the dedicated_compute
           # toleration so it can still schedule on an all-GPU-node cluster.

@@ -8,6 +8,8 @@ package deployments
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 )
 
 // Workload is the pod-level configuration shared by the inference, compute and job
@@ -32,6 +34,12 @@ type Workload struct {
 	// ecr-image-pull secret.
 	ImagePullSecret *ImagePullSecret `json:"imagePullSecret,omitempty"`
 
+	// ImagePullSecretNames are Secrets in the release namespace, added to the pod's
+	// imagePullSecrets after the chart's own; a name already listed is skipped. The
+	// chart never creates or reads them. The kubelet reads them on each pull, so a
+	// Secret refreshed in place needs no pod restart.
+	ImagePullSecretNames []string `json:"imagePullSecretNames,omitempty"`
+
 	// Resources are the container's limits and requests. Required.
 	Resources ResourceRequirements `json:"resources"`
 
@@ -41,6 +49,13 @@ type Workload struct {
 
 	// EnvVars are set in the container, after the chart's own variables.
 	EnvVars map[string]string `json:"envVars,omitempty"`
+
+	// SecretEnvVars set variables in the container from keys of Secrets in the release
+	// namespace, after EnvVars. The chart never creates or reads the Secrets. The
+	// container does not start until each Secret has its key, and keeps the values it
+	// started with. A variable may not also be in EnvVars, or be one the chart sets
+	// itself.
+	SecretEnvVars map[string]SecretKeyRef `json:"secretEnvVars,omitempty"`
 
 	// DevShmSize is the size of the /dev/shm tmpfs, as a Kubernetes quantity. The
 	// chart ships 512Mi.
@@ -88,6 +103,8 @@ func (w Workload) Validate() error {
 		)),
 		w.Resources.Validate(),
 		w.ImagePullSecret.Validate(),
+		ValidateImagePullSecretNames(w.ImagePullSecretNames),
+		ValidateSecretEnvVars(w.SecretEnvVars, w.EnvVars),
 	)
 }
 
@@ -192,4 +209,56 @@ func (s *ImagePullSecret) Validate() error {
 		Field{"imagePullSecret.username", s.Username},
 		Field{"imagePullSecret.password", s.Password},
 	))
+}
+
+// ValidateImagePullSecretNames reports empty names.
+func ValidateImagePullSecretNames(names []string) error {
+	var missing []string
+	for i, name := range names {
+		if name == "" {
+			missing = append(missing, fmt.Sprintf("imagePullSecretNames[%d]", i))
+		}
+	}
+	return MissingError(missing)
+}
+
+// SecretKeyRef selects one key of a Secret in the release namespace. Both fields are
+// required.
+type SecretKeyRef struct {
+	// SecretName is the Secret's name.
+	SecretName string `json:"secretName"`
+
+	// Key is the key in the Secret's data.
+	Key string `json:"key"`
+}
+
+// ValidateSecretEnvVars reports references without a Secret name or key, and variables
+// envVars also sets: the pod would list the variable twice.
+func ValidateSecretEnvVars(refs map[string]SecretKeyRef, envVars map[string]string) error {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(refs)) {
+		prefix := "secretEnvVars." + name
+		errs = append(errs, MissingError(Missing(
+			Field{prefix + ".secretName", refs[name].SecretName},
+			Field{prefix + ".key", refs[name].Key},
+		)))
+		if _, ok := envVars[name]; ok {
+			errs = append(errs, fmt.Errorf("%w: %s is also set in envVars", ErrInvalidValue, prefix))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateChartEnv reports secretEnvVars entries that name a variable in chartEnv, the
+// variables a chart sets itself. The container would list the variable twice, and the
+// Application's server-side apply rejects a list with a repeated name.
+func ValidateChartEnv(refs map[string]SecretKeyRef, chartEnv []string) error {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(refs)) {
+		if slices.Contains(chartEnv, name) {
+			errs = append(errs, fmt.Errorf("%w: secretEnvVars.%s is set by the chart",
+				ErrInvalidValue, name))
+		}
+	}
+	return errors.Join(errs...)
 }
