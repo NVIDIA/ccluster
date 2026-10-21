@@ -7,10 +7,48 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 Changes merged since the latest release are in [`changelog.d/`](changelog.d/), one file per
 pull request, until a release collects them here.
 
+## [0.0.7] - 2026-10-21
+
 ### Added
+- `ccluster-py` installs a `ccluster` command built on click. `ccluster init -cp CONTEXT`
+  saves the control plane's kubeconfig context after checking it serves the ccluster API.
+  `ccluster register NAME -n NS -ip CONTEXT [--server URL]` then creates a cluster-admin
+  ServiceAccount token on the infra-plane cluster and registers it with that control plane as
+  the CCLInfraPlane NAME.
+  `ccluster unregister NAME -n NS` deletes the CCLInfraPlane and its credentials Secret,
+  leaving the infra plane's ServiceAccount and token in place.
+- The compute-ssh launcher that `compute_deployment` copies into the user container is
+  built from `catalogs/deployments/compute_deployment/compute-ssh` and published as
+  `ghcr.io/nvidia/ccluster-compute-ssh`, tagged with the commit hash on every merge to
+  main and with `X.Y.Z` on release.
+- `inference_deployment`, `compute_deployment`, `job_deployment` and `dynamo_deployment`
+  take `podLabels` and `podAnnotations`, added verbatim to every pod the chart creates,
+  including the Dynamo Frontend and workers. A key the chart sets itself keeps the chart's
+  value. They are for the caller's own metadata and must never carry tenant input, which
+  belongs in `userAnnotations`. Rendered output is unchanged when they are unset.
 - `spire_crds` has the first real check, `spirecrds.Verify`: it checks that the three SPIRE CRDs are
-  Established, through the new `catalogs.CRDsEstablished` helper. The ip operator can now
+  Established, through the new `common.CRDsEstablished` helper in the `catalogs/common`
+  package, which holds helpers shared by catalog chart packages. The ip operator can now
   read CustomResourceDefinitions.
+
+### Changed
+- **Breaking:** the cp operator's `--argocd-namespace` defaults to the operator's own
+  namespace, where the cp chart installs Argo CD, instead of `argocd`. A plain
+  `helm install` of the chart with its bundled Argo CD now works in any namespace. With an
+  existing Argo CD in another namespace, set `--argocd-namespace` in `manager.args`, or
+  `ARGOCD_NAMESPACE` for `make deploy-cp`.
+- `compute_deployment`'s `sshInjectorImage` is optional and defaults to
+  `ghcr.io/nvidia/ccluster-compute-ssh` at the release version. A caller that sets it
+  keeps its own image; the image must provide `/compute-ssh`.
+
+### Fixed
+- The `istio` cluster_base component now reaches `Synced`, so the components after it in a
+  CCLComponentSet are released. The cp operator tells Argo CD to ignore, and not revert,
+  the `failurePolicy` that istiod sets on its two validating webhooks once it is serving.
+- `job_deployment` no longer sets the `Replace=true` sync option on its Job. An automated
+  sync that followed the one creating the Job tried to replace it, which Kubernetes always
+  rejects for an existing Job, so the Application's sync stayed failed and the
+  CCLComponentSet stopped at `WaveSyncFailed` after the Job had succeeded.
 
 ## [0.0.6] - 2026-10-12
 
@@ -302,6 +340,7 @@ Template for future releases:
 ### Security
 -->
 
+[0.0.7]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/NVIDIA/ccluster/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/NVIDIA/ccluster/compare/v0.0.3...v0.0.4

@@ -14,4 +14,4 @@ enableLogging: true
 # The compute-ssh launcher image, built from compute-ssh/ in this chart. Its tag is the
 # root VERSION file: a release PR changes both, and component_test.go fails when they
 # differ.
-sshInjectorImage: ghcr.io/nvidia/ccluster-compute-ssh:0.0.6
+sshInjectorImage: ghcr.io/nvidia/ccluster-compute-ssh:0.0.7
