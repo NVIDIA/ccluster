@@ -1,6 +1,6 @@
 ---
 name: commit-pr
-description: Commit work in ccluster and open a pull request. Use whenever the user asks to commit, write a commit message, push, or open/raise a PR. Covers branch naming, DCO sign-off, the plain-text commit body format, the Conventional Commit PR title, pre-commit checks and the changelog fragment.
+description: Commit work in ccluster and open a pull request. Use whenever the user asks to commit, write a commit message, push, or open/raise a PR. Covers branch naming, rebasing onto main, DCO sign-off, the plain-text commit body format, the Conventional Commit PR title, pre-commit checks and the changelog fragment.
 ---
 
 # Commit and open a pull request
@@ -9,7 +9,7 @@ The repository squash-merges with the PR title as the commit subject and the PR 
 the commit body. Every commit message and PR description is therefore read mostly in
 `git log` in a terminal, and that drives the format below.
 
-## 1. Branch
+## 1. Branch and rebase
 
 Never commit on `main`. If on `main`, create a branch named `<type>/<short-topic>` using
 the same Conventional Commit type the PR will carry, e.g. `feat/appproject-per-namespace`,
@@ -18,6 +18,19 @@ the same Conventional Commit type the PR will carry, e.g. `feat/appproject-per-n
 ```bash
 git checkout -b <type>/<short-topic>
 ```
+
+Before the pre-commit checks, rebase the branch onto the latest `main`, so the checks run
+on the code CI tests: a `pull_request` run checks out the PR merged into `main`, not the
+branch alone.
+
+```bash
+git fetch origin main
+git rebase --autostash origin/main
+```
+
+The branch is current when `git merge-base --is-ancestor origin/main HEAD` succeeds.
+Checks that ran before the rebase do not count; run step 2 after it. This applies to a
+branch that has not been pushed yet; an open PR takes new commits as in step 7.
 
 ## 2. Pre-commit checks
 
