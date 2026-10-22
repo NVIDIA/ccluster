@@ -482,8 +482,7 @@ func waitForCommand(ctx context.Context, cmd *exec.Cmd, ptyFile *os.File) int {
 		if err == nil {
 			return 0
 		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return exitErr.ExitCode()
 		}
 		if ptyFile != nil && errors.Is(err, os.ErrClosed) {
