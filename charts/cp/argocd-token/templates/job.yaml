@@ -6,8 +6,9 @@
 # argocd-secret is replaced. To replace it, remove the Secret's "token" key and upgrade.
 #
 # It logs in as admin with argocd-initial-admin-secret, which a fresh Argo CD always has.
-# Deleting that Secret later is safe while the token stays valid. If both are gone, the
-# Job waits out its retry budget for the Secret, then logs the manual steps and succeeds
+# Deleting that Secret later is safe while the token stays valid. If both are gone, or an
+# admin password is configured so the Secret is never created, the Job waits for
+# argocd-server and then briefly for the Secret, then logs the manual steps and succeeds
 # rather than failing an unrelated upgrade.
 apiVersion: batch/v1
 kind: Job
@@ -48,6 +49,10 @@ spec:
               value: {{ .Values.account | quote }}
             - name: SECRET
               value: {{ .Values.secretName | quote }}
+            # Where the CLI puts its grpc-web proxy socket; the root filesystem is
+            # read-only.
+            - name: TMPDIR
+              value: /work
           command: [sh, -c]
           args:
             - |
@@ -60,23 +65,36 @@ spec:
               fi
               manual="create one with 'argocd account generate-token --account $ACCOUNT' and store it under the key \"token\" of Secret $SECRET"
               config=/work/argocd-config
-              # One budget for every step below: 60 attempts, 5s apart. Without --wait,
-              # Helm runs the hook as soon as the release's objects exist, while Argo CD
-              # may still be creating argocd-initial-admin-secret and argocd-server
-              # still starting. The kubelet fills the optional admin volume once that
-              # Secret appears.
+              # Each wait below retries every 5s within its own budget, and the budgets
+              # add up to well under Helm's default 5m hook timeout. Without --wait,
+              # Helm runs the hook as soon as the release's objects exist, while
+              # argocd-server may still be starting.
               attempt=0
               retry() {
                 attempt=$((attempt + 1))
-                [ "$attempt" -lt 60 ] || return 1
+                [ "$attempt" -lt "$1" ] || return 1
                 sleep 5
               }
+              # argocd-server creates argocd-initial-admin-secret before it serves, so
+              # once it answers, a missing Secret is not coming: it was deleted, or an
+              # admin password was configured. The version endpoint needs no login.
+              until out="$(argocd version --server "$SERVER" --insecure --short \
+                  --config "$config" 2>&1)"; do
+                if ! retry 24; then
+                  echo "Failed to reach $SERVER: $out" >&2
+                  exit 1
+                fi
+              done
+              # Give the kubelet about a minute to fill the optional admin volume, in
+              # case the Secret appeared after this Pod started.
+              attempt=0
               until [ -s /admin/password ]; do
-                if ! retry; then
+                if ! retry 12; then
                   echo "argocd-initial-admin-secret not found, so no token was created: $manual"
                   exit 0
                 fi
               done
+              attempt=0
               until out="$(argocd login "$SERVER" --insecure --username admin \
                   --password "$(cat /admin/password)" --config "$config" 2>&1)"; do
                 case "$out" in
@@ -84,7 +102,7 @@ spec:
                     echo "argocd-initial-admin-secret no longer holds the admin password, so no token was created: $manual"
                     exit 0 ;;
                 esac
-                if ! retry; then
+                if ! retry 6; then
                   echo "Failed to log in to $SERVER: $out" >&2
                   exit 1
                 fi
@@ -93,7 +111,7 @@ spec:
               # upgrade that adds it.
               until token="$(argocd account generate-token --account "$ACCOUNT" \
                   --config "$config" 2>/work/error)"; do
-                if ! retry; then
+                if ! retry 6; then
                   echo "Failed to create a token for Argo CD account $ACCOUNT: $(cat /work/error)" >&2
                   exit 1
                 fi
