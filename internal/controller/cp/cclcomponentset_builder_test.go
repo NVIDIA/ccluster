@@ -91,6 +91,16 @@ const (
 	uncomparedMarker = "uncompared"
 )
 
+// specBehind leaves component's Application on a spec other than the one the operator
+// would write now, as after a spec edit the operator has not applied yet.
+func specBehind(
+	existing map[string]*argocdv1alpha1.Application,
+	component string,
+) map[string]*argocdv1alpha1.Application {
+	existing[applicationName(testComponentSetName, component)].Spec.Source.Path = "catalogs/previous"
+	return existing
+}
+
 // uncompared leaves Argo CD's last comparison describing the previous spec. Its health
 // and sync verdicts are then about that one, whatever they say.
 func uncompared(application *argocdv1alpha1.Application) *argocdv1alpha1.Application {
@@ -418,15 +428,57 @@ func TestApplicationsCondition(t *testing.T) {
 func TestRolloutStatus(t *testing.T) {
 	reconciler := &CCLComponentSetReconciler{}
 
+	// invalidMessage stands for the Validated message of a pass that failed validation.
+	const invalidMessage = `Component "a" references CCLInfraPlane "missing", which does not exist`
+
 	tests := []struct {
-		name        string
-		components  []string
-		existing    map[string]*argocdv1alpha1.Application
+		name       string
+		components []string
+		existing   map[string]*argocdv1alpha1.Application
+		// invalid is the reason validation failed with on this pass, empty if it passed.
+		invalid     string
 		wantStatus  metav1.ConditionStatus
 		wantReason  string
 		wantMessage string
 		notMessage  string
 	}{
+		{
+			// The operator creates nothing on a pass that failed validation.
+			name:       "names a failed validation for a component the operator has not deployed",
+			components: []string{"a", "b"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			invalid:     reasonInfraPlaneNotFound,
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  reasonInfraPlaneNotFound,
+			wantMessage: `Wave 2 (component "b") cannot be deployed until validation passes: ` + invalidMessage,
+		},
+		{
+			// Nor does it write a changed spec, so "waiting for the operator to write"
+			// would describe a write that is not coming.
+			name:       "names a failed validation for a spec the operator has not written",
+			components: []string{"a"},
+			existing: specBehind(applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}), "a"),
+			invalid:     reasonInfraPlaneNotFound,
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  reasonInfraPlaneNotFound,
+			wantMessage: `Wave 1 (component "a") cannot be written until validation passes: ` + invalidMessage,
+		},
+		{
+			// Argo CD keeps working on what the operator already wrote.
+			name:       "keeps reporting a wait on Argo CD when validation failed",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": uncompared(healthyApp()),
+			}),
+			invalid:     reasonInfraPlaneNotFound,
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  reasonWaveSyncing,
+			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to compare`,
+		},
 		{
 			name:       "names the first component that has no Application yet",
 			components: []string{"a", "b"},
@@ -543,7 +595,11 @@ func TestRolloutStatus(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			set := componentSetWith(test.components...)
-			status, reason, message := reconciler.rolloutStatus(set, test.existing)
+			var validation string
+			if test.invalid != "" {
+				validation = invalidMessage
+			}
+			status, reason, message := reconciler.rolloutStatus(set, test.existing, test.invalid, validation)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)

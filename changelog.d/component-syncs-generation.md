@@ -3,7 +3,9 @@
   pass that fails validation or fails to apply. Before, such a pass advanced
   `status.observedGeneration` but kept the previous spec's report, so
   `comparedToMatchesSpec` could read `true`, and `Progressing` could read
-  `RolloutComplete`, for a spec Argo CD had not compared.
+  `RolloutComplete`, for a spec Argo CD had not compared. On a pass that fails validation,
+  a component waiting for the operator is reported under the `Validated` reason, such as
+  `InfraPlaneNotFound`.
 - `CCLComponentSet` status leaves out an Application whose back-reference names another
   `CCLComponentSet`. Before, `status.componentSyncs` could report that Application's health
   and sync as one of its own components.

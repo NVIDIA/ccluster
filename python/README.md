@@ -149,8 +149,8 @@ raises `NotFoundError` for a missing set.
 
 `component_set_current_conditions` says why a set is not finished yet. It keys its
 conditions by type and drops the ones the operator computed from an older generation, so
-what is left is its verdict on the spec as it now stands — after a failed validation the
-other types still carry the previous generation's. `get_component_set` and
+what is left is its verdict on the spec as it now stands — after a failed validation
+`ComponentsApplied` still carries the previous generation's. `get_component_set` and
 `get_infraplane` read one object and return it as its model, or raise `NotFoundError`.
 
 ```python
@@ -163,7 +163,7 @@ if not client.is_component_set_finished(name="local-base"):
 ```
 
 A type is absent when the operator did not get far enough to write it: a set whose
-validation failed has no `Progressing` condition for this generation.
+validation failed has no `ComponentsApplied` condition for this generation.
 
 `Progressing=False` means every Application matches the operator's current desired spec,
 Argo CD's latest comparison was of that spec and reports `Healthy` and `Synced`, and no
@@ -171,7 +171,9 @@ operation for it is pending, running or failed.
 While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when the last
 sync of a component's current spec failed. The operator does not retry a failed sync; a
 later successful sync of that Application in Argo CD clears `WaveSyncFailed` and resumes
-the rollout.
+the rollout. When validation failed and the component being waited on needs the operator
+to write its Application, the reason is the `Validated` condition's, such as
+`InfraPlaneNotFound`: the operator writes nothing until validation passes.
 Updates to already released components are not serialized by wave.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer

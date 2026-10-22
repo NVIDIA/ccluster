@@ -761,11 +761,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				"a comparison against the previous destination was reported for this generation")
 			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
 
+			// The first component now waits for a write the operator will not make
+			// until the reference is fixed, so Progressing names that, not the
+			// previous spec's completion or a write about to happen.
 			progressing := conditionOf(componentSet, conditionTypeProgressing)
 			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing),
-				"the previous spec's completion was reported for this generation")
+			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
+			Expect(progressing.Reason).To(Equal(reasonInfraPlaneNotFound))
 			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+			Expect(progressing.Message).To(ContainSubstring("missing-plane"))
 		})
 
 		It("should rebuild componentSyncs and Progressing on a pass that fails to apply", func() {

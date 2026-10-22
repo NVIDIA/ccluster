@@ -571,9 +571,15 @@ func currentSyncFailed(app *argocdv1alpha1.Application, desired argocdv1alpha1.A
 // The first component that is not yet released, or is released but still converging, is
 // the one holding everything after it up. There is no timeout on that wait, so naming it
 // is the only way a stuck rollout is visible.
+//
+// invalidReason and invalidMessage are this pass's validation failure, empty when it
+// passed. The operator writes no Application on such a pass, so a component waiting for
+// the operator is reported under that reason, which names what actually holds it up.
+// Waits on Argo CD are reported as usual: Argo CD keeps working on what was written.
 func (r *CCLComponentSetReconciler) rolloutStatus(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	invalidReason, invalidMessage string,
 ) (status metav1.ConditionStatus, reason, message string) {
 	for i, component := range componentSet.Spec.Components {
 		wave := i + 1
@@ -581,6 +587,11 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 
 		application, released := applications[name]
 		if !released {
+			if invalidReason != "" {
+				return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
+					"Wave %d (component %q) cannot be deployed until validation passes: %s",
+					wave, component.Name, invalidMessage)
+			}
 			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
 				"Waiting to deploy wave %d (component %q)", wave, component.Name)
 		}
@@ -590,6 +601,13 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 
 		desired := r.applicationSpec(componentSet, component)
 		switch {
+		case !equality.Semantic.DeepEqual(application.Spec, desired) && invalidReason != "":
+			// Only an edit to the CCLComponentSet or its CCLInfraPlanes, both watched,
+			// lets the operator write this spec.
+			return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
+				"Wave %d (component %q) cannot be written until validation passes: %s",
+				wave, component.Name, invalidMessage)
+
 		case !equality.Semantic.DeepEqual(application.Spec, desired):
 			// The list behind this report predates this reconcile's write. The write's
 			// own event brings the CCLComponentSet back.

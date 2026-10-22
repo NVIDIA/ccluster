@@ -89,7 +89,7 @@ const (
 	// The conflict means the server holds a newer CCLComponentSet, and that version's
 	// watch event brings it back. The queue keeps one entry per object at its earliest
 	// time, so the event and this requeue make one pass unless the event never comes.
-	statusConflictRetryInterval = time.Millisecond * 500
+	statusConflictRetryInterval = 500 * time.Millisecond
 )
 
 // CCLComponentSetReconciler reconciles a CCLComponentSet object
@@ -205,7 +205,8 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// An Application claimed by another CCLComponentSet is left out of both.
 	reported := ownedApplications(&componentSet, applications)
 	componentSet.Status.ComponentSyncs = r.componentSyncStatuses(&componentSet, reported)
-	progressStatus, progressReason, progressMessage := r.rolloutStatus(&componentSet, reported)
+	progressStatus, progressReason, progressMessage :=
+		r.rolloutStatus(&componentSet, reported, reason, message)
 
 	conditions = append(conditions,
 		condition(conditionTypeProgressing, progressStatus, progressReason, progressMessage))
