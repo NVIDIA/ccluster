@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -354,8 +355,8 @@ func (r *CCLComponentSetReconciler) teardownNext(
 
 	// Highest wave first.
 	components := componentSet.Spec.Components
-	for i := len(components) - 1; i >= 0; i-- {
-		name := applicationName(componentSet.Name, components[i].Name)
+	for i, component := range slices.Backward(components) {
+		name := applicationName(componentSet.Name, component.Name)
 		application, present := owned[name]
 		if !present {
 			continue
