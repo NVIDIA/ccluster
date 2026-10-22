@@ -462,7 +462,7 @@ Pods and the other objects controllers create from the rendered ones, their live
 manifests, and their events, are only in argocd-server's API. `internal/argocd/apiclient`
 reads them: an Application's resource tree, the live manifest of one node, and that
 node's events. argocd-server answers with Argo CD's own credentials for the destination
-cluster, so the cp operator still never holds an infra-plane's credentials itself.
+cluster, so the cp operator still never connects to an infra-plane itself.
 
 The client authenticates as `ccluster-cp`, an Argo CD account the cp chart declares with
 `apiKey` only (no password, no UI login) and one RBAC line, `applications, get, */*`.
