@@ -268,6 +268,51 @@ startup. Argo CD clones `CATALOG_REPO_URL` itself; a private catalog requires cr
 provided through `GITHUB_TOKEN` to `make deploy-cp`. Missing credentials surface as
 Application comparison errors. Use `CATALOG_REVISION` to select the catalog commit or tag.
 
+### Argo CD API token
+
+The operator reads Applications' resource trees, live manifests and events from
+argocd-server's API as `ccluster-cp`, a read-only Argo CD account. It authenticates with a
+token stored under the key `token` of Secret `ccluster-cp-argocd-token` (`--argocd-token-secret`)
+in the Argo CD namespace (`--argocd-namespace`). The token does not expire and is created
+once. The operator reaches argocd-server through its Service in the same namespace,
+`--argocd-server-service`, without verifying its certificate, so Argo CD must run in the
+operator's cluster. The chart's default `manager.args` name the bundled Argo CD's Service
+for the release name `ccluster-cp`; `make deploy-cp` sets it for `HELM_RELEASE_CP`.
+
+With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
+The chart declares the account and its RBAC line (`argo-cd.configs` in
+`charts/cp/chart/values.yaml`), and the `argocd-token` dependency
+(`charts/cp/argocd-token/`) runs a post-install and post-upgrade hook Job. The Job logs in
+as admin with `argocd-initial-admin-secret`, generates the token and stores it in the
+Secret. When the Secret already holds a token it does nothing, so deleting
+`argocd-initial-admin-secret` after installation is safe. To replace the token, remove the
+key and upgrade:
+
+```bash
+kubectl -n ccluster-cp-system patch secret ccluster-cp-argocd-token --type=json \
+  -p '[{"op":"remove","path":"/data/token"}]'
+make deploy-cp KUBE_CONTEXT_CP=kind-ccluster-cp
+```
+
+Removing the key does not revoke the old token. Argo CD keeps accepting it until it is
+deleted: list the account's token IDs with `argocd account get --account ccluster-cp` and
+revoke with `argocd account delete-token --account ccluster-cp <id>`.
+
+With an existing Argo CD in the same cluster (`ARGOCD=false`), create the token once with an Argo CD login that
+may update the account, such as admin or an SSO user with `role:admin`:
+
+1. Declare the account in that Argo CD's `argocd-cm`: `accounts.ccluster-cp: apiKey`.
+2. Grant it read access in `argocd-rbac-cm`, for example as its own key
+   `policy.ccluster-cp.csv`: `p, ccluster-cp, applications, get, */*, allow`.
+3. Generate a token: `argocd account generate-token --account ccluster-cp`.
+4. Store it: `kubectl -n <argocd-namespace> create secret generic ccluster-cp-argocd-token
+   --from-literal=token=<token>`.
+5. If argocd-server's Service is not named `argocd-server`, pass its name with
+   `--argocd-server-service`.
+
+The same steps recover a bundled installation whose token and initial admin Secret are
+both gone; the hook Job then logs them instead of creating a token.
+
 ### Updating and removing an installation
 
 After loading a rebuilt image with `make load-cp`, restart the deployment when the image tag

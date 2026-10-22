@@ -945,9 +945,10 @@ var _ = Describe("Manager", Ordered, func() {
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy Argo CD alongside the controller-manager")
 
-				// The manager Deployment is unchanged by the upgrade, so Helm does not
-				// roll it; both reconcilers only watch their Argo CD kind if the CRD is
-				// served at SetupWithManager time.
+				// The upgrade adds the argocd-server flags, so Helm rolls the manager, but
+				// nothing orders its new Pod after the Argo CD CRDs, and both reconcilers
+				// only watch their Argo CD kind if the CRD is served at SetupWithManager
+				// time.
 				By("restarting the controller-manager so it picks up the Application and AppProject watches")
 				_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
 					"deploy/ccluster-cp-controller-manager"))
@@ -967,6 +968,34 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(podNames).To(HaveLen(1))
 					controllerPodName = podNames[0]
 				}, 2*time.Minute).Should(Succeed())
+			})
+
+			// The upgrade above added Argo CD to an existing release, so the argocd-token
+			// dependency's post-upgrade hook created the operator's token, and deploy-cp
+			// pointed the operator at the new argocd-server Service. The token is checked
+			// against that Service, from inside the server Pod, whose image has the CLI;
+			// the token goes over stdin rather than onto a command line.
+			It("should give the operator an Argo CD API token and argocd-server Service when installing Argo CD", func() {
+				token, err := utils.Run(exec.Command("kubectl", "get", "secret", "ccluster-cp-argocd-token",
+					"-n", namespace, "-o", "go-template={{ .data.token | base64decode }}"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(token).NotTo(BeEmpty(), "the hook Job stored no token")
+
+				args, err := utils.Run(exec.Command("kubectl", "get", "deploy/ccluster-cp-controller-manager",
+					"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(args).To(ContainSubstring("--argocd-server-service=ccluster-cp-argocd-server"))
+				serverHost := fmt.Sprintf("ccluster-cp-argocd-server.%s.svc", namespace)
+
+				cmd := exec.Command("kubectl", "exec", "-i", "-n", namespace, "deploy/ccluster-cp-argocd-server",
+					"--", "sh", "-c",
+					`argocd account get-user-info --server "$1:443" --insecure --auth-token "$(cat)"`,
+					"sh", serverHost)
+				cmd.Stdin = strings.NewReader(token)
+				out, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(ContainSubstring("Logged In: true"))
+				Expect(out).To(ContainSubstring("Username: ccluster-cp"))
 			})
 
 			// The specs above never touch a real Application: nothing creates one under

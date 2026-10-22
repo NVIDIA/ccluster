@@ -13,11 +13,14 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
@@ -45,6 +48,17 @@ var (
 	catalogRevision string
 )
 
+// The argocd-server Service the operator reads Application trees through, and the
+// Secret holding its token, both in argoCDNamespace. Set by flags, for the same reason
+// as argoCDNamespace.
+var (
+	argoCDServerService string
+	argoCDTokenSecret   string
+)
+
+// argoCDTokenKey is the key of the token Secret.
+const argoCDTokenKey = "token"
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -68,6 +82,12 @@ func main() {
 		"The Git repository holding the chart catalog. Argo CD's repo-server must be able to clone it.")
 	flag.StringVar(&catalogRevision, "catalog-revision", "main",
 		"The revision of the catalog repository to deploy from: a branch, tag or commit SHA.")
+	flag.StringVar(&argoCDServerService, "argocd-server-service", "argocd-server",
+		"argocd-server's Service in --argocd-namespace. The operator reads Application "+
+			"trees through it, over HTTPS without verifying its certificate.")
+	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
+		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
+			"of the Argo CD account the operator reads argocd-server's API as.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -92,6 +112,10 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	argoCDNamespace = namespace
 
+	argoCDServer, err := newArgoCDServerClient(mgr)
+	if err != nil {
+		return err
+	}
 	if err := (&cp.CCLInfraPlaneReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
@@ -106,6 +130,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 		Drift:           driftregistry.Get(),
+		ArgoCDServer:    argoCDServer,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}
@@ -129,4 +154,29 @@ func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
 		return "", fmt.Errorf("--argocd-namespace is unset and %s is empty", namespaceFile)
 	}
 	return namespace, nil
+}
+
+// newArgoCDServerClient returns the argocd-server client the flags describe. It reads
+// its token through the manager's cached client, and does not contact argocd-server, so
+// an invalid Service name fails startup but an unreachable server does not.
+//
+// The client reaches argocd-server only through its Service, because Argo CD runs in
+// the operator's own cluster and the client does not verify the server's certificate.
+func newArgoCDServerClient(mgr ctrl.Manager) (*apiclient.Client, error) {
+	if errs := validation.IsDNS1035Label(argoCDServerService); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid --argocd-server-service %q: %s",
+			argoCDServerService, strings.Join(errs, "; "))
+	}
+	argoCDServer, err := apiclient.New(apiclient.Options{
+		ServerURL: fmt.Sprintf("https://%s.%s.svc", argoCDServerService, argoCDNamespace),
+		Token: apiclient.SecretKey{
+			NamespacedName: types.NamespacedName{Namespace: argoCDNamespace, Name: argoCDTokenSecret},
+			Key:            argoCDTokenKey,
+		},
+		Reader: mgr.GetClient(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to create the argocd-server client: %w", err)
+	}
+	return argoCDServer, nil
 }

@@ -398,7 +398,8 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 # The operator looks for Argo CD in its own namespace, the release namespace, where
 # the chart's argo-cd dependency installs it. Set ARGOCD_NAMESPACE for an existing
-# Argo CD elsewhere. manager.args is restated in full because `--set manager.args[1]=...` builds
+# Argo CD elsewhere. With the bundled Argo CD, deploy-cp also points the operator at its
+# argocd-server Service. manager.args is restated in full because `--set manager.args[1]=...` builds
 # a sparse list and nulls index 0, silently dropping --leader-elect.
 # The one target that names both clusters: deploy-cp and deploy-ip on their own still
 # act on the current kubeconfig context, so they can be pointed anywhere.
@@ -414,7 +415,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
-		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"]' \
+		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -475,6 +476,8 @@ ARGOCD ?= true
 ARGOCD_NAMESPACE ?=
 # A literal comma cannot appear inside $(if).
 COMMA := ,
+# The manager arg deploy-cp adds for the bundled Argo CD.
+ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=$(HELM_RELEASE_CP)-argocd-server")
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.

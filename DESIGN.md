@@ -455,6 +455,43 @@ Argo CD's **RollingSync** strategy gates Applications by switching automated syn
 as of v3.5.1, never switching it back on — which is incompatible with the `selfHeal` that
 these Applications depend on for drift correction.
 
+### Reading through argocd-server
+
+The Application object records only what the chart rendered and its aggregate health.
+Pods and the other objects controllers create from the rendered ones, their live
+manifests, and their events, are only in argocd-server's API. `internal/argocd/apiclient`
+reads them: an Application's resource tree, the live manifest of one node, and that
+node's events. argocd-server answers with Argo CD's own credentials for the destination
+cluster, so the cp operator still never connects to an infra-plane itself.
+
+The client authenticates as `ccluster-cp`, an Argo CD account the cp chart declares with
+`apiKey` only (no password, no UI login) and one RBAC line, `applications, get, */*`.
+That one grant covers the three reads, for every project and namespace. The token is a
+bearer credential to that read access. It lives in a Secret in the Argo CD namespace,
+which the operator already reads, and is reread on every request, so it can be replaced
+in place. It does not expire and is created once. When the cp chart installs Argo CD, a
+post-install hook Job of its `argocd-token` dependency creates it, logging in as admin
+with `argocd-initial-admin-secret`, the one admin credential a fresh Argo CD always has.
+An existing Argo CD's admin credentials are not the chart's to hold, so there the user
+declares the account and stores a token in the Secret. Argo CD checks an account token
+against its live settings on every request, so neither case restarts Argo CD.
+
+The client mirrors only the parts of the API it uses, like
+`internal/argocd/v1alpha1`. It names the Application's namespace and project on every
+request, so argocd-server answers a deleted Application with 404, not 403. It tells
+apart the few failures a caller can act on by status and message: an unauthorized
+token, a deleted Application, a tree not yet cached, and a node gone since the tree was
+read.
+
+Argo CD runs in the cp operator's own cluster, so the client reaches argocd-server through
+its Service, `--argocd-server-service` in the Argo CD namespace, and does not verify the
+server's certificate, which is self-signed unless one is configured. Redirecting that
+Service takes about the access needed to read the token's Secret beside it, so
+verification would add little; TLS still keeps the token off the wire. The operator
+builds the client at startup, without contacting argocd-server, and hands it to the
+`CCLComponentSet` reconciler. Nothing reads through it yet: it is the data source for
+per-component status (§8).
+
 ## 5. Ordering: release by withholding
 
 The rollout order is enforced by **not creating** an Application until its predecessors are
@@ -656,6 +693,9 @@ infra-plane operator periodically re-verifies the live state it does not write (
   read through the registered credentials. Per-component results are also not broken out
   of the `Verified` condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
+- **Component status.** Nothing reports a component's state in its own terms yet: a Job
+  that succeeded, a Pod in CrashLoopBackOff. The argocd-server client (§4) is the data
+  source it will use.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a

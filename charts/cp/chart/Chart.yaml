@@ -41,6 +41,13 @@ dependencies:
     version: 10.4.0
     repository: https://argoproj.github.io/argo-helm
     condition: argo-cd.enabled
+  # Creates the operator's Argo CD API token, but only for the Argo CD installed above:
+  # its argocd-initial-admin-secret is the one admin credential the chart can count on.
+  # With an existing Argo CD, the user creates the token (see docs/development.md).
+  - name: argocd-token
+    version: 0.0.0-dev
+    repository: file://../argocd-token
+    condition: argo-cd.enabled
 
 annotations:
   kubebuilder.io/generated-by: kubebuilder

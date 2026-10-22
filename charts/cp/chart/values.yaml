@@ -47,10 +47,22 @@ manager:
   ## path within that repository. Argo CD's repo-server clones it, so the revision has
   ## to be pushed — point --catalog-revision at a branch to try a catalog change before
   ## it merges.
+  ##
+  ## The operator reads Application trees through argocd-server's API, as the Argo CD
+  ## account declared under `argo-cd.configs` below. Argo CD must run in this cluster:
+  ## - --argocd-server-service (default argocd-server, a stock install's) is
+  ##   argocd-server's Service in --argocd-namespace. The `argo-cd` subchart's is
+  ##   <release>-argocd-server, so the default below assumes the release name
+  ##   ccluster-cp; change it with the release name, and drop it for an existing
+  ##   Argo CD. The operator connects over HTTPS without verifying the server's
+  ##   certificate.
+  ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
+  ##   --argocd-namespace whose `token` key holds that account's token.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
     - --catalog-revision=main
+    - --argocd-server-service=ccluster-cp-argocd-server
 
   ## Image pull secrets, rendered as the pod's imagePullSecrets when non-empty.
   ## The ghcr.io/nvidia operator images are private, so anything outside GitHub
@@ -213,8 +225,10 @@ networkPolicy:
 ##
 ## Set `enabled: false` to install the operator into a cluster that already runs
 ## Argo CD, or for hermetic tests that must not pull the Argo CD images
-## (`make deploy-cp ARGOCD=false`). With an existing Argo CD outside the release
-## namespace, also set --argocd-namespace in `manager.args`.
+## (`make deploy-cp ARGOCD=false`). That also disables the argocd-token dependency:
+## an existing Argo CD needs the account and policy below declared in its own config,
+## and a token for it stored in Secret ccluster-cp-argocd-token in --argocd-namespace
+## (see docs/development.md).
 argo-cd:
   enabled: true
 
@@ -250,3 +264,24 @@ argo-cd:
       ## manage Applications cluster-wide; the application controller's ClusterRole
       ## already covers every namespace.
       application.namespaces: "*"
+
+    ## The Argo CD account the operator reads argocd-server's API as: an Application's
+    ## resource tree, and the live manifests and events of the objects in it, none of
+    ## which is in the Application object. `apiKey` lets it hold API tokens; without
+    ## `login` it has no password and cannot use the UI.
+    ##
+    ## The argocd-token dependency creates its token after install and stores it in
+    ## Secret ccluster-cp-argocd-token, which the operator reads.
+    cm:
+      accounts.ccluster-cp: apiKey
+
+    ## Read-only access for that account. `applications, get` covers the tree, resource
+    ## and events reads; `*/*` matches every Application in any project and, since the
+    ## glob spans `/`, in any namespace. Nothing grants it create, update, sync or delete:
+    ## the operator writes Applications through the Kubernetes API, not argocd-server.
+    ##
+    ## A user policy must be merged in here rather than set alone, which would drop this
+    ## line.
+    rbac:
+      policy.csv: |
+        p, ccluster-cp, applications, get, */*, allow
