@@ -326,13 +326,7 @@ func (r *CCLComponentSetReconciler) teardownNext(
 		return 0, err
 	}
 
-	owned := make(map[string]*argocdv1alpha1.Application, len(all))
-	for name, application := range all {
-		if componentSetOwner.ownedBy(application, componentSet) {
-			owned[name] = application
-		}
-	}
-
+	owned := ownedApplications(componentSet, all)
 	if len(owned) == 0 {
 		// Logged here rather than per pass, so a foreign Application does not
 		// produce a line on every requeue while teardown runs.
@@ -436,6 +430,24 @@ func liveApplications(
 	return live
 }
 
+// ownedApplications drops the Applications that back-reference another CCLComponentSet.
+//
+// The operator refuses to write one (ApplicationConflict) and never deletes one, so its
+// state says nothing about componentSet's spec. An unclaimed Application is kept: the
+// operator adopts it on its next write.
+func ownedApplications(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) map[string]*argocdv1alpha1.Application {
+	owned := make(map[string]*argocdv1alpha1.Application, len(applications))
+	for name, application := range applications {
+		if componentSetOwner.ownedBy(application, componentSet) {
+			owned[name] = application
+		}
+	}
+	return owned
+}
+
 // releaseCount decides how many of componentSet's components may be deployed right now.
 //
 // This is the ordering mechanism: a component's Application is not created until every
@@ -510,20 +522,21 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 	}
 }
 
-// reportComponentSyncs rebuilds status.componentSyncs from observed Applications.
-// Rebuilding drops removed components and replaces stale observations.
-func (r *CCLComponentSetReconciler) reportComponentSyncs(
+// componentSyncStatuses builds status.componentSyncs from observed Applications, one
+// entry per component that has one, in spec order. Callers replace the field with the
+// result, which drops removed components and stale observations.
+func (r *CCLComponentSetReconciler) componentSyncStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
-) {
-	reports := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
+) []cclusternvidiacomv1alpha1.ComponentSyncStatus {
+	statuses := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
 	for _, component := range componentSet.Spec.Components {
 		application := applications[applicationName(componentSet.Name, component.Name)]
 		if application == nil {
 			// Omit components without a live Application.
 			continue
 		}
-		reports = append(reports, cclusternvidiacomv1alpha1.ComponentSyncStatus{
+		statuses = append(statuses, cclusternvidiacomv1alpha1.ComponentSyncStatus{
 			Name:                  component.Name,
 			ComparedToMatchesSpec: comparedToMatchesSpec(application, r.applicationSpec(componentSet, component)),
 			Health:                application.HealthStatus(),
@@ -531,7 +544,7 @@ func (r *CCLComponentSetReconciler) reportComponentSyncs(
 			Message:               application.OperationMessage(),
 		})
 	}
-	componentSet.Status.ComponentSyncs = reports
+	return statuses
 }
 
 // currentSyncFailed reports a terminal failure for the source currently desired and
@@ -559,9 +572,15 @@ func currentSyncFailed(app *argocdv1alpha1.Application, desired argocdv1alpha1.A
 // The first component that is not yet released, or is released but still converging, is
 // the one holding everything after it up. There is no timeout on that wait, so naming it
 // is the only way a stuck rollout is visible.
+//
+// invalidReason and invalidMessage are this pass's validation failure, empty when it
+// passed. The operator writes no Application on such a pass, so a component waiting for
+// the operator is reported under that reason, which names what actually holds it up.
+// Waits on Argo CD are reported as usual: Argo CD keeps working on what was written.
 func (r *CCLComponentSetReconciler) rolloutStatus(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	invalidReason, invalidMessage string,
 ) (status metav1.ConditionStatus, reason, message string) {
 	for i, component := range componentSet.Spec.Components {
 		wave := i + 1
@@ -569,6 +588,11 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 
 		application, released := applications[name]
 		if !released {
+			if invalidReason != "" {
+				return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
+					"Wave %d (component %q) cannot be deployed until validation passes: %s",
+					wave, component.Name, invalidMessage)
+			}
 			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
 				"Waiting to deploy wave %d (component %q)", wave, component.Name)
 		}
@@ -578,6 +602,13 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 
 		desired := r.applicationSpec(componentSet, component)
 		switch {
+		case !equality.Semantic.DeepEqual(application.Spec, desired) && invalidReason != "":
+			// Only an edit to the CCLComponentSet or its CCLInfraPlanes, both watched,
+			// lets the operator write this spec.
+			return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
+				"Wave %d (component %q) cannot be written until validation passes: %s",
+				wave, component.Name, invalidMessage)
+
 		case !equality.Semantic.DeepEqual(application.Spec, desired):
 			// The list behind this report predates this reconcile's write. The write's
 			// own event brings the CCLComponentSet back.

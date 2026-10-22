@@ -578,10 +578,20 @@ Comparison has the following rules:
   resumes the rollout with no CCLComponentSet edit.
 - Judge Applications the operator has never written the same way. There is no state to
   join and no first spec change to wait for.
-- Rebuild `status.componentSyncs` from the released Applications each pass. The
-  `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
+- Rebuild `status.componentSyncs` and the `Progressing` condition on every pass, from one
+  list of released Applications, including a pass that fails validation or fails to apply.
+  `componentSyncs` has no generation of its own: `status.observedGeneration`, written in
+  the same patch, says which spec it describes. A report left over from an earlier pass
+  would describe a spec that is no longer desired. Leave out an Application whose
+  back-reference names another CCLComponentSet: the operator refuses to write it, so its
+  state says nothing about this spec. The `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
   source, destination and ignoreDifferences. Controller decisions use Applications directly, so a failed
   status write leaves a stale report without blocking rollout recovery.
+- Write status with the resource version of the read the report was computed from. A
+  conflict means a lagging cache or another writer has moved the CCLComponentSet on. It is
+  routine, so the pass ends with a short requeue, not an error. The report is not written
+  again in place: it belongs to the generation it was read at, so the next pass recomputes
+  it from a fresh read. That version's watch event and the requeue merge into one pass.
 
 Every pass writes the spec of every released component, and no component's operation holds
 back another's write, so a CCLComponentSet update reaches all released waves in the same
@@ -630,7 +640,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
-| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
+| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
 | `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not

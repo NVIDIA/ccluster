@@ -211,7 +211,7 @@ class CCLComponentSetStatus(BaseModel):
     ] = None
     """
     componentSyncs reports the latest observed Application state for each released
-    component.
+    component, judged against the spec at status.observedGeneration.
     """
     conditions: list[Condition] | None = None
     """
@@ -229,5 +229,8 @@ class CCLComponentSetStatus(BaseModel):
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
-    observedGeneration is the .metadata.generation the conditions were computed from.
+    observedGeneration is the .metadata.generation of the spec the operator last
+    reconciled. componentSyncs always describes this generation. A condition can be
+    older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
+    pass that fails validation.
     """

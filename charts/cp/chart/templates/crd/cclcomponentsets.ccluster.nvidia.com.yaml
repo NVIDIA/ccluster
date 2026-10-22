@@ -144,7 +144,7 @@ spec:
               componentSyncs:
                 description: |-
                   componentSyncs reports the latest observed Application state for each released
-                  component.
+                  component, judged against the spec at status.observedGeneration.
                 items:
                   description: |-
                     ComponentSyncStatus reports the latest observed Application state.
@@ -251,8 +251,11 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedGeneration:
-                description: observedGeneration is the .metadata.generation the conditions
-                  were computed from.
+                description: |-
+                  observedGeneration is the .metadata.generation of the spec the operator last
+                  reconciled. componentSyncs always describes this generation. A condition can be
+                  older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
+                  pass that fails validation.
                 format: int64
                 type: integer
             title: CCLComponentSetStatus

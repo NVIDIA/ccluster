@@ -50,6 +50,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			firstComponent  = "argo-rollouts"
 			secondComponent = "keda"
+
+			// otherNamespace is where a foreign CCLComponentSet's back-reference points.
+			otherNamespace = "other-namespace"
 		)
 
 		ctx := context.Background()
@@ -730,6 +733,104 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
 		})
 
+		// status.observedGeneration vouches for componentSyncs, and Progressing is read from
+		// the same Applications, so a pass that moves it on must rebuild both for that spec,
+		// even when the pass stops short.
+		It("should rebuild componentSyncs and Progressing on a pass that fails validation", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+			componentSet := reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).
+				To(Equal(reasonRolloutComplete))
+
+			By("moving the first component to a CCLInfraPlane that does not exist")
+			componentSet.Spec.Components[0].InfraPlaneRef.Name = "missing-plane"
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeValidated).Reason).
+				To(Equal(reasonInfraPlaneNotFound))
+			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
+			first := componentSet.Status.ComponentSyncs[0]
+			Expect(first.Name).To(Equal(firstComponent))
+			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
+				"a comparison against the previous destination was reported for this generation")
+			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
+
+			// The first component now waits for a write the operator will not make
+			// until the reference is fixed, so Progressing names that, not the
+			// previous spec's completion or a write about to happen.
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
+			Expect(progressing.Reason).To(Equal(reasonInfraPlaneNotFound))
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+			Expect(progressing.Message).To(ContainSubstring("missing-plane"))
+		})
+
+		It("should rebuild componentSyncs and Progressing on a pass that fails to apply", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			componentSet := reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+
+			By("changing the first component while the second's Application belongs elsewhere")
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			application := getApplication(secondComponent)
+			application.Annotations[annotationComponentSetNamespace] = otherNamespace
+			Expect(k8sClient.Update(ctx, application)).To(Succeed())
+
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
+				To(Equal(reasonApplicationConflict))
+			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1),
+				"the Application claimed by another CCLComponentSet was reported")
+			first := componentSet.Status.ComponentSyncs[0]
+			Expect(first.Name).To(Equal(firstComponent))
+			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
+				"a comparison against the previous values was reported for this generation")
+
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
+		})
+
+		It("should leave an Application claimed by another CCLComponentSet out of the status", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
+				To(Equal(reasonRolloutComplete))
+
+			By("claiming the second component's Application for a CCLComponentSet elsewhere")
+			application := getApplication(secondComponent)
+			base := application.DeepCopy()
+			application.Annotations[annotationComponentSetNamespace] = otherNamespace
+			Expect(k8sClient.Patch(ctx, application, client.MergeFrom(base))).To(Succeed())
+
+			componentSet := reconcileAndGet()
+			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
+				To(Equal(reasonApplicationConflict))
+			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
+			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+
+			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			Expect(progressing.Reason).To(Equal(reasonWaveSyncing),
+				"the rollout was reported complete on an Application the operator refuses to write")
+			Expect(progressing.Message).To(ContainSubstring(secondComponent))
+		})
+
 		It("should prune the Application of a component removed from the spec", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
@@ -1367,6 +1468,28 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(getApplication(firstComponent).Spec.Source.Path).To(Equal(components()[0].Chart))
 		})
 
+		It("should requeue, not fail, when its status write loses a race", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			// The CCLComponentSet moves on between the rollout's read and its status
+			// write, as it does when the cache lags the operator's previous write or
+			// another controller writes the object. The API server rejects the write.
+			racing := &movedBeforeStatusWrite{Client: k8sClient}
+			racer := &CCLComponentSetReconciler{
+				Client:          racing,
+				Scheme:          k8sClient.Scheme(),
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
+			}
+
+			result, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(racing.moved).To(BeTrue(), "the race was not staged")
+			Expect(err).NotTo(HaveOccurred(), "an expected conflict was returned as a reconcile error")
+			Expect(result.RequeueAfter).To(Equal(statusConflictRetryInterval))
+		})
+
 		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
@@ -1475,7 +1598,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 					Namespace: namespace,
 					Annotations: map[string]string{
 						annotationComponentSetName:      componentSetName,
-						annotationComponentSetNamespace: "other-namespace",
+						annotationComponentSetNamespace: otherNamespace,
 					},
 				},
 				Spec: argocdv1alpha1.ApplicationSpec{
@@ -1543,6 +1666,44 @@ func (c *staleOnFirstWrite) Create(
 		return apierrors.NewAlreadyExists(applicationsResource, obj.GetName())
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+// movedBeforeStatusWrite writes the object through the API server just before the first
+// status write, so that write names a resource version the server has moved past and gets
+// a real Conflict back. Later writes pass through.
+type movedBeforeStatusWrite struct {
+	client.Client
+	moved bool
+}
+
+func (c *movedBeforeStatusWrite) Status() client.SubResourceWriter {
+	return &movedStatusWriter{SubResourceWriter: c.Client.Status(), racing: c}
+}
+
+type movedStatusWriter struct {
+	client.SubResourceWriter
+	racing *movedBeforeStatusWrite
+}
+
+func (w *movedStatusWriter) Patch(
+	ctx context.Context,
+	obj client.Object,
+	patch client.Patch,
+	opts ...client.SubResourcePatchOption,
+) error {
+	if !w.racing.moved {
+		w.racing.moved = true
+		current := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+		if err := w.racing.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		metav1.SetMetaDataAnnotation(&current.ObjectMeta, "test.ccluster.nvidia.com/moved", "true")
+		if err := w.racing.Patch(ctx, current, client.MergeFrom(base)); err != nil {
+			return err
+		}
+	}
+	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
 }
 
 // staleApplicationList serves the rollout an Application list from before the last write,
