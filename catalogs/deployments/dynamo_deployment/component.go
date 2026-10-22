@@ -71,6 +71,12 @@ type Values struct {
 	// registry and adds it to every pod's imagePullSecrets.
 	ImagePullSecret *deployments.ImagePullSecret `json:"imagePullSecret,omitempty"`
 
+	// ImagePullSecretNames are Secrets in the release namespace, added to every pod's
+	// imagePullSecrets after the chart's own; a name already listed is skipped. The
+	// chart never creates or reads them. The kubelet reads them on each pull, so a
+	// Secret refreshed in place needs no pod restart.
+	ImagePullSecretNames []string `json:"imagePullSecretNames,omitempty"`
+
 	// Domain is the DNS zone the deployment's hostname is created in. The Ingress
 	// host is <name>.<namespace>.<domain> unless DeploymentURL overrides it. Required.
 	Domain string `json:"domain"`
@@ -99,7 +105,7 @@ type Values struct {
 	ServedModelName *string `json:"servedModelName,omitempty"`
 
 	// HFToken is stored in a Secret and exposed to the Frontend and workers as
-	// HF_TOKEN; gated models need it.
+	// HF_TOKEN; gated models need it. SecretEnvVars may not also set HF_TOKEN.
 	HFToken *string `json:"hfToken,omitempty"`
 
 	// EnvVars are set in the Frontend and every worker, except the variables the
@@ -107,6 +113,14 @@ type Values struct {
 	// dropped. DYN_ROUTER_MODE is the one exception: it overrides the Frontend's
 	// default of kv.
 	EnvVars map[string]string `json:"envVars,omitempty"`
+
+	// SecretEnvVars set variables in the Frontend and every worker from keys of Secrets
+	// in the release namespace, after EnvVars. The chart never creates or reads the
+	// Secrets. A container does not start until each Secret has its key, and keeps the
+	// values it started with. A variable may not also be in EnvVars, or be one the
+	// chart sets itself. DYN_ROUTER_MODE overrides the Frontend's default of kv, as in
+	// EnvVars.
+	SecretEnvVars map[string]deployments.SecretKeyRef `json:"secretEnvVars,omitempty"`
 
 	// ExtraArgv are literal arguments appended to python3 -m dynamo.vllm on every
 	// worker, never through a shell. The chart owns --runner (and, aggregated,
@@ -333,6 +347,24 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
+// chartEnv are the variables templates/dgd.yaml and templates/_helpers.tpl can set in
+// the Frontend or a worker. DYN_ROUTER_MODE is not one: it is the caller's router knob,
+// and the Frontend takes it from secretEnvVars or envVars.
+var chartEnv = []string{
+	"DYN_EVENT_PLANE",
+	"DYN_REQUEST_PLANE",
+	"PYTHONHASHSEED",
+	"DYN_ROUTER_QUEUE_THRESHOLD",
+	"DYN_DISABLE_FRONTEND_ADMIN_API",
+	"DYN_DISABLE_FRONTEND_NVEXT",
+	"DYN_VLLM_ENABLE_INFERENCE_V1_GENERATE",
+	"DYN_SELF_HOST_METADATA",
+	"FI_PROVIDER",
+	"FI_EFA_USE_DEVICE_RDMA",
+	"FI_EFA_ENABLE_SHM_TRANSFER",
+	"HF_HUB_CACHE",
+}
+
 // Validate implements catalogs.Validator: the required values that are unset, the
 // pools the serving mode needs, and the knobs the Frontend cannot start with.
 func (v Values) Validate() error {
@@ -345,6 +377,9 @@ func (v Values) Validate() error {
 			deployments.Field{Name: "model", Value: strings.TrimSpace(v.Model)},
 		)),
 		v.ImagePullSecret.Validate(),
+		deployments.ValidateImagePullSecretNames(v.ImagePullSecretNames),
+		deployments.ValidateSecretEnvVars(v.SecretEnvVars, v.EnvVars),
+		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
 		v.HPA.Validate(),
 		v.RolloutStrategy.Validate(),
 		v.BackendProtocol.Validate(),
@@ -375,6 +410,10 @@ func (v Values) Validate() error {
 	if v.RevisionNumber != nil && *v.RevisionNumber < 0 {
 		errs = append(errs, fmt.Errorf("%w: revisionNumber %d is negative",
 			deployments.ErrInvalidValue, *v.RevisionNumber))
+	}
+	if _, ok := v.SecretEnvVars["HF_TOKEN"]; ok && v.HFToken != nil && *v.HFToken != "" {
+		errs = append(errs, fmt.Errorf("%w: secretEnvVars.HF_TOKEN is also set by hfToken",
+			deployments.ErrInvalidValue))
 	}
 	return errors.Join(errs...)
 }

@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
   value: "0"
 {{- end -}}
 
-{{/* Forward user env without duplicating variables owned by this chart. */}}
+{{/* Forward envVars, then secretEnvVars, without duplicating variables owned by this
+     chart. */}}
 {{- define "dynamo.userEnv" -}}
 {{- $root := .root -}}
 {{- $component := .component -}}
@@ -38,6 +39,28 @@ SPDX-License-Identifier: Apache-2.0
 - name: {{ $key | quote }}
   value: {{ $value | quote }}
 {{- end }}
+{{- end }}
+{{- range $key, $ref := ($root.Values.secretEnvVars | default dict) }}
+{{- if and (not (has $key $owned)) (not (and (eq $component "frontend") (eq $key "DYN_ROUTER_MODE"))) }}
+- name: {{ $key | quote }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $ref.secretName | quote }}
+      key: {{ $ref.key | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* A pod's imagePullSecrets entries: the chart's own pull Secrets, then each of
+     imagePullSecretNames not already listed. A repeated name can fail server-side
+     apply, which keys imagePullSecrets by name. */}}
+{{- define "dynamo.imagePullSecrets" -}}
+{{- $names := list "ecr-image-pull" -}}
+{{- if .imagePullSecret -}}
+{{- $names = append $names (printf "%s-image-pull-secret" .name) -}}
+{{- end -}}
+{{- range uniq (concat $names (.imagePullSecretNames | default list)) }}
+- name: {{ . | quote }}
 {{- end }}
 {{- end -}}
 
@@ -277,10 +300,7 @@ priorityClassName: {{ .priorityClassName | quote }}
         {{- include "dynamo.pvcVolumes" .Values | trim | nindent 8 }}
         {{- end }}
       imagePullSecrets:
-        - name: ecr-image-pull
-        {{- if .Values.imagePullSecret }}
-        - name: {{ .Values.name }}-image-pull-secret
-        {{- end }}
+        {{- include "dynamo.imagePullSecrets" .Values | trim | nindent 8 }}
       tolerations:
         - effect: NoSchedule
           key: dedicated_compute
@@ -430,10 +450,7 @@ priorityClassName: {{ .priorityClassName | quote }}
         {{- include "dynamo.pvcVolumes" $root.Values | trim | nindent 8 }}
         {{- end }}
       imagePullSecrets:
-        - name: ecr-image-pull
-        {{- if $root.Values.imagePullSecret }}
-        - name: {{ $root.Values.name }}-image-pull-secret
-        {{- end }}
+        {{- include "dynamo.imagePullSecrets" $root.Values | trim | nindent 8 }}
       tolerations:
         - effect: NoSchedule
           key: dedicated_compute

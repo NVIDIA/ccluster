@@ -101,6 +101,13 @@ spec:
             - name: {{ $key | quote }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- range $key, $ref := .Values.secretEnvVars }}
+            - name: {{ $key | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ref.secretName | quote }}
+                  key: {{ $ref.key | quote }}
+            {{- end }}
           resources:
             limits:
               cpu: {{ .Values.resources.limits.cpu | quote }}
@@ -137,10 +144,7 @@ spec:
               mountPath: {{ .volumeMountMountPath | quote }}
             {{- end }}
       imagePullSecrets:
-        - name: ecr-image-pull
-        {{- if .Values.imagePullSecret }}
-        - name: {{ .Values.name }}-image-pull-secret
-        {{- end }}
+        {{- include "imagePullSecrets" .Values | trim | nindent 8 }}
       tolerations:
         - effect: NoSchedule
           key: dedicated_compute

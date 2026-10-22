@@ -29,3 +29,16 @@ SPDX-License-Identifier: Apache-2.0
 {{- end -}}
 {{- toYaml $merged -}}
 {{- end -}}
+
+{{/* The pod's imagePullSecrets entries: the chart's own pull Secrets, then each of
+     imagePullSecretNames not already listed. A repeated name can fail server-side
+     apply, which keys imagePullSecrets by name. */}}
+{{- define "imagePullSecrets" -}}
+{{- $names := list "ecr-image-pull" -}}
+{{- if .imagePullSecret -}}
+{{- $names = append $names (printf "%s-image-pull-secret" .name) -}}
+{{- end -}}
+{{- range uniq (concat $names (.imagePullSecretNames | default list)) }}
+- name: {{ . | quote }}
+{{- end }}
+{{- end -}}

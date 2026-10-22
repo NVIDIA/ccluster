@@ -77,11 +77,20 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
+// chartEnv are the variables templates/deployment.yaml sets in the container.
+var chartEnv = []string{
+	"CCLUSTER_SSH_ADDR",
+	"CCLUSTER_SSH_HOST_KEY_DIR",
+	"CCLUSTER_SSH_WORKDIR",
+	"SSH_PUBLIC_KEY_FILE",
+}
+
 // Validate implements catalogs.Validator: the required values that are unset, and the
 // values that are malformed.
 func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
+		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
 		deployments.MissingError(deployments.Missing(
 			deployments.Field{Name: "domain", Value: v.Domain},
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},

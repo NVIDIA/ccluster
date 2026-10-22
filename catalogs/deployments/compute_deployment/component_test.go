@@ -7,10 +7,13 @@ package computedeployment
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/NVIDIA/ccluster/catalogs/deployments/deploymentstest"
 )
 
 // Catalogs are read from git at a revision, so the default launcher tag cannot be stamped
@@ -57,5 +60,14 @@ func TestValidateSSHInjectorImage(t *testing.T) {
 				t.Fatalf("Validate() reports sshInjectorImage = %t, want %t: %v", got, tt.wantErr, err)
 			}
 		})
+	}
+}
+
+// TestChartEnvMatchesTemplates keeps chartEnv in step with the templates, so
+// secretEnvVars cannot repeat a variable the chart sets.
+func TestChartEnvMatchesTemplates(t *testing.T) {
+	got := slices.Sorted(slices.Values(chartEnv))
+	if want := deploymentstest.TemplateEnv(t, "."); !slices.Equal(got, want) {
+		t.Fatalf("chartEnv = %v, templates set %v", got, want)
 	}
 }

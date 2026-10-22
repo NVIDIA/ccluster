@@ -197,6 +197,26 @@ class RolloutStrategy(BaseModel):
     """
 
 
+class SecretKeyRef(BaseModel):
+    """
+    SecretKeyRef selects one key of a Secret in the release namespace. Both fields are
+    required.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    secret_name: Annotated[str, Field(alias="secretName")]
+    """
+    SecretName is the Secret's name.
+    """
+    key: str
+    """
+    Key is the key in the Secret's data.
+    """
+
+
 class VolumeMount(BaseModel):
     """
     VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
@@ -331,6 +351,15 @@ class Values(BaseModel):
     ImagePullSecret, when set, creates a dockerconfigjson Secret for ImageURL's
     registry and adds it to every pod's imagePullSecrets.
     """
+    image_pull_secret_names: Annotated[
+        list[str] | None, Field(alias="imagePullSecretNames")
+    ] = None
+    """
+    ImagePullSecretNames are Secrets in the release namespace, added to every pod's
+    imagePullSecrets after the chart's own; a name already listed is skipped. The
+    chart never creates or reads them. The kubelet reads them on each pull, so a
+    Secret refreshed in place needs no pod restart.
+    """
     domain: str
     """
     Domain is the DNS zone the deployment's hostname is created in. The Ingress
@@ -372,7 +401,7 @@ class Values(BaseModel):
     hf_token: Annotated[str | None, Field(alias="hfToken")] = None
     """
     HFToken is stored in a Secret and exposed to the Frontend and workers as
-    HF_TOKEN; gated models need it.
+    HF_TOKEN; gated models need it. SecretEnvVars may not also set HF_TOKEN.
     """
     env_vars: Annotated[dict[str, str] | None, Field(alias="envVars")] = None
     """
@@ -380,6 +409,17 @@ class Values(BaseModel):
     chart owns (the DYN_* plane and router settings and PYTHONHASHSEED), which are
     dropped. DYN_ROUTER_MODE is the one exception: it overrides the Frontend's
     default of kv.
+    """
+    secret_env_vars: Annotated[
+        dict[str, SecretKeyRef] | None, Field(alias="secretEnvVars")
+    ] = None
+    """
+    SecretEnvVars set variables in the Frontend and every worker from keys of Secrets
+    in the release namespace, after EnvVars. The chart never creates or reads the
+    Secrets. A container does not start until each Secret has its key, and keeps the
+    values it started with. A variable may not also be in EnvVars, or be one the
+    chart sets itself. DYN_ROUTER_MODE overrides the Frontend's default of kv, as in
+    EnvVars.
     """
     extra_argv: Annotated[list[str] | None, Field(alias="extraArgv")] = None
     """

@@ -175,6 +175,26 @@ class RolloutStrategy(BaseModel):
     """
 
 
+class SecretKeyRef(BaseModel):
+    """
+    SecretKeyRef selects one key of a Secret in the release namespace. Both fields are
+    required.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    secret_name: Annotated[str, Field(alias="secretName")]
+    """
+    SecretName is the Secret's name.
+    """
+    key: str
+    """
+    Key is the key in the Secret's data.
+    """
+
+
 class VolumeMount(BaseModel):
     """
     VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
@@ -245,6 +265,15 @@ class Values(BaseModel):
     registry and adds it to the pod's imagePullSecrets, next to the namespace's
     ecr-image-pull secret.
     """
+    image_pull_secret_names: Annotated[
+        list[str] | None, Field(alias="imagePullSecretNames")
+    ] = None
+    """
+    ImagePullSecretNames are Secrets in the release namespace, added to the pod's
+    imagePullSecrets after the chart's own; a name already listed is skipped. The
+    chart never creates or reads them. The kubelet reads them on each pull, so a
+    Secret refreshed in place needs no pod restart.
+    """
     resources: ResourceRequirements
     """
     Resources are the container's limits and requests. Required.
@@ -259,6 +288,16 @@ class Values(BaseModel):
     env_vars: Annotated[dict[str, str] | None, Field(alias="envVars")] = None
     """
     EnvVars are set in the container, after the chart's own variables.
+    """
+    secret_env_vars: Annotated[
+        dict[str, SecretKeyRef] | None, Field(alias="secretEnvVars")
+    ] = None
+    """
+    SecretEnvVars set variables in the container from keys of Secrets in the release
+    namespace, after EnvVars. The chart never creates or reads the Secrets. The
+    container does not start until each Secret has its key, and keeps the values it
+    started with. A variable may not also be in EnvVars, or be one the chart sets
+    itself.
     """
     dev_shm_size: Annotated[str | None, Field(alias="devShmSize")] = None
     """
@@ -354,7 +393,7 @@ class Values(BaseModel):
     hf_token: Annotated[str | None, Field(alias="hfToken")] = None
     """
     HFToken is rendered as the HF_TOKEN environment variable, after EnvVars, so it
-    wins over a token set there.
+    wins over a token set there. SecretEnvVars may not also set HF_TOKEN.
     """
     enable_node_model_cache: Annotated[
         bool | None, Field(alias="enableNodeModelCache")
