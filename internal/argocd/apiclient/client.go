@@ -187,6 +187,9 @@ func (c *Client) ResourceEvents(ctx context.Context, app ApplicationRef, ref Res
 
 // get sends GET /api/v1/applications/{app.Name}/{op} and decodes a 200 answer into out.
 func (c *Client) get(ctx context.Context, app ApplicationRef, op string, query url.Values, out any) error {
+	if app.Namespace == "" || app.Name == "" || app.Project == "" {
+		return fmt.Errorf("argocd-server %s: ApplicationRef needs a namespace, name and project, got %+v", op, app)
+	}
 	token, err := c.token.read(ctx, c.reader)
 	if err != nil {
 		return fmt.Errorf("reading argocd-server token: %w", err)

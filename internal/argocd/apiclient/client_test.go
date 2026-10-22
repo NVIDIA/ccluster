@@ -302,6 +302,41 @@ func TestToken(t *testing.T) {
 	}
 }
 
+// TestIncompleteApplicationRef: without its namespace, name or project, argocd-server
+// would answer about a different Application or with a misleading status, so the request
+// is never sent and the error matches none of the typed ones.
+func TestIncompleteApplicationRef(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ApplicationRef)
+	}{
+		{"no namespace", func(a *ApplicationRef) { a.Namespace = "" }},
+		{"no name", func(a *ApplicationRef) { a.Name = "" }},
+		{"no project", func(a *ApplicationRef) { a.Project = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var received []request
+			server := fakeServer(t, http.StatusOK, `{}`, &received)
+			c, _ := newClient(t, server, secret(tokenKey, testToken))
+			app := testApp
+			tc.mutate(&app)
+
+			_, err := c.ResourceTree(context.Background(), app)
+			if err == nil {
+				t.Fatal("ResourceTree succeeded")
+			}
+			for _, kind := range []error{ErrUnauthorized, ErrApplicationNotFound, ErrTreeUnavailable, ErrResourceGone} {
+				if errors.Is(err, kind) {
+					t.Errorf("error %v matches %v", err, kind)
+				}
+			}
+			if len(received) != 0 {
+				t.Errorf("server received %d requests", len(received))
+			}
+		})
+	}
+}
+
 func TestNewRejectsBadOptions(t *testing.T) {
 	reader := fake.NewClientBuilder().Build()
 	valid := Options{ServerURL: "https://argocd-server", Token: tokenKey, Reader: reader}

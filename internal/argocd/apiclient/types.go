@@ -11,7 +11,8 @@ package apiclient
 // The operator writes Applications outside the Argo CD namespace ("Applications in any
 // namespace"), so argocd-server cannot find one by name alone. And naming the project
 // makes argocd-server answer an Application it cannot find with 404 rather than 403,
-// which is what lets ErrApplicationNotFound be told apart from ErrUnauthorized.
+// which is what lets ErrApplicationNotFound be told apart from ErrUnauthorized. A request
+// missing any of the three fails before it is sent.
 type ApplicationRef struct {
 	Namespace string
 	Name      string
