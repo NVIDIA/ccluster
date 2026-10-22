@@ -550,6 +550,11 @@ Comparison has the following rules:
   state says nothing about this spec. The `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
   source, destination and ignoreDifferences. Controller decisions use Applications directly, so a failed
   status write leaves a stale report without blocking rollout recovery.
+- Write status with the resource version of the read the report was computed from. A
+  conflict means a lagging cache or another writer has moved the CCLComponentSet on. It is
+  routine, so the pass ends with a short requeue, not an error. The report is not written
+  again in place: it belongs to the generation it was read at, so the next pass recomputes
+  it from a fresh read. That version's watch event and the requeue merge into one pass.
 
 Every pass writes the spec of every released component, and no component's operation holds
 back another's write, so a CCLComponentSet update reaches all released waves in the same

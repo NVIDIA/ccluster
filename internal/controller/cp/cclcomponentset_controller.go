@@ -84,6 +84,12 @@ const (
 	// this only covers a missed event, and keeps a component whose cluster is
 	// unreachable from wedging the delete silently.
 	teardownRetryInterval = 15 * time.Second
+
+	// statusConflictRetryInterval backstops the watch after a status write conflicts.
+	// The conflict means the server holds a newer CCLComponentSet, and that version's
+	// watch event brings it back. The queue keeps one entry per object at its earliest
+	// time, so the event and this requeue make one pass unless the event never comes.
+	statusConflictRetryInterval = time.Millisecond * 500
 )
 
 // CCLComponentSetReconciler reconciles a CCLComponentSet object
@@ -205,7 +211,17 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		condition(conditionTypeProgressing, progressStatus, progressReason, progressMessage))
 
 	if err := r.setConditions(ctx, &componentSet, statusBase, conditions...); err != nil {
-		return ctrl.Result{}, err
+		if !apierrors.IsConflict(err) {
+			return ctrl.Result{}, err
+		}
+		// Expected rather than a failure: the report was computed from a read that a
+		// lagging cache or another writer has since left behind. It is recomputed from a
+		// fresh read, not written again, because it belongs to the generation it was read
+		// at. A pending apply error keeps its rate-limited retry.
+		log.V(1).Info("Requeued CCLComponentSet after its status write conflicted")
+		if retryErr == nil {
+			return ctrl.Result{RequeueAfter: statusConflictRetryInterval}, nil
+		}
 	}
 	return ctrl.Result{}, retryErr
 }
@@ -335,8 +351,8 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 // status subresource in one patch.
 //
 // Carry the original resource version so a concurrent spec edit cannot receive a
-// completion computed for older input. A conflict is retried by the controller; a missing
-// object has no status left to record.
+// completion computed for older input. A conflict is returned for Reconcile to requeue; a
+// missing object has no status left to record.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,

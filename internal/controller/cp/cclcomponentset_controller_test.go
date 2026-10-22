@@ -1464,6 +1464,28 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(getApplication(firstComponent).Spec.Source.Path).To(Equal(components()[0].Chart))
 		})
 
+		It("should requeue, not fail, when its status write loses a race", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			// The CCLComponentSet moves on between the rollout's read and its status
+			// write, as it does when the cache lags the operator's previous write or
+			// another controller writes the object. The API server rejects the write.
+			racing := &movedBeforeStatusWrite{Client: k8sClient}
+			racer := &CCLComponentSetReconciler{
+				Client:          racing,
+				Scheme:          k8sClient.Scheme(),
+				CatalogRepoURL:  repoURL,
+				CatalogRevision: revision,
+			}
+
+			result, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(racing.moved).To(BeTrue(), "the race was not staged")
+			Expect(err).NotTo(HaveOccurred(), "an expected conflict was returned as a reconcile error")
+			Expect(result.RequeueAfter).To(Equal(statusConflictRetryInterval))
+		})
+
 		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
@@ -1640,6 +1662,44 @@ func (c *staleOnFirstWrite) Create(
 		return apierrors.NewAlreadyExists(applicationsResource, obj.GetName())
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+// movedBeforeStatusWrite writes the object through the API server just before the first
+// status write, so that write names a resource version the server has moved past and gets
+// a real Conflict back. Later writes pass through.
+type movedBeforeStatusWrite struct {
+	client.Client
+	moved bool
+}
+
+func (c *movedBeforeStatusWrite) Status() client.SubResourceWriter {
+	return &movedStatusWriter{SubResourceWriter: c.Client.Status(), racing: c}
+}
+
+type movedStatusWriter struct {
+	client.SubResourceWriter
+	racing *movedBeforeStatusWrite
+}
+
+func (w *movedStatusWriter) Patch(
+	ctx context.Context,
+	obj client.Object,
+	patch client.Patch,
+	opts ...client.SubResourcePatchOption,
+) error {
+	if !w.racing.moved {
+		w.racing.moved = true
+		current := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+		if err := w.racing.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		metav1.SetMetaDataAnnotation(&current.ObjectMeta, "test.ccluster.nvidia.com/moved", "true")
+		if err := w.racing.Patch(ctx, current, client.MergeFrom(base)); err != nil {
+			return err
+		}
+	}
+	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
 }
 
 // staleApplicationList serves the rollout an Application list from before the last write,
