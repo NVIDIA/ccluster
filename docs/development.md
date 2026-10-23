@@ -311,7 +311,7 @@ setup that Secret must name an address reachable from the cp operator's Pod, as 
 A plane registering the cp cluster itself (`server: https://kubernetes.default.svc`, no
 token) is written with the operator's own ServiceAccount and reports
 `ClusterConfigApplied=False/CRDMissing` until the ip chart's CRD is installed there.
-`--infraplane-resync-period` (default 10m) controls how often a written `CCLClusterConfig`
+`--infraplane-resync-period` (default 5m) controls how often a written `CCLClusterConfig`
 is rewritten; failures are retried every minute.
 
 ### Argo CD API token

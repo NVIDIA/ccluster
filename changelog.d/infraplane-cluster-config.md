@@ -6,7 +6,7 @@
   `DomainMissing`. Deleting the `CCLInfraPlane` deletes the `CCLClusterConfig` if the
   operator wrote it. A plane registering the cp cluster itself is written with the
   operator's own ServiceAccount, which the cp role now grants `cclclusterconfigs`.
-- New cp flag `--infraplane-resync-period` (default 10m): how often a written
+- New cp flag `--infraplane-resync-period` (default 5m): how often a written
   `CCLClusterConfig` is rewritten to restore drift.
 
 ### Changed

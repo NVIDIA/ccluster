@@ -92,7 +92,7 @@ func main() {
 	flag.StringVar(&argoCDServerService, "argocd-server-service", "argocd-server",
 		"argocd-server's Service in --argocd-namespace. The operator reads Application "+
 			"trees through it, over HTTPS without verifying its certificate.")
-	flag.DurationVar(&infraPlaneResyncPeriod, "infraplane-resync-period", 10*time.Minute,
+	flag.DurationVar(&infraPlaneResyncPeriod, "infraplane-resync-period", 5*time.Minute,
 		"How often each CCLInfraPlane is reconciled again once its infra-plane cluster's "+
 			"CCLClusterConfig has been written, restoring it if it drifted. 0 disables it.")
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",

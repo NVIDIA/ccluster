@@ -216,7 +216,7 @@ because a cluster that is gone must not keep its CCLInfraPlane from being delete
 
 Nothing on the infra-plane cluster is watched, so drift there is found by polling: a
 `CCLInfraPlane` whose `CCLClusterConfig` was written is reconciled again every
-`--infraplane-resync-period` (default 10m), and one whose write failed every minute.
+`--infraplane-resync-period` (default 5m), and one whose write failed every minute.
 
 ### Status
 
