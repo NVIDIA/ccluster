@@ -60,3 +60,7 @@ metadata:
 spec:
   clusterCredentialsRef:
     name: ccluster-local-credentials
+  # Written to the cluster's CCLClusterConfig, which the infra-plane operator verifies the
+  # cluster against. Cannot be changed later. Until the ccluster-ip chart is installed in
+  # this cluster, ClusterConfigApplied reports CRDMissing.
+  domain: ccluster-local.example.com

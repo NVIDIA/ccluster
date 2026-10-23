@@ -22,7 +22,10 @@ topology — a single instance in the control-plane cluster, with every infra-pl
 registered there as a remote destination — and drives it by writing Argo CD API objects.
 CCluster's operators are therefore a translation layer: they turn two small, declarative
 custom resources into Argo CD `Application`s and cluster `Secret`s, and read Argo CD's health
-back to decide what to do next.
+back to decide what to do next. The one object the control plane writes into an infra-plane
+cluster itself, rather than through Argo CD, is that cluster's `CCLClusterConfig` (§3): the
+infra-plane operator's input, which carries the domain the `CCLInfraPlane` was registered
+with.
 
 ### Why the operator never installs Argo CD
 
@@ -68,7 +71,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 
 | Piece | Role |
 | --- | --- |
-| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. |
+| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials (§3). |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
@@ -88,11 +91,14 @@ metadata:
 spec:
   clusterCredentialsRef:
     name: ccluster-local-credentials
+  domain: ccluster-local.example.com
 ```
 
-A `CCLInfraPlane` names one Kubernetes cluster that CCluster may deploy to. Its only field
+A `CCLInfraPlane` names one Kubernetes cluster that CCluster may deploy to. `clusterCredentialsRef`
 points at a `Secret` in the **same namespace** holding that cluster's Argo CD credentials —
-the usual `server`, `config`, and optionally `tlsClientConfig` keys.
+the usual `server`, `config`, and optionally `tlsClientConfig` keys. `domain` is the
+cluster's DNS domain; it is validated like `CCLClusterConfig`'s and cannot be changed once
+set, so a cluster is re-registered rather than renamed.
 
 `CCLInfraPlaneReconciler` (`internal/controller/cp/cclinfraplane_controller.go`) mirrors that
 Secret into the Argo CD namespace (`--argocd-namespace`, by default the operator's own,
@@ -184,11 +190,47 @@ Because there is no owner reference, there is no garbage collection either, so t
 `ccluster.nvidia.com/argocd-cluster-secret` deletes the mirror, and the project if unused,
 on delete — and only if the ownership check still agrees they are ours.
 
+### The infra-plane cluster's `CCLClusterConfig`
+
+Once the cluster Secret is mirrored, the controller connects to the infra-plane cluster and
+creates or updates its `CCLClusterConfig` singleton (§3a) with `spec.domain`
+(`cclinfraplane_clusterconfig.go`). This is the control plane's one direct write to an
+infra-plane cluster; everything else goes through Argo CD.
+
+It connects with the **same credentials Secret Argo CD uses**, read the way Argo CD reads it
+(`internal/remote`): `server`, and `config`'s `bearerToken`, basic auth or
+`tlsClientConfig`. A Secret with no `server`, or `https://kubernetes.default.svc` with no
+credentials, registers the operator's own cluster, so the operator uses its own
+ServiceAccount — which is why the cp role grants `cclclusterconfigs`. Exec plugins and AWS
+IAM (`execProviderConfig`, `awsAuthConfig`) need binaries or a cloud identity only Argo CD's
+Pods have, and are refused. Every request is bounded by a 30s timeout, so an unreachable
+cluster fails a reconcile rather than holding a worker.
+
+The `CCLClusterConfig` is stamped with the same `infraPlaneOwner` annotations as the
+mirrored Secret, with the same adopt-if-unclaimed rule: one created by hand is taken over,
+and one written for another CCLInfraPlane — two CCLInfraPlanes registering one cluster — is
+left alone. The write is an update of spec and metadata only, so the infra-plane operator's
+status survives it. The finalizer deletes the `CCLClusterConfig` first, if it is still ours,
+while the credentials are still registered; an unreachable cluster is logged and skipped,
+because a cluster that is gone must not keep its CCLInfraPlane from being deleted.
+
+Nothing on the infra-plane cluster is watched, so drift there is found by polling: a
+`CCLInfraPlane` whose `CCLClusterConfig` was written is reconciled again every
+`--infraplane-resync-period` (default 10m), and one whose write failed every minute.
+
 ### Status
 
 `Available` — `True/ClusterSecretCreated`, or `False` with `SecretNotFound` (the referenced
 Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No failure
 requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
+
+`ClusterConfigApplied` — `True/Applied`, or `False` with `CRDMissing` (the ip chart is not
+installed on the cluster), `Conflict` (another CCLInfraPlane's `CCLClusterConfig`),
+`ClusterUnreachable` (any other failure to read or write it, with the error as the message),
+`UnsupportedCredentials`, `InvalidCredentials` (`config` is not JSON) or `DomainMissing` (a
+CCLInfraPlane stored before `domain` was required). It is computed only once `Available` is
+true, and both are written in one status patch. `CRDMissing` and `ClusterUnreachable` retry
+every minute; the credentials reasons wait for the Secret watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
@@ -211,9 +253,9 @@ and it answers it the same way whichever installer put the charts there: a
 
 `CCLClusterConfig` is the operator's one input, a cluster-scoped singleton (the CRD's CEL
 rule admits only the name `cluster`). Its spec carries just what the checks consume today:
-the cluster's domain, which is also its SPIFFE trust domain. It is created once the domain
-exists — which is after the cluster has been registered with the control plane — and the
-operator is idle until then.
+the cluster's domain, which is also its SPIFFE trust domain. For a registered cluster the
+control-plane operator creates it from the `CCLInfraPlane`'s `domain` (§3); a cluster run
+without a control plane gets one by hand. The operator is idle until it exists.
 
 ### Checks live with the catalog, registration with the operator
 
@@ -271,8 +313,9 @@ the singleton trigger a pass only when its generation changes, so the operator's
 status writes do not rerun every Verifier.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
-control plane does not read this status yet; it holds the credentials to, and doing so is
-how an infra-plane's health would surface on its `CCLInfraPlane` later.
+control plane writes this object's spec but does not read its status yet; doing so with
+the same credentials is how an infra-plane's health would surface on its `CCLInfraPlane`
+later.
 
 ## 4. `CCLComponentSet` — an ordered bundle of charts
 
@@ -638,6 +681,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | CRD | Condition | Meaning |
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
+| `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `CRDMissing`, `Conflict`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`, `DomainMissing`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
@@ -647,7 +691,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Available` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
+Printer columns: `Domain`, `Available` and `ClusterConfig` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
 `Verified` and `Domain` on `CCLClusterConfig`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
@@ -675,7 +719,9 @@ same-namespace Applications garbage collection would defeat the ordered teardown
 
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
 an Application, and those arrive as events. Teardown has a 15s retry of its own. The
-infra-plane operator periodically re-verifies the live state it does not write (§3a).
+infra-plane operator periodically re-verifies the live state it does not write (§3a), and
+the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
+`CCLClusterConfig`, which it cannot watch (§3).
 
 ## 8. Not built yet
 
@@ -698,9 +744,10 @@ infra-plane operator periodically re-verifies the live state it does not write (
   every other cluster_base chart is still registered with `alwaysVerified`, so the
   remaining checks (SPIRE's trust domain against `spec.domain`, workload readiness,
   issuer readiness) are not written yet.
-- **The control plane does not read `CCLClusterConfig`.** An infra-plane's verification
-  result stays in that cluster; surfacing it on the `CCLInfraPlane` would need the cp to
-  read through the registered credentials. Per-component results are also not broken out
+- **The control plane does not read `CCLClusterConfig` status.** It writes the spec (§3),
+  but an infra-plane's verification result stays in that cluster; surfacing it on the
+  `CCLInfraPlane` needs a watch on the remote object, which would also replace the
+  periodic resync. Per-component results are also not broken out
   of the `Verified` condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Component status.** Nothing reports a component's state in its own terms yet: a Job

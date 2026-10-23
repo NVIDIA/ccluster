@@ -7,6 +7,7 @@ package cp
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,12 +17,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
 var _ = Describe("CCLInfraPlane Controller", func() {
@@ -33,6 +37,11 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			argoCDNamespace = "argocd"
 			serverURL       = "https://infra.example.com:6443"
 			repoURL         = "https://github.com/NVIDIA/ccluster"
+			domain          = "gpu-a.example.com"
+
+			// resyncPeriod differs from clusterConfigRetryInterval, so a spec can tell
+			// which one a reconcile asked for.
+			resyncPeriod = 7 * time.Minute
 
 			// mirrorName is what the cluster is registered as: prefixed with the
 			// namespace, because Argo CD's cluster names are global.
@@ -70,6 +79,33 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 		// Built in BeforeEach: k8sClient does not exist until BeforeSuite has run.
 		var reconciler *CCLInfraPlaneReconciler
+
+		// remoteClient is what the reconciler's ClientFactory hands out for every
+		// credentials Secret. It defaults to k8sClient: envtest itself plays the
+		// infra-plane cluster, so the CCLClusterConfig lands beside the CCLInfraPlane.
+		var remoteClient client.Client
+
+		clusterConfigKey := types.NamespacedName{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName}
+
+		// getClusterConfig returns the CCLClusterConfig on the "infra-plane cluster".
+		getClusterConfig := func() *cclusternvidiacomv1alpha1.CCLClusterConfig {
+			GinkgoHelper()
+
+			config := &cclusternvidiacomv1alpha1.CCLClusterConfig{}
+			Expect(k8sClient.Get(ctx, clusterConfigKey, config)).To(Succeed())
+			return config
+		}
+
+		clusterConfigExists := func() bool {
+			GinkgoHelper()
+
+			err := k8sClient.Get(ctx, clusterConfigKey, &cclusternvidiacomv1alpha1.CCLClusterConfig{})
+			if apierrors.IsNotFound(err) {
+				return false
+			}
+			Expect(err).NotTo(HaveOccurred())
+			return true
+		}
 
 		// reconcileKey reconciles the named CCLInfraPlane and asserts no error is returned.
 		reconcileKey := func(key types.NamespacedName) {
@@ -111,6 +147,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: key.Name + "-credentials",
 					},
+					Domain: domain,
 				},
 			})).To(Succeed())
 		}
@@ -172,11 +209,16 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		}
 
 		BeforeEach(func() {
+			remoteClient = k8sClient
 			reconciler = &CCLInfraPlaneReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
 				ArgoCDNamespace: argoCDNamespace,
 				CatalogRepoURL:  repoURL,
+				RemoteClients: remote.ClientFactoryFunc(func(*corev1.Secret) (client.Client, error) {
+					return remoteClient, nil
+				}),
+				ResyncPeriod: resyncPeriod,
 			}
 
 			By("creating the Argo CD namespace")
@@ -197,6 +239,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: secretName,
 					},
+					Domain: domain,
 				},
 			})).To(Succeed())
 		})
@@ -223,6 +266,11 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 				}
 			}
+
+			By("Cleanup the CCLClusterConfig a spec left behind")
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
+			}))).To(Succeed())
 
 			By("Cleanup any AppProject a spec left behind")
 			var projects argocdv1alpha1.AppProjectList
@@ -544,6 +592,264 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(reconciler.infraPlanesForProject(ctx, &argocdv1alpha1.AppProject{
 				ObjectMeta: metav1.ObjectMeta{Name: "empty-namespace", Namespace: argoCDNamespace},
 			})).To(BeEmpty())
+		})
+
+		// reconcileResult reconciles the CCLInfraPlane, asserts no error is returned, and
+		// returns the result, for the specs about when the controller looks again.
+		reconcileResult := func() reconcile.Result {
+			GinkgoHelper()
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			return result
+		}
+
+		// expectClusterConfigApplied asserts the ClusterConfigApplied condition's status
+		// and reason, and that it was computed from the current generation.
+		expectClusterConfigApplied := func(
+			infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+			status metav1.ConditionStatus,
+			reason string,
+		) {
+			GinkgoHelper()
+
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeClusterConfigApplied)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(status))
+			Expect(condition.Reason).To(Equal(reason))
+			Expect(condition.ObservedGeneration).To(Equal(infraPlane.Generation))
+		}
+
+		It("should reject a CCLInfraPlane without a domain", func() {
+			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-domain", Namespace: namespace},
+				Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
+					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: secretName},
+				},
+			})
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "got %v", err)
+		})
+
+		It("should reject a domain that is not a DNS name of two labels", func() {
+			for _, invalid := range []string{"localhost", "Upper.example.com", "a..b", "-a.example.com"} {
+				err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
+					ObjectMeta: metav1.ObjectMeta{Name: "bad-domain", Namespace: namespace},
+					Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
+						ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: secretName},
+						Domain:                invalid,
+					},
+				})
+				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "domain %q: got %v", invalid, err)
+			}
+		})
+
+		It("should reject a change to the domain", func() {
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			infraPlane.Spec.Domain = "gpu-b.example.com"
+			err := k8sClient.Update(ctx, infraPlane)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("domain is immutable"))
+		})
+
+		It("should write the CCLClusterConfig with the domain on the infra-plane cluster", func() {
+			createSecret(credentials)
+
+			infraPlane := settle()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+
+			config := getClusterConfig()
+			Expect(config.Spec.Domain).To(Equal(domain))
+			Expect(config.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
+			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
+
+			By("resyncing periodically, since nothing on the infra-plane cluster is watched")
+			Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
+		})
+
+		It("should restore a CCLClusterConfig whose domain drifted, keeping its status", func() {
+			createSecret(credentials)
+			settle()
+
+			By("the infra-plane operator writing status, and someone editing the domain")
+			config := getClusterConfig()
+			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+				Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+			})
+			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+			config = getClusterConfig()
+			config.Spec.Domain = "drifted.example.com"
+			Expect(k8sClient.Update(ctx, config)).To(Succeed())
+
+			reconcileAndGet()
+
+			restored := getClusterConfig()
+			Expect(restored.Spec.Domain).To(Equal(domain))
+			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, "Verified")).To(BeTrue())
+		})
+
+		It("should re-create a CCLClusterConfig deleted from the infra-plane cluster", func() {
+			createSecret(credentials)
+			settle()
+
+			Expect(k8sClient.Delete(ctx, getClusterConfig())).To(Succeed())
+			reconcileAndGet()
+
+			Expect(getClusterConfig().Spec.Domain).To(Equal(domain))
+		})
+
+		It("should adopt a CCLClusterConfig created by hand", func() {
+			createSecret(credentials)
+			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
+				Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "by-hand.example.com"},
+			})).To(Succeed())
+
+			infraPlane := settle()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+			config := getClusterConfig()
+			Expect(config.Spec.Domain).To(Equal(domain))
+			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
+		})
+
+		It("should report Conflict and leave a CCLClusterConfig owned by another CCLInfraPlane alone", func() {
+			createSecret(credentials)
+			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: cclusternvidiacomv1alpha1.CCLClusterConfigName,
+					Annotations: map[string]string{
+						annotationInfraPlaneName:      "other-plane",
+						annotationInfraPlaneNamespace: "other-namespace",
+					},
+				},
+				Spec: cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "other.example.com"},
+			})).To(Succeed())
+
+			infraPlane := settle()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			Expect(getClusterConfig().Spec.Domain).To(Equal("other.example.com"))
+
+			By("still registering the cluster with Argo CD")
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+
+			By("leaving it in place when the CCLInfraPlane is deleted")
+			deleteAndFinalize(typeNamespacedName)
+			Expect(getClusterConfig().Spec.Domain).To(Equal("other.example.com"))
+		})
+
+		It("should report CRDMissing when the infra-plane cluster does not serve CCLClusterConfig", func() {
+			createSecret(credentials)
+
+			By("handing out a client whose RESTMapper knows no kinds")
+			var err error
+			remoteClient, err = client.New(cfg, client.Options{
+				Scheme: k8sClient.Scheme(),
+				Mapper: apimeta.NewDefaultRESTMapper(nil),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			reconcileAndGet()
+			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
+			infraPlane := reconcileAndGet()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigCRDMissing)
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+			Expect(clusterConfigExists()).To(BeFalse())
+		})
+
+		It("should report ClusterUnreachable and retry when the infra-plane cluster cannot be reached", func() {
+			createSecret(credentials)
+
+			By("handing out a client for an address nothing listens on")
+			var err error
+			remoteClient, err = client.New(&rest.Config{
+				Host:    "https://127.0.0.1:1",
+				Timeout: remote.RequestTimeout,
+			}, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+
+			reconcileAndGet()
+			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
+			infraPlane := reconcileAndGet()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterUnreachable)
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+
+			By("still deleting the CCLInfraPlane")
+			deleteAndFinalize(typeNamespacedName)
+		})
+
+		// These go through the real SecretClientFactory, the one the operator runs with.
+		Context("with the operator's ClientFactory", func() {
+			BeforeEach(func() {
+				reconciler.RemoteClients = remote.SecretClientFactory{Local: cfg, Scheme: k8sClient.Scheme()}
+			})
+
+			It("should write the CCLClusterConfig into its own cluster for a Secret without a server", func() {
+				createSecret(map[string]string{"config": `{"tlsClientConfig":{"insecure":false}}`})
+
+				infraPlane := settle()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+				Expect(getClusterConfig().Spec.Domain).To(Equal(domain))
+
+				By("deleting it with the CCLInfraPlane")
+				deleteAndFinalize(typeNamespacedName)
+				Expect(clusterConfigExists()).To(BeFalse())
+			})
+
+			It("should report UnsupportedCredentials for an exec plugin", func() {
+				createSecret(map[string]string{
+					"server": serverURL,
+					"config": `{"execProviderConfig":{"command":"gke-gcloud-auth-plugin"}}`,
+				})
+
+				infraPlane := settle()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonUnsupportedCredentials)
+				Expect(reconcileResult().RequeueAfter).To(BeZero())
+			})
+
+			It("should report InvalidCredentials for a config that is not JSON", func() {
+				createSecret(map[string]string{"server": serverURL, "config": "{not json"})
+
+				infraPlane := settle()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonInvalidCredentials)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeClusterConfigApplied)
+				Expect(condition.Message).NotTo(ContainSubstring("not json"))
+			})
+		})
+
+		It("should delete the CCLClusterConfig before the mirrored Secret when the CCLInfraPlane is deleted", func() {
+			createSecret(credentials)
+			settle()
+			Expect(clusterConfigExists()).To(BeTrue())
+
+			By("recording what still exists when the infra-plane cluster is asked to delete it")
+			var mirrorPresent bool
+			watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			remoteClient = interceptor.NewClient(watchClient, interceptor.Funcs{
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					mirrorPresent = k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}) == nil
+					return c.Delete(ctx, obj, opts...)
+				},
+			})
+
+			deleteAndFinalize(typeNamespacedName)
+
+			Expect(clusterConfigExists()).To(BeFalse())
+			Expect(mirrorPresent).To(BeTrue(), "the mirrored Secret was deleted first")
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
 		})
 
 	})

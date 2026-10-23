@@ -29,24 +29,29 @@ type CCLInfraPlaneSpec struct {
 	// https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
 	// +required
 	ClusterCredentialsRef LocalObjectReference `json:"clusterCredentialsRef"`
+
+	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
+	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
+	// verifies the cluster against. It must be a lowercase DNS name of at least two labels,
+	// each at most 63 characters, and it cannot be changed once set.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable"
+	Domain string `json:"domain"`
 }
 
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.
 // +kubebuilder:title=CCLInfraPlaneStatus
 type CCLInfraPlaneStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the CCLInfraPlane resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// Condition types reported by the control-plane operator:
+	//   - "Available": the namespace's Argo CD AppProject exists and the cluster
+	//     Secret has been mirrored into the Argo CD namespace.
+	//   - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
+	//     cluster carries this CCLInfraPlane's domain.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -62,7 +67,9 @@ type CCLInfraPlaneStatus struct {
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
+// +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API

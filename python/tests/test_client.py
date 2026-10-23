@@ -148,7 +148,11 @@ def test_no_write_creates_a_namespace(fake):
     c, dyn = make_client(fake)
 
     c.apply_infraplane(
-        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1",
+        domain="edge-1.example.com",
+        server="https://10.0.0.1:6443",
+        bearer_token="tok",
+        ca_cert=CA,
     )
     c.apply_component_set(
         name="local-base",
@@ -187,7 +191,11 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
     c, dyn = make_client(fake)
 
     plane = c.apply_infraplane(
-        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1",
+        domain="edge-1.example.com",
+        server="https://10.0.0.1:6443",
+        bearer_token="tok",
+        ca_cert=CA,
     )
 
     kinds = [kind for kind, *_ in dyn.applied]
@@ -216,7 +224,8 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
     assert infra_plane["kind"] == Kind.CCL_INFRA_PLANE
     assert infra_plane["metadata"] == {"name": "edge-1", "namespace": "tenant"}
     assert infra_plane["spec"] == {
-        "clusterCredentialsRef": {"name": "edge-1-credentials"}
+        "clusterCredentialsRef": {"name": "edge-1-credentials"},
+        "domain": "edge-1.example.com",
     }
     assert "status" not in infra_plane
 
@@ -229,7 +238,7 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
 def test_apply_infraplane_defaults_to_in_cluster_credential_free(fake):
     c, dyn = make_client(fake)
 
-    c.apply_infraplane(name="edge-1")
+    c.apply_infraplane(name="edge-1", domain="edge-1.example.com")
 
     secret = dyn.applied[0][2]
     assert secret["stringData"]["server"] == "https://kubernetes.default.svc"
@@ -242,6 +251,7 @@ def test_apply_infraplane_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.apply_infraplane(
         name="edge-1",
+        domain="edge-1.example.com",
         server="https://10.0.0.1:6443",
         bearer_token="tok",
         ca_cert=CA.encode(),
@@ -272,7 +282,10 @@ def test_get_infraplane_returns_the_plane_with_its_status(fake):
         "apiVersion": "ccluster.nvidia.com/v1alpha1",
         "kind": "CCLInfraPlane",
         "metadata": {"name": "edge-1", "namespace": "tenant", "generation": 1},
-        "spec": {"clusterCredentialsRef": {"name": "edge-1-credentials"}},
+        "spec": {
+            "clusterCredentialsRef": {"name": "edge-1-credentials"},
+            "domain": "edge-1.example.com",
+        },
         "status": {
             "conditions": [
                 {

@@ -180,11 +180,15 @@ class CCLClient:
         self,
         *,
         name: str,
+        domain: str,
         server: str | None = None,
         bearer_token: str | None = None,
         ca_cert: str | bytes | None = None,
     ) -> CCLInfraPlane:
         """Create or update the CCLInfraPlane called name, for the cluster at server.
+
+        domain is the cluster's DNS domain. The operator writes it to the cluster's
+        CCLClusterConfig, and it cannot be changed once the CCLInfraPlane exists.
 
         Server-side applies a Secret named "<name>-credentials" in Argo CD's
         cluster-secret shape, then a CCLInfraPlane pointing at it. ca_cert is the API
@@ -226,7 +230,10 @@ class CCLClient:
 
         plane = CCLInfraPlane(
             metadata=ObjectMeta(name=name, namespace=self.namespace),
-            spec=CCLInfraPlaneSpec(cluster_credentials_ref=LocalObjectReference(name=secret_name)),
+            spec=CCLInfraPlaneSpec(
+                cluster_credentials_ref=LocalObjectReference(name=secret_name),
+                domain=domain,
+            ),
         )
         return CCLInfraPlane.model_validate(
             self._apply_object(self._discovery.infra_plane_gvr, plane)

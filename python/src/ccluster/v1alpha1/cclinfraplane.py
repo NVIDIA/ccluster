@@ -64,6 +64,20 @@ class CCLInfraPlaneSpec(BaseModel):
     referenced Secret holds. See
     https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
     """
+    domain: Annotated[
+        str,
+        Field(
+            max_length=253,
+            min_length=1,
+            pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$",
+        ),
+    ]
+    """
+    domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
+    to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
+    verifies the cluster against. It must be a lowercase DNS name of at least two labels,
+    each at most 63 characters, and it cannot be changed once set.
+    """
 
 
 class Status(Enum):
@@ -144,12 +158,12 @@ class CCLInfraPlaneStatus(BaseModel):
     conditions: list[Condition] | None = None
     """
     conditions represent the current state of the CCLInfraPlane resource.
-    Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
-    Standard condition types include:
-    - "Available": the resource is fully functional
-    - "Progressing": the resource is being created or updated
-    - "Degraded": the resource failed to reach or maintain its desired state
+    Condition types reported by the control-plane operator:
+      - "Available": the namespace's Argo CD AppProject exists and the cluster
+        Secret has been mirrored into the Argo CD namespace.
+      - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
+        cluster carries this CCLInfraPlane's domain.
 
     The status of each condition is one of True, False, or Unknown.
     """
