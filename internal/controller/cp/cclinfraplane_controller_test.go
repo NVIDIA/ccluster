@@ -852,5 +852,26 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
 		})
 
+		It("should delete the CCLClusterConfig with the mirrored Secret once the source Secret is gone", func() {
+			createSecret(credentials)
+			settle()
+			Expect(clusterConfigExists()).To(BeTrue())
+
+			By("deleting the source Secret before the finalizer runs, as `ccluster unregister` does")
+			var reachedWith []string
+			reconciler.RemoteClients = remote.ClientFactoryFunc(func(secret *corev1.Secret) (client.Client, error) {
+				reachedWith = append(reachedWith, secret.Namespace+"/"+secret.Name)
+				return remoteClient, nil
+			})
+			Expect(k8sClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			})).To(Succeed())
+
+			deleteAndFinalize(typeNamespacedName)
+
+			Expect(clusterConfigExists()).To(BeFalse())
+			Expect(reachedWith).To(Equal([]string{mirrorNamespacedName.String()}))
+		})
+
 	})
 })

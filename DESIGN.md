@@ -211,8 +211,11 @@ mirrored Secret, with the same adopt-if-unclaimed rule: one created by hand is t
 and one written for another CCLInfraPlane — two CCLInfraPlanes registering one cluster — is
 left alone. The write is an update of spec and metadata only, so the infra-plane operator's
 status survives it. The finalizer deletes the `CCLClusterConfig` first, if it is still ours,
-while the credentials are still registered; an unreachable cluster is logged and skipped,
-because a cluster that is gone must not keep its CCLInfraPlane from being deleted.
+while the credentials are still registered. A credentials Secret deleted alongside its
+CCLInfraPlane, as `ccluster unregister` does, is usually gone by then, so the finalizer falls
+back to the mirrored Secret, which it deletes only afterwards. An unreachable cluster is
+logged and skipped, because a cluster that is gone must not keep its CCLInfraPlane from
+being deleted.
 
 Nothing on the infra-plane cluster is watched, so drift there is found by polling: a
 `CCLInfraPlane` whose `CCLClusterConfig` was written is reconciled again every

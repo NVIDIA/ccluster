@@ -164,18 +164,17 @@ func (r *CCLInfraPlaneReconciler) deleteClusterConfig(
 ) {
 	log := logf.FromContext(ctx).WithValues("name", cclusternvidiacomv1alpha1.CCLClusterConfigName)
 
-	var source corev1.Secret
-	key := client.ObjectKey{Namespace: infraPlane.Namespace, Name: infraPlane.Spec.ClusterCredentialsRef.Name}
-	if err := r.Get(ctx, key, &source); err != nil {
+	source, err := r.teardownCredentials(ctx, infraPlane)
+	if err != nil {
 		log.Info("Skipped deleting CCLClusterConfig without credentials Secret",
-			"secret", key.Name, "reason", err.Error())
+			"secret", infraPlane.Spec.ClusterCredentialsRef.Name, "reason", err.Error())
 		return
 	}
 
-	remoteClient, err := r.RemoteClients.ClientFor(&source)
+	remoteClient, err := r.RemoteClients.ClientFor(source)
 	if err != nil {
 		log.Info("Skipped deleting CCLClusterConfig with unusable credentials",
-			"secret", key.Name, "reason", err.Error())
+			"secret", source.Name, "secretNamespace", source.Namespace, "reason", err.Error())
 		return
 	}
 
@@ -198,4 +197,32 @@ func (r *CCLInfraPlaneReconciler) deleteClusterConfig(
 		return
 	}
 	log.Info("Deleted CCLClusterConfig on infra-plane cluster")
+}
+
+// teardownCredentials returns the Secret to reach infraPlane's cluster with during
+// finalization: the credentials Secret, or else the mirrored Secret if it is still ours.
+// Deleting the credentials Secret right after its CCLInfraPlane, as `ccluster unregister`
+// does, usually beats the finalizer to it. The mirror carries the same data and outlives
+// this step, because the finalizer deletes it afterwards; a CCLClusterConfig is only ever
+// written after the mirror was.
+func (r *CCLInfraPlaneReconciler) teardownCredentials(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+) (*corev1.Secret, error) {
+	var source corev1.Secret
+	key := client.ObjectKey{Namespace: infraPlane.Namespace, Name: infraPlane.Spec.ClusterCredentialsRef.Name}
+	err := r.Get(ctx, key, &source)
+	if !apierrors.IsNotFound(err) {
+		return &source, err
+	}
+
+	var mirror corev1.Secret
+	key = client.ObjectKey{Namespace: r.ArgoCDNamespace, Name: argoCDClusterName(infraPlane.Namespace, infraPlane.Name)}
+	if mirrorErr := r.Get(ctx, key, &mirror); mirrorErr != nil {
+		return nil, errors.Join(err, mirrorErr)
+	}
+	if !infraPlaneOwner.ownedBy(&mirror, infraPlane) {
+		return nil, errors.Join(err, errClusterSecretConflict)
+	}
+	return &mirror, nil
 }

@@ -190,10 +190,14 @@ class CCLClient:
         domain is the cluster's DNS domain. The operator writes it to the cluster's
         CCLClusterConfig, and it cannot be changed once the CCLInfraPlane exists.
 
-        Server-side applies a Secret named "<name>-credentials" in Argo CD's
-        cluster-secret shape, then a CCLInfraPlane pointing at it. ca_cert is the API
-        server's CA certificate in PEM. The call returns as soon as both objects are
-        applied; it does not wait for the operator to report Available.
+        Server-side applies the CCLInfraPlane, then the Secret named "<name>-credentials"
+        it points at, in Argo CD's cluster-secret shape. The plane goes first so that a
+        domain the API server rejects - malformed, or changed on an existing plane - fails
+        the call before the credentials are written: the operator acts on a changed
+        Secret at once, so new credentials under the old domain would retarget the
+        existing plane. ca_cert is the API server's CA certificate in PEM. The call
+        returns as soon as both objects are applied; it does not wait for the operator to
+        report Available.
 
         server, bearer_token and ca_cert are all optional. With none given, this
         registers the cluster the operator itself runs in: server defaults to Argo CD's
@@ -208,6 +212,13 @@ class CCLClient:
             ca_cert = ca_cert.encode()
         secret_name = _credentials_secret_name(name)
 
+        plane = CCLInfraPlane(
+            metadata=ObjectMeta(name=name, namespace=self.namespace),
+            spec=CCLInfraPlaneSpec(
+                cluster_credentials_ref=LocalObjectReference(name=secret_name),
+                domain=domain,
+            ),
+        )
         cluster_config = ClusterConfig(
             bearer_token=bearer_token,
             tls_client_config=TLSClientConfig(
@@ -226,18 +237,11 @@ class CCLClient:
                 ),
             },
         )
-        self._apply(self._discovery.secret_gvr, secret)
-
-        plane = CCLInfraPlane(
-            metadata=ObjectMeta(name=name, namespace=self.namespace),
-            spec=CCLInfraPlaneSpec(
-                cluster_credentials_ref=LocalObjectReference(name=secret_name),
-                domain=domain,
-            ),
-        )
-        return CCLInfraPlane.model_validate(
+        applied = CCLInfraPlane.model_validate(
             self._apply_object(self._discovery.infra_plane_gvr, plane)
         )
+        self._apply(self._discovery.secret_gvr, secret)
+        return applied
 
     def delete_infraplane(self, *, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
