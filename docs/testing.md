@@ -48,9 +48,39 @@ to select these tests without invoking the Ginkgo envtest suite.
 
 ## E2e setup and lifecycle
 
-Docker and kind must be available. E2e creates `KIND_CLUSTER_E2E` (default
-`ccluster-test-e2e`) and deletes it when done. Never use a working cluster for this name.
-Use `make cleanup-test-e2e` if an interrupted run leaves the test cluster behind.
+Docker, kind and uv must be available. E2e creates two clusters, a control plane
+`KIND_CLUSTER_E2E_CP` (default `ccluster-test-e2e-cp`) and a separate infra plane
+`KIND_CLUSTER_E2E_IP` (default `ccluster-test-e2e-ip`), the same shape as the development
+pair `make init` creates, and deletes both when done. Never use a working cluster for
+either name: the suite uninstalls operators and CRDs. Use `make cleanup-test-e2e` if an
+interrupted run leaves the test clusters behind.
+
+### Two clusters and the infra-plane targets
+
+The control-plane cluster is the current kubeconfig context, so a plain `kubectl` in a spec
+reaches it; `utils.IP().Kubectl(...)` (or `utils.CP()`) names a cluster explicitly. The cp
+operator runs on the control plane, and the infra-plane operator on both clusters, deployed
+and removed by the suite (`e2e_suite_test.go`): each is an infra plane.
+
+Specs about a real infra plane run once per target in `targets()` (`test/e2e/clusters_test.go`),
+each registered the way a user would register that kind of cluster:
+
+| Target | Cluster | Registration |
+| --- | --- | --- |
+| `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
+| `ex-cluster` | infra plane | `ccluster register` from `python/`, run with uv: a cluster-admin token and the cluster's CA, with the server on kind's Docker network (`https://<cluster>-control-plane:6443`). |
+
+To run a spec against both, generate it in a `for _, t := range targets()` loop, register with
+`t.register(planeName)`, and reach the plane's cluster with `t.cluster.Kubectl`. Give each
+target its own plane name. Delete the plane inline with `deleteInfraPlane`, never from
+`DeferCleanup`: its finalizer needs the operator running. Each cluster has one
+`CCLClusterConfig`, so a spec holding two planes on one cluster at once sees the second
+report `ClusterConfigApplied=Conflict`.
+
+Specs that only test the control plane's handling of a registration - Secret mirroring,
+`ApplicationCRDMissing` - use a placeholder server such as `https://infra.example.com:6443`
+that is never dialled. `ClusterConfigApplied=CRDMissing` is covered by envtest only: both
+clusters run the infra-plane operator, so neither lacks its CRD.
 
 The full tier pulls real images and waits for Argo CD convergence. Argo CD clones the
 catalog over the network; a private repository needs `GITHUB_TOKEN`, as with deployment.
@@ -75,5 +105,6 @@ full command runs everything. There is no separate quick-only label.
 Real rollout assertions must check the managed resources as well as aggregate Application
 health where appropriate: large CRDs expose server-side apply/diff regressions that can
 stall later components. Real tenancy assertions must use distinct cluster server URLs;
-Argo CD skips duplicate-server cluster Secrets. These contracts are explained in
+Argo CD skips duplicate-server cluster Secrets, and two planes registering the same
+cluster at once collide. These contracts are explained in
 [DESIGN.md](../DESIGN.md).
