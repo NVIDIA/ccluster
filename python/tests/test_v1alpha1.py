@@ -107,6 +107,26 @@ def test_status_models_read_what_the_operator_writes():
     assert CCLComponentSetStatus.model_validate({}).conditions is None
 
 
+def test_infra_plane_status_carries_the_cluster_config_status():
+    # The control-plane operator copies the infra plane's CCLClusterConfig status verbatim.
+    condition = {
+        "type": "Verified",
+        "status": "False",
+        "reason": "ComponentsNotVerified",
+        "message": "spire",
+        "lastTransitionTime": "2026-09-16T00:00:00Z",
+    }
+    status = CCLInfraPlaneStatus.model_validate(
+        {
+            "conditions": [{**condition, "type": "Available", "status": "True", "reason": "R"}],
+            "clusterConfig": {"observedGeneration": 3, "conditions": [condition]},
+        }
+    )
+    assert status.cluster_config.observed_generation == 3
+    assert status.cluster_config.conditions[0].type == "Verified"
+    assert status.conditions[0].type == "Available"
+
+
 def test_wire_names_are_aliases():
     spec = CCLComponentSetSpec.model_validate(
         {

@@ -13,9 +13,12 @@ import (
 // CCLClusterConfigStatusApplyConfiguration represents a declarative configuration of the CCLClusterConfigStatus type for use
 // with apply.
 //
-// CCLClusterConfigStatus defines the observed state of CCLClusterConfig.
+// CCLClusterConfigStatus defines the observed state of CCLClusterConfig. The
+// control-plane operator also copies it, unchanged, into the status of the CCLInfraPlane
+// that registers the cluster.
 type CCLClusterConfigStatusApplyConfiguration struct {
-	// conditions represent the current state of the CCLClusterConfig resource.
+	// conditions represent the current state of the infra-plane cluster's
+	// CCLClusterConfig.
 	//
 	// Condition types reported by the infra-plane operator:
 	// - "Verified": every catalogs/cluster_base component is installed in this
@@ -24,7 +27,8 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	// observedGeneration is the .metadata.generation the conditions were computed from.
+	// observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
+	// were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 }
 

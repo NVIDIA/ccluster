@@ -305,14 +305,16 @@ Application comparison errors. Use `CATALOG_REVISION` to select the catalog comm
 
 ### Infra-plane access
 
-The cp operator writes each infra-plane cluster's `CCLClusterConfig` (DESIGN.md §3) using
-the CCLInfraPlane's credentials Secret, the same one Argo CD uses. In the local two-cluster
+The cp operator writes and watches each infra-plane cluster's `CCLClusterConfig`
+(DESIGN.md §3) using the CCLInfraPlane's credentials Secret, the same one Argo CD uses, and
+copies its status into the CCLInfraPlane's `status.clusterConfig`. In the local two-cluster
 setup that Secret must name an address reachable from the cp operator's Pod, as for Argo CD.
 A plane registering the cp cluster itself (`server: https://kubernetes.default.svc`, no
 token) is written with the operator's own ServiceAccount and reports
 `ClusterConfigApplied=False/CRDMissing` until the ip chart's CRD is installed there.
-`--infraplane-resync-period` (default 5m) controls how often a written `CCLClusterConfig`
-is rewritten; failures are retried every minute.
+Watch starts, stops and failures are logged under the `remote` logger, and the
+`ccluster_remote_watches` metric counts active watches. `--infraplane-resync-period`
+(default 5m) is a safety net behind the watch; failed writes are retried every minute.
 
 ### Argo CD API token
 

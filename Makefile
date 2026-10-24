@@ -723,7 +723,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 			--use-annotated --field-constraints --snake-case-field \
 			--allow-population-by-field-name --use-title-as-name \
 			--use-schema-description --use-field-description --use-default \
-			--collapse-root-models --use-double-quotes --disable-timestamp \
+			--collapse-root-models --reuse-model --use-double-quotes --disable-timestamp \
 			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
 			|| exit 1; \
 		case "$$pkg" in catalogs/*) printf '\n\n# CHART is the chart directory, relative to the root of the catalog repository.\nCHART = "%s"\n' "$$pkg" >> "$$out";; esac; \

@@ -41,9 +41,8 @@ const (
 )
 
 // clusterConfigRetryInterval is how soon a CCLClusterConfig that could not be written is
-// tried again. Nothing on the infra-plane cluster is watched, so a fix there - the plane
-// coming back, the infra-plane operator and its CRD being installed, a conflicting
-// CCLClusterConfig being deleted - is only noticed by polling.
+// tried again. The watch on the cluster cannot report these fixes - the plane coming back,
+// the infra-plane operator and its CRD being installed - so they are noticed by polling.
 const clusterConfigRetryInterval = time.Minute
 
 // errClusterConfigConflict reports that the infra-plane cluster already has a
@@ -52,15 +51,16 @@ const clusterConfigRetryInterval = time.Minute
 // reaching the cluster.
 var errClusterConfigConflict = errors.New("CCLClusterConfig was not created by this CCLInfraPlane")
 
-// reconcileClusterConfig writes the CCLClusterConfig singleton into the infra-plane cluster
-// that source holds the credentials for, and returns the ClusterConfigApplied condition and
-// when to look again. Failures are reported in the condition, not returned: none of them is
-// fixed by an immediate retry.
+// reconcileClusterConfig makes sure the infra-plane cluster that source holds the
+// credentials for is watched, and writes its CCLClusterConfig singleton. It returns the
+// ClusterConfigApplied condition, the singleton's status when it was written - nil
+// otherwise, keeping the last copy - and when to look again. Failures are reported in the
+// condition, not returned: none of them is fixed by an immediate retry.
 func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	source *corev1.Secret,
-) (metav1.Condition, ctrl.Result) {
+) (metav1.Condition, *cclusternvidiacomv1alpha1.CCLClusterConfigStatus, ctrl.Result) {
 	log := logf.FromContext(ctx)
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
@@ -73,7 +73,11 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		}
 	}
 
-	op, err := r.applyClusterConfig(ctx, infraPlane, source)
+	// Never blocks: a watch that cannot start is the write's failure too, and that is
+	// what gets reported.
+	r.RemoteWatches.Ensure(ctx, client.ObjectKeyFromObject(infraPlane), source)
+
+	config, op, err := r.applyClusterConfig(ctx, infraPlane, source)
 	switch {
 	case err == nil:
 		if op != controllerutil.OperationResultNone {
@@ -84,20 +88,20 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		return condition(metav1.ConditionTrue, reasonClusterConfigApplied, fmt.Sprintf(
 				"CCLClusterConfig %q on the infra-plane cluster has domain %q",
 				cclusternvidiacomv1alpha1.CCLClusterConfigName, infraPlane.Spec.Domain)),
-			ctrl.Result{RequeueAfter: r.ResyncPeriod}
+			config.Status.DeepCopy(), ctrl.Result{RequeueAfter: r.ResyncPeriod}
 
 	case errors.Is(err, remote.ErrUnsupportedCredentials):
 		// No requeue: the Secret watch re-triggers reconciliation once it changes.
 		log.Info("Skipped CCLClusterConfig for unsupported credentials",
 			"secret", source.Name, "reason", err.Error())
 		return condition(metav1.ConditionFalse, reasonUnsupportedCredentials, err.Error()),
-			ctrl.Result{}
+			nil, ctrl.Result{}
 
 	case errors.Is(err, remote.ErrInvalidCredentials):
 		log.Info("Skipped CCLClusterConfig for invalid credentials",
 			"secret", source.Name, "reason", err.Error())
 		return condition(metav1.ConditionFalse, reasonInvalidCredentials, err.Error()),
-			ctrl.Result{}
+			nil, ctrl.Result{}
 
 	case errors.Is(err, errClusterConfigConflict):
 		log.Info("Refused to overwrite CCLClusterConfig not created by this CCLInfraPlane",
@@ -105,14 +109,14 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		return condition(metav1.ConditionFalse, reasonClusterConfigConflict, fmt.Sprintf(
 				"%v; delete CCLClusterConfig %q on the infra-plane cluster for this CCLInfraPlane to write its own",
 				err, cclusternvidiacomv1alpha1.CCLClusterConfigName)),
-			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
+			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	case apimeta.IsNoMatchError(err):
 		log.Info("CCLClusterConfig CRD not installed on infra-plane cluster, skipped CCLClusterConfig")
 		return condition(metav1.ConditionFalse, reasonClusterConfigCRDMissing,
 				"the CCLClusterConfig CRD is not installed on the infra-plane cluster; "+
 					"install the ccluster-ip chart there"),
-			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
+			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	case apierrors.IsUnauthorized(err), apierrors.IsForbidden(err):
 		// Retried: a fix to RBAC on the infra-plane cluster is not watched. A new token in
@@ -120,13 +124,13 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		log.Info("Skipped CCLClusterConfig for credentials the infra-plane cluster refused",
 			"secret", source.Name, "reason", err.Error())
 		return condition(metav1.ConditionFalse, reasonClusterAccessDenied, err.Error()),
-			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
+			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	default:
 		log.Error(err, "Failed to apply CCLClusterConfig on infra-plane cluster",
 			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName)
 		return condition(metav1.ConditionFalse, reasonClusterUnreachable, err.Error()),
-			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
+			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 	}
 }
 
@@ -139,20 +143,20 @@ func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	source *corev1.Secret,
-) (controllerutil.OperationResult, error) {
+) (*cclusternvidiacomv1alpha1.CCLClusterConfig, controllerutil.OperationResult, error) {
 	remoteClient, err := r.RemoteClients.ClientFor(source)
 	if err != nil {
-		return controllerutil.OperationResultNone, err
+		return nil, controllerutil.OperationResultNone, err
 	}
 
-	op, err := createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+	config, op, err := createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
 	if apierrors.IsAlreadyExists(err) {
 		// Someone else created it between our read and our create, such as another
 		// CCLInfraPlane registering the same cluster. Read it again: it is a conflict unless
 		// it is ours.
-		op, err = createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+		config, op, err = createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
 	}
-	return op, err
+	return config, op, err
 }
 
 // createOrPatchClusterConfig is a single attempt of applyClusterConfig, through
@@ -163,14 +167,16 @@ func createOrPatchClusterConfig(
 	ctx context.Context,
 	remoteClient client.Client,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-) (controllerutil.OperationResult, error) {
+) (*cclusternvidiacomv1alpha1.CCLClusterConfig, controllerutil.OperationResult, error) {
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
 	}
-	// A merge patch, not an update: it sends only what changed, so it neither fails on the
-	// resourceVersion the infra-plane operator's status writes bump, nor drops spec fields
-	// this operator's copy of the type does not know.
-	return controllerutil.CreateOrPatch(ctx, remoteClient, config, func() error {
+	// Read live rather than from the watch's cache, so the status copied from it is never
+	// older than the event that triggered this reconcile. A merge patch, not an update: it
+	// sends only what changed, so it neither fails on the resourceVersion the infra-plane
+	// operator's status writes bump, nor drops spec fields this operator's copy of the type
+	// does not know.
+	op, err := controllerutil.CreateOrPatch(ctx, remoteClient, config, func() error {
 		// An empty resourceVersion means there was none to read, and this creates it.
 		if config.ResourceVersion != "" && !infraPlaneOwner.claimedBy(config, infraPlane) {
 			return clusterConfigConflict(config)
@@ -179,6 +185,7 @@ func createOrPatchClusterConfig(
 		config.Spec.Domain = infraPlane.Spec.Domain
 		return nil
 	})
+	return config, op, err
 }
 
 // clusterConfigConflict returns errClusterConfigConflict, naming the CCLInfraPlane config

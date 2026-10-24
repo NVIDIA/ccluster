@@ -218,6 +218,40 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         map:
           fields:
+          - name: clusterConfig
+            type:
+              map:
+                fields:
+                - name: conditions
+                  type:
+                    list:
+                      elementType:
+                        map:
+                          fields:
+                          - name: lastTransitionTime
+                            type:
+                              scalar: untyped
+                          - name: message
+                            type:
+                              scalar: string
+                          - name: observedGeneration
+                            type:
+                              scalar: numeric
+                          - name: reason
+                            type:
+                              scalar: string
+                          - name: status
+                            type:
+                              scalar: string
+                          - name: type
+                            type:
+                              scalar: string
+                      elementRelationship: associative
+                      keys:
+                      - type
+                - name: observedGeneration
+                  type:
+                    scalar: numeric
           - name: conditions
             type:
               list:

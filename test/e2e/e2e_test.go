@@ -566,11 +566,12 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		// The operator writes the CCLClusterConfig singleton into the plane's cluster. This
-		// plane registers the control-plane cluster itself, so the operator reaches it with
-		// its own ServiceAccount: only a running deployment proves that the cp RBAC
-		// covers CCLClusterConfig, and that a missing CRD is reported rather than fatal.
-		It("should write the CCLClusterConfig into the infra-plane cluster", func() {
+		// The operator writes the CCLClusterConfig singleton into the plane's cluster and
+		// watches it. This plane registers the control-plane cluster itself, so the
+		// operator reaches it with its own ServiceAccount: only a running deployment
+		// proves that the cp RBAC covers CCLClusterConfig, that a missing CRD is reported
+		// rather than fatal, and that the remote watch is wired to the controller.
+		It("should write the CCLClusterConfig into the infra-plane cluster and sync its status back", func() {
 			const planeName = "e2e-cluster-config-plane"
 			const credentialsName = "e2e-cluster-config-plane-credentials"
 			clusterConfigCRD := filepath.Join("config", "crd", "bases", "ccluster.nvidia.com_cclclusterconfigs.yaml")
@@ -610,6 +611,23 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(strings.TrimSpace(out)).To(Equal(infraPlaneDomain(planeName)))
 			}, 3*time.Minute).Should(Succeed())
+
+			// Standing in for the infra-plane operator, which this container does not
+			// run. The deadline is far inside --infraplane-resync-period, so only the
+			// watch's event can bring the status over in time.
+			By("copying the CCLClusterConfig status into the CCLInfraPlane as soon as it changes")
+			_, err = utils.Run(exec.Command("kubectl", "patch", "cclclusterconfig", "cluster",
+				"--subresource=status", "--type=merge", "-p", `{"status":{"conditions":[{
+					"type":"Verified","status":"False","reason":"E2EStatusSync","message":"set by e2e",
+					"lastTransitionTime":"2026-01-01T00:00:00Z"}]}}`))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane", planeName,
+					"-n", crNamespace, "-o",
+					"jsonpath={.status.clusterConfig.conditions[?(@.type=='Verified')].reason}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal("E2EStatusSync"))
+			}, 30*time.Second).Should(Succeed())
 
 			By("deleting the CCLClusterConfig with the CCLInfraPlane")
 			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
