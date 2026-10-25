@@ -7,6 +7,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -235,6 +236,13 @@ func (r *Registry) run(
 	informer, err := remoteCache.GetInformer(syncCtx, r.opts.Object)
 	if err != nil {
 		return err
+	}
+	// GetInformer waits for the sync only once the cache has started, and Start runs in
+	// the goroutine above, so it can return before the first list. Waiting here makes a
+	// cluster that answers discovery but not the list - no list or watch permission, or
+	// a list that hangs - fail within SyncTimeout instead of retrying forever.
+	if !remoteCache.WaitForCacheSync(syncCtx) {
+		return errors.New("watch did not sync within " + SyncTimeout.String())
 	}
 	_, err = informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    func(any) { r.enqueue(plane) },
