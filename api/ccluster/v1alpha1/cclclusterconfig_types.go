@@ -40,6 +40,11 @@ type CCLClusterConfigStatus struct {
 	//   - "Verified": every catalogs/cluster_base component is installed in this
 	//     cluster and configured for it. When False, the message names the charts
 	//     that failed verification.
+	//   - "LoadBalancerReady": the cluster's ingress LoadBalancer, the Service of type
+	//     LoadBalancer labelled ccluster.nvidia.com/track-ingress=true, has an address.
+	//     Reasons are Ready, Pending (no address yet), NotDeployed (no such Service) and
+	//     Ambiguous (more than one). When Ready, the message lists the Service and its
+	//     addresses, IPs and hostnames in the order the Service reports them.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -59,6 +64,7 @@ type CCLClusterConfigStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.conditions[?(@.type=="Verified")].status`
+// +kubebuilder:printcolumn:name="LoadBalancer",type=string,JSONPath=`.status.conditions[?(@.type=="LoadBalancerReady")].status`
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="CCLClusterConfig is a singleton and must be named \"cluster\""

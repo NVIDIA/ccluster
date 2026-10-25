@@ -3,8 +3,16 @@
 ingress-nginx:
   controller:
     allowSnippetAnnotations: true
+    # The controller's LoadBalancer is the cluster's ingress. The infra-plane operator
+    # finds it by the ccluster.nvidia.com/track-ingress label (ingressnginx.ServiceLabel)
+    # and reports its address in CCLClusterConfig's LoadBalancerReady condition, from
+    # which the control plane publishes the cluster's DNS. Disable it on a cluster whose
+    # gateway is provisioned out of band.
     service:
-      enabled: false
+      enabled: true
+      type: LoadBalancer
+      labels:
+        ccluster.nvidia.com/track-ingress: "true"
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:

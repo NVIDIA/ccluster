@@ -79,6 +79,7 @@ type CCLInfraPlaneStatus struct {
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
+// +kubebuilder:printcolumn:name="LoadBalancer",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="LoadBalancerReady")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API

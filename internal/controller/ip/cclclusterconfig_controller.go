@@ -10,21 +10,28 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
@@ -36,6 +43,17 @@ const (
 
 	reasonComponentsVerified    = "ComponentsVerified"
 	reasonComponentsNotVerified = "ComponentsNotVerified"
+
+	// conditionTypeLoadBalancerReady reports the cluster's ingress LoadBalancer: the
+	// Service of type LoadBalancer labelled ingressnginx.ServiceLabel=true. When Ready,
+	// its message names the Service and its addresses, which the control plane
+	// publishes the cluster's DNS from.
+	conditionTypeLoadBalancerReady = "LoadBalancerReady"
+
+	reasonLoadBalancerReady       = "Ready"
+	reasonLoadBalancerPending     = "Pending"
+	reasonLoadBalancerNotDeployed = "NotDeployed"
+	reasonLoadBalancerAmbiguous   = "Ambiguous"
 )
 
 // Re-verification intervals. Verifiers read state this operator does not write, so
@@ -72,9 +90,11 @@ type CCLClusterConfigReconciler struct {
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 
 // Reconcile runs every cluster_base component's Verifier against the CCLClusterConfig and
-// records the outcome as its Verified condition.
+// records the outcome as its Verified condition, and reports the cluster's ingress
+// LoadBalancer as its LoadBalancerReady condition.
 //
 // The operator reads the cluster and writes status; it changes nothing else. Whether
 // the components were installed by the control plane through a CCLComponentSet or by a
@@ -105,7 +125,23 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			"total", total, "failing", describe(failing))
 	}
 
-	if err := r.setVerified(ctx, &config, status, reason, message); err != nil {
+	loadBalancer, err := r.observeLoadBalancer(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	previous = apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeLoadBalancerReady)
+	if previous == nil || previous.Status != loadBalancer.Status || previous.Message != loadBalancer.Message {
+		log.Info("Observed ingress LoadBalancer", "reason", loadBalancer.Reason,
+			"message", loadBalancer.Message)
+	}
+
+	verified := metav1.Condition{
+		Type:    conditionTypeVerified,
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	}
+	if err := r.setStatus(ctx, &config, verified, loadBalancer); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -193,29 +229,94 @@ func describe(failing []failure) []string {
 	return described
 }
 
-// setVerified sets the Verified condition and the observed generation, then writes the
-// status subresource.
+// observeLoadBalancer reports the cluster's ingress LoadBalancer as the LoadBalancerReady
+// condition.
+//
+// The ingress is found by ingressnginx.ServiceLabel, which the catalog's ingress_nginx
+// chart stamps on its controller Service, rather than by name or by the upstream chart's
+// labels: the Service's name follows the Helm release, which differs between a
+// CCLComponentSet and a helm install, and the upstream labels match any ingress-nginx.
+// Like a Verifier, it reads the live Service and never Argo CD or Helm release state.
+// Only Services of type LoadBalancer count. A failed list is returned, so the pass is
+// retried, rather than reported as no LoadBalancer.
+func (r *CCLClusterConfigReconciler) observeLoadBalancer(ctx context.Context) (metav1.Condition, error) {
+	var services corev1.ServiceList
+	if err := r.List(ctx, &services, client.MatchingLabels{ingressnginx.ServiceLabel: "true"}); err != nil {
+		return metav1.Condition{}, fmt.Errorf("listing ingress Services: %w", err)
+	}
+	var loadBalancers []corev1.Service
+	for _, service := range services.Items {
+		if service.Spec.Type == corev1.ServiceTypeLoadBalancer {
+			loadBalancers = append(loadBalancers, service)
+		}
+	}
+	return loadBalancerCondition(loadBalancers), nil
+}
+
+// loadBalancerCondition turns the LoadBalancer Services labelled as the cluster's ingress
+// into the LoadBalancerReady condition. Its reason and message are what the control plane
+// reads, so they are built here and nowhere else.
+func loadBalancerCondition(loadBalancers []corev1.Service) metav1.Condition {
+	condition := metav1.Condition{Type: conditionTypeLoadBalancerReady, Status: metav1.ConditionFalse}
+	switch len(loadBalancers) {
+	case 0:
+		condition.Reason = reasonLoadBalancerNotDeployed
+		condition.Message = fmt.Sprintf("No Service of type LoadBalancer is labelled %s=true",
+			ingressnginx.ServiceLabel)
+	case 1:
+		service := loadBalancers[0]
+		name := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+		var addresses []string
+		for _, ingress := range service.Status.LoadBalancer.Ingress {
+			if ingress.IP != "" {
+				addresses = append(addresses, ingress.IP)
+			}
+			if ingress.Hostname != "" {
+				addresses = append(addresses, ingress.Hostname)
+			}
+		}
+		if len(addresses) == 0 {
+			condition.Reason = reasonLoadBalancerPending
+			condition.Message = fmt.Sprintf("Service %s has no address yet", name)
+			break
+		}
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = reasonLoadBalancerReady
+		condition.Message = fmt.Sprintf("Service %s has addresses %s", name, strings.Join(addresses, ", "))
+	default:
+		names := make([]string, len(loadBalancers))
+		for i, service := range loadBalancers {
+			names[i] = types.NamespacedName{Namespace: service.Namespace, Name: service.Name}.String()
+		}
+		// A cached list has no order of its own; sorting keeps the message, and with it the
+		// status, unchanged from one pass to the next.
+		slices.Sort(names)
+		condition.Reason = reasonLoadBalancerAmbiguous
+		condition.Message = fmt.Sprintf("%d Services of type LoadBalancer are labelled %s=true: %s",
+			len(loadBalancers), ingressnginx.ServiceLabel, strings.Join(names, ", "))
+	}
+	return condition
+}
+
+// setStatus sets the given conditions and the observed generation, then writes the status
+// subresource.
 //
 // A plain merge patch, without an optimistic lock: this controller is the only writer of
-// this status and nothing acts on Verified, so a racing write has nothing to clobber, and
-// a result computed for an older spec carries that spec's observedGeneration, so it reads
-// as stale until the next pass replaces it. NotFound is ignored: the object was deleted
-// while it was being verified.
-func (r *CCLClusterConfigReconciler) setVerified(
+// this status, so a racing write has nothing to clobber, and a result computed for an
+// older spec carries that spec's observedGeneration, so it reads as stale until the next
+// pass replaces it. NotFound is ignored: the object was deleted while it was being
+// verified.
+func (r *CCLClusterConfigReconciler) setStatus(
 	ctx context.Context,
 	config *cclusternvidiacomv1alpha1.CCLClusterConfig,
-	status metav1.ConditionStatus,
-	reason, message string,
+	conditions ...metav1.Condition,
 ) error {
 	base := config.DeepCopy()
 
-	apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-		Type:               conditionTypeVerified,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: config.Generation,
-	})
+	for _, condition := range conditions {
+		condition.ObservedGeneration = config.Generation
+		apimeta.SetStatusCondition(&config.Status.Conditions, condition)
+	}
 	config.Status.ObservedGeneration = config.Generation
 
 	return client.IgnoreNotFound(r.Status().Patch(ctx, config, client.MergeFrom(base)))
@@ -223,19 +324,44 @@ func (r *CCLClusterConfigReconciler) setVerified(
 
 // SetupWithManager sets up the controller with the Manager.
 //
-// Only the CCLClusterConfig is watched. Verifiers read state the operator does not
-// write, and the kinds they will read are installed by the very components being
-// verified - a watch on a kind the API server does not serve keeps a controller from
-// ever starting - so re-verification is periodic (Reconcile's RequeueAfter) rather than
-// event-driven.
+// Verifiers read state the operator does not write, and the kinds they will read are
+// installed by the very components being verified - a watch on a kind the API server
+// does not serve keeps a controller from ever starting - so re-verification is periodic
+// (Reconcile's RequeueAfter) rather than event-driven.
 //
-// Updates are filtered to spec changes. The controller's own status patch is an update
-// too, and without the filter every patch would rerun every Verifier; the periodic pass
-// already covers re-verification.
+// Services are the exception: every API server serves them, so the ingress LoadBalancer
+// is watched, and its address reaches LoadBalancerReady as soon as the cloud provider
+// assigns it. Only Services labelled ingressnginx.ServiceLabel=true are passed on, all to
+// the singleton, and with no predicate on updates, since the address arrives as a status
+// update. ServiceCacheSelector keeps the operator's cache to those Services.
+//
+// CCLClusterConfig updates are filtered to spec changes. The controller's own status
+// patch is an update too, and without the filter every patch would rerun every Verifier;
+// the periodic pass already covers re-verification.
 func (r *CCLClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLClusterConfig{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(singletonForService),
+			builder.WithPredicates(predicate.NewPredicateFuncs(isIngressService))).
 		Named("cclclusterconfig").
 		Complete(r)
+}
+
+// ServiceCacheSelector is the only Services the operator's cache holds: the ones labelled
+// as the cluster's ingress. cmd/ccluster-ip-operator sets it as the manager's cache
+// selector for Services.
+var ServiceCacheSelector = labels.SelectorFromSet(labels.Set{ingressnginx.ServiceLabel: "true"})
+
+// isIngressService is whether a Service is labelled as the cluster's ingress.
+func isIngressService(object client.Object) bool {
+	return ServiceCacheSelector.Matches(labels.Set(object.GetLabels()))
+}
+
+// singletonForService maps an ingress Service event to the CCLClusterConfig singleton.
+func singletonForService(context.Context, client.Object) []reconcile.Request {
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
+	}}
 }

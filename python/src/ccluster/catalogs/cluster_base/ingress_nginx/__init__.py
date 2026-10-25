@@ -30,6 +30,31 @@ class Autoscaling(BaseModel):
     """
 
 
+class Service(BaseModel):
+    """
+    Service configures the controller's Service.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+    )
+    enabled: bool | None = None
+    """
+    Enabled creates the Service. The chart ships true.
+    """
+    type: str | None = None
+    """
+    Type is the Service type. The chart ships LoadBalancer; any other type is not
+    reported as the cluster's ingress.
+    """
+    annotations: dict[str, str] | None = None
+    """
+    Annotations are added to the Service, e.g. a cloud provider's load balancer
+    settings.
+    """
+
+
 class Toggle(BaseModel):
     """
     Toggle is a subchart's enable flag.
@@ -67,10 +92,12 @@ class Controller(BaseModel):
         extra="forbid",
         populate_by_name=True,
     )
-    service: Toggle | None = None
+    service: Service | None = None
     """
-    Service is shipped disabled; the gateway in front of the cluster is
-    expected to be provisioned out of band.
+    Service is the controller's Service, shipped enabled as a LoadBalancer
+    labelled with ServiceLabel: it is the cluster's ingress, and its address is
+    what the cluster's DNS points at. Disable it on a cluster whose gateway is
+    provisioned out of band.
     """
     metrics: Metrics | None = None
     """

@@ -168,6 +168,11 @@ class CCLClusterConfigStatus(BaseModel):
       - "Verified": every catalogs/cluster_base component is installed in this
         cluster and configured for it. When False, the message names the charts
         that failed verification.
+      - "LoadBalancerReady": the cluster's ingress LoadBalancer, the Service of type
+        LoadBalancer labelled ccluster.nvidia.com/track-ingress=true, has an address.
+        Reasons are Ready, Pending (no address yet), NotDeployed (no such Service) and
+        Ambiguous (more than one). When Ready, the message lists the Service and its
+        addresses, IPs and hostnames in the order the Service reports them.
 
     The status of each condition is one of True, False, or Unknown.
     """

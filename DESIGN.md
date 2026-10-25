@@ -237,7 +237,9 @@ object — reconciles the `CCLInfraPlane` at once. Each reconcile copies the sin
 verbatim, into `status.clusterConfig`. That field reuses the `CCLClusterConfigStatus` type
 rather than merging its conditions into the CCLInfraPlane's own: the two sets of conditions
 and observedGenerations describe different objects. New fields the infra-plane operator
-reports flow through without a control-plane change. The copy is taken from the live read
+reports flow through without a control-plane change; so do new conditions, such as
+`LoadBalancerReady`, the cluster's ingress address that its DNS will be published from
+(§3a). The copy is taken from the live read
 the write makes, never from the watch's cache, and only when the write succeeded; otherwise
 the last copy stays, and `ClusterConfigApplied` says it is stale.
 
@@ -349,25 +351,40 @@ against.
 runs every registered Verifier against the spec, concurrently. Each Verifier runs under its own
 30-second deadline, and a panic in one is recovered; both count as that component
 failing, so one faulty check can neither crash the operator nor hold up the others. The
-outcome is one condition:
+outcome is one condition, and the pass also reports the cluster's ingress LoadBalancer in a
+second; both are written in one status patch:
 
 | Condition | Meaning |
 | --- | --- |
 | `Verified` | `True/ComponentsVerified` when every cluster_base component passes; `False/ComponentsNotVerified` with a message naming each failing chart and its Verifier's error. |
+| `LoadBalancerReady` | `True/Ready` with the message `Service <namespace>/<name> has addresses <a>, <b>`, the IPs and hostnames in the order the Service lists them; `False` with `Pending` (no address yet), `NotDeployed` (no such Service) or `Ambiguous` (more than one, each named). |
 
 A Verifier's error is not a reconcile error: it is the answer, reported rather than retried. The
 operator writes nothing but this status, and its ClusterRole grants nothing but the
-singleton and its status; a Verifier that reads a kind adds a read-only marker for it in
-the controller package.
+singleton and its status, and reads of what it inspects; a Verifier that reads a kind adds
+a read-only marker for it in the controller package.
 
-Only the singleton is watched. Verifiers read state the operator does not write, and
-the kinds they will read are installed by the very components being verified —
-controller-runtime never starts a controller whose watch source cannot sync — so
-re-verification is periodic: one minute while anything fails, five once everything
-passes. That is one of the two deliberate exceptions to the "no polling" rule in §7; the
-other is the control-plane operator's resync of this singleton (§3). Updates to
-the singleton trigger a pass only when its generation changes, so the operator's own
-status writes do not rerun every Verifier.
+The ingress LoadBalancer is a report, not a verification: an address the cloud provider has
+not assigned yet means the cluster is not reachable yet, not that ingress-nginx is
+misconfigured, so `Verified` does not depend on it. It is the Service of type
+`LoadBalancer` labelled `ccluster.nvidia.com/track-ingress=true`, which the catalog's
+`ingress_nginx` chart stamps on its controller Service (`ingressnginx.ServiceLabel`). The
+label, not the name, identifies it: the name follows the Helm release, which differs
+between a `CCLComponentSet` and a `helm install`, and the upstream chart's own labels match
+any ingress-nginx. Like a Verifier it reads the live Service, never Argo CD or Helm release
+state. The condition's reason and message are, for now, its only contract; the address is
+what the control plane will publish the cluster's DNS from.
+
+Verifiers read state the operator does not write, and the kinds they will read are
+installed by the very components being verified — controller-runtime never starts a
+controller whose watch source cannot sync — so re-verification is periodic: one minute
+while anything fails, five once everything passes. That is one of the two deliberate
+exceptions to the "no polling" rule in §7; the other is the control-plane operator's resync
+of this singleton (§3). Updates to the singleton trigger a pass only when its generation
+changes, so the operator's own status writes do not rerun every Verifier. Services are the
+exception to not watching: every API server serves them, so the labelled ones are watched,
+without a predicate, and an address the cloud provider assigns reaches `LoadBalancerReady`
+at once. The manager's cache holds only those Services.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
 control plane writes this object's spec and watches it, copying its status into the
@@ -743,14 +760,15 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
 | `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |
+| `CCLClusterConfig` | `LoadBalancerReady` | The cluster's ingress LoadBalancer has an address, which the message lists (§3a). Reasons: `Ready`, `Pending`, `NotDeployed`, `Ambiguous`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain`, `Available`, `ClusterConfig` and `Verified` (from
-`status.clusterConfig`) on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
-`Verified` and `Domain` on `CCLClusterConfig`.
+Printer columns: `Domain`, `Available`, `ClusterConfig`, and `Verified` and `LoadBalancer`
+(from `status.clusterConfig`) on `CCLInfraPlane`; `Applied` and `Progress` on
+`CCLComponentSet`; `Verified`, `LoadBalancer` and `Domain` on `CCLClusterConfig`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
 
@@ -779,7 +797,8 @@ same-namespace Applications garbage collection would defeat the ordered teardown
 
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
 an Application, and those arrive as events. Teardown has a 15s retry of its own. The
-infra-plane operator periodically re-verifies the live state it does not write (§3a), and
+infra-plane operator periodically re-verifies the live state it does not write, apart from
+its ingress LoadBalancer Service, which it watches (§3a), and
 the `CCLInfraPlane` controller retries a `CCLClusterConfig` it could not write every
 minute, with a slower resync behind its watch (§3).
 
