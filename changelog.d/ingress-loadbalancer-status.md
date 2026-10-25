@@ -10,6 +10,5 @@
 ### Changed
 - `catalogs/cluster_base/ingress_nginx` now enables the controller Service as a
   `LoadBalancer` labelled `ccluster.nvidia.com/track-ingress: "true"`, so an infra plane
-  gets a cloud load balancer on its next sync. Set `controller.service.enabled: false` to
-  keep a gateway provisioned out of band. The typed `controller.service` values gain
-  `type` and `annotations`.
+  gets a cloud load balancer on its next sync. The typed `controller.service` value is
+  removed: the Service is fixed in the chart's values.

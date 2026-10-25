@@ -35,12 +35,6 @@ type ChartValues struct {
 
 // Controller configures the ingress controller.
 type Controller struct {
-	// Service is the controller's Service, shipped enabled as a LoadBalancer
-	// labelled with ServiceLabel: it is the cluster's ingress, and its address is
-	// what the cluster's DNS points at. Disable it on a cluster whose gateway is
-	// provisioned out of band.
-	Service *Service `json:"service,omitempty"`
-
 	// Metrics requires the kube-prometheus-stack CRDs. Disable it on a
 	// cluster that does not deploy them.
 	Metrics *Metrics `json:"metrics,omitempty"`
@@ -61,18 +55,6 @@ type Autoscaling struct {
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// MaxReplicas is the ceiling. The chart ships 180.
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
-}
-
-// Service configures the controller's Service.
-type Service struct {
-	// Enabled creates the Service. The chart ships true.
-	Enabled *bool `json:"enabled,omitempty"`
-	// Type is the Service type. The chart ships LoadBalancer; any other type is not
-	// reported as the cluster's ingress.
-	Type *string `json:"type,omitempty"`
-	// Annotations are added to the Service, e.g. a cloud provider's load balancer
-	// settings.
-	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // Toggle is a subchart's enable flag.
