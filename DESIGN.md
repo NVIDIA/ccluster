@@ -148,7 +148,7 @@ because an `Available` CCLInfraPlane in the namespace already guarantees it.
 
 Naming the project after the namespace means CCLInfraPlanes in the `default` namespace adopt
 and rewrite Argo CD's built-in `default` project — the same adopt-if-unclaimed rule as every
-other object the operator owns — and the last one out deletes it. That is accepted: the
+object the operator owns in the Argo CD namespace — and the last one out deletes it. That is accepted: the
 built-in project permits everything, which is exactly what a ccluster namespace's project
 must not do.
 
@@ -207,11 +207,17 @@ Pods have, and are refused. Every request is bounded by a 30s timeout, so an unr
 cluster fails a reconcile rather than holding a worker.
 
 The `CCLClusterConfig` is stamped with the same `infraPlaneOwner` annotations as the
-mirrored Secret, with the same adopt-if-unclaimed rule: one created by hand is taken over,
-and one written for another CCLInfraPlane — two CCLInfraPlanes registering one cluster — is
-left alone. The write is an update of spec and metadata only, so the infra-plane operator's
-status survives it. The finalizer deletes the `CCLClusterConfig` first, if it is still ours,
-while the credentials are still registered. A credentials Secret deleted alongside its
+mirrored Secret, but without the adopt-if-unclaimed rule: a CCLInfraPlane writes and deletes
+only the `CCLClusterConfig` it created, so the check is `claimedBy`, an exact match. Any
+other — one applied by hand, or one created for another CCLInfraPlane, whether that plane
+registers the same cluster or is gone without its finalizer having reached the cluster — is
+left alone and reported as `Conflict` until someone deletes it, after which the plane creates
+its own. Unlike the mirror's name, the singleton's is not the operator's choice, and the
+cluster is one other people write to. A plane's own `CCLClusterConfig` is written with a
+merge patch of its spec and metadata, so it neither fails on the `resourceVersion` the
+infra-plane operator's status writes bump nor drops spec fields an older operator does not
+know. The finalizer deletes the `CCLClusterConfig` first, if this plane created it, while
+the credentials are still registered. A credentials Secret deleted alongside its
 CCLInfraPlane, as `ccluster unregister` does, is usually gone by then, so the finalizer falls
 back to the mirrored Secret, which it deletes only afterwards. An unreachable cluster is
 logged and skipped, because a cluster that is gone must not keep its CCLInfraPlane from
@@ -228,12 +234,13 @@ Secret does not exist yet), `ClusterSecretConflict` or `ProjectConflict`. No fai
 requeues: the controller watches Secrets and AppProjects, so the fix re-triggers it.
 
 `ClusterConfigApplied` — `True/Applied`, or `False` with `CRDMissing` (the ip chart is not
-installed on the cluster), `Conflict` (another CCLInfraPlane's `CCLClusterConfig`),
+installed on the cluster), `Conflict` (a `CCLClusterConfig` this plane did not create, whose
+message names the CCLInfraPlane it was created for, if any),
 `ClusterUnreachable` (any other failure to read or write it, with the error as the message),
 `UnsupportedCredentials`, `InvalidCredentials` (`config` is not JSON) or `DomainMissing` (a
 CCLInfraPlane stored before `domain` was required). It is computed only once `Available` is
-true, and both are written in one status patch. `CRDMissing` and `ClusterUnreachable` retry
-every minute; the credentials reasons wait for the Secret watch.
+true, and both are written in one status patch. `CRDMissing`, `Conflict` and
+`ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 

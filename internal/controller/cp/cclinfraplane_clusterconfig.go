@@ -41,13 +41,15 @@ const (
 
 // clusterConfigRetryInterval is how soon a CCLClusterConfig that could not be written is
 // tried again. Nothing on the infra-plane cluster is watched, so a fix there - the plane
-// coming back, the infra-plane operator and its CRD being installed - is only noticed by
-// polling.
+// coming back, the infra-plane operator and its CRD being installed, a conflicting
+// CCLClusterConfig being deleted - is only noticed by polling.
 const clusterConfigRetryInterval = time.Minute
 
-// errClusterConfigConflict reports that the infra-plane cluster's CCLClusterConfig was
-// written for a different CCLInfraPlane: two CCLInfraPlanes register the same cluster.
-var errClusterConfigConflict = errors.New("CCLClusterConfig belongs to another CCLInfraPlane")
+// errClusterConfigConflict reports that the infra-plane cluster already has a
+// CCLClusterConfig this CCLInfraPlane did not create: one applied by hand, or one created
+// for another CCLInfraPlane - registering the same cluster, or gone without its finalizer
+// reaching the cluster.
+var errClusterConfigConflict = errors.New("CCLClusterConfig was not created by this CCLInfraPlane")
 
 // reconcileClusterConfig writes the CCLClusterConfig singleton into the infra-plane cluster
 // that source holds the credentials for, and returns the ClusterConfigApplied condition and
@@ -104,12 +106,12 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 			ctrl.Result{}
 
 	case errors.Is(err, errClusterConfigConflict):
-		log.Info("Refused to overwrite CCLClusterConfig owned by another CCLInfraPlane",
-			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName)
+		log.Info("Refused to overwrite CCLClusterConfig not created by this CCLInfraPlane",
+			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName, "reason", err.Error())
 		return condition(metav1.ConditionFalse, reasonClusterConfigConflict, fmt.Sprintf(
-				"CCLClusterConfig %q on the infra-plane cluster belongs to another CCLInfraPlane",
-				cclusternvidiacomv1alpha1.CCLClusterConfigName)),
-			ctrl.Result{RequeueAfter: r.ResyncPeriod}
+				"%v; delete CCLClusterConfig %q on the infra-plane cluster for this CCLInfraPlane to write its own",
+				err, cclusternvidiacomv1alpha1.CCLClusterConfigName)),
+			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	case apimeta.IsNoMatchError(err):
 		log.Info("CCLClusterConfig CRD not installed on infra-plane cluster, skipped CCLClusterConfig")
@@ -126,9 +128,11 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 	}
 }
 
-// applyClusterConfig creates or updates the infra-plane cluster's CCLClusterConfig so its
-// spec carries infraPlane's domain. Like the mirrored Secret, it is stamped with
-// infraPlaneOwner, and one claimed by another CCLInfraPlane is left alone.
+// applyClusterConfig creates the infra-plane cluster's CCLClusterConfig with infraPlane's
+// domain, stamped with infraPlaneOwner, or patches the one infraPlane created back to that
+// domain. Unlike the mirrored Secret, an unclaimed CCLClusterConfig is not adopted: any
+// CCLClusterConfig infraPlane did not create is a conflict and left alone, so a
+// CCLInfraPlane only ever writes, and its finalizer only ever deletes, its own.
 func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -142,11 +146,13 @@ func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
 	}
-	// Update, not a patch, writes only the spec and metadata: status belongs to the
-	// infra-plane operator and is a separate subresource.
-	return controllerutil.CreateOrUpdate(ctx, remoteClient, config, func() error {
-		if !infraPlaneOwner.ownedBy(config, infraPlane) {
-			return errClusterConfigConflict
+	// A merge patch, not an update: it sends only what changed, so it neither fails on the
+	// resourceVersion the infra-plane operator's status writes bump, nor drops spec fields
+	// this operator's copy of the type does not know.
+	return controllerutil.CreateOrPatch(ctx, remoteClient, config, func() error {
+		// An empty resourceVersion means there was none to read, and this creates it.
+		if config.ResourceVersion != "" && !infraPlaneOwner.claimedBy(config, infraPlane) {
+			return clusterConfigConflict(config)
 		}
 		infraPlaneOwner.stamp(config, infraPlane)
 		config.Spec.Domain = infraPlane.Spec.Domain
@@ -154,8 +160,19 @@ func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 	})
 }
 
+// clusterConfigConflict returns errClusterConfigConflict, naming the CCLInfraPlane config
+// was created for, if any.
+func clusterConfigConflict(config *cclusternvidiacomv1alpha1.CCLClusterConfig) error {
+	name := config.Annotations[annotationInfraPlaneName]
+	namespace := config.Annotations[annotationInfraPlaneNamespace]
+	if name == "" && namespace == "" {
+		return fmt.Errorf("%w: it names no CCLInfraPlane", errClusterConfigConflict)
+	}
+	return fmt.Errorf("%w: it was created for CCLInfraPlane %s/%s", errClusterConfigConflict, namespace, name)
+}
+
 // deleteClusterConfig deletes the infra-plane cluster's CCLClusterConfig if infraPlane
-// wrote it. It never fails the finalizer: an infra-plane cluster that is gone or
+// created it. It never fails the finalizer: an infra-plane cluster that is gone or
 // unreachable must not keep its CCLInfraPlane from being deleted, so every failure is
 // logged and skipped.
 func (r *CCLInfraPlaneReconciler) deleteClusterConfig(
@@ -187,8 +204,8 @@ func (r *CCLInfraPlaneReconciler) deleteClusterConfig(
 	case err != nil:
 		log.Error(err, "Failed to read CCLClusterConfig on infra-plane cluster, left it in place")
 		return
-	case !infraPlaneOwner.ownedBy(&config, infraPlane):
-		log.Info("Left CCLClusterConfig owned by another CCLInfraPlane in place")
+	case !infraPlaneOwner.claimedBy(&config, infraPlane):
+		log.Info("Left CCLClusterConfig not created by this CCLInfraPlane in place")
 		return
 	}
 

@@ -272,9 +272,9 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	})
 }
 
-// finalize deletes the infra-plane cluster's CCLClusterConfig and the mirrored Secret, each
-// if it is still ours, and the namespace's AppProject if this was the last CCLInfraPlane
-// using it, then drops the finalizer so the CCLInfraPlane can go away.
+// finalize deletes the infra-plane cluster's CCLClusterConfig if this CCLInfraPlane created
+// it, the mirrored Secret if it is still ours, and the namespace's AppProject if this was
+// the last CCLInfraPlane using it, then drops the finalizer so the CCLInfraPlane can go away.
 //
 // The CCLClusterConfig goes first, while the credentials to reach the cluster are still
 // registered; failing to reach the cluster does not block the rest.

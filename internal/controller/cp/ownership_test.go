@@ -119,6 +119,69 @@ func TestOwnedBy(t *testing.T) {
 	}
 }
 
+// TestClaimedBy covers the exact-match check the infra-plane cluster's CCLClusterConfig is
+// written and deleted under: unlike ownedBy, an unclaimed object is not the owner's.
+func TestClaimedBy(t *testing.T) {
+	owner := ownerInfraPlane("plane-a", "default")
+
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{name: "rejects an object carrying neither annotation", annotations: nil, want: false},
+		{name: "rejects an object with an empty annotation map", annotations: map[string]string{}, want: false},
+		{
+			name: "accepts an object back-referencing this owner",
+			annotations: map[string]string{
+				annotationInfraPlaneName:      "plane-a",
+				annotationInfraPlaneNamespace: "default",
+			},
+			want: true,
+		},
+		{
+			name: "rejects an object back-referencing another name",
+			annotations: map[string]string{
+				annotationInfraPlaneName:      "plane-b",
+				annotationInfraPlaneNamespace: "default",
+			},
+			want: false,
+		},
+		{
+			name: "rejects an object claimed by a same-named resource in another namespace",
+			annotations: map[string]string{
+				annotationInfraPlaneName:      "plane-a",
+				annotationInfraPlaneNamespace: "other",
+			},
+			want: false,
+		},
+		{
+			name:        "rejects an object carrying only the name annotation",
+			annotations: map[string]string{annotationInfraPlaneName: "plane-a"},
+			want:        false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := infraPlaneOwner.claimedBy(secretWith(test.annotations), owner); got != test.want {
+				t.Errorf("claimedBy() = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	t.Run("accepts an object after stamp, for that owner only", func(t *testing.T) {
+		secret := secretWith(nil)
+		infraPlaneOwner.stamp(secret, owner)
+		if !infraPlaneOwner.claimedBy(secret, owner) {
+			t.Error("claimedBy() = false after stamp(), want true")
+		}
+		if infraPlaneOwner.claimedBy(secret, ownerInfraPlane("plane-b", "default")) {
+			t.Error("claimedBy() = true for another CCLInfraPlane, want false")
+		}
+	})
+}
+
 // TestNamespaceOwner covers the single-key owner the AppProject uses. Its adopt-if-unclaimed
 // rule is what lets the operator take over Argo CD's built-in "default" project.
 func TestNamespaceOwner(t *testing.T) {

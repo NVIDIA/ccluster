@@ -3,6 +3,10 @@
 # Describes the infra-plane cluster to ccluster-ip-operator, which runs in that cluster.
 # Apply it there, not in the control-plane cluster.
 #
+# Apply it only to a cluster no CCLInfraPlane registers. The control-plane operator writes
+# this object into every cluster a CCLInfraPlane registers, and reports Conflict for one
+# it did not create until that one is deleted.
+#
 # The operator runs every catalogs/cluster_base component's Verifier against it and
 # reports the outcome as the Verified condition (every Verifier is a placeholder
 # reporting true for now):
@@ -22,6 +26,5 @@ metadata:
     app.kubernetes.io/name: ccluster
   name: cluster
 spec:
-  # The cluster's DNS domain and SPIFFE trust domain. Created once the cluster is
-  # registered with the control plane; apply this object when it exists.
+  # The cluster's DNS domain and SPIFFE trust domain.
   domain: ccluster-local.example.com

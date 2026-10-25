@@ -89,9 +89,11 @@ kubectl -n ccluster-quickstart get cclcomponentsets
 kubectl get applications -L ccluster.nvidia.com/wave
 ```
 
-In the infra-plane cluster, describe the cluster to its operator and it reports whether
-every `catalogs/cluster_base` component verifies against it (every component's check is
-a placeholder reporting true for now):
+In the infra-plane cluster, its operator reports whether every `catalogs/cluster_base`
+component verifies against the cluster's `CCLClusterConfig` (every component's check is a
+placeholder reporting true for now). The control-plane operator writes that object into
+every cluster a `CCLInfraPlane` registers, and reports `Conflict` for one it did not
+create, so apply the example only to an infra-plane cluster no `CCLInfraPlane` registers:
 
 ```bash
 kubectl apply -f examples/quickstart/v1alpha1_cclclusterconfig.yaml
