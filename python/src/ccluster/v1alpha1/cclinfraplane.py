@@ -147,6 +147,30 @@ class Condition(BaseModel):
     """
 
 
+class LoadBalancer(BaseModel):
+    """
+    loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
+    observed it: the Service of type LoadBalancer labelled
+    ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
+    Service, while it has no address yet, and while more than one Service carries the
+    label.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    hostname: str | None = None
+    """
+    hostname is the LoadBalancer's DNS name, set by cloud providers whose load
+    balancers are addressed by name rather than by IP: the first hostname the Service
+    reports.
+    """
+    ip: str | None = None
+    """
+    ip is the LoadBalancer's IP address: the first IP the Service reports.
+    """
+
+
 class CCLClusterConfigStatus(BaseModel):
     """
     clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
@@ -168,13 +192,16 @@ class CCLClusterConfigStatus(BaseModel):
       - "Verified": every catalogs/cluster_base component is installed in this
         cluster and configured for it. When False, the message names the charts
         that failed verification.
-      - "LoadBalancerReady": the cluster's ingress LoadBalancer, the Service of type
-        LoadBalancer labelled ccluster.nvidia.com/track-ingress=true, has an address.
-        Reasons are Ready, Pending (no address yet), NotDeployed (no such Service) and
-        Ambiguous (more than one). When Ready, the message lists the Service and its
-        addresses, IPs and hostnames in the order the Service reports them.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    load_balancer: Annotated[LoadBalancer | None, Field(alias="loadBalancer")] = None
+    """
+    loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
+    observed it: the Service of type LoadBalancer labelled
+    ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
+    Service, while it has no address yet, and while more than one Service carries the
+    label.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """

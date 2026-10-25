@@ -5,7 +5,7 @@ ingress-nginx:
     allowSnippetAnnotations: true
     # The controller's LoadBalancer is the cluster's ingress. The infra-plane operator
     # finds it by the ccluster.nvidia.com/track-ingress label (ingressnginx.ServiceLabel)
-    # and reports its address in CCLClusterConfig's LoadBalancerReady condition, from
+    # and reports its address in CCLClusterConfig's status.loadBalancer, from
     # which the control plane publishes the cluster's DNS.
     service:
       enabled: true

@@ -77,6 +77,16 @@ var schemaYAML = typed.YAMLObject(`types:
                 elementRelationship: associative
                 keys:
                 - type
+          - name: loadBalancer
+            type:
+              map:
+                fields:
+                - name: hostname
+                  type:
+                    scalar: string
+                - name: ip
+                  type:
+                    scalar: string
           - name: observedGeneration
             type:
               scalar: numeric
@@ -249,6 +259,16 @@ var schemaYAML = typed.YAMLObject(`types:
                       elementRelationship: associative
                       keys:
                       - type
+                - name: loadBalancer
+                  type:
+                    map:
+                      fields:
+                      - name: hostname
+                        type:
+                          scalar: string
+                      - name: ip
+                        type:
+                          scalar: string
                 - name: observedGeneration
                   type:
                     scalar: numeric

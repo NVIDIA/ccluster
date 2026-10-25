@@ -275,10 +275,10 @@ var _ = Describe("CCLClusterConfig Controller's ingress LoadBalancer", func() {
 		verifier   *switchVerifier
 	)
 
-	condition := func() *metav1.Condition {
+	loadBalancer := func() *cclusternvidiacomv1alpha1.LoadBalancerStatus {
 		var config cclusternvidiacomv1alpha1.CCLClusterConfig
 		Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
-		return apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeLoadBalancerReady)
+		return config.Status.LoadBalancer
 	}
 
 	reconcileOnce := func() {
@@ -322,63 +322,55 @@ var _ = Describe("CCLClusterConfig Controller's ingress LoadBalancer", func() {
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, config))).To(Succeed()) })
 	})
 
-	It("reports NotDeployed when no LoadBalancer carries the label", func() {
+	It("reports no LoadBalancer when none of type LoadBalancer carries the label", func() {
 		service("labelled-cluster-ip", corev1.ServiceTypeClusterIP, ingressLabels)
 		service("upstream-only", corev1.ServiceTypeLoadBalancer, upstreamLabels,
 			corev1.LoadBalancerIngress{IP: "192.0.2.1"})
 		reconcileOnce()
 
-		c := condition()
-		Expect(c).NotTo(BeNil())
-		Expect(c.Status).To(Equal(metav1.ConditionFalse))
-		Expect(c.Reason).To(Equal(reasonLoadBalancerNotDeployed))
-		Expect(c.Message).To(ContainSubstring(ingressnginx.ServiceLabel))
+		Expect(loadBalancer()).To(BeNil())
 	})
 
-	It("reports Pending until the LoadBalancer has an address, then Ready with it", func() {
+	It("reports no LoadBalancer until it has an address, then its IP", func() {
 		svc := service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels)
 		reconcileOnce()
-		Expect(condition().Reason).To(Equal(reasonLoadBalancerPending))
-		Expect(condition().Message).To(Equal("Service default/ingress has no address yet"))
+		Expect(loadBalancer()).To(BeNil())
 
 		svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "192.0.2.10"}}
 		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
 		reconcileOnce()
 
-		c := condition()
-		Expect(c.Status).To(Equal(metav1.ConditionTrue))
-		Expect(c.Reason).To(Equal(reasonLoadBalancerReady))
-		Expect(c.Message).To(Equal("Service default/ingress has addresses 192.0.2.10"))
-		Expect(c.ObservedGeneration).To(Equal(int64(1)))
+		Expect(loadBalancer()).To(Equal(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"}))
 	})
 
-	It("reports a hostname and several addresses in the order the Service lists them", func() {
+	It("reports the first IP and the first hostname the Service lists", func() {
 		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{Hostname: "lb-1.elb.example.com"},
-			corev1.LoadBalancerIngress{IP: "192.0.2.11"})
+			corev1.LoadBalancerIngress{IP: "192.0.2.11"},
+			corev1.LoadBalancerIngress{IP: "192.0.2.12", Hostname: "lb-2.elb.example.com"})
 		reconcileOnce()
 
-		Expect(condition().Reason).To(Equal(reasonLoadBalancerReady))
-		Expect(condition().Message).To(Equal(
-			"Service default/ingress has addresses lb-1.elb.example.com, 192.0.2.11"))
+		Expect(loadBalancer()).To(Equal(&cclusternvidiacomv1alpha1.LoadBalancerStatus{
+			IP:       "192.0.2.11",
+			Hostname: "lb-1.elb.example.com",
+		}))
 	})
 
-	It("reports Ambiguous, naming every one, when several LoadBalancers carry the label", func() {
+	It("clears the LoadBalancer once a second Service carries the label", func() {
 		service("ingress-a", corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{IP: "192.0.2.20"})
-		service("ingress-b", corev1.ServiceTypeLoadBalancer, ingressLabels)
 		reconcileOnce()
+		Expect(loadBalancer()).NotTo(BeNil())
 
-		c := condition()
-		Expect(c.Status).To(Equal(metav1.ConditionFalse))
-		Expect(c.Reason).To(Equal(reasonLoadBalancerAmbiguous))
-		Expect(c.Message).To(ContainSubstring("default/ingress-a"))
-		Expect(c.Message).To(ContainSubstring("default/ingress-b"))
+		service("ingress-b", corev1.ServiceTypeLoadBalancer, ingressLabels,
+			corev1.LoadBalancerIngress{IP: "192.0.2.21"})
+		reconcileOnce()
+		Expect(loadBalancer()).To(BeNil())
 	})
 
 	It("leaves Verified to the Verifiers", func() {
 		reconcileOnce()
-		Expect(condition().Reason).To(Equal(reasonLoadBalancerNotDeployed))
+		Expect(loadBalancer()).To(BeNil())
 
 		var config cclusternvidiacomv1alpha1.CCLClusterConfig
 		Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())

@@ -27,7 +27,7 @@ spec:
     - jsonPath: .status.clusterConfig.conditions[?(@.type=="Verified")].status
       name: Verified
       type: string
-    - jsonPath: .status.clusterConfig.conditions[?(@.type=="LoadBalancerReady")].status
+    - jsonPath: .status.clusterConfig.loadBalancer.ip
       name: LoadBalancer
       type: string
     - jsonPath: .metadata.creationTimestamp
@@ -121,11 +121,6 @@ spec:
                         - "Verified": every catalogs/cluster_base component is installed in this
                           cluster and configured for it. When False, the message names the charts
                           that failed verification.
-                        - "LoadBalancerReady": the cluster's ingress LoadBalancer, the Service of type
-                          LoadBalancer labelled ccluster.nvidia.com/track-ingress=true, has an address.
-                          Reasons are Ready, Pending (no address yet), NotDeployed (no such Service) and
-                          Ambiguous (more than one). When Ready, the message lists the Service and its
-                          addresses, IPs and hostnames in the order the Service reports them.
 
                       The status of each condition is one of True, False, or Unknown.
                     items:
@@ -187,6 +182,25 @@ spec:
                     x-kubernetes-list-map-keys:
                     - type
                     x-kubernetes-list-type: map
+                  loadBalancer:
+                    description: |-
+                      loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
+                      observed it: the Service of type LoadBalancer labelled
+                      ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
+                      Service, while it has no address yet, and while more than one Service carries the
+                      label.
+                    properties:
+                      hostname:
+                        description: |-
+                          hostname is the LoadBalancer's DNS name, set by cloud providers whose load
+                          balancers are addressed by name rather than by IP: the first hostname the Service
+                          reports.
+                        type: string
+                      ip:
+                        description: 'ip is the LoadBalancer''s IP address: the first
+                          IP the Service reports.'
+                        type: string
+                    type: object
                   observedGeneration:
                     description: |-
                       observedGeneration is the CCLClusterConfig's .metadata.generation the conditions

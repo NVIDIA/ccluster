@@ -640,22 +640,16 @@ var _ = Describe("Manager", Ordered, func() {
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
 				}, watchTimeout).Should(Succeed())
 
-				By("reporting that the plane has no ingress LoadBalancer yet")
-				Eventually(func(g Gomega) {
-					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="LoadBalancerReady")].reason`)).
-						To(Equal("NotDeployed"))
-				}, crossClusterTimeout).Should(Succeed())
+				By("reporting no ingress LoadBalancer while the plane has none")
+				Expect(clusterConfigField(planeName, ".loadBalancer")).To(BeEmpty())
 
 				// kind has no load balancer controller, so the spec assigns the address
 				// itself. The infra-plane operator watches the labelled Service, so the
 				// address reaches the CCLInfraPlane without waiting for a periodic pass.
-				By("following the ingress LoadBalancer's address onto the CCLInfraPlane")
+				By("following the ingress LoadBalancer's IP onto the CCLInfraPlane")
 				createIngressLoadBalancer(t.cluster, "e2e-ingress", ingressLoadBalancerIP)
 				Eventually(func(g Gomega) {
-					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="LoadBalancerReady")].status`)).
-						To(Equal("True"))
-					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="LoadBalancerReady")].message`)).
-						To(Equal("Service default/e2e-ingress has addresses " + ingressLoadBalancerIP))
+					g.Expect(clusterConfigField(planeName, ".loadBalancer.ip")).To(Equal(ingressLoadBalancerIP))
 				}, crossClusterTimeout).Should(Succeed())
 
 				By("deleting the CCLClusterConfig from the plane's cluster with the CCLInfraPlane")

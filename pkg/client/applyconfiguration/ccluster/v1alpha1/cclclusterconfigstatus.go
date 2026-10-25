@@ -24,17 +24,18 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	// - "Verified": every catalogs/cluster_base component is installed in this
 	// cluster and configured for it. When False, the message names the charts
 	// that failed verification.
-	// - "LoadBalancerReady": the cluster's ingress LoadBalancer, the Service of type
-	// LoadBalancer labelled ccluster.nvidia.com/track-ingress=true, has an address.
-	// Reasons are Ready, Pending (no address yet), NotDeployed (no such Service) and
-	// Ambiguous (more than one). When Ready, the message lists the Service and its
-	// addresses, IPs and hostnames in the order the Service reports them.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
 	// were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
+	// observed it: the Service of type LoadBalancer labelled
+	// ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
+	// Service, while it has no address yet, and while more than one Service carries the
+	// label.
+	LoadBalancer *LoadBalancerStatusApplyConfiguration `json:"loadBalancer,omitempty"`
 }
 
 // CCLClusterConfigStatusApplyConfiguration constructs a declarative configuration of the CCLClusterConfigStatus type for use with
@@ -61,5 +62,13 @@ func (b *CCLClusterConfigStatusApplyConfiguration) WithConditions(values ...*v1.
 // If called multiple times, the ObservedGeneration field is set to the value of the last call.
 func (b *CCLClusterConfigStatusApplyConfiguration) WithObservedGeneration(value int64) *CCLClusterConfigStatusApplyConfiguration {
 	b.ObservedGeneration = &value
+	return b
+}
+
+// WithLoadBalancer sets the LoadBalancer field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LoadBalancer field is set to the value of the last call.
+func (b *CCLClusterConfigStatusApplyConfiguration) WithLoadBalancer(value *LoadBalancerStatusApplyConfiguration) *CCLClusterConfigStatusApplyConfiguration {
+	b.LoadBalancer = value
 	return b
 }
