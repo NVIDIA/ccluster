@@ -7,8 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	cclusterv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	internal "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -39,6 +42,46 @@ func CCLClusterConfig(name string) *CCLClusterConfigApplyConfiguration {
 	b.WithKind("CCLClusterConfig")
 	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
 	return b
+}
+
+// ExtractCCLClusterConfigFrom extracts the applied configuration owned by fieldManager from
+// cCLClusterConfig for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// cCLClusterConfig must be a unmodified CCLClusterConfig API object that was retrieved from the Kubernetes API.
+// ExtractCCLClusterConfigFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLClusterConfigFrom(cCLClusterConfig *cclusterv1alpha1.CCLClusterConfig, fieldManager string, subresource string) (*CCLClusterConfigApplyConfiguration, error) {
+	b := &CCLClusterConfigApplyConfiguration{}
+	err := managedfields.ExtractInto(cCLClusterConfig, internal.Parser().Type("com.github.NVIDIA.ccluster.api.ccluster.v1alpha1.CCLClusterConfig"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(cCLClusterConfig.Name)
+
+	b.WithKind("CCLClusterConfig")
+	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractCCLClusterConfig extracts the applied configuration owned by fieldManager from
+// cCLClusterConfig. If no managedFields are found in cCLClusterConfig for fieldManager, a
+// CCLClusterConfigApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// cCLClusterConfig must be a unmodified CCLClusterConfig API object that was retrieved from the Kubernetes API.
+// ExtractCCLClusterConfig provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLClusterConfig(cCLClusterConfig *cclusterv1alpha1.CCLClusterConfig, fieldManager string) (*CCLClusterConfigApplyConfiguration, error) {
+	return ExtractCCLClusterConfigFrom(cCLClusterConfig, fieldManager, "")
+}
+
+// ExtractCCLClusterConfigStatus extracts the applied configuration owned by fieldManager from
+// cCLClusterConfig for the status subresource.
+func ExtractCCLClusterConfigStatus(cCLClusterConfig *cclusterv1alpha1.CCLClusterConfig, fieldManager string) (*CCLClusterConfigApplyConfiguration, error) {
+	return ExtractCCLClusterConfigFrom(cCLClusterConfig, fieldManager, "status")
 }
 
 func (b CCLClusterConfigApplyConfiguration) IsApplyConfiguration() {}

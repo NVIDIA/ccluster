@@ -1,7 +1,8 @@
 ### Added
 - A generated Go client for the API in `github.com/NVIDIA/ccluster/pkg/client`: a typed
-  clientset with server-side apply and a fake, apply configurations, listers and a shared
-  informer factory for `CCLInfraPlane`, `CCLComponentSet` and `CCLClusterConfig`.
+  clientset with server-side apply and a fake that tracks field ownership, apply
+  configurations with `Extract` functions, listers and a shared informer factory for
+  `CCLInfraPlane`, `CCLComponentSet` and `CCLClusterConfig`.
 
 ### Changed
 - **Breaking:** The API's Go package moves from `github.com/NVIDIA/ccluster/api/v1alpha1`

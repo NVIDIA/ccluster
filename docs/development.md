@@ -221,7 +221,13 @@ informer-gen from `k8s.io/code-generator`, at the version of `k8s.io/client-go` 
 a fake, listers and a shared informer factory into `pkg/client/`, which is deleted and
 rebuilt on each run. The apply configurations give the clientset its `Apply` methods and
 the fake its field-managed `NewClientset`; without them the fake offers only the
-deprecated `NewSimpleClientset`. A kind is included when its type carries `+genclient`;
+deprecated `NewSimpleClientset`.
+
+The field-managed fake types every write with an OpenAPI schema that applyconfiguration-gen
+embeds in `pkg/client/applyconfiguration/internal/`; a kind missing from it fails every
+create, update and apply. `hack/clientschema` builds that schema from the CRDs with the
+API server's own CRD OpenAPI builder, so `client-generate` runs `manifests` first. The schema also gives each kind an `Extract` function, which reads back the fields
+one manager owns. A kind is included when its type carries `+genclient`;
 a cluster-scoped kind such as `CCLClusterConfig` also needs `+genclient:nonNamespaced`.
 A new top-level kind needs these markers too.
 
@@ -232,8 +238,8 @@ package markers live in `api/ccluster/v1alpha1/doc.go`; without it they would ad
 the group as `ccluster` rather than `ccluster.nvidia.com`. The generated code also
 expects `SchemeGroupVersion` and `Resource` beside kubebuilder's `GroupVersion`, in
 `groupversion_info.go`. `test/client/` runs the generated client against envtest, which
-proves those markers and that glue rather than the generated code. CI regenerates and
-fails on any drift.
+proves those markers, that glue and the schema rather than the generated code. CI
+regenerates and fails on any drift.
 
 ## License headers
 

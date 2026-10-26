@@ -19,6 +19,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,6 +109,16 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 	}
 	if !apimeta.IsStatusConditionTrue(got.Status.Conditions, "Verified") {
 		t.Errorf("status.conditions = %v, want Verified=True", got.Status.Conditions)
+	}
+
+	// Extract reads the server's managed fields with the schema built from the CRDs, so it
+	// returns what the field manager applied.
+	owned, err := cclusterac.ExtractCCLClusterConfig(got, apply.FieldManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned.Spec == nil || owned.Spec.Domain == nil || *owned.Spec.Domain != "gpu-a.example.com" {
+		t.Errorf("extracted spec = %+v, want domain gpu-a.example.com", owned.Spec)
 	}
 }
 
@@ -217,18 +228,45 @@ func TestInformerFactoryWatchesAndListsASingleton(t *testing.T) {
 	expectEvent(t, events, "delete")
 }
 
-// The fake clientset knows the API types, so programs can test against it without a server.
-func TestFakeClientsetServesTheAPITypes(t *testing.T) {
-	fakeClient := fake.NewClientset(&cclusternvidiacomv1alpha1.CCLInfraPlane{
+// The fake clientset tracks field ownership for the API types, so programs can create,
+// update and apply them in tests without a server. Each write goes through the schema in
+// pkg/client; a kind missing from it fails every write.
+func TestFakeClientsetWritesTheAPITypes(t *testing.T) {
+	ctx := t.Context()
+	client := fake.NewClientset(&cclusternvidiacomv1alpha1.CCLInfraPlane{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "gpu-a"},
-	})
+	}).CclusterV1alpha1()
 
-	plane, err := fakeClient.CclusterV1alpha1().CCLInfraPlanes("team-a").Get(t.Context(), "gpu-a", metav1.GetOptions{})
+	plane, err := client.CCLInfraPlanes("team-a").Get(ctx, "gpu-a", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plane.Name != "gpu-a" {
-		t.Errorf("got CCLInfraPlane %q, want gpu-a", plane.Name)
+	plane.Status.ObservedGeneration = 1
+	if _, err := client.CCLInfraPlanes("team-a").UpdateStatus(ctx, plane, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.CCLClusterConfigs().Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// values has no schema of its own, so this also covers a field the schema leaves untyped.
+	set, err := client.CCLComponentSets("team-a").Apply(ctx, cclusterac.CCLComponentSet("base", "team-a").
+		WithSpec(cclusterac.CCLComponentSetSpec().WithComponents(cclusterac.ComponentSpec().
+			WithName("cert-manager").
+			WithInfraPlaneRef(cclusterac.LocalObjectReference().WithName("gpu-a")).
+			WithChart("catalogs/cluster_base/cert_manager").WithNamespace("cert-manager").
+			WithValues(apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":2}`)}))),
+		metav1.ApplyOptions{FieldManager: "client-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.Spec.Components) != 1 || set.Spec.Components[0].Values == nil ||
+		string(set.Spec.Components[0].Values.Raw) != `{"replicaCount":2}` {
+		t.Errorf("applied spec.components = %+v, want cert-manager with replicaCount 2", set.Spec.Components)
 	}
 }
 

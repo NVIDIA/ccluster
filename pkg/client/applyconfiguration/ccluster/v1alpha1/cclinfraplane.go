@@ -7,8 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	cclusterv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	internal "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -35,6 +38,47 @@ func CCLInfraPlane(name, namespace string) *CCLInfraPlaneApplyConfiguration {
 	b.WithKind("CCLInfraPlane")
 	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
 	return b
+}
+
+// ExtractCCLInfraPlaneFrom extracts the applied configuration owned by fieldManager from
+// cCLInfraPlane for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// cCLInfraPlane must be a unmodified CCLInfraPlane API object that was retrieved from the Kubernetes API.
+// ExtractCCLInfraPlaneFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLInfraPlaneFrom(cCLInfraPlane *cclusterv1alpha1.CCLInfraPlane, fieldManager string, subresource string) (*CCLInfraPlaneApplyConfiguration, error) {
+	b := &CCLInfraPlaneApplyConfiguration{}
+	err := managedfields.ExtractInto(cCLInfraPlane, internal.Parser().Type("com.github.NVIDIA.ccluster.api.ccluster.v1alpha1.CCLInfraPlane"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(cCLInfraPlane.Name)
+	b.WithNamespace(cCLInfraPlane.Namespace)
+
+	b.WithKind("CCLInfraPlane")
+	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractCCLInfraPlane extracts the applied configuration owned by fieldManager from
+// cCLInfraPlane. If no managedFields are found in cCLInfraPlane for fieldManager, a
+// CCLInfraPlaneApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// cCLInfraPlane must be a unmodified CCLInfraPlane API object that was retrieved from the Kubernetes API.
+// ExtractCCLInfraPlane provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLInfraPlane(cCLInfraPlane *cclusterv1alpha1.CCLInfraPlane, fieldManager string) (*CCLInfraPlaneApplyConfiguration, error) {
+	return ExtractCCLInfraPlaneFrom(cCLInfraPlane, fieldManager, "")
+}
+
+// ExtractCCLInfraPlaneStatus extracts the applied configuration owned by fieldManager from
+// cCLInfraPlane for the status subresource.
+func ExtractCCLInfraPlaneStatus(cCLInfraPlane *cclusterv1alpha1.CCLInfraPlane, fieldManager string) (*CCLInfraPlaneApplyConfiguration, error) {
+	return ExtractCCLInfraPlaneFrom(cCLInfraPlane, fieldManager, "status")
 }
 
 func (b CCLInfraPlaneApplyConfiguration) IsApplyConfiguration() {}

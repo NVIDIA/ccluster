@@ -7,8 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	cclusterv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	internal "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/internal"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -40,6 +43,47 @@ func CCLComponentSet(name, namespace string) *CCLComponentSetApplyConfiguration 
 	b.WithKind("CCLComponentSet")
 	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
 	return b
+}
+
+// ExtractCCLComponentSetFrom extracts the applied configuration owned by fieldManager from
+// cCLComponentSet for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
+// cCLComponentSet must be a unmodified CCLComponentSet API object that was retrieved from the Kubernetes API.
+// ExtractCCLComponentSetFrom provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLComponentSetFrom(cCLComponentSet *cclusterv1alpha1.CCLComponentSet, fieldManager string, subresource string) (*CCLComponentSetApplyConfiguration, error) {
+	b := &CCLComponentSetApplyConfiguration{}
+	err := managedfields.ExtractInto(cCLComponentSet, internal.Parser().Type("com.github.NVIDIA.ccluster.api.ccluster.v1alpha1.CCLComponentSet"), fieldManager, b, subresource)
+	if err != nil {
+		return nil, err
+	}
+	b.WithName(cCLComponentSet.Name)
+	b.WithNamespace(cCLComponentSet.Namespace)
+
+	b.WithKind("CCLComponentSet")
+	b.WithAPIVersion("ccluster.nvidia.com/v1alpha1")
+	return b, nil
+}
+
+// ExtractCCLComponentSet extracts the applied configuration owned by fieldManager from
+// cCLComponentSet. If no managedFields are found in cCLComponentSet for fieldManager, a
+// CCLComponentSetApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// cCLComponentSet must be a unmodified CCLComponentSet API object that was retrieved from the Kubernetes API.
+// ExtractCCLComponentSet provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractCCLComponentSet(cCLComponentSet *cclusterv1alpha1.CCLComponentSet, fieldManager string) (*CCLComponentSetApplyConfiguration, error) {
+	return ExtractCCLComponentSetFrom(cCLComponentSet, fieldManager, "")
+}
+
+// ExtractCCLComponentSetStatus extracts the applied configuration owned by fieldManager from
+// cCLComponentSet for the status subresource.
+func ExtractCCLComponentSetStatus(cCLComponentSet *cclusterv1alpha1.CCLComponentSet, fieldManager string) (*CCLComponentSetApplyConfiguration, error) {
+	return ExtractCCLComponentSetFrom(cCLComponentSet, fieldManager, "status")
 }
 
 func (b CCLComponentSetApplyConfiguration) IsApplyConfiguration() {}

@@ -73,6 +73,7 @@ inputs are hand-written. Python's hand-written files are documented in
 | API types, markers or API doc comments | `make manifests generate`, `make client-generate`, `make helm-generate`, `make python-generate` |
 | `config/` or RBAC markers | `make helm-generate` (includes manifest generation) |
 | Catalog Go values or their comments, or `hack/pyschema/` | `make python-generate` |
+| `hack/clientschema/` | `make client-generate` |
 
 Commit the resulting generated changes. API and catalog doc comments ship in schemas;
 comment-only edits can require regeneration too. Do not install CRDs into a cluster merely

@@ -99,13 +99,18 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 # +genclient are included.
 API_PACKAGES = $(shell go list ./api/...)
 CLIENT_PACKAGE = $(shell go list -m)/pkg/client
+# The OpenAPI schema hack/clientschema builds from the CRDs for applyconfiguration-gen.
+CLIENT_SCHEMA ?= dist/clientschema.json
 
 .PHONY: client-generate
-client-generate: applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
+client-generate: manifests applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
 	rm -rf pkg/client
+	go run ./hack/clientschema --crds "$(CRD_DIR)" --out "$(CLIENT_SCHEMA)"
 	# Apply configurations give the clientset its Apply methods and the fake clientset its
 	# field-managed NewClientset; without them only the deprecated NewSimpleClientset exists.
-	"$(APPLYCONFIGURATION_GEN)" --output-dir pkg/client/applyconfiguration \
+	# The fake tracks field ownership with the schema and fails every write without it.
+	"$(APPLYCONFIGURATION_GEN)" --openapi-schema "$(CLIENT_SCHEMA)" \
+		--output-dir pkg/client/applyconfiguration \
 		--output-pkg $(CLIENT_PACKAGE)/applyconfiguration \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
 	"$(CLIENT_GEN)" --clientset-name versioned --input-base "" $(addprefix --input ,$(API_PACKAGES)) \

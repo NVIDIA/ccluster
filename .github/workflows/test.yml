@@ -13,6 +13,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      # The header of every generated Go file, which the client drift check compares.
+      - 'hack/boilerplate.go.txt'
       - 'Dockerfile'
       - 'config/**'
       - 'charts/**'

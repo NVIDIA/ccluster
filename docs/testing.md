@@ -29,7 +29,7 @@ performs manifest generation, formatting and vetting before running tests.
 
 `test/client/` runs the generated Go client in `pkg/client/` against envtest with plain
 `testing`: each kind's scope and status subresource, the informer factory and listers,
-and the fake clientset.
+`Extract` on the server's managed fields, and writes through the fake clientset.
 
 The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of test
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
