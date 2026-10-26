@@ -77,16 +77,24 @@ var schemaYAML = typed.YAMLObject(`types:
                 elementRelationship: associative
                 keys:
                 - type
-          - name: loadBalancer
+          - name: loadBalancers
             type:
-              map:
-                fields:
-                - name: hostname
-                  type:
-                    scalar: string
-                - name: ip
-                  type:
-                    scalar: string
+              list:
+                elementType:
+                  map:
+                    fields:
+                    - name: hostname
+                      type:
+                        scalar: string
+                    - name: ip
+                      type:
+                        scalar: string
+                    - name: name
+                      type:
+                        scalar: string
+                elementRelationship: associative
+                keys:
+                - name
           - name: observedGeneration
             type:
               scalar: numeric
@@ -259,16 +267,24 @@ var schemaYAML = typed.YAMLObject(`types:
                       elementRelationship: associative
                       keys:
                       - type
-                - name: loadBalancer
+                - name: loadBalancers
                   type:
-                    map:
-                      fields:
-                      - name: hostname
-                        type:
-                          scalar: string
-                      - name: ip
-                        type:
-                          scalar: string
+                    list:
+                      elementType:
+                        map:
+                          fields:
+                          - name: hostname
+                            type:
+                              scalar: string
+                          - name: ip
+                            type:
+                              scalar: string
+                          - name: name
+                            type:
+                              scalar: string
+                      elementRelationship: associative
+                      keys:
+                      - name
                 - name: observedGeneration
                   type:
                     scalar: numeric

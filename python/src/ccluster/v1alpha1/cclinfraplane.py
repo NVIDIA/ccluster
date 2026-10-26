@@ -149,11 +149,9 @@ class Condition(BaseModel):
 
 class LoadBalancer(BaseModel):
     """
-    loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
-    observed it: the Service of type LoadBalancer labelled
-    ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
-    Service, while it has no address yet, and while more than one Service carries the
-    label.
+    LoadBalancerStatus is the address of a LoadBalancer Service labelled
+    ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
+    provider assigns one.
     """
 
     model_config = ConfigDict(
@@ -168,6 +166,10 @@ class LoadBalancer(BaseModel):
     ip: str | None = None
     """
     ip is the LoadBalancer's IP address: the first IP the Service reports.
+    """
+    name: Annotated[str, Field(max_length=63, min_length=1)]
+    """
+    name is the Service's ccluster.nvidia.com/loadbalancer label value, e.g. "ingress".
     """
 
 
@@ -195,13 +197,14 @@ class CCLClusterConfigStatus(BaseModel):
 
     The status of each condition is one of True, False, or Unknown.
     """
-    load_balancer: Annotated[LoadBalancer | None, Field(alias="loadBalancer")] = None
+    load_balancers: Annotated[
+        list[LoadBalancer] | None, Field(alias="loadBalancers")
+    ] = None
     """
-    loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
-    observed it: the Service of type LoadBalancer labelled
-    ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
-    Service, while it has no address yet, and while more than one Service carries the
-    label.
+    loadBalancers are the cluster's LoadBalancer Services labelled
+    ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
+    last observed them. "ingress" is the cluster's ingress. A value carried by more
+    than one Service is left out and reported in the Verified condition.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """

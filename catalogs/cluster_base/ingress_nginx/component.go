@@ -17,10 +17,6 @@ const (
 	Name = "ingress-nginx"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/ingress_nginx"
-	// ServiceLabel marks the controller's Service as the cluster's ingress
-	// LoadBalancer. values.yaml sets it to "true"; the infra-plane operator reports
-	// the address of the LoadBalancer Service that carries it.
-	ServiceLabel = "ccluster.nvidia.com/track-ingress"
 )
 
 // Values is the top-level values document for catalogs/cluster_base/ingress_nginx.

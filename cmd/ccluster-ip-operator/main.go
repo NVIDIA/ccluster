@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 // ccluster-ip-operator runs in an infra-plane cluster.
 //
 // It runs every catalogs/cluster_base component's Verifier against the CCLClusterConfig
-// singleton and reports the outcome there, along with the cluster's ingress
-// LoadBalancer. It installs nothing.
+// singleton and reports the outcome there, along with the cluster's labelled
+// LoadBalancers. It installs nothing.
 package main
 
 import (
@@ -44,7 +44,7 @@ func main() {
 		Name:             "ccluster-ip-operator",
 		LeaderElectionID: "ip.ccluster.nvidia.com",
 		Scheme:           scheme,
-		// The operator reads one kind of Service, the cluster's ingress LoadBalancer;
+		// The operator reads only the Services labelled as LoadBalancers to report;
 		// caching every Service in the cluster would cost memory for nothing.
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
 			&corev1.Service{}: {Label: ip.ServiceCacheSelector},

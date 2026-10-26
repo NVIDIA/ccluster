@@ -9,6 +9,6 @@ SPDX-License-Identifier: Apache-2.0
 //
 // The operator's job is verification: it runs every catalogs/cluster_base component's
 // Verifier against the CCLClusterConfig singleton and reports the outcome there. It also
-// reports the cluster's ingress LoadBalancer there, for the control plane's DNS. It never
+// reports the cluster's labelled LoadBalancers there, for the control plane's DNS. It never
 // installs, upgrades or deletes anything.
 package ip

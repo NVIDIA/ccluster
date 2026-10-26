@@ -99,10 +99,10 @@ func (in *CCLClusterConfigStatus) DeepCopyInto(out *CCLClusterConfigStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
-	if in.LoadBalancer != nil {
-		in, out := &in.LoadBalancer, &out.LoadBalancer
-		*out = new(LoadBalancerStatus)
-		**out = **in
+	if in.LoadBalancers != nil {
+		in, out := &in.LoadBalancers, &out.LoadBalancers
+		*out = make([]LoadBalancerStatus, len(*in))
+		copy(*out, *in)
 	}
 }
 

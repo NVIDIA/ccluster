@@ -245,7 +245,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    ccluster.nvidia.com/track-ingress: "true"
+    ccluster.nvidia.com/loadbalancer: ingress
 spec:
   type: LoadBalancer
   ports:

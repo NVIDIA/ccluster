@@ -9,9 +9,12 @@ package v1alpha1
 // LoadBalancerStatusApplyConfiguration represents a declarative configuration of the LoadBalancerStatus type for use
 // with apply.
 //
-// LoadBalancerStatus is the address of a cluster's ingress LoadBalancer. At least one of
-// ip and hostname is set.
+// LoadBalancerStatus is the address of a LoadBalancer Service labelled
+// ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
+// provider assigns one.
 type LoadBalancerStatusApplyConfiguration struct {
+	// name is the Service's ccluster.nvidia.com/loadbalancer label value, e.g. "ingress".
+	Name *string `json:"name,omitempty"`
 	// ip is the LoadBalancer's IP address: the first IP the Service reports.
 	IP *string `json:"ip,omitempty"`
 	// hostname is the LoadBalancer's DNS name, set by cloud providers whose load
@@ -24,6 +27,14 @@ type LoadBalancerStatusApplyConfiguration struct {
 // apply.
 func LoadBalancerStatus() *LoadBalancerStatusApplyConfiguration {
 	return &LoadBalancerStatusApplyConfiguration{}
+}
+
+// WithName sets the Name field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Name field is set to the value of the last call.
+func (b *LoadBalancerStatusApplyConfiguration) WithName(value string) *LoadBalancerStatusApplyConfiguration {
+	b.Name = &value
+	return b
 }
 
 // WithIP sets the IP field in the declarative configuration to the given value

@@ -10,10 +10,13 @@ import (
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 )
 
 // TestValuesLabelTheLoadBalancer checks that values.yaml ships the controller's Service
-// as a LoadBalancer carrying ServiceLabel, which the infra-plane operator looks for.
+// as a LoadBalancer labelled as the cluster's ingress, which the infra-plane operator
+// reports for the cluster's DNS.
 func TestValuesLabelTheLoadBalancer(t *testing.T) {
 	raw, err := os.ReadFile("values.yaml")
 	if err != nil {
@@ -39,7 +42,8 @@ func TestValuesLabelTheLoadBalancer(t *testing.T) {
 		t.Errorf("controller.service is enabled=%t type=%q, want an enabled LoadBalancer",
 			service.Enabled, service.Type)
 	}
-	if got := service.Labels[ServiceLabel]; got != "true" {
-		t.Errorf("controller.service.labels[%q] = %q, want \"true\"", ServiceLabel, got)
+	label, want := cclusternvidiacomv1alpha1.LabelLoadBalancer, cclusternvidiacomv1alpha1.LoadBalancerIngress
+	if got := service.Labels[label]; got != want {
+		t.Errorf("controller.service.labels[%q] = %q, want %q", label, got, want)
 	}
 }

@@ -30,12 +30,11 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	// observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
 	// were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
-	// loadBalancer is the cluster's ingress LoadBalancer as the infra-plane operator last
-	// observed it: the Service of type LoadBalancer labelled
-	// ccluster.nvidia.com/track-ingress=true. It is unset while there is no such
-	// Service, while it has no address yet, and while more than one Service carries the
-	// label.
-	LoadBalancer *LoadBalancerStatusApplyConfiguration `json:"loadBalancer,omitempty"`
+	// loadBalancers are the cluster's LoadBalancer Services labelled
+	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
+	// last observed them. "ingress" is the cluster's ingress. A value carried by more
+	// than one Service is left out and reported in the Verified condition.
+	LoadBalancers []LoadBalancerStatusApplyConfiguration `json:"loadBalancers,omitempty"`
 }
 
 // CCLClusterConfigStatusApplyConfiguration constructs a declarative configuration of the CCLClusterConfigStatus type for use with
@@ -65,10 +64,15 @@ func (b *CCLClusterConfigStatusApplyConfiguration) WithObservedGeneration(value 
 	return b
 }
 
-// WithLoadBalancer sets the LoadBalancer field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the LoadBalancer field is set to the value of the last call.
-func (b *CCLClusterConfigStatusApplyConfiguration) WithLoadBalancer(value *LoadBalancerStatusApplyConfiguration) *CCLClusterConfigStatusApplyConfiguration {
-	b.LoadBalancer = value
+// WithLoadBalancers adds the given value to the LoadBalancers field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the LoadBalancers field.
+func (b *CCLClusterConfigStatusApplyConfiguration) WithLoadBalancers(values ...*LoadBalancerStatusApplyConfiguration) *CCLClusterConfigStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithLoadBalancers")
+		}
+		b.LoadBalancers = append(b.LoadBalancers, *values[i])
+	}
 	return b
 }
