@@ -116,5 +116,8 @@ with each job's inputs when changing build or generation dependencies.
   release PR runs them all. Its `release` label selects full e2e.
 - A skipped filtered workflow is expected for unrelated changes. Do not make these
   filtered checks required in branch protection: a skipped workflow can prevent merging.
+- Dependabot opens weekly version-update PRs for the Go module (`k8s.io/*` and
+  controller-runtime in one group), the Python package, the Dockerfile base images and
+  GitHub Actions. Their titles use the `build` or `ci` type so `pr-title` accepts them.
 - `dco` and `pr-title` enforce sign-off and the Conventional Commit PR title. The repository
   squash-merges the PR title and body into commit history; follow the commit skill's format.
