@@ -120,6 +120,7 @@ make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
 
 To author CRs from Python instead of YAML, `python/` is a generated Pydantic package covering
 both CRDs and the catalog's typed chart values; see [python/README.md](python/README.md).
+Go programs can use the generated clientset, listers and informers in [`pkg/client/`](pkg/client/).
 
 Each of those has `-cp` / `-ip` halves (`make build-cp`, `make deploy-ip`, ...) if you only
 want to touch one operator. `make clean` deletes both clusters; `make clean-all` also wipes

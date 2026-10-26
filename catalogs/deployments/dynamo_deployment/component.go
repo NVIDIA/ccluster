@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 	"github.com/NVIDIA/ccluster/catalogs/deployments"
 )

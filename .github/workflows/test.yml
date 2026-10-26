@@ -32,6 +32,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Intent-to-add makes files the generators would add count as drift too.
+      - name: Check the generated Go client
+        run: |
+          make client-generate
+          git add --intent-to-add pkg/client
+          git diff --exit-code -- pkg/client/
+
       - name: Running Tests
         run: |
           go mod tidy

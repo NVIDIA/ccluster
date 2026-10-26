@@ -27,6 +27,10 @@ Setup lives in `internal/controller/cp/suite_test.go` and, for the infra-plane o
 `internal/controller/ip/suite_test.go`. `make test` supplies the envtest assets and
 performs manifest generation, formatting and vetting before running tests.
 
+`test/client/` runs the generated Go client in `pkg/client/` against envtest with plain
+`testing`: each kind's scope and status subresource, the informer factory and listers,
+and the fake clientset.
+
 The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of test
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
 outcome) is proven without the seventeen real charts.

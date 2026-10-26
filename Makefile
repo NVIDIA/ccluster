@@ -95,6 +95,30 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
+# The API packages the Go client is generated from, as import paths. Only kinds marked
+# +genclient are included.
+API_PACKAGES = $(shell go list ./api/...)
+CLIENT_PACKAGE = $(shell go list -m)/pkg/client
+
+.PHONY: client-generate
+client-generate: applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
+	rm -rf pkg/client
+	# Apply configurations give the clientset its Apply methods and the fake clientset its
+	# field-managed NewClientset; without them only the deprecated NewSimpleClientset exists.
+	"$(APPLYCONFIGURATION_GEN)" --output-dir pkg/client/applyconfiguration \
+		--output-pkg $(CLIENT_PACKAGE)/applyconfiguration \
+		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
+	"$(CLIENT_GEN)" --clientset-name versioned --input-base "" $(addprefix --input ,$(API_PACKAGES)) \
+		--apply-configuration-package $(CLIENT_PACKAGE)/applyconfiguration \
+		--output-dir pkg/client/clientset --output-pkg $(CLIENT_PACKAGE)/clientset \
+		--go-header-file hack/boilerplate.go.txt
+	"$(LISTER_GEN)" --output-dir pkg/client/listers --output-pkg $(CLIENT_PACKAGE)/listers \
+		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
+	"$(INFORMER_GEN)" --versioned-clientset-package $(CLIENT_PACKAGE)/clientset/versioned \
+		--listers-package $(CLIENT_PACKAGE)/listers \
+		--output-dir pkg/client/informers --output-pkg $(CLIENT_PACKAGE)/informers \
+		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -711,6 +735,10 @@ KIND ?= kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 YQ ?= $(LOCALBIN)/yq
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+APPLYCONFIGURATION_GEN ?= $(LOCALBIN)/applyconfiguration-gen
+CLIENT_GEN ?= $(LOCALBIN)/client-gen
+LISTER_GEN ?= $(LOCALBIN)/lister-gen
+INFORMER_GEN ?= $(LOCALBIN)/informer-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 # kubebuilder is pinned and downloaded into bin/ like the other tools, because the
@@ -726,6 +754,11 @@ KUBEBUILDER ?= $(LOCALBIN)/kubebuilder
 KUSTOMIZE_VERSION ?= v5.8.1
 YQ_VERSION ?= v4.53.6
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
+
+#CODE_GENERATOR_VERSION is the k8s.io/code-generator release matching the client-go the generated client is built against
+CODE_GENERATOR_VERSION ?= $(shell v='$(call gomodver,k8s.io/client-go)'; \
+  [ -n "$$v" ] || { echo "Set CODE_GENERATOR_VERSION manually (client-go replace has no tag)" >&2; exit 1; }; \
+  printf '%s\n' "$$v")
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -754,6 +787,26 @@ $(YQ): $(LOCALBIN)
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
+
+.PHONY: applyconfiguration-gen
+applyconfiguration-gen: $(APPLYCONFIGURATION_GEN) ## Download applyconfiguration-gen locally if necessary.
+$(APPLYCONFIGURATION_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(APPLYCONFIGURATION_GEN),k8s.io/code-generator/cmd/applyconfiguration-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: client-gen
+client-gen: $(CLIENT_GEN) ## Download client-gen locally if necessary.
+$(CLIENT_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(CLIENT_GEN),k8s.io/code-generator/cmd/client-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: lister-gen
+lister-gen: $(LISTER_GEN) ## Download lister-gen locally if necessary.
+$(LISTER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(LISTER_GEN),k8s.io/code-generator/cmd/lister-gen,$(CODE_GENERATOR_VERSION))
+
+.PHONY: informer-gen
+informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
+$(INFORMER_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: setup-envtest
 setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
