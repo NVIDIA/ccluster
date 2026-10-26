@@ -11,5 +11,7 @@
 ### Changed
 - `catalogs/cluster_base/ingress_nginx` now enables the controller Service as a
   `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: ingress`, so an infra plane
-  gets a cloud load balancer on its next sync. The typed `controller.service` value is
-  removed: the Service is fixed in the chart's values.
+  gets a cloud load balancer on its next sync.
+- **Breaking:** the typed `ingress_nginx` values drop `controller.service`, in Go
+  (`ingressnginx.Controller.Service`) and in the generated Python models: the Service is
+  fixed in the chart's values. Remove the field from any values that set it.
