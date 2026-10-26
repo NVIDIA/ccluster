@@ -8,11 +8,10 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestResolveNamespace(t *testing.T) {
+func TestResolveArgoCDNamespace(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		path := filepath.Join(dir, name)
@@ -39,15 +38,12 @@ func TestResolveNamespace(t *testing.T) {
 		{name: "empty file", file: empty, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveNamespace("--argocd-namespace", tc.flagValue, tc.file)
+			got, err := resolveArgoCDNamespace(tc.flagValue, tc.file)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, want error: %v", err, tc.wantErr)
 			}
 			if got != tc.want {
 				t.Errorf("namespace = %q, want %q", got, tc.want)
-			}
-			if err != nil && !strings.Contains(err.Error(), "--argocd-namespace") {
-				t.Errorf("error %q does not name the flag", err)
 			}
 		})
 	}

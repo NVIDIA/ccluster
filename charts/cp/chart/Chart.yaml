@@ -51,8 +51,7 @@ dependencies:
   # Publishes each CCLInfraPlane's wildcard record from the DNSEndpoint the operator writes,
   # into the DNS zone the user created for the domain. Like Argo CD, it is installed
   # alongside the operator rather than by it, and the operator only ever writes
-  # DNSEndpoints. Off by default: it needs a DNS provider and its credentials, and the
-  # operator --publish-dns.
+  # DNSEndpoints. Off by default: it needs a DNS provider and its credentials.
   - name: external-dns
     version: 1.19.0
     repository: https://kubernetes-sigs.github.io/external-dns/

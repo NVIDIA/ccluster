@@ -232,6 +232,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}),
 				RemoteWatches: watches,
 				ResyncPeriod:  resyncPeriod,
+				// The operator's own namespace in production. Specs about DNS move it.
+				DNSEndpointNamespace: argoCDNamespace,
 			}
 
 			By("creating the Argo CD namespace")
@@ -1125,13 +1127,12 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(watches.calls()).To(HaveExactElements("stop " + missing.String()))
 		})
 
-		Context("with DNS published", func() {
+		Context("publishing DNS", func() {
 			const dnsNamespace = "external-dns"
 
 			dnsEndpointKey := types.NamespacedName{Name: mirrorName, Namespace: dnsNamespace}
 
 			BeforeEach(func() {
-				reconciler.PublishDNS = true
 				reconciler.DNSEndpointNamespace = dnsNamespace
 
 				err := k8sClient.Create(ctx, &corev1.Namespace{
@@ -1216,16 +1217,6 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(k8sClient.Status().Update(ctx, dnsEndpoint)).To(Succeed())
 				return reconcileAndGet()
 			}
-
-			It("should report NotConfigured and write nothing without --publish-dns", func() {
-				reconciler.PublishDNS = false
-
-				settle()
-				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
-
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSNotConfigured)
-				Expect(dnsEndpointExists()).To(BeFalse())
-			})
 
 			It("should wait for the ingress LoadBalancer without writing a DNSEndpoint", func() {
 				infraPlane := settle()
@@ -1323,7 +1314,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
 			})
 
-			It("should report DNSEndpointCRDMissing and retry when external-dns is not installed", func() {
+			It("should report DNSEndpointCRDMissing, leaving the retry to the resync, when external-dns is not installed", func() {
 				settle()
 				watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
 				Expect(err).NotTo(HaveOccurred())
@@ -1351,7 +1342,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
 				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSEndpointCRDMissing)
-				Expect(reconcileResult().RequeueAfter).To(Equal(dnsRetryInterval))
+				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
 
 				By("deleting the plane all the same")
 				deleteAndFinalize(typeNamespacedName)

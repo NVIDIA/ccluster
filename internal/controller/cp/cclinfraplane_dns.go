@@ -9,12 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -32,15 +30,10 @@ const (
 
 	reasonDNSPublished          = "Published"
 	reasonDNSPending            = "Pending"
-	reasonDNSNotConfigured      = "NotConfigured"
 	reasonLoadBalancerPending   = "LoadBalancerPending"
 	reasonDNSEndpointCRDMissing = "DNSEndpointCRDMissing"
 	reasonDNSEndpointConflict   = "DNSEndpointConflict"
 )
-
-// dnsRetryInterval is how soon a DNSEndpoint that could not be written for want of its
-// CRD is tried again. external-dns being installed does not arrive as an event.
-const dnsRetryInterval = time.Minute
 
 // wildcardTTL is the TTL of the wildcard record, short so that resolvers follow a
 // LoadBalancer whose address changes quickly.
@@ -58,9 +51,9 @@ func dnsEndpointName(namespace, name string) string {
 
 // reconcileDNS writes the DNSEndpoint that has external-dns point "*.<domain>" at the
 // ingress LoadBalancer reported in clusterConfig, or deletes it while there is no address
-// to point it at. It returns the DNSReady condition and when to look again. Only
-// unexpected Kubernetes API errors are returned; everything else is reported in the
-// condition.
+// to point it at. It returns the DNSReady condition. Only unexpected Kubernetes API errors
+// are returned; everything else is reported in the condition, and none of it needs a
+// requeue of its own.
 //
 // Which DNS zone the record lands in is external-dns's choice: the most specific zone it
 // manages that the domain falls under. Creating that zone, and delegating it, is the
@@ -69,7 +62,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
-) (metav1.Condition, ctrl.Result, error) {
+) (metav1.Condition, error) {
 	log := logf.FromContext(ctx)
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
@@ -82,42 +75,36 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		}
 	}
 
-	if !r.PublishDNS {
-		return condition(metav1.ConditionFalse, reasonDNSNotConfigured,
-			"the control-plane operator runs without --publish-dns"), ctrl.Result{}, nil
-	}
-
 	endpoint := wildcardEndpoint(infraPlane.Spec.Domain, clusterConfig)
 	if endpoint == nil {
 		// No requeue: the address arrives through the watch on the CCLClusterConfig.
 		if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
-			return metav1.Condition{}, ctrl.Result{}, err
+			return metav1.Condition{}, err
 		}
 		return condition(metav1.ConditionFalse, reasonLoadBalancerPending, fmt.Sprintf(
-				"waiting for the infra-plane cluster to report an address for its %q LoadBalancer",
-				"ingress")),
-			ctrl.Result{}, nil
+			"waiting for the infra-plane cluster to report an address for its %q LoadBalancer",
+			"ingress")), nil
 	}
 
 	dnsEndpoint, op, err := r.applyDNSEndpoint(ctx, infraPlane, *endpoint)
 	switch {
 	case apimeta.IsNoMatchError(err):
+		// No requeue of its own: without external-dns this is the steady state, and the
+		// resync notices external-dns being installed.
 		log.Info("DNSEndpoint CRD not installed, skipped DNSEndpoint",
 			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
 		return condition(metav1.ConditionFalse, reasonDNSEndpointCRDMissing,
-				"the DNSEndpoint CRD is not installed; install external-dns with the cp chart"),
-			ctrl.Result{RequeueAfter: dnsRetryInterval}, nil
+			"the DNSEndpoint CRD is not installed; install external-dns with the cp chart"), nil
 	case errors.Is(err, errDNSEndpointConflict):
 		// No requeue: only an edit elsewhere can resolve this, and the DNSEndpoint watch
 		// picks that up.
 		log.Info("Refused to overwrite DNSEndpoint owned by another CCLInfraPlane",
 			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
 		return condition(metav1.ConditionFalse, reasonDNSEndpointConflict, fmt.Sprintf(
-				"DNSEndpoint %q in namespace %q belongs to another CCLInfraPlane",
-				dnsEndpoint.Name, dnsEndpoint.Namespace)),
-			ctrl.Result{}, nil
+			"DNSEndpoint %q in namespace %q belongs to another CCLInfraPlane",
+			dnsEndpoint.Name, dnsEndpoint.Namespace)), nil
 	case err != nil:
-		return metav1.Condition{}, ctrl.Result{}, err
+		return metav1.Condition{}, err
 	case op != controllerutil.OperationResultNone:
 		log.Info("Applied DNSEndpoint", "dnsEndpoint", dnsEndpoint.Name,
 			"dnsEndpointNamespace", dnsEndpoint.Namespace, "dnsName", endpoint.DNSName,
@@ -128,17 +115,15 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	if dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation {
 		// No requeue: external-dns writing the DNSEndpoint's status is an event.
 		return condition(metav1.ConditionFalse, reasonDNSPending, fmt.Sprintf(
-				"waiting for external-dns to accept DNSEndpoint %q in namespace %q: %s",
-				dnsEndpoint.Name, dnsEndpoint.Namespace, record)),
-			ctrl.Result{}, nil
+			"waiting for external-dns to accept DNSEndpoint %q in namespace %q: %s",
+			dnsEndpoint.Name, dnsEndpoint.Namespace, record)), nil
 	}
 	// external-dns accepts a record that matches none of its zones too, and drops it; see
 	// https://github.com/NVIDIA/ccluster/issues/174.
 	return condition(metav1.ConditionTrue, reasonDNSPublished, fmt.Sprintf(
-			"external-dns accepted DNSEndpoint %q in namespace %q: %s; it is published if "+
-				"external-dns manages a zone that %s falls under",
-			dnsEndpoint.Name, dnsEndpoint.Namespace, record, infraPlane.Spec.Domain)),
-		ctrl.Result{}, nil
+		"external-dns accepted DNSEndpoint %q in namespace %q: %s; it is published if "+
+			"external-dns manages a zone that %s falls under",
+		dnsEndpoint.Name, dnsEndpoint.Namespace, record, infraPlane.Spec.Domain)), nil
 }
 
 // wildcardEndpoint returns the "*.<domain>" record pointing at the ingress LoadBalancer
@@ -223,19 +208,6 @@ func (r *CCLInfraPlaneReconciler) deleteDNSEndpoint(
 	}
 	log.Info("Deleted DNSEndpoint", "dnsEndpoint", key.Name, "dnsEndpointNamespace", key.Namespace)
 	return nil
-}
-
-// finalizeDNS deletes infraPlane's DNSEndpoint, which has external-dns withdraw the record.
-// Without DNS published there is none to delete; one written before DNS was turned off
-// stays behind.
-func (r *CCLInfraPlaneReconciler) finalizeDNS(
-	ctx context.Context,
-	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-) error {
-	if !r.PublishDNS {
-		return nil
-	}
-	return r.deleteDNSEndpoint(ctx, infraPlane)
 }
 
 // infraPlanesForDNSEndpoint maps a DNSEndpoint the operator wrote to its CCLInfraPlane, so

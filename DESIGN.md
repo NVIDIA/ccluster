@@ -76,7 +76,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 
 | Piece | Role |
 | --- | --- |
-| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials, and, with `--publish-dns`, the `DNSEndpoint` for each plane's wildcard record (§3). |
+| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials, and the `DNSEndpoint` for each plane's wildcard record (§3). |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | external-dns | Control-plane cluster only, optional. Publishes the `DNSEndpoint`s the operator writes into the DNS zones the user created (§3). |
@@ -281,8 +281,7 @@ therefore retried every minute, and a written one is reconciled again every
 
 ### DNS: a wildcard record per plane, published by external-dns
 
-With `--publish-dns`, `*.<domain>` points at the plane's ingress LoadBalancer
-(`cclinfraplane_dns.go`). The work is split three ways:
+`*.<domain>` points at the plane's ingress LoadBalancer (`cclinfraplane_dns.go`). The work is split three ways:
 
 | Step | Done by |
 | --- | --- |
@@ -305,8 +304,8 @@ withdraws the record.
   infrastructure code.
 - **Confinement.** The cp chart's external-dns reads only the `crd` source, only in its own
   namespace (`namespaced: true`, a Role), and deletes only records under its own TXT owner
-  ID. The `DNSEndpoint`s therefore live in that namespace (`--dns-endpoint-namespace`, the
-  operator's by default), not beside the CCLInfraPlane: anyone who could write a
+  ID. The `DNSEndpoint`s therefore live in that namespace, the operator's own, not beside
+  the CCLInfraPlane: anyone who could write a
   `DNSEndpoint` where external-dns reads it could publish any name its credentials reach.
   Like the mirrored Secret, the `DNSEndpoint` carries the `infraPlaneOwner` annotations
   rather than an owner reference, the same `ownedBy` check, and the same `<namespace>-<name>`
@@ -319,7 +318,9 @@ withdraws the record.
   which it drops with a debug-level log, so `Published` cannot yet tell that case apart
   ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 
-Without `--publish-dns` none of this runs.
+The operator writes the `DNSEndpoint` whether or not external-dns is installed. Without its
+CRD the write fails, which is reported and retried on the resync rather than every minute,
+since it is the steady state of a control plane that publishes no DNS.
 
 ### Status
 
@@ -340,11 +341,11 @@ is computed only once `Available` is true, and both are written in one status pa
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 `DNSReady` — `True/Published` (external-dns has accepted the current `DNSEndpoint`; see
-the gap above), or `False` with `NotConfigured` (no `--publish-dns`), `LoadBalancerPending`
-(the plane reports no ingress address), `Pending` (external-dns has not read the current
-`DNSEndpoint` yet), `DNSEndpointCRDMissing` (external-dns is not installed) or
-`DNSEndpointConflict` (the name is another plane's). It is written in the same status
-patch. `DNSEndpointCRDMissing` retries every minute; the rest wait for a watch.
+the gap above), or `False` with `LoadBalancerPending` (the plane reports no ingress
+address), `Pending` (external-dns has not read the current `DNSEndpoint` yet),
+`DNSEndpointCRDMissing` (external-dns is not installed) or `DNSEndpointConflict` (the name
+is another plane's). It is written in the same status patch. `DNSEndpointCRDMissing` waits
+for the resync; the rest wait for a watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
@@ -817,7 +818,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has accepted the `DNSEndpoint` pointing `*.<domain>` at the plane's ingress LoadBalancer (§3). Reasons: `Published`, `Pending`, `NotConfigured`, `LoadBalancerPending`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has accepted the `DNSEndpoint` pointing `*.<domain>` at the plane's ingress LoadBalancer (§3). Reasons: `Published`, `Pending`, `LoadBalancerPending`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
@@ -854,8 +855,8 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   the namespace it is named after, so a project deleted or loosened by hand is repaired.
   Through a raw source fed by `internal/remote`, it also watches each infra-plane cluster's
   `CCLClusterConfig` (§3), which is also how a new ingress address reaches the plane's
-  wildcard record. With `--publish-dns` and external-dns's CRD installed at startup, it
-  watches `DNSEndpoint`s too, mapped back by their annotations, so external-dns accepting
+  wildcard record. With external-dns's CRD installed at startup, it watches
+  `DNSEndpoint`s too, mapped back by their annotations, so external-dns accepting
   one, or drift on it, reconciles the plane.
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
@@ -893,7 +894,7 @@ minute, with a slower resync behind its watch (§3).
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide, and DNSEndpoints too
-  with `--publish-dns`.
+  once external-dns is installed.
 - **Unpublishable records.** A record that falls under no zone external-dns manages is
   reported `Published` all the same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 - **Overlapping domains.** Nothing stops two CCLInfraPlanes from registering the same

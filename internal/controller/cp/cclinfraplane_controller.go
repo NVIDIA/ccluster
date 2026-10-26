@@ -91,12 +91,9 @@ type CCLInfraPlaneReconciler struct {
 	// reconciled again anyway, a safety net behind RemoteWatches. Zero disables it.
 	ResyncPeriod time.Duration
 
-	// PublishDNS has the operator write a DNSEndpoint per CCLInfraPlane, from which
-	// external-dns publishes "*.<domain>" pointing at the plane's ingress LoadBalancer.
-	PublishDNS bool
-
-	// DNSEndpointNamespace is the namespace the DNSEndpoints are written to, the one the
-	// control plane's external-dns reads them from. CCLInfraPlanes live elsewhere, so
+	// DNSEndpointNamespace is the operator's own namespace, where the DNSEndpoint of each
+	// CCLInfraPlane is written, and from which the cp chart's external-dns publishes
+	// "*.<domain>" pointing at the plane's ingress LoadBalancer. CCLInfraPlanes live elsewhere, so
 	// that no tenant who can write in their own namespace can publish a record.
 	DNSEndpointNamespace string
 }
@@ -130,8 +127,8 @@ type CCLInfraPlaneReconciler struct {
 // against, and writes it with spec.domain. That is reported as the ClusterConfigApplied
 // condition, and the singleton's status is copied into status.clusterConfig.
 //
-// With DNS published, the operator then writes a DNSEndpoint pointing "*.<domain>" at the
-// ingress LoadBalancer in that copy, for external-dns to publish. That is reported as the
+// The operator then writes a DNSEndpoint pointing "*.<domain>" at the ingress
+// LoadBalancer in that copy, for external-dns to publish. That is reported as the
 // DNSReady condition. Every condition and the copy are written in one status patch.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
@@ -246,21 +243,13 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if lastClusterConfig == nil {
 		lastClusterConfig = infraPlane.Status.ClusterConfig
 	}
-	dnsReady, dnsResult, err := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
+	dnsReady, err := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return earliest(result, dnsResult), r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
+	return result, r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
 		available, clusterConfigApplied, dnsReady)
-}
-
-// earliest returns the result that requeues soonest, ignoring those that do not.
-func earliest(a, b ctrl.Result) ctrl.Result {
-	if b.RequeueAfter > 0 && (a.RequeueAfter == 0 || b.RequeueAfter < a.RequeueAfter) {
-		return b
-	}
-	return a
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
@@ -327,7 +316,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	}
 
 	r.RemoteWatches.Stop(client.ObjectKeyFromObject(infraPlane))
-	if err := r.finalizeDNS(ctx, infraPlane); err != nil {
+	if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
 		return err
 	}
 	r.deleteClusterConfig(ctx, infraPlane)
@@ -461,7 +450,7 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start. The DNSEndpoint
-// watch likewise needs external-dns's CRD, and is registered only when DNS is published.
+// watch likewise needs external-dns's CRD.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
@@ -472,7 +461,7 @@ func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder = builder.Watches(&argocdv1alpha1.AppProject{},
 			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForProject))
 	}
-	if r.PublishDNS && kindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"),
+	if kindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"),
 		externaldnsv1alpha1.GroupVersion.WithKind("DNSEndpoint")) {
 		builder = builder.Watches(&externaldnsv1alpha1.DNSEndpoint{},
 			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForDNSEndpoint))

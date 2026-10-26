@@ -654,10 +654,12 @@ var _ = Describe("Manager", Ordered, func() {
 				}, crossClusterTimeout).Should(Succeed())
 
 				// The suite deploys the cp chart as the quickstart does, without
-				// --publish-dns or external-dns.
-				By("reporting DNS as not configured, with an ingress address to publish")
-				Expect(infraPlaneCondition(planeName, conditionDNSReady, "status")).To(Equal("False"))
-				Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("NotConfigured"))
+				// external-dns, so there is no DNSEndpoint CRD to write the record to.
+				By("reporting the missing DNSEndpoint CRD once there is an ingress address to publish")
+				Eventually(func(g Gomega) {
+					g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "status")).To(Equal("False"))
+					g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("DNSEndpointCRDMissing"))
+				}, crossClusterTimeout).Should(Succeed())
 
 				By("deleting the CCLClusterConfig from the plane's cluster with the CCLInfraPlane")
 				deleteInfraPlane(planeName)

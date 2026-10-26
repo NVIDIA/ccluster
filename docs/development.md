@@ -330,8 +330,9 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 
 ### DNS and external-dns
 
-DNS is off by default (`DNSReady=False/NotConfigured`). To publish `*.<domain>` for each
-CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
+The operator always writes a DNSEndpoint per CCLInfraPlane into its own namespace; without
+external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
+`*.<domain>` for each CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
 
 1. Create the DNS zones the planes' domains fall under, and delegate them from their
    parents. One zone can serve several planes (`team-a.example.com` for
@@ -352,16 +353,16 @@ CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
          eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
    ```
 
-3. Deploy with DNS on, which sets `external-dns.enabled=true` and `--publish-dns`:
+3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`):
 
    ```bash
    make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
    ```
 
-The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
-reads; `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
-should then read only that namespace. external-dns's Route53 policy, scoped by name with
-`team-a.example.com` standing for your zones:
+The chart's external-dns reads DNSEndpoints from the release namespace, the operator's own.
+`make run-cp` has no namespace of its own and writes them to the Argo CD namespace instead.
+external-dns's Route53 policy, scoped by name with `team-a.example.com` standing for your
+zones:
 
 ```json
 {
