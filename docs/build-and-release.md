@@ -102,6 +102,10 @@ with each job's inputs when changing build or generation dependencies.
   and test inputs. `test-e2e` builds every image: the suite builds the operators and a
   workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
   PR rather than `main.yml`.
+- `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
+  templates. Before the suite it runs `make manifests generate` and fails on any diff
+  under `api/`, `config/` or `internal/`. `make test` regenerates these files itself, so
+  without the check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
 - The filtered `lint`, `test`, `test-e2e` and `test-python` jobs include `VERSION`, so a
