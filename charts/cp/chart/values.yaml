@@ -63,14 +63,13 @@ manager:
   ## safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
-  ## DNS is off unless --dns-parent-zone-id names a Route53 hosted zone, such as the one
-  ## for planes.example.com. The operator then creates a hosted zone for each
-  ## CCLInfraPlane's domain, which must lie under the parent's (gpu-a.planes.example.com),
-  ## delegates it from the parent, and points "*.<domain>" in it at the plane's ingress
-  ## LoadBalancer:
-  ##   - --dns-parent-zone-id=Z0123456789ABCDEFGHIJ
-  ## It calls Route53 with the AWS SDK's default credentials, such as IRSA through
-  ## `serviceAccount.annotations` below; docs/development.md lists the IAM policy.
+  ## DNS is off unless --publish-dns is set, together with the `external-dns` dependency
+  ## below. The operator then writes a DNSEndpoint per CCLInfraPlane pointing
+  ## "*.<domain>" at the plane's ingress LoadBalancer, and external-dns publishes it into
+  ## the DNS zone the domain falls under, which the user creates:
+  ##   - --publish-dns
+  ## --dns-endpoint-namespace (default: the operator's own namespace, where that
+  ## external-dns runs) is where the DNSEndpoints go.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
@@ -187,9 +186,7 @@ serviceAccount:
   ##
   # name: ""
 
-  ## Custom ServiceAccount annotations, such as the IAM role the operator calls Route53
-  ## as when --dns-parent-zone-id is set:
-  ##   eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<role>
+  ## Custom ServiceAccount annotations
   ##
   # annotations: {}
 
@@ -307,3 +304,50 @@ argo-cd:
     rbac:
       policy.csv: |
         p, ccluster-cp, applications, get, */*, allow
+
+## external-dns — a dependency of this chart, off by default. See the rationale in
+## Chart.yaml. Values here are passed to the upstream external-dns chart.
+##
+## Enable it together with the operator's --publish-dns (see manager.args). It publishes
+## the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<domain>" pointing at
+## the plane's ingress LoadBalancer - into the most specific DNS zone it manages that the
+## domain falls under. Creating the zones, and delegating them, is the user's: one zone per
+## plane, or one zone shared by several. A record that falls under none of its zones is
+## dropped without an error (https://github.com/NVIDIA/ccluster/issues/174).
+##
+## The presets below confine it to those DNSEndpoints, so it does not touch anything else,
+## another external-dns in the cluster included:
+##   - `namespaced` has it read DNSEndpoints from the release namespace only, the
+##     operator's default --dns-endpoint-namespace, under a Role rather than a
+##     ClusterRole;
+##   - `sources` is the DNSEndpoint CRD alone, so no Service or Ingress is published;
+##   - `txtOwnerId` limits deletions to the records it created itself.
+## The DNSEndpoint CRD comes with this chart and is shared with any other external-dns:
+## Helm installs it only if it is missing, and never upgrades or deletes it.
+##
+## The provider, the zones it may write and its credentials are the user's to set, for
+## instance for Route53 with IRSA:
+##   provider:
+##     name: aws
+##   domainFilters:
+##     - planes.example.com
+##   serviceAccount:
+##     annotations:
+##       eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<role>
+## docs/development.md has the matching IAM policy.
+external-dns:
+  enabled: false
+
+  sources:
+    - crd
+  namespaced: true
+  policy: sync
+  registry: txt
+  txtOwnerId: ccluster-cp
+  interval: 1m
+
+  extraArgs:
+    ## A TXT ownership record is named after the record it owns plus its type, which for
+    ## the wildcard is "a-*.<domain>": a "*" that is not a whole label is not a wildcard,
+    ## and most DNS providers reject it. This names it "a-wildcard.<domain>" instead.
+    txt-wildcard-replacement: wildcard

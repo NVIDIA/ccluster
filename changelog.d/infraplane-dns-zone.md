@@ -1,9 +1,12 @@
 ### Added
-- With the new `--dns-parent-zone-id`, the cp operator creates a Route53 hosted zone for
-  each `CCLInfraPlane`'s domain, which must lie under the parent zone's, delegates it from
-  the parent, and points `*.<domain>` in it at the plane's `ingress` LoadBalancer: an A
-  record for an IP, a CNAME for a hostname, withdrawn while the plane reports no address.
-  Deleting the plane deletes the delegation, the records and the zone. A new `DNSReady`
-  condition, `DNS` column and `status.dns` (the zone's ID and name servers) report on it.
-  Without the flag DNS stays off and reports `DNSReady=False/NotConfigured`.
-  `make deploy-cp DNS_PARENT_ZONE_ID=<zone>` sets the flag.
+- With the new `--publish-dns`, the cp operator writes an external-dns `DNSEndpoint` per
+  `CCLInfraPlane`, pointing `*.<domain>` at the plane's `ingress` LoadBalancer: an A
+  record for an IP, a CNAME for a hostname, withdrawn while the plane reports no address
+  and when the plane is deleted. The records go into whichever DNS zone the domain falls
+  under, which the user creates and delegates: one per plane, or one shared. A new
+  `DNSReady` condition and `DNS` column report on it; without the flag it is
+  `NotConfigured`. The operator's ClusterRole gains `externaldns.k8s.io` `dnsendpoints`.
+- The cp chart gains an optional external-dns dependency (`external-dns.enabled`, off by
+  default) that publishes those DNSEndpoints and nothing else: it reads only the release
+  namespace and only the `crd` source. Its provider, zones and credentials are set through
+  its values. `make deploy-cp DNS=true` turns on both.

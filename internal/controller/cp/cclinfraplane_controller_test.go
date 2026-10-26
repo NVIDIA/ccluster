@@ -8,9 +8,7 @@ package cp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,7 +31,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/cloud/aws/route53"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
@@ -1127,20 +1125,34 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(watches.calls()).To(HaveExactElements("stop " + missing.String()))
 		})
 
-		Context("with DNS configured", func() {
-			// zones stands in for Route53; internal/cloud/aws/route53 tests the real one.
-			var zones *fakeZones
+		Context("with DNS published", func() {
+			const dnsNamespace = "external-dns"
+
+			dnsEndpointKey := types.NamespacedName{Name: mirrorName, Namespace: dnsNamespace}
 
 			BeforeEach(func() {
-				zones = newFakeZones("example.com")
-				reconciler.Zones = zones
+				reconciler.PublishDNS = true
+				reconciler.DNSEndpointNamespace = dnsNamespace
+
+				err := k8sClient.Create(ctx, &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: dnsNamespace},
+				})
+				if !apierrors.IsAlreadyExists(err) {
+					Expect(err).NotTo(HaveOccurred())
+				}
 				createSecret(credentials)
 			})
 
 			AfterEach(func() {
-				// The outer AfterEach finalizes the CCLInfraPlanes; a spec may have
-				// made Route53 fail, which would block that.
-				zones.setErrors(nil, nil, nil)
+				// Runs after the outer AfterEach has finalized the CCLInfraPlanes, so it
+				// only removes what a spec created itself or left to another plane.
+				DeferCleanup(func() {
+					var list externaldnsv1alpha1.DNSEndpointList
+					Expect(k8sClient.List(ctx, &list, client.InNamespace(dnsNamespace))).To(Succeed())
+					for i := range list.Items {
+						Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &list.Items[i]))).To(Succeed())
+					}
+				})
 			})
 
 			// expectDNSReady asserts the DNSReady condition's status and reason, and
@@ -1175,85 +1187,122 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				return reconcileAndGet()
 			}
 
-			// wildcard returns the plane's wildcard record, or nil if it has none.
-			wildcard := func(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) *route53.Record {
+			getDNSEndpoint := func() *externaldnsv1alpha1.DNSEndpoint {
 				GinkgoHelper()
 
-				Expect(infraPlane.Status.DNS).NotTo(BeNil())
-				return zones.wildcard(infraPlane.Status.DNS.ZoneID)
+				dnsEndpoint := &externaldnsv1alpha1.DNSEndpoint{}
+				Expect(k8sClient.Get(ctx, dnsEndpointKey, dnsEndpoint)).To(Succeed())
+				return dnsEndpoint
 			}
 
-			It("should report NotConfigured and call no AWS API without a parent zone", func() {
-				reconciler.Zones = nil
+			dnsEndpointExists := func() bool {
+				GinkgoHelper()
+
+				err := k8sClient.Get(ctx, dnsEndpointKey, &externaldnsv1alpha1.DNSEndpoint{})
+				if apierrors.IsNotFound(err) {
+					return false
+				}
+				Expect(err).NotTo(HaveOccurred())
+				return true
+			}
+
+			// externalDNSAccepts has "external-dns" record that it read the DNSEndpoint's
+			// current generation, then reconciles as the DNSEndpoint watch's event would.
+			externalDNSAccepts := func() *cclusternvidiacomv1alpha1.CCLInfraPlane {
+				GinkgoHelper()
+
+				dnsEndpoint := getDNSEndpoint()
+				dnsEndpoint.Status.ObservedGeneration = dnsEndpoint.Generation
+				Expect(k8sClient.Status().Update(ctx, dnsEndpoint)).To(Succeed())
+				return reconcileAndGet()
+			}
+
+			It("should report NotConfigured and write nothing without --publish-dns", func() {
+				reconciler.PublishDNS = false
 
 				settle()
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
 				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSNotConfigured)
-				Expect(infraPlane.Status.DNS).To(BeNil())
-				Expect(zones.calls()).To(BeEmpty())
+				Expect(dnsEndpointExists()).To(BeFalse())
 			})
 
-			It("should create the hosted zone and wait for the ingress LoadBalancer", func() {
+			It("should wait for the ingress LoadBalancer without writing a DNSEndpoint", func() {
 				infraPlane := settle()
 
 				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonLoadBalancerPending)
-				zone := zones.zoneOf(infraPlane)
-				Expect(infraPlane.Status.DNS).To(Equal(&cclusternvidiacomv1alpha1.DNSStatus{
-					ZoneID: zone.ID, NameServers: zone.NameServers,
-				}))
-				Expect(wildcard(infraPlane)).To(BeNil())
+				Expect(dnsEndpointExists()).To(BeFalse())
 
 				By("waiting for the CCLClusterConfig watch rather than polling")
 				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
-
-				By("passing the recorded zone back, sparing Route53 a lookup by name")
-				Expect(zones.calls()).To(ContainElements(
-					"ensure "+domain+" ",
-					"ensure "+domain+" "+zone.ID,
-				))
 			})
 
-			It("should point the wildcard record at the ingress IP", func() {
+			It("should point the wildcard record at the ingress IP and report when external-dns accepts it", func() {
 				settle()
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+				dnsEndpoint := getDNSEndpoint()
+				Expect(dnsEndpoint.Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: "*." + domain, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+				}))
+				Expect(dnsEndpoint.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+				Expect(dnsEndpoint.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
+				Expect(dnsEndpoint.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
+
+				infraPlane = externalDNSAccepts()
+
 				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				Expect(wildcard(infraPlane)).To(Equal(&route53.Record{Type: "A", Value: "192.0.2.10"}))
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
 				Expect(condition.Message).To(ContainSubstring("*." + domain + " A 192.0.2.10"))
-				Expect(condition.Message).To(ContainSubstring(infraPlane.Status.DNS.ZoneID))
+
+				By("staying Published across reconciles that change nothing")
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
 			})
 
 			It("should point the wildcard record at the ingress hostname with a CNAME", func() {
 				settle()
 
-				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb-1.elb.example.net"})
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb-1.elb.example.net"})
 
-				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				Expect(wildcard(infraPlane)).To(Equal(&route53.Record{Type: "CNAME", Value: "lb-1.elb.example.net"}))
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: "*." + domain, RecordType: "CNAME", Targets: []string{"lb-1.elb.example.net"}, RecordTTL: 60,
+				}))
 			})
 
 			It("should follow a LoadBalancer whose address changes", func() {
 				settle()
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				externalDNSAccepts()
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.20"})
 
-				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				Expect(wildcard(infraPlane)).To(Equal(&route53.Record{Type: "A", Value: "192.0.2.20"}))
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.20"))
+			})
+
+			It("should restore a DNSEndpoint edited by hand", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				dnsEndpoint := getDNSEndpoint()
+				dnsEndpoint.Spec.Endpoints[0].Targets = []string{"198.51.100.1"}
+				Expect(k8sClient.Update(ctx, dnsEndpoint)).To(Succeed())
+				reconcileAndGet()
+
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
 			})
 
 			It("should withdraw the record when the ingress LoadBalancer goes away", func() {
 				settle()
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
 
 				infraPlane := reportIngress(nil)
 
 				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonLoadBalancerPending)
-				Expect(wildcard(infraPlane)).To(BeNil())
-				Expect(zones.zoneOf(infraPlane).ID).To(Equal(infraPlane.Status.DNS.ZoneID), "the zone outlives the record")
+				Expect(dnsEndpointExists()).To(BeFalse())
 			})
 
 			It("should keep the record while the CCLClusterConfig can no longer be written", func() {
@@ -1271,192 +1320,101 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				infraPlane := reconcileAndGet()
 
 				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
-				Expect(wildcard(infraPlane)).To(Equal(&route53.Record{Type: "A", Value: "192.0.2.10"}))
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
 			})
 
-			It("should report DomainOutsideParentZone without retrying", func() {
-				zones.parent = "example.org"
-
-				infraPlane := settle()
-
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDomainOutsideParentZone)
-				Expect(infraPlane.Status.DNS).To(BeNil())
-				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
-			})
-
-			It("should report Route53Error, keep the recorded zone and retry when the zone cannot be ensured", func() {
-				recorded := settle().Status.DNS
-				Expect(recorded).NotTo(BeNil())
-
-				zones.setErrors(errors.New("throttled"), nil, nil)
-				infraPlane := reconcileAndGet()
-
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonRoute53Error)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
-				Expect(condition.Message).To(ContainSubstring("throttled"))
-				Expect(infraPlane.Status.DNS).To(Equal(recorded))
-				Expect(reconcileResult().RequeueAfter).To(Equal(dnsRetryInterval))
-			})
-
-			It("should report Route53Error and retry when the record cannot be set", func() {
+			It("should report DNSEndpointCRDMissing and retry when external-dns is not installed", func() {
 				settle()
-				zones.setErrors(nil, errors.New("access denied"), nil)
+				watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+				Expect(err).NotTo(HaveOccurred())
+				noDNSEndpoints := func(obj client.Object) error {
+					if _, ok := obj.(*externaldnsv1alpha1.DNSEndpoint); ok {
+						return &apimeta.NoKindMatchError{GroupKind: externaldnsv1alpha1.GroupVersion.WithKind("DNSEndpoint").GroupKind()}
+					}
+					return nil
+				}
+				reconciler.Client = interceptor.NewClient(watchClient, interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if err := noDNSEndpoints(obj); err != nil {
+							return err
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if err := noDNSEndpoints(obj); err != nil {
+							return err
+						}
+						return c.Create(ctx, obj, opts...)
+					},
+				})
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonRoute53Error)
-				Expect(infraPlane.Status.DNS).NotTo(BeNil(), "the zone was ensured")
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSEndpointCRDMissing)
 				Expect(reconcileResult().RequeueAfter).To(Equal(dnsRetryInterval))
 
-				zones.setErrors(nil, nil, nil)
-				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
+				By("deleting the plane all the same")
+				deleteAndFinalize(typeNamespacedName)
 			})
 
-			It("should delete the zone before the CCLClusterConfig on deletion", func() {
+			It("should refuse to overwrite a DNSEndpoint owned by another CCLInfraPlane", func() {
+				Expect(k8sClient.Create(ctx, &externaldnsv1alpha1.DNSEndpoint{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: dnsEndpointKey.Name, Namespace: dnsNamespace,
+						Annotations: map[string]string{
+							annotationInfraPlaneName:      "other-plane",
+							annotationInfraPlaneNamespace: "other-namespace",
+						},
+					},
+					Spec: externaldnsv1alpha1.DNSEndpointSpec{Endpoints: []externaldnsv1alpha1.Endpoint{{
+						DNSName: "*.other.example.com", RecordType: "A", Targets: []string{"198.51.100.1"},
+					}}},
+				})).To(Succeed())
 				settle()
-				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
-				zoneID := infraPlane.Status.DNS.ZoneID
 
-				var clusterConfigPresent bool
-				zones.onDelete = func() { clusterConfigPresent = clusterConfigExists() }
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSEndpointConflict)
+				Expect(getDNSEndpoint().Spec.Endpoints[0].DNSName).To(Equal("*.other.example.com"))
+
+				By("leaving it in place when the CCLInfraPlane is deleted")
+				deleteAndFinalize(typeNamespacedName)
+				Expect(dnsEndpointExists()).To(BeTrue())
+			})
+
+			It("should delete the DNSEndpoint when the CCLInfraPlane is deleted", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
 
 				deleteAndFinalize(typeNamespacedName)
 
-				Expect(zones.calls()).To(ContainElement("delete " + domain + " " + zoneID))
-				Expect(zones.zoneOf(infraPlane).ID).To(BeEmpty())
-				Expect(clusterConfigPresent).To(BeTrue(), "the CCLClusterConfig was deleted before the zone")
+				Expect(dnsEndpointExists()).To(BeFalse())
 				Expect(clusterConfigExists()).To(BeFalse())
 			})
 
-			It("should keep the finalizer until the zone is deleted", func() {
-				settle()
-				zones.setErrors(nil, nil, errors.New("access denied"))
+			It("should enqueue the CCLInfraPlane a DNSEndpoint was written for", func() {
+				owned := &externaldnsv1alpha1.DNSEndpoint{ObjectMeta: metav1.ObjectMeta{
+					Name: dnsEndpointKey.Name, Namespace: dnsNamespace,
+					Annotations: map[string]string{
+						annotationInfraPlaneName:      resourceName,
+						annotationInfraPlaneNamespace: namespace,
+					},
+				}}
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, owned)).To(HaveExactElements(
+					reconcile.Request{NamespacedName: typeNamespacedName}))
 
-				infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
-				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
-				Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
-				Expect(err).To(MatchError(ContainSubstring("access denied")))
-
-				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
-				Expect(infraPlane.Finalizers).To(ContainElement(finalizerName))
-				Expect(clusterConfigExists()).To(BeTrue())
-				Expect(k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{})).To(Succeed())
-
-				zones.setErrors(nil, nil, nil)
-				reconcileKey(typeNamespacedName)
-				Eventually(func() bool {
-					return apierrors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, infraPlane))
-				}).Should(BeTrue())
+				By("ignoring one in another namespace, and one without annotations")
+				elsewhere := owned.DeepCopy()
+				elsewhere.Namespace = namespace
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, elsewhere)).To(BeEmpty())
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, &externaldnsv1alpha1.DNSEndpoint{
+					ObjectMeta: metav1.ObjectMeta{Name: "unowned", Namespace: dnsNamespace},
+				})).To(BeEmpty())
 			})
 		})
 	})
 })
-
-// fakeZones is a route53.ZoneManager that keeps one zone, and its wildcard record, per
-// owner in memory and records the calls made to it.
-type fakeZones struct {
-	mu        sync.Mutex
-	parent    string
-	zones     map[string]route53.Zone
-	wildcards map[string]route53.Record
-	log       []string
-	next      int
-
-	ensureErr, wildcardErr, deleteErr error
-
-	// onDelete, if set, runs at the start of DeleteZone.
-	onDelete func()
-}
-
-func newFakeZones(parent string) *fakeZones {
-	return &fakeZones{parent: parent, zones: map[string]route53.Zone{}, wildcards: map[string]route53.Record{}}
-}
-
-func (f *fakeZones) EnsureZone(_ context.Context, domain string, owner route53.Owner, knownID string) (route53.Zone, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.log = append(f.log, "ensure "+domain+" "+knownID)
-	if !strings.HasSuffix(domain, "."+f.parent) {
-		return route53.Zone{}, fmt.Errorf("%w: %s", route53.ErrOutsideParentZone, domain)
-	}
-	if f.ensureErr != nil {
-		return route53.Zone{}, f.ensureErr
-	}
-	if zone, ok := f.zones[owner.UID]; ok {
-		return zone, nil
-	}
-	f.next++
-	zone := route53.Zone{
-		ID:          fmt.Sprintf("Z%04d", f.next),
-		NameServers: []string{"ns-1.awsdns-01.net", "ns-2.awsdns-02.org"},
-	}
-	f.zones[owner.UID] = zone
-	return zone, nil
-}
-
-func (f *fakeZones) SetWildcard(_ context.Context, zoneID, domain string, record *route53.Record) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.log = append(f.log, "wildcard "+domain+" "+zoneID)
-	if f.wildcardErr != nil {
-		return false, f.wildcardErr
-	}
-	current, ok := f.wildcards[zoneID]
-	if record == nil {
-		delete(f.wildcards, zoneID)
-		return ok, nil
-	}
-	f.wildcards[zoneID] = *record
-	return !ok || current != *record, nil
-}
-
-func (f *fakeZones) DeleteZone(_ context.Context, domain string, owner route53.Owner, knownID string) error {
-	if f.onDelete != nil {
-		f.onDelete()
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.log = append(f.log, "delete "+domain+" "+knownID)
-	if f.deleteErr != nil {
-		return f.deleteErr
-	}
-	delete(f.wildcards, f.zones[owner.UID].ID)
-	delete(f.zones, owner.UID)
-	return nil
-}
-
-func (f *fakeZones) setErrors(ensureErr, wildcardErr, deleteErr error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.ensureErr, f.wildcardErr, f.deleteErr = ensureErr, wildcardErr, deleteErr
-}
-
-func (f *fakeZones) zoneOf(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) route53.Zone {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.zones[string(infraPlane.UID)]
-}
-
-func (f *fakeZones) wildcard(zoneID string) *route53.Record {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	record, ok := f.wildcards[zoneID]
-	if !ok {
-		return nil
-	}
-	return &record
-}
-
-func (f *fakeZones) calls() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return slices.Clone(f.log)
-}
 
 // recordingWatcher is a remote.Watcher that only records the calls made to it, in order.
 type recordingWatcher struct {

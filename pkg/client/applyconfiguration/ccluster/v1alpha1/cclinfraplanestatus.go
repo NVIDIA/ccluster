@@ -22,9 +22,9 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// Secret has been mirrored into the Argo CD namespace.
 	// - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	// cluster carries this CCLInfraPlane's domain.
-	// - "DNSReady": the Route53 hosted zone for the domain exists and is delegated
-	// from the parent zone, and "*.<domain>" in it points at the cluster's ingress
-	// LoadBalancer.
+	// - "DNSReady": external-dns has accepted the record pointing "*.<domain>" at the
+	// cluster's ingress LoadBalancer. external-dns also accepts a record that matches
+	// none of its zones, which it then never publishes.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
@@ -36,9 +36,6 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// current. Its conditions and observedGeneration are the infra-plane operator's, and
 	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
 	ClusterConfig *CCLClusterConfigStatusApplyConfiguration `json:"clusterConfig,omitempty"`
-	// dns is the Route53 hosted zone the control-plane operator created for this
-	// CCLInfraPlane's domain, as last observed. Unset until the zone exists.
-	DNS *DNSStatusApplyConfiguration `json:"dns,omitempty"`
 }
 
 // CCLInfraPlaneStatusApplyConfiguration constructs a declarative configuration of the CCLInfraPlaneStatus type for use with
@@ -73,13 +70,5 @@ func (b *CCLInfraPlaneStatusApplyConfiguration) WithObservedGeneration(value int
 // If called multiple times, the ClusterConfig field is set to the value of the last call.
 func (b *CCLInfraPlaneStatusApplyConfiguration) WithClusterConfig(value *CCLClusterConfigStatusApplyConfiguration) *CCLInfraPlaneStatusApplyConfiguration {
 	b.ClusterConfig = value
-	return b
-}
-
-// WithDNS sets the DNS field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the DNS field is set to the value of the last call.
-func (b *CCLInfraPlaneStatusApplyConfiguration) WithDNS(value *DNSStatusApplyConfiguration) *CCLInfraPlaneStatusApplyConfiguration {
-	b.DNS = value
 	return b
 }

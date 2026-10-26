@@ -653,8 +653,8 @@ var _ = Describe("Manager", Ordered, func() {
 						To(Equal(ingressLoadBalancerIP))
 				}, crossClusterTimeout).Should(Succeed())
 
-				// The suite deploys the cp chart as the quickstart does, without a parent
-				// hosted zone, so the operator calls no AWS API.
+				// The suite deploys the cp chart as the quickstart does, without
+				// --publish-dns or external-dns.
 				By("reporting DNS as not configured, with an ingress address to publish")
 				Expect(infraPlaneCondition(planeName, conditionDNSReady, "status")).To(Equal("False"))
 				Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("NotConfigured"))

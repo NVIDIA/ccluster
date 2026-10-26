@@ -13,8 +13,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `internal/registry/` | Generic per-chart registry (chart path → function) and the `*_registry` packages built on it, such as the ip operator's `verifier_registry` and the cp operator's `drift_registry`. |
 | `api/ccluster/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
 | `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository and for the cp operator's infra-plane watch in `internal/remote/`; `test/client/` tests them. |
-| `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
-| `internal/cloud/aws/` | The cp operator's cloud integrations: `route53` manages each infra plane's hosted zone and wildcard record. |
+| `internal/argocd/v1alpha1/`, `internal/externaldns/v1alpha1/` | Hand-written partial Argo CD and external-dns API mirrors; extend them rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (each registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |
 | `hack/pyschema/` → `python/` | CRD spec/status and chart values → JSON Schema → Pydantic package. |
@@ -53,9 +52,8 @@ than expanding this file.
   Secrets and AppProjects live in the Argo CD namespace. Projects allow only the catalog
   repository, and cluster Secrets are project-scoped.
 - `CCLInfraPlane Available=True` guarantees its namespace's AppProject already exists.
-- The cp operator touches only Route53 hosted zones it created for a CCLInfraPlane, found by
-  the plane's UID, plus their delegation in the parent zone; a Route53 failure blocks the
-  plane's finalizer rather than leaving a delegation behind.
+- The cp operator makes no cloud API calls. DNS records are published by external-dns from
+  DNSEndpoints in the operator's namespace, never a tenant's; zones are the user's.
 - Keep cp/ip RBAC separate and their leader-election IDs distinct.
 - The ip operator verifies `cluster_base` and never installs, upgrades or deletes anything.
   Verifiers read live objects, never Argo CD or Helm release state. Its RBAC is read-only

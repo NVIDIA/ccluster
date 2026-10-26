@@ -7,14 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -25,8 +23,8 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/cloud/aws/route53"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 	"github.com/NVIDIA/ccluster/internal/remote"
@@ -66,13 +64,13 @@ var (
 // argoCDNamespace.
 var infraPlaneResyncPeriod time.Duration
 
-// dnsParentZoneID is the Route53 hosted zone each CCLInfraPlane's zone is delegated
-// from. Set by a flag, for the same reason as argoCDNamespace.
-var dnsParentZoneID string
-
-// defaultAWSRegion is the region the AWS SDK is configured with when the environment
-// names none. Route53 is a global service, but the SDK still needs one to sign requests.
-const defaultAWSRegion = "us-east-1"
+// publishDNS turns on a DNSEndpoint per CCLInfraPlane, written to dnsEndpointNamespace.
+// Set by flags, for the same reason as argoCDNamespace; setupControllers replaces an
+// empty dnsEndpointNamespace with the operator's own namespace.
+var (
+	publishDNS           bool
+	dnsEndpointNamespace string
+)
 
 // argoCDTokenKey is the key of the token Secret.
 const argoCDTokenKey = "token"
@@ -85,6 +83,9 @@ func init() {
 	// Registering them is safe on a cluster with no Argo CD: the missing CRDs surface
 	// at reconcile time, from the RESTMapper, rather than at startup.
 	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
+	// external-dns's DNSEndpoint, which the CCLInfraPlane controller creates. Safe on a
+	// cluster without external-dns for the same reason.
+	utilruntime.Must(externaldnsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -110,11 +111,13 @@ func main() {
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
-	flag.StringVar(&dnsParentZoneID, "dns-parent-zone-id", "",
-		"The Route53 hosted zone that delegates to a hosted zone the operator creates for "+
-			"each CCLInfraPlane's domain, which must lie under the parent's, and in which it "+
-			"points *.<domain> at the plane's ingress LoadBalancer. Empty disables DNS. "+
-			"AWS credentials come from the SDK's default chain, such as IRSA.")
+	flag.BoolVar(&publishDNS, "publish-dns", false,
+		"Write an external-dns DNSEndpoint for each CCLInfraPlane, pointing *.<domain> at "+
+			"the plane's ingress LoadBalancer. external-dns publishes it into the DNS zone "+
+			"the domain falls under, which the user creates.")
+	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
+		"The namespace the DNSEndpoints are written to, which external-dns must read. "+
+			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -133,20 +136,18 @@ func main() {
 // wired up here by hand — the CLI only knows how to inject into cmd/main.go,
 // which this project does not have.
 func setupControllers(mgr ctrl.Manager) error {
-	namespace, err := resolveArgoCDNamespace(argoCDNamespace, serviceAccountNamespaceFile)
+	namespace, err := resolveNamespace("--argocd-namespace", argoCDNamespace, serviceAccountNamespaceFile)
 	if err != nil {
 		return err
 	}
 	argoCDNamespace = namespace
 
-	var zones route53.ZoneManager
-	if dnsParentZoneID != "" {
-		awsConfig, err := awsconfig.LoadDefaultConfig(context.Background(),
-			awsconfig.WithDefaultRegion(defaultAWSRegion))
+	if publishDNS {
+		namespace, err := resolveNamespace("--dns-endpoint-namespace", dnsEndpointNamespace, serviceAccountNamespaceFile)
 		if err != nil {
-			return fmt.Errorf("unable to load the AWS configuration: %w", err)
+			return err
 		}
-		zones = route53.NewFromConfig(awsConfig, dnsParentZoneID)
+		dnsEndpointNamespace = namespace
 	}
 
 	argoCDServer, err := newArgoCDServerClient(mgr)
@@ -167,9 +168,10 @@ func setupControllers(mgr ctrl.Manager) error {
 			Local:  mgr.GetConfig(),
 			Scheme: mgr.GetScheme(),
 		},
-		RemoteWatches: remoteWatches,
-		ResyncPeriod:  infraPlaneResyncPeriod,
-		Zones:         zones,
+		RemoteWatches:        remoteWatches,
+		ResyncPeriod:         infraPlaneResyncPeriod,
+		PublishDNS:           publishDNS,
+		DNSEndpointNamespace: dnsEndpointNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
@@ -187,20 +189,20 @@ func setupControllers(mgr ctrl.Manager) error {
 	return nil
 }
 
-// resolveArgoCDNamespace returns flagValue, or if it is empty the namespace in
-// namespaceFile, the operator's own. Outside a Pod there is no such file, and the
-// namespace has to be given.
-func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
+// resolveNamespace returns flagValue, the value of the namespace flag flagName, or if it
+// is empty the namespace in namespaceFile, the operator's own. Outside a Pod there is no
+// such file, and the namespace has to be given.
+func resolveNamespace(flagName, flagValue, namespaceFile string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
 	data, err := os.ReadFile(namespaceFile)
 	if err != nil {
-		return "", fmt.Errorf("--argocd-namespace is unset and the operator's own namespace is unknown: %w", err)
+		return "", fmt.Errorf("%s is unset and the operator's own namespace is unknown: %w", flagName, err)
 	}
 	namespace := strings.TrimSpace(string(data))
 	if namespace == "" {
-		return "", fmt.Errorf("--argocd-namespace is unset and %s is empty", namespaceFile)
+		return "", fmt.Errorf("%s is unset and %s is empty", flagName, namespaceFile)
 	}
 	return namespace, nil
 }

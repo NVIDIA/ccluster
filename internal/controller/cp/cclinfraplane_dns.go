@@ -11,46 +11,66 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/cloud/aws/route53"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 )
 
 // The DNSReady condition and its reasons.
 const (
-	// conditionTypeDNSReady reports on the plane's Route53 hosted zone and the wildcard
-	// record in it.
+	// conditionTypeDNSReady reports on the DNSEndpoint that has external-dns publish the
+	// plane's wildcard record.
 	conditionTypeDNSReady = "DNSReady"
 
-	reasonDNSPublished            = "Published"
-	reasonDNSNotConfigured        = "NotConfigured"
-	reasonDomainOutsideParentZone = "DomainOutsideParentZone"
-	reasonRoute53Error            = "Route53Error"
-	reasonLoadBalancerPending     = "LoadBalancerPending"
+	reasonDNSPublished          = "Published"
+	reasonDNSPending            = "Pending"
+	reasonDNSNotConfigured      = "NotConfigured"
+	reasonLoadBalancerPending   = "LoadBalancerPending"
+	reasonDNSEndpointCRDMissing = "DNSEndpointCRDMissing"
+	reasonDNSEndpointConflict   = "DNSEndpointConflict"
 )
 
-// dnsRetryInterval is how soon a failed Route53 call is tried again. Route53 recovering
-// does not arrive as an event.
+// dnsRetryInterval is how soon a DNSEndpoint that could not be written for want of its
+// CRD is tried again. external-dns being installed does not arrive as an event.
 const dnsRetryInterval = time.Minute
 
-// reconcileDNS creates the Route53 hosted zone for infraPlane's domain, delegated from the
-// parent zone, and points "*.<domain>" in it at the ingress LoadBalancer reported in
-// clusterConfig. It returns the DNSReady condition, the zone when it was ensured - nil
-// otherwise, keeping the last one recorded - and when to look again. Failures are
-// reported in the condition, not returned.
+// wildcardTTL is the TTL of the wildcard record, short so that resolvers follow a
+// LoadBalancer whose address changes quickly.
+const wildcardTTL = 60
+
+// errDNSEndpointConflict reports that the DNSEndpoint name is already taken by another
+// CCLInfraPlane, for the same reason as errClusterSecretConflict.
+var errDNSEndpointConflict = errors.New("DNSEndpoint belongs to another CCLInfraPlane")
+
+// dnsEndpointName is the DNSEndpoint written for a CCLInfraPlane: <namespace>-<name>, like
+// the mirrored Secret, because DNSEndpoints from every namespace share one.
+func dnsEndpointName(namespace, name string) string {
+	return namespace + "-" + name
+}
+
+// reconcileDNS writes the DNSEndpoint that has external-dns point "*.<domain>" at the
+// ingress LoadBalancer reported in clusterConfig, or deletes it while there is no address
+// to point it at. It returns the DNSReady condition and when to look again. Only
+// unexpected Kubernetes API errors are returned; everything else is reported in the
+// condition.
 //
-// The wildcard record is deleted while there is no address to point it at. The zone stays
-// for as long as the CCLInfraPlane does.
+// Which DNS zone the record lands in is external-dns's choice: the most specific zone it
+// manages that the domain falls under. Creating that zone, and delegating it, is the
+// user's.
 func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
-) (metav1.Condition, *cclusternvidiacomv1alpha1.DNSStatus, ctrl.Result) {
+) (metav1.Condition, ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	domain := infraPlane.Spec.Domain
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
 		return metav1.Condition{
@@ -62,103 +82,172 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		}
 	}
 
-	if r.Zones == nil {
+	if !r.PublishDNS {
 		return condition(metav1.ConditionFalse, reasonDNSNotConfigured,
-			"the control-plane operator runs without --dns-parent-zone-id"), nil, ctrl.Result{}
+			"the control-plane operator runs without --publish-dns"), ctrl.Result{}, nil
 	}
 
-	zone, err := r.Zones.EnsureZone(ctx, domain, zoneOwner(infraPlane), recordedZoneID(infraPlane))
-	switch {
-	case errors.Is(err, route53.ErrOutsideParentZone):
-		// No requeue: the domain is immutable, and the parent zone changes only with a
-		// restart.
-		log.Info("Skipped Route53 hosted zone for domain outside the parent zone",
-			"domain", domain, "reason", err.Error())
-		return condition(metav1.ConditionFalse, reasonDomainOutsideParentZone, err.Error()),
-			nil, ctrl.Result{}
-	case err != nil:
-		log.Error(err, "Failed to ensure Route53 hosted zone", "domain", domain)
-		return condition(metav1.ConditionFalse, reasonRoute53Error, err.Error()),
-			nil, ctrl.Result{RequeueAfter: dnsRetryInterval}
-	}
-	dns := &cclusternvidiacomv1alpha1.DNSStatus{ZoneID: zone.ID, NameServers: zone.NameServers}
-
-	record := wildcardRecord(clusterConfig)
-	changed, err := r.Zones.SetWildcard(ctx, zone.ID, domain, record)
-	if err != nil {
-		log.Error(err, "Failed to set wildcard record", "domain", domain, "zoneID", zone.ID)
-		return condition(metav1.ConditionFalse, reasonRoute53Error, err.Error()),
-			dns, ctrl.Result{RequeueAfter: dnsRetryInterval}
-	}
-
-	name := "*." + domain
-	if record == nil {
-		if changed {
-			log.Info("Deleted wildcard record", "name", name, "zoneID", zone.ID)
-		}
+	endpoint := wildcardEndpoint(infraPlane.Spec.Domain, clusterConfig)
+	if endpoint == nil {
 		// No requeue: the address arrives through the watch on the CCLClusterConfig.
+		if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
+			return metav1.Condition{}, ctrl.Result{}, err
+		}
 		return condition(metav1.ConditionFalse, reasonLoadBalancerPending, fmt.Sprintf(
-				"hosted zone %s is delegated; waiting for the infra-plane cluster to report an address for its %q LoadBalancer",
-				zone.ID, "ingress")),
-			dns, ctrl.Result{}
+				"waiting for the infra-plane cluster to report an address for its %q LoadBalancer",
+				"ingress")),
+			ctrl.Result{}, nil
 	}
-	if changed {
-		log.Info("Set wildcard record", "name", name, "zoneID", zone.ID,
-			"type", record.Type, "value", record.Value)
+
+	dnsEndpoint, op, err := r.applyDNSEndpoint(ctx, infraPlane, *endpoint)
+	switch {
+	case apimeta.IsNoMatchError(err):
+		log.Info("DNSEndpoint CRD not installed, skipped DNSEndpoint",
+			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
+		return condition(metav1.ConditionFalse, reasonDNSEndpointCRDMissing,
+				"the DNSEndpoint CRD is not installed; install external-dns with the cp chart"),
+			ctrl.Result{RequeueAfter: dnsRetryInterval}, nil
+	case errors.Is(err, errDNSEndpointConflict):
+		// No requeue: only an edit elsewhere can resolve this, and the DNSEndpoint watch
+		// picks that up.
+		log.Info("Refused to overwrite DNSEndpoint owned by another CCLInfraPlane",
+			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
+		return condition(metav1.ConditionFalse, reasonDNSEndpointConflict, fmt.Sprintf(
+				"DNSEndpoint %q in namespace %q belongs to another CCLInfraPlane",
+				dnsEndpoint.Name, dnsEndpoint.Namespace)),
+			ctrl.Result{}, nil
+	case err != nil:
+		return metav1.Condition{}, ctrl.Result{}, err
+	case op != controllerutil.OperationResultNone:
+		log.Info("Applied DNSEndpoint", "dnsEndpoint", dnsEndpoint.Name,
+			"dnsEndpointNamespace", dnsEndpoint.Namespace, "dnsName", endpoint.DNSName,
+			"recordType", endpoint.RecordType, "targets", endpoint.Targets, "operation", op)
 	}
+
+	record := fmt.Sprintf("%s %s %s", endpoint.DNSName, endpoint.RecordType, endpoint.Targets[0])
+	if dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation {
+		// No requeue: external-dns writing the DNSEndpoint's status is an event.
+		return condition(metav1.ConditionFalse, reasonDNSPending, fmt.Sprintf(
+				"waiting for external-dns to accept DNSEndpoint %q in namespace %q: %s",
+				dnsEndpoint.Name, dnsEndpoint.Namespace, record)),
+			ctrl.Result{}, nil
+	}
+	// external-dns accepts a record that matches none of its zones too, and drops it; see
+	// https://github.com/NVIDIA/ccluster/issues/174.
 	return condition(metav1.ConditionTrue, reasonDNSPublished, fmt.Sprintf(
-			"%s %s %s in hosted zone %s", name, record.Type, record.Value, zone.ID)),
-		dns, ctrl.Result{}
+			"external-dns accepted DNSEndpoint %q in namespace %q: %s; it is published if "+
+				"external-dns manages a zone that %s falls under",
+			dnsEndpoint.Name, dnsEndpoint.Namespace, record, infraPlane.Spec.Domain)),
+		ctrl.Result{}, nil
 }
 
-// wildcardRecord returns what the wildcard record points at: the ingress LoadBalancer in
-// clusterConfig, as an A record for an IP or else a CNAME for a hostname, or nil if it has
-// no address.
-func wildcardRecord(clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus) *route53.Record {
+// wildcardEndpoint returns the "*.<domain>" record pointing at the ingress LoadBalancer
+// in clusterConfig - an A record for an IP, otherwise a CNAME for a hostname - or nil if
+// it has no address.
+func wildcardEndpoint(
+	domain string,
+	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
+) *externaldnsv1alpha1.Endpoint {
 	if clusterConfig == nil {
 		return nil
 	}
 	lb := clusterConfig.LoadBalancer("ingress")
+	endpoint := &externaldnsv1alpha1.Endpoint{DNSName: "*." + domain, RecordTTL: wildcardTTL}
 	switch {
 	case lb == nil:
 		return nil
 	case lb.IP != "":
-		return &route53.Record{Type: "A", Value: lb.IP}
+		endpoint.RecordType = "A"
+		endpoint.Targets = []string{lb.IP}
 	case lb.Hostname != "":
-		return &route53.Record{Type: "CNAME", Value: lb.Hostname}
+		endpoint.RecordType = "CNAME"
+		endpoint.Targets = []string{lb.Hostname}
 	default:
 		return nil
 	}
+	return endpoint
 }
 
-// finalizeDNS deletes infraPlane's hosted zone, with its records and the parent zone's
-// delegation to it. Unlike an unreachable infra-plane cluster, a Route53 failure blocks the
-// finalizer: a delegation left pointing at a deleted zone lets whoever creates a zone on
-// the same name servers take over the domain.
+// applyDNSEndpoint creates or updates infraPlane's DNSEndpoint in DNSEndpointNamespace,
+// holding endpoint alone. Like the mirrored Secret it cannot carry an owner reference,
+// living in another namespace than its CCLInfraPlane, so it is stamped with
+// infraPlaneOwner instead.
+func (r *CCLInfraPlaneReconciler) applyDNSEndpoint(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	endpoint externaldnsv1alpha1.Endpoint,
+) (*externaldnsv1alpha1.DNSEndpoint, controllerutil.OperationResult, error) {
+	dnsEndpoint := &externaldnsv1alpha1.DNSEndpoint{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dnsEndpointName(infraPlane.Namespace, infraPlane.Name),
+			Namespace: r.DNSEndpointNamespace,
+		},
+	}
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, dnsEndpoint, func() error {
+		if !infraPlaneOwner.ownedBy(dnsEndpoint, infraPlane) {
+			return errDNSEndpointConflict
+		}
+		infraPlaneOwner.stamp(dnsEndpoint, infraPlane)
+		dnsEndpoint.Spec.Endpoints = []externaldnsv1alpha1.Endpoint{endpoint}
+		return nil
+	})
+	return dnsEndpoint, op, err
+}
+
+// deleteDNSEndpoint deletes infraPlane's DNSEndpoint if there is one and it is still ours,
+// which has external-dns withdraw the record. A missing CRD means there is none.
+func (r *CCLInfraPlaneReconciler) deleteDNSEndpoint(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+) error {
+	log := logf.FromContext(ctx)
+
+	var dnsEndpoint externaldnsv1alpha1.DNSEndpoint
+	key := client.ObjectKey{
+		Namespace: r.DNSEndpointNamespace,
+		Name:      dnsEndpointName(infraPlane.Namespace, infraPlane.Name),
+	}
+	switch err := r.Get(ctx, key, &dnsEndpoint); {
+	case apierrors.IsNotFound(err), apimeta.IsNoMatchError(err):
+		return nil
+	case err != nil:
+		return err
+	case !infraPlaneOwner.ownedBy(&dnsEndpoint, infraPlane):
+		log.Info("Left DNSEndpoint owned by another CCLInfraPlane in place",
+			"dnsEndpoint", key.Name, "dnsEndpointNamespace", key.Namespace)
+		return nil
+	}
+
+	if err := r.Delete(ctx, &dnsEndpoint); client.IgnoreNotFound(err) != nil {
+		return err
+	}
+	log.Info("Deleted DNSEndpoint", "dnsEndpoint", key.Name, "dnsEndpointNamespace", key.Namespace)
+	return nil
+}
+
+// finalizeDNS deletes infraPlane's DNSEndpoint, which has external-dns withdraw the record.
+// Without DNS published there is none to delete; one written before DNS was turned off
+// stays behind.
 func (r *CCLInfraPlaneReconciler) finalizeDNS(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 ) error {
-	if r.Zones == nil || infraPlane.Spec.Domain == "" {
-		// A zone created before DNS was turned off stays behind.
+	if !r.PublishDNS {
 		return nil
 	}
-	return r.Zones.DeleteZone(ctx, infraPlane.Spec.Domain, zoneOwner(infraPlane), recordedZoneID(infraPlane))
+	return r.deleteDNSEndpoint(ctx, infraPlane)
 }
 
-// zoneOwner identifies infraPlane to the ZoneManager.
-func zoneOwner(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) route53.Owner {
-	return route53.Owner{
-		UID:       string(infraPlane.UID),
-		Namespace: infraPlane.Namespace,
-		Name:      infraPlane.Name,
+// infraPlanesForDNSEndpoint maps a DNSEndpoint the operator wrote to its CCLInfraPlane, so
+// external-dns accepting it, or drift on it, reconciles the plane.
+func (r *CCLInfraPlaneReconciler) infraPlanesForDNSEndpoint(_ context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetNamespace() != r.DNSEndpointNamespace {
+		return nil
 	}
-}
-
-// recordedZoneID returns the hosted zone ID last recorded in infraPlane's status, or "".
-func recordedZoneID(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) string {
-	if infraPlane.Status.DNS == nil {
-		return ""
+	name, hasName := obj.GetAnnotations()[annotationInfraPlaneName]
+	namespace, hasNamespace := obj.GetAnnotations()[annotationInfraPlaneNamespace]
+	if !hasName || !hasNamespace {
+		return nil
 	}
-	return infraPlane.Status.DNS.ZoneID
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: namespace, Name: name}}}
 }

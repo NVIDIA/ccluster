@@ -25,7 +25,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/cloud/aws/route53"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
@@ -91,10 +91,14 @@ type CCLInfraPlaneReconciler struct {
 	// reconciled again anyway, a safety net behind RemoteWatches. Zero disables it.
 	ResyncPeriod time.Duration
 
-	// Zones creates the Route53 hosted zone of each CCLInfraPlane's domain, delegated
-	// from the parent zone, and the wildcard record in it. Nil means DNS is not
-	// configured: the operator calls no AWS API.
-	Zones route53.ZoneManager
+	// PublishDNS has the operator write a DNSEndpoint per CCLInfraPlane, from which
+	// external-dns publishes "*.<domain>" pointing at the plane's ingress LoadBalancer.
+	PublishDNS bool
+
+	// DNSEndpointNamespace is the namespace the DNSEndpoints are written to, the one the
+	// control plane's external-dns reads them from. CCLInfraPlanes live elsewhere, so
+	// that no tenant who can write in their own namespace can publish a record.
+	DNSEndpointNamespace string
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
@@ -102,6 +106,7 @@ type CCLInfraPlaneReconciler struct {
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;watch;create;update;patch;delete
 
 // The operator writes CCLClusterConfig with its own ServiceAccount only for a CCLInfraPlane
 // that registers the operator's own cluster; a remote cluster is written to with the
@@ -125,10 +130,9 @@ type CCLInfraPlaneReconciler struct {
 // against, and writes it with spec.domain. That is reported as the ClusterConfigApplied
 // condition, and the singleton's status is copied into status.clusterConfig.
 //
-// With a parent hosted zone configured, the operator then creates the Route53 hosted zone
-// for spec.domain, delegated from the parent, and points "*.<domain>" in it at the ingress
-// LoadBalancer in that copy. That is reported as the DNSReady condition and status.dns.
-// Every condition and both copies are written in one status patch.
+// With DNS published, the operator then writes a DNSEndpoint pointing "*.<domain>" at the
+// ingress LoadBalancer in that copy, for external-dns to publish. That is reported as the
+// DNSReady condition. Every condition and the copy are written in one status patch.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
@@ -242,9 +246,12 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if lastClusterConfig == nil {
 		lastClusterConfig = infraPlane.Status.ClusterConfig
 	}
-	dnsReady, dnsStatus, dnsResult := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
+	dnsReady, dnsResult, err := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
-	return earliest(result, dnsResult), r.patchStatus(ctx, &infraPlane, clusterConfigStatus, dnsStatus,
+	return earliest(result, dnsResult), r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
 		available, clusterConfigApplied, dnsReady)
 }
 
@@ -299,14 +306,14 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	})
 }
 
-// finalize deletes the plane's Route53 hosted zone, the infra-plane
+// finalize deletes the plane's DNSEndpoint, the infra-plane
 // cluster's CCLClusterConfig if this CCLInfraPlane created it, the mirrored Secret if it is
 // still ours, and the namespace's AppProject if this was the last CCLInfraPlane using it,
 // then drops the finalizer so the CCLInfraPlane can go away.
 //
 // The watch on the cluster stops first, so deleting the CCLClusterConfig does not
-// reconcile a CCLInfraPlane that is going away. DNS goes next, and a Route53 failure is
-// returned to be retried (see finalizeDNS). The CCLClusterConfig follows, while the
+// reconcile a CCLInfraPlane that is going away. The DNSEndpoint goes next, then the
+// CCLClusterConfig, while the
 // credentials to reach the cluster are still registered; failing to reach the cluster
 // does not block the rest.
 func (r *CCLInfraPlaneReconciler) finalize(
@@ -364,7 +371,7 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	reason, message string,
 ) error {
-	return r.patchStatus(ctx, infraPlane, nil, nil, metav1.Condition{
+	return r.patchStatus(ctx, infraPlane, nil, metav1.Condition{
 		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
@@ -378,9 +385,8 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 }
 
 // patchStatus sets conditions, each stamped with the current generation, the observed
-// generation and, unless they are nil, the copy of the infra-plane cluster's
-// CCLClusterConfig status and the hosted zone, then writes the status subresource in one
-// patch.
+// generation and, unless it is nil, the copy of the infra-plane cluster's
+// CCLClusterConfig status, then writes the status subresource in one patch.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
 // on a CCLInfraPlane that was just written the cached copy can carry a stale resource
@@ -392,16 +398,12 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
-	dns *cclusternvidiacomv1alpha1.DNSStatus,
 	conditions ...metav1.Condition,
 ) error {
 	base := infraPlane.DeepCopy()
 
 	if clusterConfig != nil {
 		infraPlane.Status.ClusterConfig = clusterConfig
-	}
-	if dns != nil {
-		infraPlane.Status.DNS = dns
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = infraPlane.Generation
@@ -458,7 +460,8 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 //
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
-// server does not serve never syncs, and the controller would never start.
+// server does not serve never syncs, and the controller would never start. The DNSEndpoint
+// watch likewise needs external-dns's CRD, and is registered only when DNS is published.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
@@ -468,6 +471,11 @@ func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"), "AppProject") {
 		builder = builder.Watches(&argocdv1alpha1.AppProject{},
 			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForProject))
+	}
+	if r.PublishDNS && kindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"),
+		externaldnsv1alpha1.GroupVersion.WithKind("DNSEndpoint")) {
+		builder = builder.Watches(&externaldnsv1alpha1.DNSEndpoint{},
+			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForDNSEndpoint))
 	}
 
 	return builder.Named("cclinfraplane").Complete(r)

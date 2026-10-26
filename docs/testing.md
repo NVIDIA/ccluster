@@ -40,10 +40,8 @@ manager. Watch map functions are exercised as ordinary functions, which cannot p
 a running manager registered the right watches or responds to events. Envtest also runs no
 Argo CD: schema-less CRDs under `test/testdata/crd/` stand in for Applications and
 AppProjects, and specs set Application status to advance the rollout. Nor does it run
-Route53: a fake `route53.ZoneManager` stands in, and `internal/cloud/aws/route53` tests the
-real one against an in-memory Route53 API. Its `route53integration` build tag adds a test
-against an emulated Route53 API, run by hand (see `route53_integration_test.go`); CI does
-not run it.
+external-dns: a stand-in CRD stores DNSEndpoints, and specs set their status to stand for
+external-dns accepting them.
 
 Plain table tests alongside these suites are for states that reconciliation cannot cheaply
 stage, such as Applications existing for components 1 and 3 but not 2. Keep them selective;

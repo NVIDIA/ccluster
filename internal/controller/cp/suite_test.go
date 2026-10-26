@@ -24,6 +24,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -56,14 +57,18 @@ var _ = BeforeSuite(func() {
 	err = argocdv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = externaldnsv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "..", "config", "crd", "bases"),
-			// Argo CD's Application, which the CCLComponentSet controller creates and
-			// reads back.
+			// Argo CD's Application and AppProject, which the controllers create and
+			// read back, and external-dns's DNSEndpoint, which the CCLInfraPlane
+			// controller writes.
 			filepath.Join("..", "..", "..", "test", "testdata", "crd"),
 		},
 		ErrorIfCRDPathMissing: true,

@@ -328,32 +328,40 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 `ccluster_remote_watches` metric counts active watches. `--infraplane-resync-period`
 (default 5m) is a safety net behind the watch; failed writes are retried every minute.
 
-### DNS and Route53
+### DNS and external-dns
 
-DNS is off by default (`DNSReady=False/NotConfigured`). To give each CCLInfraPlane a Route53
-hosted zone with `*.<domain>` pointing at its ingress LoadBalancer (DESIGN.md §3), give the
-operator a parent hosted zone and AWS credentials:
+DNS is off by default (`DNSReady=False/NotConfigured`). To publish `*.<domain>` for each
+CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
 
-```yaml
-# dns-values.yaml: the IAM role the operator calls Route53 as.
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<operator role>
-```
+1. Create the DNS zones the planes' domains fall under, and delegate them from their
+   parents. One zone can serve several planes (`team-a.example.com` for
+   `gpu-a.team-a.example.com` and `gpu-b.team-a.example.com`), or a plane can have its own
+   (`gpu-a.team-a.example.com`); external-dns writes each record into the most specific
+   zone it manages.
+2. Configure the cp chart's external-dns for your provider. For Route53 with IRSA:
 
-```bash
-make deploy-cp KUBE_CONTEXT_CP=<context> DNS_PARENT_ZONE_ID=<parent zone ID> \
-  HELM_ARGS='-f dns-values.yaml'
-```
+   ```yaml
+   # dns-values.yaml
+   external-dns:
+     provider:
+       name: aws
+     domainFilters:
+       - team-a.example.com
+     serviceAccount:
+       annotations:
+         eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
+   ```
 
-`DNS_PARENT_ZONE_ID` adds `--dns-parent-zone-id` to the operator's arguments. Every
-CCLInfraPlane's domain must then lie under the parent zone's (`gpu-a.planes.example.com`
-under `planes.example.com`); one outside it reports `DomainOutsideParentZone`.
+3. Deploy with DNS on, which sets `external-dns.enabled=true` and `--publish-dns`:
 
-The operator uses the AWS SDK's default credentials. The chart passes it no environment, so
-use a mechanism that injects it, such as IRSA or EKS Pod Identity. Record changes are
-scoped by name, with `planes.example.com` standing for the parent zone's domain; they cover
-the delegation in the parent zone and the wildcard and teardown purge in each plane's zone:
+   ```bash
+   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
+   ```
+
+The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
+reads; `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
+should then read only that namespace. external-dns's Route53 policy, scoped by name with
+`team-a.example.com` standing for your zones:
 
 ```json
 {
@@ -361,17 +369,12 @@ the delegation in the parent zone and the wildcard and teardown purge in each pl
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["route53:CreateHostedZone", "route53:ListHostedZonesByName"],
+      "Action": ["route53:ListHostedZones", "route53:ListTagsForResource", "route53:ListTagsForResources"],
       "Resource": "*"
     },
     {
       "Effect": "Allow",
-      "Action": [
-        "route53:GetHostedZone",
-        "route53:DeleteHostedZone",
-        "route53:ChangeTagsForResource",
-        "route53:ListResourceRecordSets"
-      ],
+      "Action": "route53:ListResourceRecordSets",
       "Resource": "arn:aws:route53:::hostedzone/*"
     },
     {
@@ -380,7 +383,7 @@ the delegation in the parent zone and the wildcard and teardown purge in each pl
       "Resource": "arn:aws:route53:::hostedzone/*",
       "Condition": {
         "ForAllValues:StringLike": {
-          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.planes.example.com"]
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.team-a.example.com"]
         }
       }
     }
@@ -388,15 +391,13 @@ the delegation in the parent zone and the wildcard and teardown purge in each pl
 }
 ```
 
-The operator deletes only zones whose `CallerReference` is a CCLInfraPlane's UID, but IAM
-cannot hold it to that; keep the parent zone in an account without unrelated zones if that
-matters.
-
-A Route53 failure is reported as `DNSReady=False/Route53Error` and retried every minute.
-Deleting a CCLInfraPlane waits for its zone and delegation to be deleted, and retries a
-Route53 failure until it succeeds: fix the credentials rather than removing the finalizer,
-or the delegation is left pointing at the zone. Turning DNS off leaves existing zones and
-records in place; delete the CCLInfraPlanes first to remove them.
+`DNSReady=True/Published` means external-dns accepted the record, not that it was written:
+a domain that falls under none of external-dns's zones is dropped with only a debug-level
+log line ([#174](https://github.com/NVIDIA/ccluster/issues/174)). If the name does not
+resolve, check external-dns's logs at `--log-level=debug` for `Skipping record`, and its
+`--domain-filter`. One external-dns writes every plane's record with one set of
+credentials; separate credentials per tenant need an external-dns per tenant, each reading
+only its tenant's DNSEndpoints, which the chart does not set up.
 
 ### Argo CD API token
 
