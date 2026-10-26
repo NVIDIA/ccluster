@@ -44,6 +44,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &cclusterv1alpha1.ComponentSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ComponentSyncStatus"):
 		return &cclusterv1alpha1.ComponentSyncStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DNSStatus"):
+		return &cclusterv1alpha1.DNSStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("LoadBalancerStatus"):
 		return &cclusterv1alpha1.LoadBalancerStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("LocalObjectReference"):

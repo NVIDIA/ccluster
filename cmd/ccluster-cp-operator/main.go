@@ -7,12 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -23,6 +25,7 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/cloud/aws/route53"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
@@ -63,6 +66,14 @@ var (
 // argoCDNamespace.
 var infraPlaneResyncPeriod time.Duration
 
+// dnsParentZoneID is the Route53 hosted zone each CCLInfraPlane's zone is delegated
+// from. Set by a flag, for the same reason as argoCDNamespace.
+var dnsParentZoneID string
+
+// defaultAWSRegion is the region the AWS SDK is configured with when the environment
+// names none. Route53 is a global service, but the SDK still needs one to sign requests.
+const defaultAWSRegion = "us-east-1"
+
 // argoCDTokenKey is the key of the token Secret.
 const argoCDTokenKey = "token"
 
@@ -99,6 +110,11 @@ func main() {
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
+	flag.StringVar(&dnsParentZoneID, "dns-parent-zone-id", "",
+		"The Route53 hosted zone that delegates to a hosted zone the operator creates for "+
+			"each CCLInfraPlane's domain, which must lie under the parent's, and in which it "+
+			"points *.<domain> at the plane's ingress LoadBalancer. Empty disables DNS. "+
+			"AWS credentials come from the SDK's default chain, such as IRSA.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -123,6 +139,16 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	argoCDNamespace = namespace
 
+	var zones route53.ZoneManager
+	if dnsParentZoneID != "" {
+		awsConfig, err := awsconfig.LoadDefaultConfig(context.Background(),
+			awsconfig.WithDefaultRegion(defaultAWSRegion))
+		if err != nil {
+			return fmt.Errorf("unable to load the AWS configuration: %w", err)
+		}
+		zones = route53.NewFromConfig(awsConfig, dnsParentZoneID)
+	}
+
 	argoCDServer, err := newArgoCDServerClient(mgr)
 	if err != nil {
 		return err
@@ -143,6 +169,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		},
 		RemoteWatches: remoteWatches,
 		ResyncPeriod:  infraPlaneResyncPeriod,
+		Zones:         zones,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}

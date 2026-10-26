@@ -328,6 +328,76 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 `ccluster_remote_watches` metric counts active watches. `--infraplane-resync-period`
 (default 5m) is a safety net behind the watch; failed writes are retried every minute.
 
+### DNS and Route53
+
+DNS is off by default (`DNSReady=False/NotConfigured`). To give each CCLInfraPlane a Route53
+hosted zone with `*.<domain>` pointing at its ingress LoadBalancer (DESIGN.md §3), give the
+operator a parent hosted zone and AWS credentials:
+
+```yaml
+# dns-values.yaml: the IAM role the operator calls Route53 as.
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<operator role>
+```
+
+```bash
+make deploy-cp KUBE_CONTEXT_CP=<context> DNS_PARENT_ZONE_ID=<parent zone ID> \
+  HELM_ARGS='-f dns-values.yaml'
+```
+
+`DNS_PARENT_ZONE_ID` adds `--dns-parent-zone-id` to the operator's arguments. Every
+CCLInfraPlane's domain must then lie under the parent zone's (`gpu-a.planes.example.com`
+under `planes.example.com`); one outside it reports `DomainOutsideParentZone`.
+
+The operator uses the AWS SDK's default credentials. The chart passes it no environment, so
+use a mechanism that injects it, such as IRSA or EKS Pod Identity. Record changes are
+scoped by name, with `planes.example.com` standing for the parent zone's domain; they cover
+the delegation in the parent zone and the wildcard and teardown purge in each plane's zone:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["route53:CreateHostedZone", "route53:ListHostedZonesByName"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:GetHostedZone",
+        "route53:DeleteHostedZone",
+        "route53:ChangeTagsForResource",
+        "route53:ListResourceRecordSets"
+      ],
+      "Resource": "arn:aws:route53:::hostedzone/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/*",
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.planes.example.com"]
+        }
+      }
+    }
+  ]
+}
+```
+
+The operator deletes only zones whose `CallerReference` is a CCLInfraPlane's UID, but IAM
+cannot hold it to that; keep the parent zone in an account without unrelated zones if that
+matters.
+
+A Route53 failure is reported as `DNSReady=False/Route53Error` and retried every minute.
+Deleting a CCLInfraPlane waits for its zone and delegation to be deleted, and retries a
+Route53 failure until it succeeds: fix the credentials rather than removing the finalizer,
+or the delegation is left pointing at the zone. Turning DNS off leaves existing zones and
+records in place; delete the CCLInfraPlanes first to remove them.
+
 ### Argo CD API token
 
 The operator reads Applications' resource trees, live manifests and events from

@@ -25,7 +25,9 @@ custom resources into Argo CD `Application`s and cluster `Secret`s, and read Arg
 back to decide what to do next. The one object the control plane writes into an infra-plane
 cluster itself, rather than through Argo CD, is that cluster's `CCLClusterConfig` (§3): the
 infra-plane operator's input, which carries the domain the `CCLInfraPlane` was registered
-with.
+with. Outside Kubernetes the control plane calls one cloud API: given a parent Route53
+hosted zone, it creates a hosted zone for each plane's domain and points the domain's
+wildcard record at the plane's ingress (§3).
 
 ### Why the operator never installs Argo CD
 
@@ -71,7 +73,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 
 | Piece | Role |
 | --- | --- |
-| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials (§3). |
+| `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials, and, given a parent hosted zone, creates each plane's Route53 hosted zone and its wildcard record (§3). |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
@@ -98,7 +100,8 @@ A `CCLInfraPlane` names one Kubernetes cluster that CCluster may deploy to. `clu
 points at a `Secret` in the **same namespace** holding that cluster's Argo CD credentials —
 the usual `server`, `config`, and optionally `tlsClientConfig` keys. `domain` is the
 cluster's DNS domain; it is validated like `CCLClusterConfig`'s and cannot be changed once
-set, so a cluster is re-registered rather than renamed.
+set, so a cluster is re-registered rather than renamed. With DNS configured it also names the
+plane's Route53 hosted zone, and `*.<domain>` resolves to the plane's ingress.
 
 `CCLInfraPlaneReconciler` (`internal/controller/cp/cclinfraplane_controller.go`) mirrors that
 Secret into the Argo CD namespace (`--argocd-namespace`, by default the operator's own,
@@ -238,10 +241,10 @@ verbatim, into `status.clusterConfig`. That field reuses the `CCLClusterConfigSt
 rather than merging its conditions into the CCLInfraPlane's own: the two sets of conditions
 and observedGenerations describe different objects. New fields the infra-plane operator
 reports flow through without a control-plane change, such as `loadBalancers`, whose
-addresses the cluster's DNS will be published from (§3a). The copy is
-taken from the live read
-the write makes, never from the watch's cache, and only when the write succeeded; otherwise
-the last copy stays, and `ClusterConfigApplied` says it is stale.
+`ingress` entry is the address the cluster's wildcard record points at (§3a, and "DNS"
+below). The copy is taken from the live read the write makes, never from the watch's cache,
+and only when the write succeeded; otherwise the last copy stays, and
+`ClusterConfigApplied` says it is stale.
 
 The watches live in `internal/remote`'s `Registry`: one informer per cluster, from the
 generated clientset in `pkg/client` and the same credentials Secret, holding only
@@ -272,6 +275,44 @@ installed, or a cluster coming back, arrive as no event on the object. A failed 
 therefore retried every minute, and a written one is reconciled again every
 `--infraplane-resync-period` (default 5m) as a safety net.
 
+### DNS: a hosted zone per plane
+
+With `--dns-parent-zone-id` naming a Route53 hosted zone (say `planes.example.com`), each
+plane gets a hosted zone of its own for its domain, which must lie under the parent's
+(`gpu-a.planes.example.com`), and `*.<domain>` in it points at the plane's ingress
+LoadBalancer (`cclinfraplane_dns.go`, `internal/cloud/aws/route53`). Each pass:
+
+1. ensures the zone, tagged `ccluster.nvidia.com/managed-by=ccluster-cp-operator`;
+2. ensures the parent zone's NS record delegating the domain to it;
+3. sets `*.<domain>`, TTL 60, to an A record for the ingress IP or else a CNAME for its
+   hostname, or deletes it when there is no address.
+
+The address comes from `status.clusterConfig`'s `ingress` LoadBalancer, so it arrives
+through the remote watch; a plane that cannot be reached keeps its last copy, and its
+record. The zone stays as long as the plane does. Each step reads before it writes, so a
+pass that changes nothing makes no Route53 change, and a change of record type deletes the
+old record and creates the new one in one atomic batch.
+
+- **Finding the zone.** Its `CallerReference` is the plane's UID, so a create whose
+  response was lost cannot make a second zone, and the zone is found again by name and
+  UID. `status.dns` records its ID and name servers, which spares that lookup on every
+  pass. Route53 refuses a `CallerReference` it has seen before, even for a zone since
+  deleted by hand, so that create is repeated with a suffix. A zone of the same name
+  created for anything else is left alone.
+- **Why not external-dns.** The operator has to create and delete the zone itself, which
+  external-dns cannot do, and so already holds the AWS client and the right to change
+  records in the zone. Writing one record more needs no further permission, and lets
+  `DNSReady` report Route53's own answer rather than another controller's progress. A
+  second writer would also have to be confined to these zones, and kept apart from any
+  external-dns already in the cluster.
+- **Teardown.** The finalizer deletes the delegation (only if it still points at this
+  zone's name servers), then every record left in the zone, the wildcard included, then the
+  zone. A Route53 failure **blocks** the finalizer, unlike an unreachable infra-plane
+  cluster: a delegation left pointing at a deleted zone lets whoever creates a zone on the
+  same name servers take the domain over.
+
+Without `--dns-parent-zone-id` none of this runs, and the AWS SDK is never configured.
+
 ### Status
 
 `Available` — `True/ClusterSecretCreated`, or `False` with `SecretNotFound` (the referenced
@@ -289,6 +330,13 @@ is computed only once `Available` is true, and both are written in one status pa
 `Available` is `False` it is `Unknown/NotAvailable`, since nothing keeps the
 `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
+
+`DNSReady` — `True/Published` (Route53 accepted the wildcard record; the message names it and
+the zone), or `False` with `NotConfigured` (no `--dns-parent-zone-id`),
+`DomainOutsideParentZone`, `Route53Error` (the error as the message; `status.dns` keeps the
+last zone) or `LoadBalancerPending` (the zone is delegated but the plane reports no ingress
+address). It is written in the same status patch. `Route53Error` retries
+every minute; `LoadBalancerPending` waits for the remote watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
@@ -370,10 +418,10 @@ lists every Service of type `LoadBalancer` carrying the label and reports each i
 first `hostname` the Service reports (cloud providers such as AWS address load balancers
 by name). An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
-of the list and reported in `Verified` instead. The value is the chart's to choose and
-neither operator gives any value a meaning: the catalog's `ingress_nginx` chart labels
-its controller Service `ingress`, and another chart exposes a LoadBalancer the same way,
-under its own name, with no operator or API change. The label, not the name, identifies a
+of the list and reported in `Verified` instead. The catalog's `ingress_nginx` chart labels
+its controller Service `ingress`, the address the
+control plane points the cluster's wildcard record at (§3); another chart exposes a LoadBalancer
+the same way, with no operator or API change. The label, not the name, identifies a
 Service: the name follows the Helm release, which differs between a `CCLComponentSet` and
 a `helm install`. Like a Verifier, this reads live Services, never Argo CD or Helm release
 state, and an address not assigned yet does not fail `Verified`: it means not reachable
@@ -761,6 +809,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
+| `CCLInfraPlane` | `DNSReady` | The plane's hosted zone is delegated and `*.<domain>` in it points at the plane's ingress LoadBalancer (§3). Reasons: `Published`, `NotConfigured`, `DomainOutsideParentZone`, `Route53Error`, `LoadBalancerPending`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
@@ -770,8 +819,8 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain`, `Available`, `ClusterConfig` and `Verified` (from
-`status.clusterConfig`) on `CCLInfraPlane`; `Applied` and `Progress` on
+Printer columns: `Domain`, `Available`, `ClusterConfig`, `Verified` (from
+`status.clusterConfig`) and `DNS` on `CCLInfraPlane`; `Applied` and `Progress` on
 `CCLComponentSet`; `Verified` and `Domain` on `CCLClusterConfig`. No column shows the
 LoadBalancers: a printer column shows only the first JSONPath match, and naming one
 would give a label value a meaning.
@@ -796,7 +845,9 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   also watches `AppProject`s: one in the Argo CD namespace maps to every CCLInfraPlane in
   the namespace it is named after, so a project deleted or loosened by hand is repaired.
   Through a raw source fed by `internal/remote`, it also watches each infra-plane cluster's
-  `CCLClusterConfig` (§3).
+  `CCLClusterConfig` (§3), which is also how a new ingress address reaches the plane's
+  wildcard record. Route53 is not watched: the resync repairs drift there, and a failed
+  Route53 call is retried every minute.
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
@@ -833,6 +884,13 @@ minute, with a slower resync behind its watch (§3).
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
+- **Overlapping domains.** Nothing stops two CCLInfraPlanes from registering the same
+  domain, or one under another's. Each gets a zone of its own, and the two fight over the
+  parent zone's delegation.
+- **More DNS.** Only `*.<domain>` is published, from the `ingress` LoadBalancer; others,
+  such as a compute deployment's SSH Service, get no record. An AWS load balancer's
+  hostname gets a CNAME, not an alias record. Route53 is the only provider, and turning DNS
+  off leaves existing zones and records behind.
 - **Component status.** Nothing reports a component's state in its own terms yet: a Job
   that succeeded, a Pod in CrashLoopBackOff. The argocd-server client (§4) is the data
   source it will use.

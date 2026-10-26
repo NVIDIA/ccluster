@@ -315,6 +315,19 @@ var schemaYAML = typed.YAMLObject(`types:
                 elementRelationship: associative
                 keys:
                 - type
+          - name: dns
+            type:
+              map:
+                fields:
+                - name: nameServers
+                  type:
+                    list:
+                      elementType:
+                        scalar: string
+                      elementRelationship: atomic
+                - name: zoneID
+                  type:
+                    scalar: string
           - name: observedGeneration
             type:
               scalar: numeric

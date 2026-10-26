@@ -32,7 +32,9 @@ type CCLInfraPlaneSpec struct {
 
 	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
 	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-	// verifies the cluster against. It must be a lowercase DNS name of at least two labels,
+	// verifies the cluster against. When the operator runs with a parent hosted zone, it
+	// also creates a Route53 hosted zone for the domain, which must then lie under the
+	// parent's. It must be a lowercase DNS name of at least two labels,
 	// each at most 63 characters, and it cannot be changed once set.
 	// +required
 	// +kubebuilder:validation:MinLength=1
@@ -52,6 +54,9 @@ type CCLInfraPlaneStatus struct {
 	//     Secret has been mirrored into the Argo CD namespace.
 	//   - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	//     cluster carries this CCLInfraPlane's domain.
+	//   - "DNSReady": the Route53 hosted zone for the domain exists and is delegated
+	//     from the parent zone, and "*.<domain>" in it points at the cluster's ingress
+	//     LoadBalancer.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -70,6 +75,26 @@ type CCLInfraPlaneStatus struct {
 	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
 	// +optional
 	ClusterConfig *CCLClusterConfigStatus `json:"clusterConfig,omitempty"`
+
+	// dns is the Route53 hosted zone the control-plane operator created for this
+	// CCLInfraPlane's domain, as last observed. Unset until the zone exists.
+	// +optional
+	DNS *DNSStatus `json:"dns,omitempty"`
+}
+
+// DNSStatus is the Route53 hosted zone created for an infra-plane cluster's domain.
+// +kubebuilder:title=DNSStatus
+type DNSStatus struct {
+	// zoneID is the hosted zone's ID, such as "Z0123456789ABCDEFGHIJ".
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	ZoneID string `json:"zoneID"`
+
+	// nameServers are the hosted zone's name servers, which the parent zone delegates
+	// the domain to.
+	// +listType=atomic
+	// +optional
+	NameServers []string `json:"nameServers,omitempty"`
 }
 
 // The condition types the control-plane operator reports in CCLInfraPlane.status.
@@ -108,6 +133,7 @@ const (
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
+// +kubebuilder:printcolumn:name="DNS",type=string,JSONPath=`.status.conditions[?(@.type=="DNSReady")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API

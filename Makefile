@@ -470,7 +470,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
-		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
+		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)$(DNS_ARGS)]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -533,6 +533,11 @@ ARGOCD_NAMESPACE ?=
 COMMA := ,
 # The manager arg deploy-cp adds for the bundled Argo CD.
 ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=ccluster-cp-argocd-server")
+# The Route53 hosted zone each CCLInfraPlane's zone is delegated from. Set, deploy-cp
+# passes it to the operator, which then needs AWS credentials, such as IRSA annotations
+# given through HELM_ARGS (docs/development.md).
+DNS_PARENT_ZONE_ID ?=
+DNS_ARGS = $(if $(DNS_PARENT_ZONE_ID),$(COMMA)"--dns-parent-zone-id=$(DNS_PARENT_ZONE_ID)")
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.

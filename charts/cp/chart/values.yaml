@@ -62,6 +62,15 @@ manager:
   ## cluster's registered credentials. --infraplane-resync-period (default 5m) is a
   ## safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
+  ##
+  ## DNS is off unless --dns-parent-zone-id names a Route53 hosted zone, such as the one
+  ## for planes.example.com. The operator then creates a hosted zone for each
+  ## CCLInfraPlane's domain, which must lie under the parent's (gpu-a.planes.example.com),
+  ## delegates it from the parent, and points "*.<domain>" in it at the plane's ingress
+  ## LoadBalancer:
+  ##   - --dns-parent-zone-id=Z0123456789ABCDEFGHIJ
+  ## It calls Route53 with the AWS SDK's default credentials, such as IRSA through
+  ## `serviceAccount.annotations` below; docs/development.md lists the IAM policy.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
@@ -178,7 +187,9 @@ serviceAccount:
   ##
   # name: ""
 
-  ## Custom ServiceAccount annotations
+  ## Custom ServiceAccount annotations, such as the IAM role the operator calls Route53
+  ## as when --dns-parent-zone-id is set:
+  ##   eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<role>
   ##
   # annotations: {}
 

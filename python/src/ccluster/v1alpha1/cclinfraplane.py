@@ -75,7 +75,9 @@ class CCLInfraPlaneSpec(BaseModel):
     """
     domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
     to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-    verifies the cluster against. It must be a lowercase DNS name of at least two labels,
+    verifies the cluster against. When the operator runs with a parent hosted zone, it
+    also creates a Route53 hosted zone for the domain, which must then lie under the
+    parent's. It must be a lowercase DNS name of at least two labels,
     each at most 63 characters, and it cannot be changed once set.
     """
 
@@ -219,6 +221,26 @@ class Condition1(Condition):
     """
 
 
+class DNSStatus(BaseModel):
+    """
+    dns is the Route53 hosted zone the control-plane operator created for this
+    CCLInfraPlane's domain, as last observed. Unset until the zone exists.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    name_servers: Annotated[list[str] | None, Field(alias="nameServers")] = None
+    """
+    nameServers are the hosted zone's name servers, which the parent zone delegates
+    the domain to.
+    """
+    zone_id: Annotated[str, Field(alias="zoneID", min_length=1)]
+    """
+    zoneID is the hosted zone's ID, such as "Z0123456789ABCDEFGHIJ".
+    """
+
+
 class CCLInfraPlaneStatus(BaseModel):
     """
     status defines the observed state of CCLInfraPlane
@@ -247,8 +269,16 @@ class CCLInfraPlaneStatus(BaseModel):
         Secret has been mirrored into the Argo CD namespace.
       - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
         cluster carries this CCLInfraPlane's domain.
+      - "DNSReady": the Route53 hosted zone for the domain exists and is delegated
+        from the parent zone, and "*.<domain>" in it points at the cluster's ingress
+        LoadBalancer.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    dns: Annotated[DNSStatus | None, Field(title="DNSStatus")] = None
+    """
+    dns is the Route53 hosted zone the control-plane operator created for this
+    CCLInfraPlane's domain, as last observed. Unset until the zone exists.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
