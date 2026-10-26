@@ -58,6 +58,4 @@ jobs:
         env:
           E2E_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'release') && 'true' || 'false' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go mod tidy
-          make test-e2e E2E_FULL="$E2E_FULL"
+        run: make test-e2e E2E_FULL="$E2E_FULL"

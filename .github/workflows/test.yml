@@ -34,6 +34,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # -diff prints what tidy would change and fails, so the suite and the image builds on
+      # main run against the committed go.mod and go.sum.
+      - name: Check go.mod and go.sum are tidy
+        run: go mod tidy -diff
+
       # Intent-to-add makes files the generators would add count as drift too.
       - name: Check the generated Go client
         run: |
@@ -42,6 +47,4 @@ jobs:
           git diff --exit-code -- pkg/client/
 
       - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+        run: make test

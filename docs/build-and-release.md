@@ -99,7 +99,7 @@ The workflow files are the source of truth for exact path filters. Keep filters 
 with each job's inputs when changing build or generation dependencies.
 
 - `lint` covers Go and linter inputs; `test` and `test-e2e` cover Go, build, deployment
-  and test inputs. `test` also checks generated Go client drift. `test-e2e` builds every image: the suite builds the operators and a
+  and test inputs. `test` also checks that `go.mod` and `go.sum` are tidy and that the generated Go client has not drifted. `test-e2e` builds every image: the suite builds the operators and a
   workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
   PR rather than `main.yml`.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
