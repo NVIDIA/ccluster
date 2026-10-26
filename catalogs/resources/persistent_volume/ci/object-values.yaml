@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The values make helm-lint-catalogs renders this chart with, for the object backend.
+volumeId: ci-object
+name: ci-object
+object:
+  bucket: ci-bucket
+  region: us-east-1

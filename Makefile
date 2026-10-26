@@ -576,6 +576,10 @@ helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and
 helm-lint: helm helm-deps-cp ## Lint both operator charts.
 	"$(HELM)" lint $(CHART_CP) $(CHART_IP)
 
+.PHONY: helm-lint-catalogs
+helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/*-values.yaml if any. Needs network for chart dependencies.
+	HELM="$(HELM)" YQ="$(YQ)" hack/helm-lint-catalogs.sh
+
 ##@ Release
 
 # Two kinds of build, one set of targets.

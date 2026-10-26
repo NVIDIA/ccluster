@@ -108,6 +108,10 @@ with each job's inputs when changing build or generation dependencies.
   without the check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
+- `test-chart` also runs `make helm-lint-catalogs`, which lints and renders every chart
+  under `catalogs/` on a copy of the tree. A chart renders once per `ci/*-values.yaml`
+  file in its directory, or once with its defaults when it has none. `cluster_base`
+  charts fetch their pinned upstream dependencies first, so the step needs network.
 - The filtered `lint`, `test`, `test-e2e` and `test-python` jobs include `VERSION`, so a
   release PR runs them all. Its `release` label selects full e2e.
 - A skipped filtered workflow is expected for unrelated changes. Do not make these
