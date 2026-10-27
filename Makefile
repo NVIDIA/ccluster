@@ -211,8 +211,10 @@ check-headers: ## Fail if a tracked source file lacks the SPDX license header.
 # (pulled in by build-cp/build-ip), both binaries, both images, and both charts. It
 # does not touch a cluster - `kind load docker-image` and `make deploy-{cp,ip}` are
 # still separate, per the rule that every cluster-touching target is suffixed.
+# client-generate runs first: generate loads every package, and a pkg/client generated from
+# API types that have since changed may no longer compile.
 .PHONY: build
-build: build-cp build-ip docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, both binaries, both images, both charts and the Python models.
+build: client-generate build-cp build-ip docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, the Go client, both binaries, both images, both charts and the Python models.
 
 .PHONY: build-cp
 build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.

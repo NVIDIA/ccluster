@@ -113,7 +113,7 @@ stay isolated the same way they are in production. Docker must be running first.
 
 ```bash
 make init    # create both kind clusters (idempotent)
-make build   # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
+make build   # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
 make load    # build each operator image and load it into its own cluster
 make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
 ```
@@ -206,7 +206,7 @@ CCluster is early and evolving quickly — contributions, ideas, and feedback on
 - Development quickstart:
 
 ```bash
-make build          # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
+make build          # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
 make test           # envtest suites for both control-plane controllers
 make helm-generate  # regenerate the charts from config/; CI fails on any drift
 ```
