@@ -44,7 +44,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: SERVER
-              value: {{ include "argocd-token.server" . | quote }}
+              value: {{ .Values.server | quote }}
             - name: ACCOUNT
               value: {{ .Values.account | quote }}
             - name: SECRET
