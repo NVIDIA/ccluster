@@ -25,7 +25,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cclv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	cclv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 
 	"github.com/NVIDIA/ccluster/test/utils"
 )

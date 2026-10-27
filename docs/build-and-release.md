@@ -103,9 +103,10 @@ with each job's inputs when changing build or generation dependencies.
   workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
   PR rather than `main.yml`.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
-  templates. Before the suite it runs `make manifests generate` and fails on any diff in
-  the tree. `make test` regenerates these files itself, so without the check a stale CRD,
-  RBAC role or `zz_generated.deepcopy.go` passes CI.
+  templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
+  `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes
+  anything in the tree. `make test` regenerates CRDs, RBAC and deepcopy code itself, so
+  without the last check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
 - `test-chart` also runs `make helm-lint-catalogs`, which lints and renders every chart

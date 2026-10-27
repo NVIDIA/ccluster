@@ -3,9 +3,6 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package v1alpha1 contains API Schema definitions for the  v1alpha1 API group.
-// +kubebuilder:object:generate=true
-// +groupName=ccluster.nvidia.com
 package v1alpha1
 
 import (
@@ -17,9 +14,19 @@ var (
 	// GroupVersion is group version used to register these objects.
 	GroupVersion = schema.GroupVersion{Group: "ccluster.nvidia.com", Version: "v1alpha1"}
 
+	// SchemeGroupVersion is GroupVersion under the name the generated client in pkg/client
+	// refers to it by.
+	SchemeGroupVersion = GroupVersion
+
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// Resource returns resource qualified by this API group. The generated listers in
+// pkg/client use it for their NotFound errors.
+func Resource(resource string) schema.GroupResource {
+	return GroupVersion.WithResource(resource).GroupResource()
+}

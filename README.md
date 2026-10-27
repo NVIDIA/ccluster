@@ -113,13 +113,14 @@ stay isolated the same way they are in production. Docker must be running first.
 
 ```bash
 make init    # create both kind clusters (idempotent)
-make build   # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
+make build   # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
 make load    # build each operator image and load it into its own cluster
 make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
 ```
 
 To author CRs from Python instead of YAML, `python/` is a generated Pydantic package covering
 both CRDs and the catalog's typed chart values; see [python/README.md](python/README.md).
+Go programs can use the generated clientset, listers and informers in [`pkg/client/`](pkg/client/).
 
 Each of those has `-cp` / `-ip` halves (`make build-cp`, `make deploy-ip`, ...) if you only
 want to touch one operator. `make clean` deletes both clusters; `make clean-all` also wipes
@@ -205,7 +206,7 @@ CCluster is early and evolving quickly — contributions, ideas, and feedback on
 - Development quickstart:
 
 ```bash
-make build          # manifests, CRDs, deepcopy, both binaries, both images, both charts, Python models
+make build          # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
 make test           # envtest suites for both control-plane controllers
 make helm-generate  # regenerate the charts from config/; CI fails on any drift
 ```

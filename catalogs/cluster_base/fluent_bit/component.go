@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package fluentbit
 
 import (
-	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/v1alpha1"
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
 

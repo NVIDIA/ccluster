@@ -11,7 +11,8 @@ The two-binary layout requires manual wiring. There is no `cmd/main.go`,
 `config/default/`, `config/manager/` or top-level `config/rbac/`.
 
 1. Scaffold with kubebuilder, then move the reconciler into `internal/controller/cp/`
-   or `internal/controller/ip/` and fix its package name.
+   or `internal/controller/ip/` and fix its package name. API types belong in
+   `api/ccluster/<version>/`, whatever directory kubebuilder scaffolds them into.
 2. Add its `SetupWithManager` call to `setupControllers` in the corresponding
    `cmd/ccluster-*-operator/main.go`. Preserve the cp binary's kubebuilder scaffold markers.
 3. Move any scaffolded `config/samples/` CR into `examples/<scenario>/` and remove the
@@ -20,6 +21,7 @@ The two-binary layout requires manual wiring. There is no `cmd/main.go`,
 
 ```bash
 make manifests generate
+make client-generate
 make helm-generate
 make python-generate
 ```
@@ -156,8 +158,9 @@ only such image today. Operator binaries stay in `cmd/`.
 - The subdirectory is `package main`. It is not a catalog component: it has no
   `Chart.yaml`, no entry in `components.All` and no Python model.
   `TestAllCoversTheTree` skips directories without a `Chart.yaml`.
-- The binary does not import the chart's package. That package imports `api/v1alpha1`
-  through `catalogs.Entry`, which would link API machinery into the image.
+- The binary does not import the chart's package. That package imports
+  `api/ccluster/v1alpha1` through `catalogs.Entry`, which would link API machinery into
+  the image.
 - The chart's `.helmignore` lists the subdirectory, so nothing in it reaches `.Files`
   or a chart archive.
 - The shared Dockerfile builds the image, and it is published with the operator images.
@@ -212,6 +215,34 @@ Hand-written: `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`
 `hack/pyschema/` or the Makefile recipe, never in emitted modules. Optional fields default to
 `None`; consumers dump with `mode="json", by_alias=True, exclude_none=True` to keep an
 explicit `False` while omitting unset values. See [Python usage](../python/README.md). CI
+regenerates and fails on any drift.
+
+## Go client generation
+
+`make client-generate` runs applyconfiguration-gen, client-gen, lister-gen and
+informer-gen from `k8s.io/code-generator`, at the version of `k8s.io/client-go` in
+`go.mod`, over the API packages. They write apply configurations, a typed clientset with
+a fake, listers and a shared informer factory into `pkg/client/`, which is deleted and
+rebuilt on each run. The apply configurations give the clientset its `Apply` methods and
+the fake its field-managed `NewClientset`; without them the fake offers only the
+deprecated `NewSimpleClientset`.
+
+The field-managed fake types every write with an OpenAPI schema that applyconfiguration-gen
+embeds in `pkg/client/applyconfiguration/internal/`; a kind missing from it fails every
+create, update and apply. `hack/clientschema` builds that schema from the CRDs with the
+API server's own CRD OpenAPI builder, so `client-generate` runs `manifests` first. The schema also gives each kind an `Extract` function, which reads back the fields
+one manager owns. A kind is included when its type carries `+genclient`;
+a cluster-scoped kind such as `CCLClusterConfig` also needs `+genclient:nonNamespaced`.
+A new top-level kind needs these markers too.
+
+The generators take a package's group and version from its last two directories, so the
+API lives in `api/ccluster/v1alpha1/` and the generated packages sit under
+`ccluster/v1alpha1`. They read `+groupName` only from a file named `doc.go`, so the
+package markers live in `api/ccluster/v1alpha1/doc.go`; without it they would address
+the group as `ccluster` rather than `ccluster.nvidia.com`. The generated code also
+expects `SchemeGroupVersion` and `Resource` beside kubebuilder's `GroupVersion`, in
+`groupversion_info.go`. `test/client/` runs the generated client against envtest, which
+proves those markers, that glue and the schema rather than the generated code. CI
 regenerates and fails on any drift.
 
 ## License headers
