@@ -304,8 +304,8 @@ withdraws the record.
   infrastructure code.
 - **Confinement.** The cp chart's external-dns reads only the `crd` source, only in its own
   namespace (`namespaced: true`, a Role), and deletes only records under its own TXT owner
-  ID. The `DNSEndpoint`s therefore live in that namespace, the operator's own, not beside
-  the CCLInfraPlane: anyone who could write a
+  ID. The `DNSEndpoint`s therefore live in that namespace (`--dns-endpoint-namespace`, the
+  operator's own by default), not beside the CCLInfraPlane: anyone who could write a
   `DNSEndpoint` where external-dns reads it could publish any name its credentials reach.
   Like the mirrored Secret, the `DNSEndpoint` carries the `infraPlaneOwner` annotations
   rather than an owner reference, the same `ownedBy` check, and the same `<namespace>-<name>`

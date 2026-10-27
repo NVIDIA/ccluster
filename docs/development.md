@@ -330,7 +330,7 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 
 ### DNS and external-dns
 
-The operator always writes a DNSEndpoint per CCLInfraPlane into its own namespace; without
+The operator always writes a DNSEndpoint per CCLInfraPlane; without
 external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
 `*.<domain>` for each CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
 
@@ -359,8 +359,10 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
    make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
    ```
 
-The chart's external-dns reads DNSEndpoints from the release namespace, the operator's own.
-`make run-cp` has no namespace of its own and writes them to the Argo CD namespace instead.
+The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
+reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
+should then read only that namespace; `make run-cp`, which has no namespace of its own,
+passes the cp chart's (`HELM_NAMESPACE_CP`).
 external-dns's Route53 policy, scoped by name with `team-a.example.com` standing for your
 zones:
 

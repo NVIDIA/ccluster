@@ -248,7 +248,8 @@ build-ip: manifests generate fmt vet ## Build the ccluster-ip-operator binary.
 
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
-	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd)
+	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd) \
+		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP)
 
 .PHONY: run-ip
 run-ip: manifests generate fmt vet ## Run ccluster-ip-operator from your host.

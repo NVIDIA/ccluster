@@ -73,6 +73,13 @@ type CCLInfraPlaneReconciler struct {
 	// the mirrored cluster Secrets and the AppProjects are written to.
 	ArgoCDNamespace string
 
+	// DNSEndpointNamespace is the namespace the DNSEndpoint of each CCLInfraPlane is
+	// written to, from which external-dns publishes "*.<domain>" pointing at the plane's
+	// ingress LoadBalancer: by default the operator's own, where the cp chart installs
+	// external-dns. CCLInfraPlanes live elsewhere, so that no tenant who can write in
+	// their own namespace can publish a record.
+	DNSEndpointNamespace string
+
 	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one
 	// source repository each AppProject permits, so that nothing an Application in a
 	// ccluster namespace deploys can come from anywhere but the catalog.
@@ -90,12 +97,6 @@ type CCLInfraPlaneReconciler struct {
 	// ResyncPeriod is how often a CCLInfraPlane whose CCLClusterConfig was written is
 	// reconciled again anyway, a safety net behind RemoteWatches. Zero disables it.
 	ResyncPeriod time.Duration
-
-	// DNSEndpointNamespace is the operator's own namespace, where the DNSEndpoint of each
-	// CCLInfraPlane is written, and from which the cp chart's external-dns publishes
-	// "*.<domain>" pointing at the plane's ingress LoadBalancer. CCLInfraPlanes live elsewhere, so
-	// that no tenant who can write in their own namespace can publish a record.
-	DNSEndpointNamespace string
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete

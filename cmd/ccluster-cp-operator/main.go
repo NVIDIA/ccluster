@@ -59,6 +59,11 @@ var (
 	argoCDTokenSecret   string
 )
 
+// dnsEndpointNamespace is where the DNSEndpoint of each CCLInfraPlane is written. Set by a
+// flag, for the same reason as argoCDNamespace; setupControllers replaces an empty value
+// with the operator's own namespace.
+var dnsEndpointNamespace string
+
 // infraPlaneResyncPeriod is how often a CCLInfraPlane is reconciled again to restore its
 // infra-plane cluster's CCLClusterConfig. Set by a flag, for the same reason as
 // argoCDNamespace.
@@ -103,6 +108,10 @@ func main() {
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
+	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
+		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing *.<domain> "+
+			"at the plane's ingress LoadBalancer, is written to, which external-dns must read. "+
+			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -127,15 +136,11 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	argoCDNamespace = namespace
 
-	// The DNSEndpoints go into the operator's own namespace, where the cp chart installs
-	// the external-dns that reads them. Outside a Pod, as under `make run-cp`, there is
-	// none, and the Argo CD namespace stands in.
-	dnsEndpointNamespace, err := ownNamespace(serviceAccountNamespaceFile)
+	namespace, err = resolveDNSEndpointNamespace(dnsEndpointNamespace, serviceAccountNamespaceFile)
 	if err != nil {
-		dnsEndpointNamespace = argoCDNamespace
-		ctrl.Log.WithName("setup").Info("Operator namespace unknown, writing DNSEndpoints to the Argo CD namespace",
-			"namespace", dnsEndpointNamespace, "reason", err.Error())
+		return err
 	}
+	dnsEndpointNamespace = namespace
 
 	argoCDServer, err := newArgoCDServerClient(mgr)
 	if err != nil {
@@ -184,6 +189,20 @@ func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
 	namespace, err := ownNamespace(namespaceFile)
 	if err != nil {
 		return "", fmt.Errorf("--argocd-namespace is unset and %w", err)
+	}
+	return namespace, nil
+}
+
+// resolveDNSEndpointNamespace returns flagValue, or if it is empty the operator's own
+// namespace, where the cp chart installs external-dns. Outside a Pod there is none, and
+// the namespace has to be given.
+func resolveDNSEndpointNamespace(flagValue, namespaceFile string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	namespace, err := ownNamespace(namespaceFile)
+	if err != nil {
+		return "", fmt.Errorf("--dns-endpoint-namespace is unset and %w", err)
 	}
 	return namespace, nil
 }

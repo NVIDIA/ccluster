@@ -63,9 +63,11 @@ manager:
   ## safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
-  ## The operator also writes a DNSEndpoint per CCLInfraPlane into its own namespace,
-  ## pointing "*.<domain>" at the plane's ingress LoadBalancer. Nothing is published
-  ## unless the `external-dns` dependency below is enabled.
+  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<domain>" at
+  ## the plane's ingress LoadBalancer. Nothing is published unless the `external-dns`
+  ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
+  ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
+  ## for an external-dns installed elsewhere.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
@@ -313,7 +315,8 @@ argo-cd:
 ## The presets below confine it to those DNSEndpoints, so it does not touch anything else,
 ## another external-dns in the cluster included:
 ##   - `namespaced` has it read DNSEndpoints from the release namespace only, the
-##     operator's own, where it writes them, under a Role rather than a ClusterRole;
+##     operator's default --dns-endpoint-namespace, under a Role rather than a
+##     ClusterRole;
 ##   - `sources` is the DNSEndpoint CRD alone, so no Service or Ingress is published;
 ##   - `txtOwnerId` limits deletions to the records it created itself.
 ## The DNSEndpoint CRD comes with this chart and is shared with any other external-dns:

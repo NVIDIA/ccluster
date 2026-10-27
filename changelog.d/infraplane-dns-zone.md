@@ -1,6 +1,6 @@
 ### Added
 - The cp operator writes an external-dns `DNSEndpoint` per `CCLInfraPlane` into its own
-  namespace, pointing `*.<domain>` at the plane's `ingress` LoadBalancer: an A record for
+  namespace (or `--dns-endpoint-namespace`), pointing `*.<domain>` at the plane's `ingress` LoadBalancer: an A record for
   an IP, a CNAME for a hostname, withdrawn while the plane reports no address and when the
   plane is deleted. The records go into whichever DNS zone the domain falls under, which
   the user creates and delegates: one per plane, or one shared. A new `DNSReady` condition
