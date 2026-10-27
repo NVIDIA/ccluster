@@ -195,7 +195,10 @@ on delete — and only if the ownership check still agrees they are ours.
 Once the cluster Secret is mirrored, the controller connects to the infra-plane cluster and
 creates or updates its `CCLClusterConfig` singleton (§3a) with `spec.domain`
 (`cclinfraplane_clusterconfig.go`). This is the control plane's one direct write to an
-infra-plane cluster; everything else goes through Argo CD.
+infra-plane cluster; everything else goes through Argo CD. It is written directly, not as
+an Argo CD Application, so that writing it does not depend on Argo CD, and so that its
+status can be read back into the `CCLInfraPlane` straight from the cluster rather than
+through argocd-server and polling. The cost is in the credentials it can use, below.
 
 It connects with the **same credentials Secret Argo CD uses**, read the way Argo CD reads it
 (`internal/remote`): `server`, and `config`'s `bearerToken`, basic auth or
@@ -203,8 +206,11 @@ It connects with the **same credentials Secret Argo CD uses**, read the way Argo
 credentials, registers the operator's own cluster, so the operator uses its own
 ServiceAccount — which is why the cp role grants `cclclusterconfigs`. Exec plugins and AWS
 IAM (`execProviderConfig`, `awsAuthConfig`) need binaries or a cloud identity only Argo CD's
-Pods have, and are refused. Every request is bounded by a 30s timeout, so an unreachable
-cluster fails a reconcile rather than holding a worker.
+Pods have, and are refused: a plane registered with `execProviderConfig` or `awsAuthConfig`
+works for Argo CD but reports `UnsupportedCredentials` here. Every request is bounded by a
+30s timeout, so an unreachable cluster fails a reconcile rather than hanging it, but it
+still holds the controller's single worker for up to that long, and every other
+CCLInfraPlane waits. Configurable reconcile concurrency is tracked in #116.
 
 The `CCLClusterConfig` is stamped with the same `infraPlaneOwner` annotations as the
 mirrored Secret, but without the adopt-if-unclaimed rule: a CCLInfraPlane writes and deletes
@@ -236,10 +242,12 @@ requeues: the controller watches Secrets and AppProjects, so the fix re-triggers
 `ClusterConfigApplied` — `True/Applied`, or `False` with `CRDMissing` (the ip chart is not
 installed on the cluster), `Conflict` (a `CCLClusterConfig` this plane did not create, whose
 message names the CCLInfraPlane it was created for, if any),
-`ClusterUnreachable` (any other failure to read or write it, with the error as the message),
-`UnsupportedCredentials`, `InvalidCredentials` (`config` is not JSON) or `DomainMissing` (a
-CCLInfraPlane stored before `domain` was required). It is computed only once `Available` is
-true, and both are written in one status patch. `CRDMissing`, `Conflict` and
+`AccessDenied` (the cluster answered Unauthorized or Forbidden: the credentials are
+rejected or lack the rights), `ClusterUnreachable` (any other failure to read or write it,
+with the error as the message), `UnsupportedCredentials` or `InvalidCredentials` (`config`
+is not JSON). It is computed only once `Available` is true, and both are written in one
+status patch; while `Available` is `False` it is `Unknown/NotAvailable`, since nothing keeps
+the `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
@@ -318,7 +326,8 @@ Only the singleton is watched. Verifiers read state the operator does not write,
 the kinds they will read are installed by the very components being verified —
 controller-runtime never starts a controller whose watch source cannot sync — so
 re-verification is periodic: one minute while anything fails, five once everything
-passes. That is the one deliberate exception to the "no polling" rule in §7. Updates to
+passes. That is one of the two deliberate exceptions to the "no polling" rule in §7; the
+other is the control-plane operator's resync of this singleton (§3). Updates to
 the singleton trigger a pass only when its generation changes, so the operator's own
 status writes do not rerun every Verifier.
 
@@ -691,7 +700,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | CRD | Condition | Meaning |
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
-| `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `CRDMissing`, `Conflict`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`, `DomainMissing`. |
+| `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |

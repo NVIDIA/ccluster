@@ -7,6 +7,7 @@ package cp
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,6 +17,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -831,7 +833,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(clusterConfigExists()).To(BeFalse())
 		})
 
-		It("should report ClusterUnreachable and retry when the infra-plane cluster cannot be reached", func() {
+		It("should report ClusterUnreachable and retry when the infra-plane cluster refuses the connection", func() {
 			createSecret(credentials)
 
 			By("handing out a client for an address nothing listens on")
@@ -851,6 +853,76 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			By("still deleting the CCLInfraPlane")
 			deleteAndFinalize(typeNamespacedName)
+		})
+
+		It("should report AccessDenied and retry when the infra-plane cluster refuses the credentials", func() {
+			createSecret(credentials)
+			watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, refusal := range []error{
+				apierrors.NewUnauthorized("token expired"),
+				apierrors.NewForbidden(schema.GroupResource{
+					Group: cclusternvidiacomv1alpha1.GroupVersion.Group, Resource: "cclclusterconfigs",
+				}, cclusternvidiacomv1alpha1.CCLClusterConfigName, errors.New("no RBAC")),
+			} {
+				By("handing out a client whose every read is refused with " + refusal.Error())
+				remoteClient = interceptor.NewClient(watchClient, interceptor.Funcs{
+					Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+						return refusal
+					},
+				})
+
+				reconcileAndGet()
+				Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
+				infraPlane := reconcileAndGet()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterAccessDenied)
+				Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+			}
+		})
+
+		It("should report Conflict when another CCLInfraPlane creates the CCLClusterConfig first", func() {
+			createSecret(credentials)
+
+			By("creating another plane's CCLClusterConfig between the operator's read and its create")
+			watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+			Expect(err).NotTo(HaveOccurred())
+			remoteClient = interceptor.NewClient(watchClient, interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*cclusternvidiacomv1alpha1.CCLClusterConfig); ok && !clusterConfigExists() {
+						createForeignClusterConfig(map[string]string{
+							annotationInfraPlaneName:      "other-plane",
+							annotationInfraPlaneNamespace: "other-namespace",
+						})
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			})
+
+			infraPlane := settle()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			config := getClusterConfig()
+			Expect(config.Spec.Domain).To(Equal(foreignDomain))
+			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, "other-plane"))
+		})
+
+		It("should mark ClusterConfigApplied Unknown once the plane is no longer Available", func() {
+			createSecret(credentials)
+			expectClusterConfigApplied(settle(), metav1.ConditionTrue, reasonClusterConfigApplied)
+
+			By("deleting the credentials Secret")
+			Expect(k8sClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			})).To(Succeed())
+			Expect(reconcileResult()).To(Equal(reconcile.Result{}))
+			infraPlane := reconcileAndGet()
+
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Reason).To(Equal(reasonSecretNotFound))
+			expectClusterConfigApplied(infraPlane, metav1.ConditionUnknown, reasonClusterConfigNotAvailable)
 		})
 
 		// These go through the real SecretClientFactory, the one the operator runs with.

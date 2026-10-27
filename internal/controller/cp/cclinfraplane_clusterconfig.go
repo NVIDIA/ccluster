@@ -30,13 +30,14 @@ const (
 	// operator writes into the infra-plane cluster.
 	conditionTypeClusterConfigApplied = "ClusterConfigApplied"
 
-	reasonClusterConfigApplied    = "Applied"
-	reasonDomainMissing           = "DomainMissing"
-	reasonClusterConfigCRDMissing = "CRDMissing"
-	reasonClusterConfigConflict   = "Conflict"
-	reasonClusterUnreachable      = "ClusterUnreachable"
-	reasonUnsupportedCredentials  = "UnsupportedCredentials"
-	reasonInvalidCredentials      = "InvalidCredentials"
+	reasonClusterConfigApplied      = "Applied"
+	reasonClusterConfigNotAvailable = "NotAvailable"
+	reasonClusterConfigCRDMissing   = "CRDMissing"
+	reasonClusterConfigConflict     = "Conflict"
+	reasonClusterAccessDenied       = "AccessDenied"
+	reasonClusterUnreachable        = "ClusterUnreachable"
+	reasonUnsupportedCredentials    = "UnsupportedCredentials"
+	reasonInvalidCredentials        = "InvalidCredentials"
 )
 
 // clusterConfigRetryInterval is how soon a CCLClusterConfig that could not be written is
@@ -70,13 +71,6 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 			Message:            message,
 			ObservedGeneration: infraPlane.Generation,
 		}
-	}
-
-	if infraPlane.Spec.Domain == "" {
-		// Only a CCLInfraPlane stored before spec.domain was required gets here. Setting
-		// the domain is a spec change, which re-triggers reconciliation.
-		return condition(metav1.ConditionFalse, reasonDomainMissing,
-			"spec.domain is not set"), ctrl.Result{}
 	}
 
 	op, err := r.applyClusterConfig(ctx, infraPlane, source)
@@ -120,6 +114,14 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 					"install the ccluster-ip chart there"),
 			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
+	case apierrors.IsUnauthorized(err), apierrors.IsForbidden(err):
+		// Retried: a fix to RBAC on the infra-plane cluster is not watched. A new token in
+		// the credentials Secret is, and re-triggers reconciliation sooner.
+		log.Info("Skipped CCLClusterConfig for credentials the infra-plane cluster refused",
+			"secret", source.Name, "reason", err.Error())
+		return condition(metav1.ConditionFalse, reasonClusterAccessDenied, err.Error()),
+			ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
+
 	default:
 		log.Error(err, "Failed to apply CCLClusterConfig on infra-plane cluster",
 			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName)
@@ -143,6 +145,25 @@ func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 		return controllerutil.OperationResultNone, err
 	}
 
+	op, err := createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+	if apierrors.IsAlreadyExists(err) {
+		// Someone else created it between our read and our create, such as another
+		// CCLInfraPlane registering the same cluster. Read it again: it is a conflict unless
+		// it is ours.
+		op, err = createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+	}
+	return op, err
+}
+
+// createOrPatchClusterConfig is a single attempt of applyClusterConfig, through
+// remoteClient. It starts from an empty object each time: a read decodes into the object it
+// is given, so a retry reusing the object of a failed create would merge this plane's
+// annotations into whatever it reads.
+func createOrPatchClusterConfig(
+	ctx context.Context,
+	remoteClient client.Client,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+) (controllerutil.OperationResult, error) {
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
 	}

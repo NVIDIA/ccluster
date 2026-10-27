@@ -2,9 +2,10 @@
 - The cp operator writes the `CCLClusterConfig` singleton into each infra-plane cluster,
   carrying the `CCLInfraPlane`'s domain, using the plane's credentials Secret (the one Argo
   CD uses). A new `ClusterConfigApplied` condition reports `Applied`, `CRDMissing`,
-  `Conflict`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials` or
-  `DomainMissing`. A plane writes and deletes only the `CCLClusterConfig` it created: any
-  other, such as one applied by hand, is left alone and reported as `Conflict`, retried
+  `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials` or
+  `InvalidCredentials`, and `Unknown/NotAvailable` while `Available` is `False`. A plane
+  writes and deletes only the `CCLClusterConfig` it created: any other, such as one applied
+  by hand, is left alone and reported as `Conflict`, retried
   every minute, until it is deleted. Deleting the `CCLInfraPlane` deletes the
   `CCLClusterConfig` it created. A plane registering the cp cluster itself is written with the
   operator's own ServiceAccount, which the cp role now grants `cclclusterconfigs`.

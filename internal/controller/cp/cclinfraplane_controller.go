@@ -171,7 +171,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		// watch picks that up.
 		log.Info("Refused to overwrite AppProject claimed by another namespace",
 			"project", projectName(infraPlane.Namespace), "projectNamespace", r.ArgoCDNamespace)
-		return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+		return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 			reasonProjectConflict, fmt.Sprintf(
 				"AppProject %q in namespace %q belongs to another namespace",
 				projectName(infraPlane.Namespace), r.ArgoCDNamespace))
@@ -191,7 +191,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if apierrors.IsNotFound(err) {
 			// No requeue: the Secret watch re-triggers reconciliation once it appears.
 			log.Info("Missing credentials Secret", "secret", secretName)
-			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 				reasonSecretNotFound, fmt.Sprintf("Secret %q not found", secretName))
 		}
 		return ctrl.Result{}, err
@@ -204,7 +204,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Secret watch picks that up.
 			log.Info("Refused to overwrite cluster Secret owned by another CCLInfraPlane",
 				"secret", mirrorName, "secretNamespace", r.ArgoCDNamespace)
-			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 				reasonClusterSecretConflict, fmt.Sprintf(
 					"Secret %q in namespace %q belongs to another CCLInfraPlane",
 					mirrorName, r.ArgoCDNamespace))
@@ -320,18 +320,25 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
-// setAvailable sets the Available condition, which reports on the mirrored cluster Secret.
-func (r *CCLInfraPlaneReconciler) setAvailable(
+// setUnavailable sets the Available condition, which reports on the mirrored cluster
+// Secret, to False. ClusterConfigApplied becomes Unknown: the CCLClusterConfig is not
+// written while the plane is unavailable, so whatever the condition last said is no
+// longer being kept true.
+func (r *CCLInfraPlaneReconciler) setUnavailable(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-	status metav1.ConditionStatus,
 	reason, message string,
 ) error {
 	return r.setConditions(ctx, infraPlane, metav1.Condition{
 		Type:    conditionTypeAvailable,
-		Status:  status,
+		Status:  metav1.ConditionFalse,
 		Reason:  reason,
 		Message: message,
+	}, metav1.Condition{
+		Type:    conditionTypeClusterConfigApplied,
+		Status:  metav1.ConditionUnknown,
+		Reason:  reasonClusterConfigNotAvailable,
+		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
 	})
 }
 
