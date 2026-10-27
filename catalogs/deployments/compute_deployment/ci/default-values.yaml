@@ -5,6 +5,8 @@ name: ci-compute
 deploymentId: ci-compute
 imageUrl: registry.example.com/ci/compute:1.0.0
 domain: ci.example.com
+containerPort: 2222
+exposedPort: 22
 storageClassName: standard
 sshPublicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIc ci
 resources:

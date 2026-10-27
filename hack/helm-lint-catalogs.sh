@@ -26,29 +26,30 @@ cp -R catalogs "$work/"
 export HELM_REPOSITORY_CONFIG="$work/repositories.yaml"
 export HELM_REPOSITORY_CACHE="$work/repository-cache"
 
-# `helm dependency build` resolves a locked dependency through the local repo list, so
-# every repository a catalog chart names is registered first. Matching is by URL.
-n=0
-while IFS= read -r url; do
-  n=$((n + 1))
-  "$HELM" repo add "catalog-$n" "$url" >/dev/null
-done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | sort -u)
-
-# Remote chart repositories flake; retry before failing the run.
-build_deps() {
+# Remote chart repositories flake; retry before failing the run. Both repo add and
+# dependency build download from them.
+retry() {
   local attempt
   for attempt in 1 2 3; do
-    "$HELM" dependency build "$1" >/dev/null && return 0
-    echo "helm dependency build $1 failed (attempt $attempt)" >&2
+    "$@" >/dev/null && return 0
+    echo "$* failed (attempt $attempt)" >&2
     sleep $((attempt * 5))
   done
   return 1
 }
 
+# `helm dependency build` resolves a locked dependency through the local repo list, so
+# every repository a catalog chart names is registered first. Matching is by URL.
+n=0
+while IFS= read -r url; do
+  n=$((n + 1))
+  retry "$HELM" repo add "catalog-$n" "$url"
+done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | sort -u)
+
 failed=()
 while IFS= read -r chart; do
   dir="$work/$chart"
-  if [ "$("$YQ" '.dependencies | length' "$dir/Chart.yaml")" -gt 0 ] && ! build_deps "$dir"; then
+  if [ "$("$YQ" '.dependencies | length' "$dir/Chart.yaml")" -gt 0 ] && ! retry "$HELM" dependency build "$dir"; then
     failed+=("$chart (dependency build)")
     continue
   fi
