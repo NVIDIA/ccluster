@@ -270,16 +270,18 @@ func TestFakeClientsetWritesTheAPITypes(t *testing.T) {
 	}
 }
 
-// createNamespace creates the namespace name for the test and returns name.
-func createNamespace(t *testing.T, name string) string {
+// createNamespace creates a namespace named after prefix and returns the name the server
+// gave it. The name is unique because envtest runs no namespace controller, so a
+// namespace is never deleted and a fixed name would fail the next run in the same process.
+func createNamespace(t *testing.T, prefix string) string {
 	t.Helper()
 
-	_, err := kubeClient.CoreV1().Namespaces().Create(t.Context(),
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}, metav1.CreateOptions{})
+	namespace, err := kubeClient.CoreV1().Namespaces().Create(t.Context(),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix + "-"}}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return name
+	return namespace.Name
 }
 
 // deleteClusterConfig deletes the CCLClusterConfig singleton, if there is one.
