@@ -55,7 +55,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # --build-arg PKG=./catalogs/deployments/compute_deployment/compute-ssh --target compute-ssh.
 # compute_deployment's init container runs `/compute-ssh install <path>`, so the binary
 # path is part of the chart's contract.
-FROM nvcr.io/nvidia/distroless/static:v4.1.4 AS compute-ssh
+FROM nvcr.io/nvidia/distroless/static:v4.1.5 AS compute-ssh
 # REVISION is the commit, passed by the Makefile. The base image carries its own OCI
 # labels, so every one it sets is overridden here; see the operator stage below.
 ARG REVISION=unknown
@@ -82,7 +82,7 @@ ENTRYPOINT ["/compute-ssh"]
 # than upstream gcr.io/distroless. Its default user is a named one and its default
 # workdir is /app, so each stage sets WORKDIR and a numeric USER for runAsNonRoot.
 # Refer to https://developer.download.nvidia.com/distroless-oss/index.html for more details
-FROM nvcr.io/nvidia/distroless/static:v4.1.4
+FROM nvcr.io/nvidia/distroless/static:v4.1.5
 # org.opencontainers.image.source is what links the GHCR package to the repository, so
 # the package inherits the repository's visibility and shows up on its Packages page.
 # The base image sets its own url, documentation, revision, version, created and title
