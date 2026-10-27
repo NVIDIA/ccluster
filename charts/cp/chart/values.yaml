@@ -51,9 +51,8 @@ manager:
   ## The operator reads Application trees through argocd-server's API, as the Argo CD
   ## account declared under `argo-cd.configs` below. Argo CD must run in this cluster:
   ## - --argocd-server-service (default argocd-server, a stock install's) is
-  ##   argocd-server's Service in --argocd-namespace. The `argo-cd` subchart's is
-  ##   <release>-argocd-server, so the default below assumes the release name
-  ##   ccluster-cp; change it with the release name, and drop it for an existing
+  ##   argocd-server's Service in --argocd-namespace. The default below is the
+  ##   `argo-cd` subchart's, fixed by its fullnameOverride; drop it for an existing
   ##   Argo CD. The operator connects over HTTPS without verifying the server's
   ##   certificate.
   ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
@@ -231,6 +230,13 @@ networkPolicy:
 ## (see docs/development.md).
 argo-cd:
   enabled: true
+
+  ## Pinned so Argo CD's resources are named `ccluster-cp-argocd-*` whatever the release
+  ## name, which lets the operator's --argocd-server-service above and the argocd-token
+  ## dependency name argocd-server's Service, ccluster-cp-argocd-server, as a constant.
+  ## Changing this or server.name renames that Service: set --argocd-server-service and
+  ## `argocd-token.server` to the new name as well.
+  fullnameOverride: ccluster-cp-argocd
 
   configs:
     params:

@@ -99,14 +99,28 @@ The workflow files are the source of truth for exact path filters. Keep filters 
 with each job's inputs when changing build or generation dependencies.
 
 - `lint` covers Go and linter inputs; `test` and `test-e2e` cover Go, build, deployment
-  and test inputs. `test` also checks that `go.mod` and `go.sum` are tidy and that the generated Go client has not drifted. `test-e2e` builds every image: the suite builds the operators and a
+  and test inputs. `test-e2e` builds every image: the suite builds the operators and a
   workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
   PR rather than `main.yml`.
+- `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
+  templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
+  `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes
+  anything in the tree. `make test` regenerates CRDs, RBAC and deepcopy code itself, so
+  without the last check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
+- `test-chart` also runs `make helm-lint-catalogs`, which lints and renders every chart
+  under `catalogs/` on a copy of the tree. A chart renders once per `ci/*-values.yaml`
+  file in its directory, or once with its defaults when it has none. `cluster_base`
+  charts fetch their pinned upstream dependencies first, so the step needs network.
+  `TestCIValuesAreValid` in `catalogs/components` decodes each `ci/` file strictly into
+  the chart's `Values` and runs `Validate`, because a render does not check either.
 - The filtered `lint`, `test`, `test-e2e` and `test-python` jobs include `VERSION`, so a
   release PR runs them all. Its `release` label selects full e2e.
 - A skipped filtered workflow is expected for unrelated changes. Do not make these
   filtered checks required in branch protection: a skipped workflow can prevent merging.
+- Dependabot opens weekly version-update PRs for the Go module (`k8s.io/*` and
+  controller-runtime in one group), the Python package, the Dockerfile base images and
+  GitHub Actions. Their titles use the `build` or `ci` type so `pr-title` accepts them.
 - `dco` and `pr-title` enforce sign-off and the Conventional Commit PR title. The repository
   squash-merges the PR title and body into commit history; follow the commit skill's format.

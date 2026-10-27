@@ -13,7 +13,7 @@ by changed path. See [Development](development.md) for generation and cluster se
 | Envtest | `make test` | Controller reconciliation against a real API server and etcd; no cluster needed. |
 | Quick e2e | `make test-e2e` | Helm deployment, operator ServiceAccount RBAC and running watch wiring for both operators, without Argo CD reconciliation. |
 | Full e2e | `make test-e2e-full` | Quick tier plus real Argo CD rollout, ordered release/teardown, drift repair, values updates, tenancy and istio's ignored webhook drift. |
-| Charts | `make helm-generate`, `make helm-lint` | Generated chart consistency and rendering. CI also checks the vendored Argo CD CRDs and server-side diff setting. |
+| Charts | `make helm-generate`, `make helm-lint`, `make helm-lint-catalogs` | Generated chart consistency and rendering, and that every catalog chart lints and renders. CI also checks the vendored Argo CD CRDs and server-side diff setting. |
 | Python | `make python-generate`, `make python-test` | Generated model consistency, example round-tripping and catalog value serialization. |
 | Manual host manager | `make run-cp` | Fast iteration under your kubeconfig identity; does not prove operator RBAC. |
 

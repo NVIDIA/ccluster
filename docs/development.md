@@ -138,6 +138,10 @@ When adding or changing a component:
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
+- A chart whose required values have no default carries `ci/<case>-values.yaml`, the
+  required values only; a chart with exclusive modes carries one file per mode (see
+  `persistent_volume`). `make helm-lint-catalogs`, run by CI, renders the chart with
+  each file, or with its defaults when there is none.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. List any image source subdirectory too. This is separate from the generated
   operator-chart ignore files.
@@ -307,8 +311,9 @@ token stored under the key `token` of Secret `ccluster-cp-argocd-token` (`--argo
 in the Argo CD namespace (`--argocd-namespace`). The token does not expire and is created
 once. The operator reaches argocd-server through its Service in the same namespace,
 `--argocd-server-service`, without verifying its certificate, so Argo CD must run in the
-operator's cluster. The chart's default `manager.args` name the bundled Argo CD's Service
-for the release name `ccluster-cp`; `make deploy-cp` sets it for `HELM_RELEASE_CP`.
+operator's cluster. The chart pins the bundled Argo CD's names with
+`argo-cd.fullnameOverride`, so its Service is always `ccluster-cp-argocd-server`, which the
+chart's default `manager.args` and `make deploy-cp` both pass.
 
 With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
 The chart declares the account and its RBAC line (`argo-cd.configs` in

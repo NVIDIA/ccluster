@@ -9,9 +9,9 @@ account: ccluster-cp
 ## which is where the bundled Argo CD runs. The operator reads it from there.
 secretName: ccluster-cp-argocd-token
 
-## argocd-server's Service. Empty derives it the way the argo-cd chart names it:
-## <release>-argocd-server, or <release>-server when the release name contains "argocd".
-server: ""
+## argocd-server's Service. The parent chart pins argo-cd.fullnameOverride to
+## ccluster-cp-argocd, so the bundled Service has this name whatever the release name.
+server: ccluster-cp-argocd-server
 
 ## Logs in to argocd-server and creates the token. Keep the tag at the bundled argo-cd
 ## chart's appVersion, so the CLI matches the server.

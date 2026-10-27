@@ -508,7 +508,7 @@ ARGOCD_NAMESPACE ?=
 # A literal comma cannot appear inside $(if).
 COMMA := ,
 # The manager arg deploy-cp adds for the bundled Argo CD.
-ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=$(HELM_RELEASE_CP)-argocd-server")
+ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=ccluster-cp-argocd-server")
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.
@@ -606,6 +606,10 @@ helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and
 .PHONY: helm-lint
 helm-lint: helm helm-deps-cp ## Lint both operator charts.
 	"$(HELM)" lint $(CHART_CP) $(CHART_IP)
+
+.PHONY: helm-lint-catalogs
+helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/*-values.yaml if any. Needs network for chart dependencies.
+	HELM="$(HELM)" YQ="$(YQ)" hack/helm-lint-catalogs.sh
 
 ##@ Release
 

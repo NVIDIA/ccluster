@@ -6,7 +6,7 @@ on:
   pull_request:
     # Only when python/ or one of its generator inputs changes: the CRD types, the
     # catalog Values types and hack/pyschema all feed make python-generate. Docs, chart
-    # and controller-only PRs skip it. Keep in sync with AGENTS.md "Commit messages, pull requests, releases and reviews".
+    # and controller-only PRs skip it. Keep in sync with docs/build-and-release.md "CI checks".
     # VERSION is here so a release PR, which changes little else, runs this check too.
     paths:
       - 'VERSION'

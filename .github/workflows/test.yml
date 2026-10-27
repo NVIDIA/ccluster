@@ -4,8 +4,9 @@ name: Tests
 
 on:
   pull_request:
-    # Only when something the suite depends on changes; docs, catalog and workflow-only
-    # PRs skip it. Keep in sync with AGENTS.md "Commit messages, pull requests, releases and reviews".
+    # Only when something the suite depends on changes; docs and workflow-only PRs skip
+    # it. catalogs/** is here because catalog tests read Chart.yaml, values.yaml and
+    # chart templates, not only Go. Keep in sync with docs/build-and-release.md "CI checks".
     # VERSION is here so a release PR, which changes little else, runs this check too.
     paths:
       - 'VERSION'
@@ -18,6 +19,7 @@ on:
       - 'Dockerfile'
       - 'config/**'
       - 'charts/**'
+      - 'catalogs/**'
       - 'test/**'
       - '.github/workflows/test.yml'
 
@@ -39,12 +41,25 @@ jobs:
       - name: Check go.mod and go.sum are tidy
         run: go mod tidy -diff
 
-      # Intent-to-add makes files the generators would add count as drift too.
+      # Before the manifests check: generate loads every package, and a client generated
+      # from API types that have since changed may not compile. Intent-to-add makes files
+      # the generators would add count as drift too.
       - name: Check the generated Go client
         run: |
           make client-generate
           git add --intent-to-add pkg/client
           git diff --exit-code -- pkg/client/
+
+      # make test regenerates CRDs, RBAC and deepcopy code before it runs, so a stale
+      # committed copy passes the suite and main.yml builds images from it. A stale
+      # zz_generated.deepcopy.go still compiles: it copies a new slice, map or pointer
+      # field shallowly. The diff covers the whole tree, wherever a generator writes, and
+      # intent-to-add makes files the generators would add count as drift too.
+      - name: Check the generated manifests and deepcopy code
+        run: |
+          make manifests generate
+          git add --intent-to-add .
+          git diff --exit-code
 
       - name: Running Tests
         run: make test

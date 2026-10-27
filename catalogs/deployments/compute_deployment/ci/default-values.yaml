@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The values make helm-lint-catalogs renders this chart with: the required ones only.
+name: ci-compute
+deploymentId: ci-compute
+imageUrl: registry.example.com/ci/compute:1.0.0
+domain: ci.example.com
+containerPort: 2222
+exposedPort: 22
+storageClassName: standard
+sshPublicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIcIc ci
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: "1"
+    memory: 1Gi

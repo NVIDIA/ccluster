@@ -30,6 +30,12 @@ jobs:
       - name: Lint the charts
         run: make helm-lint
 
+      # test-e2e skips catalog-only PRs, so this is the only check that renders a catalog
+      # template before it merges. Charts with required values render with the files in
+      # their ci/ directory; cluster_base charts fetch their upstream dependencies.
+      - name: Lint and render the catalog charts
+        run: make helm-lint-catalogs
+
       # Render both charts and confirm the resources the rest of the repo depends on
       # by name are present. test/e2e and the AGENTS.md recipes hardcode these.
       - name: Render the charts

@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The values make helm-lint-catalogs renders this chart with. The templates read
+# global.cluster.domain, which values.yaml does not set.
+global:
+  cluster:
+    domain: ci.example.com
