@@ -1262,6 +1262,16 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}))
 			})
 
+			It("should point the wildcard record at an IPv6 ingress address with an AAAA record", func() {
+				settle()
+
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "2001:db8::10"})
+
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: "*." + domain, RecordType: "AAAA", Targets: []string{"2001:db8::10"}, RecordTTL: 60,
+				}))
+			})
+
 			It("should follow a LoadBalancer whose address changes", func() {
 				settle()
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})

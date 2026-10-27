@@ -286,7 +286,7 @@ therefore retried every minute, and a written one is reconciled again every
 | Step | Done by |
 | --- | --- |
 | Create the DNS zone the domain falls under, and delegate it from its parent | the user, outside ccluster |
-| Write `DNSEndpoint` `<namespace>-<name>`: `*.<domain>`, an A record for the ingress IP or a CNAME for its hostname, TTL 60 | the operator |
+| Write `DNSEndpoint` `<namespace>-<name>`: `*.<domain>`, an A or AAAA record for the ingress IPv4 or IPv6 address, or a CNAME for its hostname, TTL 60 | the operator |
 | Publish the record, and the TXT record that marks it as external-dns's, into that zone | external-dns, from the cp chart |
 
 The address comes from `status.clusterConfig`'s `ingress` LoadBalancer, so it arrives

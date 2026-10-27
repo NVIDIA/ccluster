@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -127,8 +128,8 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 }
 
 // wildcardEndpoint returns the "*.<domain>" record pointing at the ingress LoadBalancer
-// in clusterConfig - an A record for an IP, otherwise a CNAME for a hostname - or nil if
-// it has no address.
+// in clusterConfig - an A or AAAA record for an IPv4 or IPv6 address, otherwise a CNAME
+// for a hostname - or nil if it has no address.
 func wildcardEndpoint(
 	domain string,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
@@ -143,6 +144,9 @@ func wildcardEndpoint(
 		return nil
 	case lb.IP != "":
 		endpoint.RecordType = "A"
+		if addr, err := netip.ParseAddr(lb.IP); err == nil && addr.Unmap().Is6() {
+			endpoint.RecordType = "AAAA"
+		}
 		endpoint.Targets = []string{lb.IP}
 	case lb.Hostname != "":
 		endpoint.RecordType = "CNAME"
