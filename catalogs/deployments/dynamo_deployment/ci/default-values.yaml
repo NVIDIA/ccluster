@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The values make helm-lint-catalogs renders this chart with: the required ones only,
+# in the chart's default aggregated serving mode.
+name: ci-dynamo
+deploymentId: ci-dynamo
+imageUrl: registry.example.com/ci/dynamo:1.0.0
+domain: ci.example.com
+model: ci/model
+workerPool:
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+      acceleratorCount: 1
+    requests:
+      cpu: "1"
+      memory: 1Gi
+      acceleratorCount: 1

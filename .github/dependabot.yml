@@ -3,11 +3,33 @@
 # Dependabot version updates — https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 # (Security *alerts* are configured in repo settings and are already enabled; this
 # file controls scheduled version-bump PRs.)
+#
+# The commit message is the PR title, which pr-title.yml checks as a Conventional
+# Commit; Dependabot adds the colon after each prefix.
 version: 2
 updates:
-  # Python dependencies (the catalog package's pyproject.toml lives in /catalog)
-  - package-ecosystem: pip
-    directory: /catalog
+  # Go module: both operators, the catalog values types and the compute-ssh launcher.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # controller-runtime pins the k8s.io minor it builds against, so they move together.
+    groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/controller-runtime"
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: "build"
+
+  # Python package (pyproject.toml and uv.lock).
+  - package-ecosystem: uv
+    directory: /python
     schedule:
       interval: weekly
       day: monday
@@ -16,10 +38,21 @@ updates:
       - dependencies
       - python
     commit-message:
-      prefix: "deps"
+      prefix: "build(python)"
 
-  # GitHub Actions used in workflows. Inert until .github/workflows/ exists;
-  # kept here so Actions get bumped automatically once CI is added.
+  # Base images in the Dockerfile: the golang builder and the distroless runtime.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "build(images)"
+
+  # GitHub Actions used in .github/workflows/.
   - package-ecosystem: github-actions
     directory: /
     schedule:

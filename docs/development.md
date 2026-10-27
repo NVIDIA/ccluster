@@ -136,6 +136,10 @@ When adding or changing a component:
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
+- A chart whose required values have no default carries `ci/<case>-values.yaml`, the
+  required values only; a chart with exclusive modes carries one file per mode (see
+  `persistent_volume`). `make helm-lint-catalogs`, run by CI, renders the chart with
+  each file, or with its defaults when there is none.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. List any image source subdirectory too. This is separate from the generated
   operator-chart ignore files.

@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The values make helm-lint-catalogs renders this chart with: the required ones only.
+name: ci-inference
+deploymentId: ci-inference
+imageUrl: registry.example.com/ci/inference:1.0.0
+domain: ci.example.com
+containerPort: 8000
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: "1"
+    memory: 1Gi

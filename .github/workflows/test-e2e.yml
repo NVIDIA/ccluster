@@ -7,7 +7,7 @@ on:
     # `labeled` so adding the release label to an open PR re-runs it as the full tier.
     types: [opened, synchronize, reopened, labeled]
     # Only when something the suite depends on changes; docs, catalog and workflow-only
-    # PRs skip it. Keep in sync with AGENTS.md "Commit messages, pull requests, releases and reviews".
+    # PRs skip it. Keep in sync with docs/build-and-release.md "CI checks".
     # VERSION is here so a release PR, which changes little else, runs the full tier.
     paths:
       - 'VERSION'
