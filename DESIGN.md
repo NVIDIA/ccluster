@@ -294,8 +294,8 @@ identifies its result. Every per-chart registry lives under `internal/registry/`
 `Charts` (registered charts in registration order). Failing charts are reported in that
 order, sorted by chart. The registry holds the cluster_base charts a cluster must have,
 which need not be every chart in `catalogs/cluster_base`: one left out (spire, spire_crds,
-prometheus_adapter, fluent_bit, network_operator, opentelemetry_collector and longhorn
-today) can still be installed but is not verified. `TestGet` fails when a registered chart
+external_dns, prometheus_adapter, fluent_bit, network_operator, opentelemetry_collector
+and longhorn today) can still be installed but is not verified. `TestGet` fails when a registered chart
 is not in `components.ClusterBase` or the registry is not sorted.
 
 A registered chart starts with `alwaysVerified`, which passes without looking; it
@@ -761,8 +761,8 @@ the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
 - **Real Verifiers.** Every registered cluster_base chart still uses `alwaysVerified`,
-  so the checks (workload readiness, issuer readiness, external-dns's
-  domain filter against `spec.domain`) are not written yet.
+  so the checks (workload readiness, issuer readiness, APIService availability) are not
+  written yet.
 - **The control plane does not read `CCLClusterConfig` status.** It writes the spec (§3),
   but an infra-plane's verification result stays in that cluster; surfacing it on the
   `CCLInfraPlane` needs a watch on the remote object, which would also replace the
