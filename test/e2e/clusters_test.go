@@ -221,3 +221,10 @@ func clusterConfigOn(c utils.Cluster, path string) (string, error) {
 // crossClusterTimeout is the patience for infra-plane state that crosses both clusters:
 // a write to the remote cluster, a verification there, and the status coming back.
 const crossClusterTimeout = 3 * time.Minute
+
+// watchTimeout is the patience for a status change on an infra-plane cluster to reach the
+// CCLInfraPlane, which only the remote watch brings over in time. It covers the
+// infra-plane operator's one-minute recheck of a failing component and stays well inside
+// the cp operator's default --infraplane-resync-period of 5m, so a resync cannot stand in
+// for a broken watch.
+const watchTimeout = 2 * time.Minute

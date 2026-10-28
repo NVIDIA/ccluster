@@ -627,7 +627,7 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("False"))
 					expectOnlySpireCRDsFailing(g,
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
-				}, crossClusterTimeout).Should(Succeed())
+				}, watchTimeout).Should(Succeed())
 
 				installSpireCRDs(t.cluster)
 				DeferCleanup(uninstallSpireCRDs, t.cluster)
@@ -637,7 +637,7 @@ var _ = Describe("Manager", Ordered, func() {
 				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("True"),
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
-				}, crossClusterTimeout).Should(Succeed())
+				}, watchTimeout).Should(Succeed())
 
 				By("deleting the CCLClusterConfig from the plane's cluster with the CCLInfraPlane")
 				deleteInfraPlane(planeName)
