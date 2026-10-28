@@ -130,7 +130,8 @@ with each job's inputs when changing build or generation dependencies.
   every image: the suite builds the operators and a workflow step builds the compute-ssh
   launcher, so a broken Dockerfile stage fails the PR rather than `main.yml`. It also
   covers `python/`, because the suite registers its infra-plane cluster with the
-  `ccluster` CLI.
+  `ccluster` CLI, and `catalogs/cluster_base/spire_crds/`, because the suite installs
+  that chart and asserts the CRDs it ships.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
   templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
   `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes

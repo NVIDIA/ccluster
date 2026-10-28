@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The CCLClusterConfig singleton, applied by hand to a cluster no CCLInfraPlane
+# registers. Plain YAML, not a template: there is one per cluster, named "cluster".
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLClusterConfig
+metadata:
+  name: cluster
+spec:
+  domain: ccluster-e2e.example.com

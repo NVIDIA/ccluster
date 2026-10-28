@@ -79,15 +79,14 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// The quickstart example is the CCLClusterConfig under test, so the documented
-	// object is the one proven to work. spire_crds is the one cluster_base component with
-	// a check of its own, so the condition starts False naming it alone, and comes up
-	// True once its chart is installed - which proves the chart's CRD and RBAC let a real
-	// manager reconcile the singleton, read CRDs and write its status.
+	// spire_crds is the one cluster_base component with a check of its own, so the
+	// condition starts False naming it alone, and comes up True once its chart is
+	// installed - which proves the chart's CRD and RBAC let a real manager reconcile the
+	// singleton, read CRDs and write its status.
 	It("should report the cluster_base components verified", func() {
-		By("applying the quickstart CCLClusterConfig")
+		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
-			filepath.Join("examples", "quickstart", "v1alpha1_cclclusterconfig.yaml")))
+			filepath.Join("test", "e2e", "testdata", "cclclusterconfig.yaml")))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply the CCLClusterConfig")
 
 		verified := func(g Gomega) (string, string) {
