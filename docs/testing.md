@@ -33,7 +33,7 @@ performs manifest generation, formatting and vetting before running tests.
 
 The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of test
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
-outcome) is proven without the seventeen real charts.
+outcome) is proven without the real charts.
 
 The envtest specs call `Reconcile` directly; they do not start controllers in the test
 manager. Watch map functions are exercised as ordinary functions, which cannot prove that
