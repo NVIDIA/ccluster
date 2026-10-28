@@ -108,25 +108,55 @@ var _ = Describe("IP operator", Ordered, func() {
 	})
 
 	// The quickstart example is the CCLClusterConfig under test, so the documented
-	// object is the one proven to work. No registered cluster_base component has a check
-	// of its own yet, so the condition comes up True without installing anything - which
-	// proves the chart's CRD and RBAC let a real manager reconcile the singleton and write
-	// its status.
+	// object is the one proven to work. metrics_server is the one registered component
+	// with a check of its own, and kind runs no metrics-server, so the condition starts
+	// False naming it alone, and comes up True once its chart is installed - which proves
+	// the chart's CRD and RBAC let a real manager reconcile the singleton, read
+	// APIServices and write its status.
 	It("should report the cluster_base components verified", func() {
 		By("applying the quickstart CCLClusterConfig")
 		cmd := exec.Command("kubectl", "apply", "-f", filepath.Join("examples", "quickstart", "v1alpha1_cclclusterconfig.yaml"))
 		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply the CCLClusterConfig")
 
-		By("reporting every component verified")
-		Eventually(func(g Gomega) {
+		verified := func(g Gomega) (string, string) {
 			out, err := utils.Run(exec.Command("kubectl", "get", "cclclusterconfig", "cluster", "-o",
 				`jsonpath={range .status.conditions[?(@.type=="Verified")]}{.status}{"\n"}{.message}{end}`))
 			g.Expect(err).NotTo(HaveOccurred())
 			parts := strings.SplitN(out, "\n", 2)
 			g.Expect(parts).To(HaveLen(2), "Verified condition not reported yet")
-			g.Expect(parts[0]).To(Equal("True"), parts[1])
-			g.Expect(parts[1]).To(HavePrefix("All "))
+			return parts[0], parts[1]
+		}
+
+		By("reporting metrics_server as the only failing component")
+		Eventually(func(g Gomega) {
+			status, message := verified(g)
+			g.Expect(status).To(Equal("False"))
+			// "not found" rather than a read error: the ClusterRole lets the
+			// manager read APIServices, and there is none for the metrics API yet.
+			g.Expect(message).To(ContainSubstring(
+				"failing: catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
+			g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
 		}).Should(Succeed())
+
+		By("installing the metrics_server chart")
+		// From a copy, so fetching the upstream dependency leaves no Chart.lock or
+		// tarball in the working tree. kind's kubelets serve self-signed certificates,
+		// which metrics-server rejects unless told otherwise.
+		chartDir := filepath.Join(GinkgoT().TempDir(), "metrics_server")
+		_, err = utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "metrics_server"), chartDir))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "metrics-server", chartDir,
+			"--dependency-update", "--namespace", "metrics-server", "--create-namespace", "--wait",
+			"--set-json", `metrics-server.args=["--kubelet-preferred-address-types=InternalIP","--kubelet-insecure-tls"]`))
+		Expect(err).NotTo(HaveOccurred(), "Failed to install the metrics_server chart")
+
+		// The operator rechecks failing components every minute.
+		By("reporting every component verified")
+		Eventually(func(g Gomega) {
+			status, message := verified(g)
+			g.Expect(status).To(Equal("True"), message)
+			g.Expect(message).To(HavePrefix("All "))
+		}).WithTimeout(3 * time.Minute).Should(Succeed())
 	})
 })

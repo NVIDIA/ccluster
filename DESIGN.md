@@ -299,9 +299,11 @@ and longhorn today) can still be installed but is not verified. `TestGet` fails 
 is not in `components.ClusterBase` or the registry is not sorted.
 
 A registered chart starts with `alwaysVerified`, which passes without looking; it
-replaces it with a check of its own when it has something to look at, as spire_crds's
-`Verify` does with `common.CRDsEstablished` from `catalogs/common` (spire_crds is not
-registered today, so that check does not run). Those checks read **live objects
+replaces it with a check of its own when it has something to look at, as metrics_server
+does with `common.APIServiceAvailable` from `catalogs/common`. A check looks at the
+outcome, not at the chart: metrics_server passes when `v1beta1.metrics.k8s.io` is
+Available, which also holds where the provider runs its own metrics-server (GKE, AKS,
+OpenShift, k3s). Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when
@@ -760,8 +762,9 @@ the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Every registered cluster_base chart still uses `alwaysVerified`,
-  so the checks (workload readiness, issuer readiness, APIService availability) are not
+- **Real Verifiers.** Only metrics_server has a check of its own (its APIService is
+  Available); every other registered cluster_base chart still uses `alwaysVerified`, so
+  the remaining checks (workload readiness, issuer readiness, keda's APIService) are not
   written yet.
 - **The control plane does not read `CCLClusterConfig` status.** It writes the spec (§3),
   but an infra-plane's verification result stays in that cluster; surfacing it on the

@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -121,5 +122,65 @@ func TestCRDsEstablishedReturnsReadErrors(t *testing.T) {
 	err := CRDsEstablished(context.Background(), r, "a.example.com")
 	if !apierrors.IsForbidden(err) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
+	}
+}
+
+// apiService returns an APIService named name, with Available set to status and reason
+// unless status is empty, in which case the condition is absent: the state before the
+// aggregator has checked a new APIService.
+func apiService(name string, status apiregistrationv1.ConditionStatus, reason string) *apiregistrationv1.APIService {
+	s := &apiregistrationv1.APIService{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if status != "" {
+		s.Status.Conditions = []apiregistrationv1.APIServiceCondition{
+			{Type: apiregistrationv1.Available, Status: status, Reason: reason},
+		}
+	}
+	return s
+}
+
+// TestAPIServiceAvailable covers the states of an APIService envtest cannot reach: it
+// runs no aggregator, so nothing ever sets Available.
+func TestAPIServiceAvailable(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := apiregistrationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		objects []client.Object
+		want    string // "" means "expect nil"
+	}{
+		{
+			name:    "available",
+			objects: []client.Object{apiService("v1beta1.example.com", apiregistrationv1.ConditionTrue, "Passed")},
+		},
+		{
+			name: "missing",
+			want: "APIService v1beta1.example.com not found",
+		},
+		{
+			// Registered, but the service behind it does not answer: the reason says why.
+			name:    "not available",
+			objects: []client.Object{apiService("v1beta1.example.com", apiregistrationv1.ConditionFalse, "MissingEndpoints")},
+			want:    "APIService v1beta1.example.com not available: MissingEndpoints",
+		},
+		{
+			name:    "no Available condition yet",
+			objects: []client.Object{apiService("v1beta1.example.com", "", "")},
+			want:    "APIService v1beta1.example.com not available",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.objects...).Build()
+			err := APIServiceAvailable(context.Background(), r, "v1beta1.example.com")
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("want nil, got %v", err)
+			case tt.want != "" && (err == nil || err.Error() != tt.want):
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
