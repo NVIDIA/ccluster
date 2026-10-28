@@ -231,8 +231,9 @@ func describe(failing []failure) []string {
 // LabelLoadBalancer, one per label value and sorted by it, and describes each value more
 // than one such Service carries.
 //
-// A chart opts a LoadBalancer in by labelling its Service; the catalog's ingress_nginx
-// chart labels its controller Service "ingress". The label, rather than the Service's
+// A chart opts a LoadBalancer in by labelling its Service, with a value of its choosing
+// that the operator only reports: the catalog's ingress_nginx chart uses "ingress". The
+// label, rather than the Service's
 // name, identifies it: the name follows the Helm release, which differs between a
 // CCLComponentSet and a helm install. Like a Verifier, it reads live Services and never
 // Argo CD or Helm release state. A value claimed by two Services has no right answer, so

@@ -54,8 +54,8 @@ type CCLClusterConfigStatus struct {
 
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-	// last observed them. "ingress" is the cluster's ingress. A value carried by more
-	// than one Service is left out and reported in the Verified condition.
+	// last observed them. A value carried by more than one Service is left out and
+	// reported in the Verified condition.
 	// +listType=map
 	// +listMapKey=name
 	// +optional
@@ -66,7 +66,7 @@ type CCLClusterConfigStatus struct {
 // ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
 // provider assigns one.
 type LoadBalancerStatus struct {
-	// name is the Service's ccluster.nvidia.com/loadbalancer label value, e.g. "ingress".
+	// name is the Service's ccluster.nvidia.com/loadbalancer label value.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
@@ -100,7 +100,6 @@ func (s *CCLClusterConfigStatus) LoadBalancer(name string) *LoadBalancerStatus {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.conditions[?(@.type=="Verified")].status`
-// +kubebuilder:printcolumn:name="Ingress",type=string,JSONPath=`.status.loadBalancers[?(@.name=="ingress")].ip`
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="CCLClusterConfig is a singleton and must be named \"cluster\""

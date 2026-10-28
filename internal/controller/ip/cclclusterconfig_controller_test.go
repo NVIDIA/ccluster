@@ -266,7 +266,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	labelled := func(name string) map[string]string {
 		return map[string]string{cclusternvidiacomv1alpha1.LabelLoadBalancer: name}
 	}
-	ingressLabels := labelled(cclusternvidiacomv1alpha1.LoadBalancerIngress)
+	ingressLabels := labelled("ingress")
 	upstreamLabels := map[string]string{
 		"app.kubernetes.io/name":      "ingress-nginx",
 		"app.kubernetes.io/component": "controller",
@@ -362,7 +362,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		reconcileOnce()
 
 		cfg := status()
-		Expect(cfg.LoadBalancer(cclusternvidiacomv1alpha1.LoadBalancerIngress)).To(Equal(
+		Expect(cfg.LoadBalancer("ingress")).To(Equal(
 			&cclusternvidiacomv1alpha1.LoadBalancerStatus{
 				Name:     "ingress",
 				IP:       "192.0.2.11",

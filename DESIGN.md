@@ -238,7 +238,7 @@ verbatim, into `status.clusterConfig`. That field reuses the `CCLClusterConfigSt
 rather than merging its conditions into the CCLInfraPlane's own: the two sets of conditions
 and observedGenerations describe different objects. New fields the infra-plane operator
 reports flow through without a control-plane change, such as `loadBalancers`, whose
-`ingress` entry is the address the cluster's DNS will be published from (§3a). The copy is
+addresses the cluster's DNS will be published from (§3a). The copy is
 taken from the live read
 the write makes, never from the watch's cache, and only when the write succeeded; otherwise
 the last copy stays, and `ClusterConfigApplied` says it is stale.
@@ -370,10 +370,10 @@ lists every Service of type `LoadBalancer` carrying the label and reports each i
 first `hostname` the Service reports (cloud providers such as AWS address load balancers
 by name). An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
-of the list and reported in `Verified` instead. The catalog's `ingress_nginx` chart labels
-its controller Service `ingress` (`v1alpha1.LoadBalancerIngress`), the address the
-control plane will publish the cluster's DNS from; another chart exposes a LoadBalancer
-the same way, with no operator or API change. The label, not the name, identifies a
+of the list and reported in `Verified` instead. The value is the chart's to choose and
+neither operator gives any value a meaning: the catalog's `ingress_nginx` chart labels
+its controller Service `ingress`, and another chart exposes a LoadBalancer the same way,
+under its own name, with no operator or API change. The label, not the name, identifies a
 Service: the name follows the Helm release, which differs between a `CCLComponentSet` and
 a `helm install`. Like a Verifier, this reads live Services, never Argo CD or Helm release
 state, and an address not assigned yet does not fail `Verified`: it means not reachable
@@ -769,10 +769,11 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain`, `Available`, `ClusterConfig`, and `Verified` and `Ingress`
-(the ingress LoadBalancer's IP, from `status.clusterConfig`) on `CCLInfraPlane`; `Applied`
-and `Progress` on `CCLComponentSet`; `Verified`, `Ingress` and `Domain` on
-`CCLClusterConfig`.
+Printer columns: `Domain`, `Available`, `ClusterConfig` and `Verified` (from
+`status.clusterConfig`) on `CCLInfraPlane`; `Applied` and `Progress` on
+`CCLComponentSet`; `Verified` and `Domain` on `CCLClusterConfig`. No column shows the
+LoadBalancers: a printer column shows only the first JSONPath match, and naming one
+would give a label value a meaning.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
 

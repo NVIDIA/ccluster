@@ -13,7 +13,7 @@ package v1alpha1
 // ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
 // provider assigns one.
 type LoadBalancerStatusApplyConfiguration struct {
-	// name is the Service's ccluster.nvidia.com/loadbalancer label value, e.g. "ingress".
+	// name is the Service's ccluster.nvidia.com/loadbalancer label value.
 	Name *string `json:"name,omitempty"`
 	// ip is the LoadBalancer's IP address: the first IP the Service reports.
 	IP *string `json:"ip,omitempty"`

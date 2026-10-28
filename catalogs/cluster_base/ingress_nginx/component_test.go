@@ -42,7 +42,7 @@ func TestValuesLabelTheLoadBalancer(t *testing.T) {
 		t.Errorf("controller.service is enabled=%t type=%q, want an enabled LoadBalancer",
 			service.Enabled, service.Type)
 	}
-	label, want := cclusternvidiacomv1alpha1.LabelLoadBalancer, cclusternvidiacomv1alpha1.LoadBalancerIngress
+	label, want := cclusternvidiacomv1alpha1.LabelLoadBalancer, "ingress"
 	if got := service.Labels[label]; got != want {
 		t.Errorf("controller.service.labels[%q] = %q, want %q", label, got, want)
 	}

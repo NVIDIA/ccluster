@@ -4,9 +4,9 @@
   `ccluster.nvidia.com/loadbalancer: <name>`, listed by name with its `ip` and `hostname`.
   It watches those Services, so a newly assigned address shows at once. Two Services with
   the same name are left out and reported as `Verified=False/LoadBalancerConflict`. The cp
-  operator copies the list into `CCLInfraPlane.status.clusterConfig`, and both kinds show
-  the ingress IP in an `Ingress` column. The ip operator's ClusterRole gains read access to
-  Services.
+  operator copies the list into `CCLInfraPlane.status.clusterConfig`. The label's value
+  is the chart's choice; neither operator gives any value a meaning. The ip operator's
+  ClusterRole gains read access to Services.
 
 ### Changed
 - `catalogs/cluster_base/ingress_nginx` now enables the controller Service as a

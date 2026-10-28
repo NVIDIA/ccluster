@@ -169,7 +169,7 @@ class LoadBalancer(BaseModel):
     """
     name: Annotated[str, Field(max_length=63, min_length=1)]
     """
-    name is the Service's ccluster.nvidia.com/loadbalancer label value, e.g. "ingress".
+    name is the Service's ccluster.nvidia.com/loadbalancer label value.
     """
 
 
@@ -203,8 +203,8 @@ class CCLClusterConfigStatus(BaseModel):
     """
     loadBalancers are the cluster's LoadBalancer Services labelled
     ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-    last observed them. "ingress" is the cluster's ingress. A value carried by more
-    than one Service is left out and reported in the Verified condition.
+    last observed them. A value carried by more than one Service is left out and
+    reported in the Verified condition.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """

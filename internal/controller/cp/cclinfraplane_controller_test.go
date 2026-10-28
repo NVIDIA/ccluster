@@ -1051,7 +1051,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Message: "spire: trust domain mismatch",
 			})
 			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{
-				{Name: cclusternvidiacomv1alpha1.LoadBalancerIngress, IP: "192.0.2.10"},
+				{Name: "ingress", IP: "192.0.2.10"},
 			}
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 
@@ -1066,7 +1066,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(verified.Status).To(Equal(metav1.ConditionFalse))
 			Expect(verified.Reason).To(Equal("ComponentsNotVerified"))
 			Expect(verified.Message).To(Equal("spire: trust domain mismatch"))
-			Expect(copied.LoadBalancer(cclusternvidiacomv1alpha1.LoadBalancerIngress)).To(Equal(
+			Expect(copied.LoadBalancer("ingress")).To(Equal(
 				&cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"}))
 
 			By("keeping the CCLInfraPlane's own conditions separate")

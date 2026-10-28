@@ -21,9 +21,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Verified")].status
       name: Verified
       type: string
-    - jsonPath: .status.loadBalancers[?(@.name=="ingress")].ip
-      name: Ingress
-      type: string
     - jsonPath: .spec.domain
       name: Domain
       type: string
@@ -151,8 +148,8 @@ spec:
                 description: |-
                   loadBalancers are the cluster's LoadBalancer Services labelled
                   ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-                  last observed them. "ingress" is the cluster's ingress. A value carried by more
-                  than one Service is left out and reported in the Verified condition.
+                  last observed them. A value carried by more than one Service is left out and
+                  reported in the Verified condition.
                 items:
                   description: |-
                     LoadBalancerStatus is the address of a LoadBalancer Service labelled
@@ -171,7 +168,7 @@ spec:
                       type: string
                     name:
                       description: name is the Service's ccluster.nvidia.com/loadbalancer
-                        label value, e.g. "ingress".
+                        label value.
                       maxLength: 63
                       minLength: 1
                       type: string
