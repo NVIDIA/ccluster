@@ -57,6 +57,10 @@ manager:
   ##   certificate.
   ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
   ##   --argocd-namespace whose `token` key holds that account's token.
+  ##
+  ## The operator writes each infra-plane cluster's CCLClusterConfig with the cluster's
+  ## registered credentials. --infraplane-resync-period (default 5m) is how often it
+  ## rewrites one that was written, restoring drift; 0 disables it.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster

@@ -566,6 +566,61 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		// The operator writes the CCLClusterConfig singleton into the plane's cluster. This
+		// plane registers the control-plane cluster itself, so the operator reaches it with
+		// its own ServiceAccount: only a running deployment proves that the cp RBAC
+		// covers CCLClusterConfig, and that a missing CRD is reported rather than fatal.
+		It("should write the CCLClusterConfig into the infra-plane cluster", func() {
+			const planeName = "e2e-cluster-config-plane"
+			const credentialsName = "e2e-cluster-config-plane-credentials"
+			clusterConfigCRD := filepath.Join("config", "crd", "bases", "ccluster.nvidia.com_cclclusterconfigs.yaml")
+
+			_, err := utils.Run(exec.Command("kubectl", "create", "secret", "generic", credentialsName,
+				"--from-literal=server=https://kubernetes.default.svc",
+				`--from-literal=config={"tlsClientConfig":{"insecure":false}}`,
+				"-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "secret",
+					credentialsName, "-n", crNamespace, "--ignore-not-found"))
+			})
+			applyCCLInfraPlane(planeName, credentialsName)
+
+			By("reporting CRDMissing while only the cp chart's CRDs are installed")
+			Eventually(func(g Gomega) {
+				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "reason")).
+					To(Equal("CRDMissing"))
+				g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("installing the CCLClusterConfig CRD, as the ip chart would")
+			_, err = utils.Run(exec.Command("kubectl", "apply", "-f", clusterConfigCRD))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "-f", clusterConfigCRD, "--ignore-not-found"))
+			})
+
+			// The operator retries a missing CRD every minute; nothing on the infra-plane
+			// cluster is watched.
+			By("writing the CCLClusterConfig with the plane's domain")
+			Eventually(func(g Gomega) {
+				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "status")).To(Equal("True"))
+				out, err := utils.Run(exec.Command("kubectl", "get", "cclclusterconfig", "cluster",
+					"-o", "jsonpath={.spec.domain}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(Equal(infraPlaneDomain(planeName)))
+			}, 3*time.Minute).Should(Succeed())
+
+			By("deleting the CCLClusterConfig with the CCLInfraPlane")
+			_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
+				planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+			out, err := utils.Run(exec.Command("kubectl", "get", "cclclusterconfig",
+				"--ignore-not-found", "-o", "name"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(out)).To(BeEmpty())
+		})
+
 		// The three specs below need Argo CD genuinely absent: BeforeAll deploys with
 		// ARGOCD=false, so the Application CRD does not exist yet when the manager
 		// starts - the exact precondition each of them needs. Like every other spec
@@ -1991,6 +2046,13 @@ const (
 	conditionProgressing       = "Progressing"
 )
 
+// conditionAvailable and conditionClusterConfigApplied are the CCLInfraPlane condition
+// types the e2e specs assert on.
+const (
+	conditionAvailable            = "Available"
+	conditionClusterConfigApplied = "ClusterConfigApplied"
+)
+
 // applyManifest renders one of the Go-templated manifests under test/e2e/testdata with data
 // and pipes it through `kubectl apply`. The templates are kept as YAML files rather than
 // Go string literals so they read as the manifests a user would write.
@@ -2023,7 +2085,13 @@ func applyCCLInfraPlaneIn(ns, name, credentialsName string) {
 	GinkgoHelper()
 	applyManifest("cclinfraplane.yaml", map[string]string{
 		"Name": name, "Namespace": ns, "CredentialsName": credentialsName,
+		"Domain": infraPlaneDomain(name),
 	})
+}
+
+// infraPlaneDomain is the spec.domain applyCCLInfraPlane gives the CCLInfraPlane name.
+func infraPlaneDomain(name string) string {
+	return name + ".e2e.example.com"
 }
 
 // applyCCLComponentSet creates a single-component CCLComponentSet targeting planeName.
@@ -2225,6 +2293,17 @@ func deleteCCLComponentSet(name string) {
 	_, err := utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", name,
 		"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=2m"))
 	Expect(err).NotTo(HaveOccurred(), "Failed to delete CCLComponentSet %s", name)
+}
+
+// infraPlaneCondition reads one field of one status condition off a CCLInfraPlane.
+func infraPlaneCondition(name, conditionType, field string) string {
+	GinkgoHelper()
+
+	out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane", name,
+		"-n", crNamespace, "-o", fmt.Sprintf(
+			"jsonpath={.status.conditions[?(@.type=='%s')].%s}", conditionType, field)))
+	Expect(err).NotTo(HaveOccurred())
+	return strings.TrimSpace(out)
 }
 
 // componentSetCondition reads one field of one status condition off a CCLComponentSet.

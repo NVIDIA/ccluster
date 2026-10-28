@@ -303,6 +303,17 @@ startup. Argo CD clones `CATALOG_REPO_URL` itself; a private catalog requires cr
 provided through `GITHUB_TOKEN` to `make deploy-cp`. Missing credentials surface as
 Application comparison errors. Use `CATALOG_REVISION` to select the catalog commit or tag.
 
+### Infra-plane access
+
+The cp operator writes each infra-plane cluster's `CCLClusterConfig` (DESIGN.md §3) using
+the CCLInfraPlane's credentials Secret, the same one Argo CD uses. In the local two-cluster
+setup that Secret must name an address reachable from the cp operator's Pod, as for Argo CD.
+A plane registering the cp cluster itself (`server: https://kubernetes.default.svc`, no
+token) is written with the operator's own ServiceAccount and reports
+`ClusterConfigApplied=False/CRDMissing` until the ip chart's CRD is installed there.
+`--infraplane-resync-period` (default 5m) controls how often a written `CCLClusterConfig`
+is rewritten; failures are retried every minute.
+
 ### Argo CD API token
 
 The operator reads Applications' resource trees, live manifests and events from

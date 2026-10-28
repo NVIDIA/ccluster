@@ -105,6 +105,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: name + "-credentials",
 					},
+					Domain: name + ".example.com",
 				},
 			}
 			Expect(k8sClient.Create(ctx, infraPlane)).To(Succeed())

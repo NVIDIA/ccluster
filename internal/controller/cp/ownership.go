@@ -33,9 +33,9 @@ type ownerAnnotations struct {
 }
 
 // The owners in use. Each kind is stamped by exactly one of them - a mirrored cluster
-// Secret by infraPlaneOwner, an Application by componentSetOwner, an AppProject by
-// projectOwner - so one object never carries two, and ownedBy does not have to tell
-// them apart.
+// Secret and an infra-plane cluster's CCLClusterConfig by infraPlaneOwner, an Application
+// by componentSetOwner, an AppProject by projectOwner - so one object never carries two,
+// and ownedBy does not have to tell them apart.
 var (
 	infraPlaneOwner = ownerAnnotations{
 		nameKey:      annotationInfraPlaneName,
@@ -67,8 +67,17 @@ func (a ownerAnnotations) ownedBy(obj client.Object, owner client.Object) bool {
 	return name == owner.GetName() && namespace == owner.GetNamespace()
 }
 
+// claimedBy reports whether obj back-references owner. Unlike ownedBy, an unclaimed object
+// is not owner's: it is for objects the operator may only ever write and delete if it
+// created them itself.
+func (a ownerAnnotations) claimedBy(obj client.Object, owner client.Object) bool {
+	annotations := obj.GetAnnotations()
+	return annotations[a.nameKey] == owner.GetName() &&
+		annotations[a.namespaceKey] == owner.GetNamespace()
+}
+
 // stamp writes the back-reference annotations and the operator's labels onto obj. Call
-// it only after ownedBy has agreed the object is ours to write.
+// it only after ownedBy or claimedBy has agreed the object is ours to write.
 func (a ownerAnnotations) stamp(obj client.Object, owner client.Object) {
 	stampLabels(obj)
 

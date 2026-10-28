@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from kubernetes import client as k8s
-from kubernetes.dynamic.exceptions import ConflictError, NotFoundError
+from kubernetes.dynamic.exceptions import ConflictError, NotFoundError, UnprocessibleEntityError
 from pydantic import ValidationError
 
 from ccluster import catalogs
@@ -37,6 +37,7 @@ class FakeDynamicClient:
         self.applied = []
         self.deleted = []
         self.missing = set()
+        self.rejected = set()  # kinds the API server refuses to apply
         self.racing = set()  # namespaces another caller creates between get and create
         self.component_set = None
         self.infra_plane = None
@@ -71,6 +72,10 @@ class FakeDynamicClient:
             self.namespaces.add(body["metadata"]["name"])
 
     def server_side_apply(self, resource, body, namespace, **kwargs):
+        if resource.kind in self.rejected:
+            raise UnprocessibleEntityError(
+                SimpleNamespace(status=422, reason="Invalid", body=b"{}", headers={})
+            )
         self.applied.append((resource.kind, namespace, body, kwargs))
         return SimpleNamespace(
             to_dict=lambda: {**body, "metadata": {**body["metadata"], "uid": "1"}}
@@ -148,7 +153,11 @@ def test_no_write_creates_a_namespace(fake):
     c, dyn = make_client(fake)
 
     c.apply_infraplane(
-        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1",
+        domain="edge-1.example.com",
+        server="https://10.0.0.1:6443",
+        bearer_token="tok",
+        ca_cert=CA,
     )
     c.apply_component_set(
         name="local-base",
@@ -183,20 +192,24 @@ def test_each_api_client_runs_its_own_discovery(fake):
     assert fake["built"] == 2
 
 
-def test_apply_infraplane_applies_secret_then_infra_plane(fake):
+def test_apply_infraplane_applies_infra_plane_then_secret(fake):
     c, dyn = make_client(fake)
 
     plane = c.apply_infraplane(
-        name="edge-1", server="https://10.0.0.1:6443", bearer_token="tok", ca_cert=CA
+        name="edge-1",
+        domain="edge-1.example.com",
+        server="https://10.0.0.1:6443",
+        bearer_token="tok",
+        ca_cert=CA,
     )
 
     kinds = [kind for kind, *_ in dyn.applied]
-    assert kinds == ["Secret", Kind.CCL_INFRA_PLANE]
+    assert kinds == [Kind.CCL_INFRA_PLANE, "Secret"]
     for _, ns_arg, _, kwargs in dyn.applied:
         assert ns_arg == "tenant"
         assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
 
-    secret = dyn.applied[0][2]
+    secret = dyn.applied[1][2]
     assert secret["apiVersion"] == "v1"
     assert secret["kind"] == "Secret"
     assert secret["metadata"] == {"name": "edge-1-credentials", "namespace": "tenant"}
@@ -211,12 +224,13 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
         },
     }
 
-    infra_plane = dyn.applied[1][2]
+    infra_plane = dyn.applied[0][2]
     assert infra_plane["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
     assert infra_plane["kind"] == Kind.CCL_INFRA_PLANE
     assert infra_plane["metadata"] == {"name": "edge-1", "namespace": "tenant"}
     assert infra_plane["spec"] == {
-        "clusterCredentialsRef": {"name": "edge-1-credentials"}
+        "clusterCredentialsRef": {"name": "edge-1-credentials"},
+        "domain": "edge-1.example.com",
     }
     assert "status" not in infra_plane
 
@@ -229,9 +243,9 @@ def test_apply_infraplane_applies_secret_then_infra_plane(fake):
 def test_apply_infraplane_defaults_to_in_cluster_credential_free(fake):
     c, dyn = make_client(fake)
 
-    c.apply_infraplane(name="edge-1")
+    c.apply_infraplane(name="edge-1", domain="edge-1.example.com")
 
-    secret = dyn.applied[0][2]
+    secret = dyn.applied[1][2]
     assert secret["stringData"]["server"] == "https://kubernetes.default.svc"
     assert json.loads(secret["stringData"]["config"]) == {
         "tlsClientConfig": {"insecure": False}
@@ -242,12 +256,30 @@ def test_apply_infraplane_accepts_pem_bytes(fake):
     c, dyn = make_client(fake)
     c.apply_infraplane(
         name="edge-1",
+        domain="edge-1.example.com",
         server="https://10.0.0.1:6443",
         bearer_token="tok",
         ca_cert=CA.encode(),
     )
-    config = json.loads(dyn.applied[0][2]["stringData"]["config"])
+    config = json.loads(dyn.applied[1][2]["stringData"]["config"])
     assert config["tlsClientConfig"]["caData"] == base64.b64encode(CA.encode()).decode()
+
+
+def test_apply_infraplane_writes_no_secret_when_the_plane_is_rejected(fake):
+    # The API server refuses a domain changed on an existing plane. The operator would
+    # act on new credentials at once, under the old domain, so they must not be written.
+    c, dyn = make_client(fake)
+    dyn.rejected = {Kind.CCL_INFRA_PLANE.value}
+    with pytest.raises(UnprocessibleEntityError):
+        c.apply_infraplane(name="edge-1", domain="edge-2.example.com", bearer_token="tok")
+    assert dyn.applied == []
+
+
+def test_apply_infraplane_rejects_a_malformed_domain_before_writing(fake):
+    c, dyn = make_client(fake)
+    with pytest.raises(ValidationError):
+        c.apply_infraplane(name="edge-1", domain="Edge_1", bearer_token="tok")
+    assert dyn.applied == []
 
 
 def test_delete_infraplane_deletes_infra_plane_before_secret(fake):
@@ -272,7 +304,10 @@ def test_get_infraplane_returns_the_plane_with_its_status(fake):
         "apiVersion": "ccluster.nvidia.com/v1alpha1",
         "kind": "CCLInfraPlane",
         "metadata": {"name": "edge-1", "namespace": "tenant", "generation": 1},
-        "spec": {"clusterCredentialsRef": {"name": "edge-1-credentials"}},
+        "spec": {
+            "clusterCredentialsRef": {"name": "edge-1-credentials"},
+            "domain": "edge-1.example.com",
+        },
         "status": {
             "conditions": [
                 {

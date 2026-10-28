@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,6 +25,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
 // Condition types and reasons reported on CCLInfraPlane.status.
@@ -86,6 +88,14 @@ type CCLInfraPlaneReconciler struct {
 	// source repository each AppProject permits, so that nothing an Application in a
 	// ccluster namespace deploys can come from anywhere but the catalog.
 	CatalogRepoURL string
+
+	// RemoteClients builds clients for infra-plane clusters from their credentials
+	// Secrets, which the operator uses to write each cluster's CCLClusterConfig.
+	RemoteClients remote.ClientFactory
+
+	// ResyncPeriod is how often a CCLInfraPlane whose CCLClusterConfig was written is
+	// reconciled again, restoring the CCLClusterConfig if it drifted. Zero disables it.
+	ResyncPeriod time.Duration
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
@@ -94,7 +104,12 @@ type CCLInfraPlaneReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile registers the infra-plane cluster with Argo CD, and stops there.
+// The operator writes CCLClusterConfig with its own ServiceAccount only for a CCLInfraPlane
+// that registers the operator's own cluster; a remote cluster is written to with the
+// credentials Secret's token.
+// +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch;create;update;patch;delete
+
+// Reconcile registers the infra-plane cluster with Argo CD, and writes its CCLClusterConfig.
 //
 // Two objects are written into the Argo CD namespace. First the AppProject for the
 // CCLInfraPlane's namespace, which every CCLInfraPlane and CCLComponentSet in that
@@ -105,6 +120,11 @@ type CCLInfraPlaneReconciler struct {
 // not this operator's. Both are reported as the Available condition, in that order: when
 // Available is true the project exists, which is what lets the CCLComponentSet controller
 // write Applications into it without checking.
+//
+// Once the cluster is registered, the operator connects to it with the same credentials
+// and writes the CCLClusterConfig singleton the infra-plane operator verifies the cluster
+// against, carrying spec.domain. That is reported as the ClusterConfigApplied condition;
+// both conditions are written in one status patch.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
@@ -151,7 +171,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		// watch picks that up.
 		log.Info("Refused to overwrite AppProject claimed by another namespace",
 			"project", projectName(infraPlane.Namespace), "projectNamespace", r.ArgoCDNamespace)
-		return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+		return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 			reasonProjectConflict, fmt.Sprintf(
 				"AppProject %q in namespace %q belongs to another namespace",
 				projectName(infraPlane.Namespace), r.ArgoCDNamespace))
@@ -171,7 +191,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if apierrors.IsNotFound(err) {
 			// No requeue: the Secret watch re-triggers reconciliation once it appears.
 			log.Info("Missing credentials Secret", "secret", secretName)
-			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 				reasonSecretNotFound, fmt.Sprintf("Secret %q not found", secretName))
 		}
 		return ctrl.Result{}, err
@@ -184,7 +204,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Secret watch picks that up.
 			log.Info("Refused to overwrite cluster Secret owned by another CCLInfraPlane",
 				"secret", mirrorName, "secretNamespace", r.ArgoCDNamespace)
-			return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionFalse,
+			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 				reasonClusterSecretConflict, fmt.Sprintf(
 					"Secret %q in namespace %q belongs to another CCLInfraPlane",
 					mirrorName, r.ArgoCDNamespace))
@@ -198,9 +218,15 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"secretNamespace", r.ArgoCDNamespace, "operation", op)
 	}
 
-	return ctrl.Result{}, r.setAvailable(ctx, &infraPlane, metav1.ConditionTrue,
-		reasonClusterSecretCreated, fmt.Sprintf("Mirrored Secret %q into namespace %q",
-			mirrorName, r.ArgoCDNamespace))
+	available := metav1.Condition{
+		Type:   conditionTypeAvailable,
+		Status: metav1.ConditionTrue,
+		Reason: reasonClusterSecretCreated,
+		Message: fmt.Sprintf("Mirrored Secret %q into namespace %q",
+			mirrorName, r.ArgoCDNamespace),
+	}
+	clusterConfigApplied, result := r.reconcileClusterConfig(ctx, &infraPlane, &source)
+	return result, r.setConditions(ctx, &infraPlane, available, clusterConfigApplied)
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
@@ -246,9 +272,12 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	})
 }
 
-// finalize deletes the mirrored Secret, if it is still ours, and the namespace's
-// AppProject if this was the last CCLInfraPlane using it, then drops the finalizer so the
-// CCLInfraPlane can go away.
+// finalize deletes the infra-plane cluster's CCLClusterConfig if this CCLInfraPlane created
+// it, the mirrored Secret if it is still ours, and the namespace's AppProject if this was
+// the last CCLInfraPlane using it, then drops the finalizer so the CCLInfraPlane can go away.
+//
+// The CCLClusterConfig goes first, while the credentials to reach the cluster are still
+// registered; failing to reach the cluster does not block the rest.
 func (r *CCLInfraPlaneReconciler) finalize(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -258,6 +287,8 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	if !controllerutil.ContainsFinalizer(infraPlane, finalizerName) {
 		return nil
 	}
+
+	r.deleteClusterConfig(ctx, infraPlane)
 
 	var mirror corev1.Secret
 	mirrorName := argoCDClusterName(infraPlane.Namespace, infraPlane.Name)
@@ -282,25 +313,37 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return err
 	}
 
-	// Patched rather than updated, and NotFound ignored, for the reasons in setAvailable:
+	// Patched rather than updated, and NotFound ignored, for the reasons in setConditions:
 	// the deletion that brought us here may not have reached the cache yet.
 	base := infraPlane.DeepCopy()
 	controllerutil.RemoveFinalizer(infraPlane, finalizerName)
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
-// setAvailable sets the Available condition, which reports on the mirrored cluster Secret.
-func (r *CCLInfraPlaneReconciler) setAvailable(
+// setUnavailable sets the Available condition, which reports on the mirrored cluster
+// Secret, to False. ClusterConfigApplied becomes Unknown: the CCLClusterConfig is not
+// written while the plane is unavailable, so whatever the condition last said is no
+// longer being kept true.
+func (r *CCLInfraPlaneReconciler) setUnavailable(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-	status metav1.ConditionStatus,
 	reason, message string,
 ) error {
-	return r.setCondition(ctx, infraPlane, conditionTypeAvailable, status, reason, message)
+	return r.setConditions(ctx, infraPlane, metav1.Condition{
+		Type:    conditionTypeAvailable,
+		Status:  metav1.ConditionFalse,
+		Reason:  reason,
+		Message: message,
+	}, metav1.Condition{
+		Type:    conditionTypeClusterConfigApplied,
+		Status:  metav1.ConditionUnknown,
+		Reason:  reasonClusterConfigNotAvailable,
+		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
+	})
 }
 
-// setCondition sets one condition and the observed generation, then writes the status
-// subresource.
+// setConditions sets conditions, each stamped with the current generation, and the
+// observed generation, then writes the status subresource in one patch.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
 // on a CCLInfraPlane that was just written the cached copy can carry a stale resource
@@ -308,22 +351,17 @@ func (r *CCLInfraPlaneReconciler) setAvailable(
 // status it computed is correct. A patch carries no such precondition. A NotFound is
 // ignored - the object was deleted while we were reconciling it, and there is no status
 // left to record.
-func (r *CCLInfraPlaneReconciler) setCondition(
+func (r *CCLInfraPlaneReconciler) setConditions(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-	conditionType string,
-	status metav1.ConditionStatus,
-	reason, message string,
+	conditions ...metav1.Condition,
 ) error {
 	base := infraPlane.DeepCopy()
 
-	apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: infraPlane.Generation,
-	})
+	for _, condition := range conditions {
+		condition.ObservedGeneration = infraPlane.Generation
+		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, condition)
+	}
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
 
 	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))

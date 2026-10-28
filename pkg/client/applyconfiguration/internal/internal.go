@@ -211,6 +211,9 @@ var schemaYAML = typed.YAMLObject(`types:
                 - name: name
                   type:
                     scalar: string
+          - name: domain
+            type:
+              scalar: string
     - name: status
       type:
         map:

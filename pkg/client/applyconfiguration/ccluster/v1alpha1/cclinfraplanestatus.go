@@ -16,12 +16,12 @@ import (
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.
 type CCLInfraPlaneStatusApplyConfiguration struct {
 	// conditions represent the current state of the CCLInfraPlane resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// Condition types reported by the control-plane operator:
+	// - "Available": the namespace's Argo CD AppProject exists and the cluster
+	// Secret has been mirrored into the Argo CD namespace.
+	// - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
+	// cluster carries this CCLInfraPlane's domain.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`

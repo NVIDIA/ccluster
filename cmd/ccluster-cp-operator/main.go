@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,6 +26,7 @@ import (
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	"github.com/NVIDIA/ccluster/internal/remote"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -56,6 +58,11 @@ var (
 	argoCDTokenSecret   string
 )
 
+// infraPlaneResyncPeriod is how often a CCLInfraPlane is reconciled again to restore its
+// infra-plane cluster's CCLClusterConfig. Set by a flag, for the same reason as
+// argoCDNamespace.
+var infraPlaneResyncPeriod time.Duration
+
 // argoCDTokenKey is the key of the token Secret.
 const argoCDTokenKey = "token"
 
@@ -85,6 +92,9 @@ func main() {
 	flag.StringVar(&argoCDServerService, "argocd-server-service", "argocd-server",
 		"argocd-server's Service in --argocd-namespace. The operator reads Application "+
 			"trees through it, over HTTPS without verifying its certificate.")
+	flag.DurationVar(&infraPlaneResyncPeriod, "infraplane-resync-period", 5*time.Minute,
+		"How often each CCLInfraPlane is reconciled again once its infra-plane cluster's "+
+			"CCLClusterConfig has been written, restoring it if it drifted. 0 disables it.")
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
@@ -121,6 +131,11 @@ func setupControllers(mgr ctrl.Manager) error {
 		Scheme:          mgr.GetScheme(),
 		ArgoCDNamespace: argoCDNamespace,
 		CatalogRepoURL:  catalogRepoURL,
+		RemoteClients: remote.SecretClientFactory{
+			Local:  mgr.GetConfig(),
+			Scheme: mgr.GetScheme(),
+		},
+		ResyncPeriod: infraPlaneResyncPeriod,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}

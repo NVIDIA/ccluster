@@ -26,6 +26,11 @@ type CCLInfraPlaneSpecApplyConfiguration struct {
 	// referenced Secret holds. See
 	// https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
 	ClusterCredentialsRef *LocalObjectReferenceApplyConfiguration `json:"clusterCredentialsRef,omitempty"`
+	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
+	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
+	// verifies the cluster against. It must be a lowercase DNS name of at least two labels,
+	// each at most 63 characters, and it cannot be changed once set.
+	Domain *string `json:"domain,omitempty"`
 }
 
 // CCLInfraPlaneSpecApplyConfiguration constructs a declarative configuration of the CCLInfraPlaneSpec type for use with
@@ -39,5 +44,13 @@ func CCLInfraPlaneSpec() *CCLInfraPlaneSpecApplyConfiguration {
 // If called multiple times, the ClusterCredentialsRef field is set to the value of the last call.
 func (b *CCLInfraPlaneSpecApplyConfiguration) WithClusterCredentialsRef(value *LocalObjectReferenceApplyConfiguration) *CCLInfraPlaneSpecApplyConfiguration {
 	b.ClusterCredentialsRef = value
+	return b
+}
+
+// WithDomain sets the Domain field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Domain field is set to the value of the last call.
+func (b *CCLInfraPlaneSpecApplyConfiguration) WithDomain(value string) *CCLInfraPlaneSpecApplyConfiguration {
+	b.Domain = &value
 	return b
 }

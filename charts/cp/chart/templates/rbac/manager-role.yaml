@@ -38,6 +38,7 @@ rules:
 - apiGroups:
   - ccluster.nvidia.com
   resources:
+  - cclclusterconfigs
   - cclcomponentsets
   - cclinfraplanes
   verbs:

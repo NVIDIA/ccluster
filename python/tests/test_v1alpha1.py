@@ -48,7 +48,9 @@ def test_api_version_and_kind_are_fixed():
     obj = CCLInfraPlane(
         metadata=ObjectMeta(name="edge-1", namespace="tenant"),
         # Each generated module carries its own LocalObjectReference class.
-        spec=CCLInfraPlaneSpec(cluster_credentials_ref=InfraPlaneRef(name="creds")),
+        spec=CCLInfraPlaneSpec(
+            cluster_credentials_ref=InfraPlaneRef(name="creds"), domain="edge-1.example.com"
+        ),
     )
     out = dump(obj)
     assert out["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
@@ -78,7 +80,7 @@ def test_objects_read_back_from_the_server_validate():
             "apiVersion": "ccluster.nvidia.com/v1alpha1",
             "kind": Kind.CCL_INFRA_PLANE,
             "metadata": {"name": "edge-1", "namespace": "tenant", "uid": "u-1", "resourceVersion": "7"},
-            "spec": {"clusterCredentialsRef": {"name": "creds"}},
+            "spec": {"clusterCredentialsRef": {"name": "creds"}, "domain": "edge-1.example.com"},
             "status": {"conditions": [{"type": "Available", "status": "True", "reason": "R", "message": "", "lastTransitionTime": "2026-09-16T00:00:00Z"}]},
         }
     )
