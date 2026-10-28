@@ -101,28 +101,36 @@ API_PACKAGES = $(shell go list ./api/...)
 CLIENT_PACKAGE = $(shell go list -m)/pkg/client
 # The OpenAPI schema hack/clientschema builds from the CRDs for applyconfiguration-gen.
 CLIENT_SCHEMA ?= dist/clientschema.json
+# Where the generators write before the result replaces pkg/client, so a failed run leaves
+# the last client in place: internal/remote imports it, and without it controller-gen
+# cannot load the cp operator's packages, so make manifests - and with it this target -
+# would fail until pkg/client is restored by hand. The leading underscore keeps ./...
+# patterns away from a half-generated copy.
+CLIENT_STAGING ?= dist/_client
 
 .PHONY: client-generate
 client-generate: manifests applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
-	rm -rf pkg/client
+	rm -rf "$(CLIENT_STAGING)"
 	go run ./hack/clientschema --crds "$(CRD_DIR)" --out "$(CLIENT_SCHEMA)"
 	# Apply configurations give the clientset its Apply methods and the fake clientset its
 	# field-managed NewClientset; without them only the deprecated NewSimpleClientset exists.
 	# The fake tracks field ownership with the schema and fails every write without it.
 	"$(APPLYCONFIGURATION_GEN)" --openapi-schema "$(CLIENT_SCHEMA)" \
-		--output-dir pkg/client/applyconfiguration \
+		--output-dir "$(CLIENT_STAGING)/applyconfiguration" \
 		--output-pkg $(CLIENT_PACKAGE)/applyconfiguration \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
 	"$(CLIENT_GEN)" --clientset-name versioned --input-base "" $(addprefix --input ,$(API_PACKAGES)) \
 		--apply-configuration-package $(CLIENT_PACKAGE)/applyconfiguration \
-		--output-dir pkg/client/clientset --output-pkg $(CLIENT_PACKAGE)/clientset \
+		--output-dir "$(CLIENT_STAGING)/clientset" --output-pkg $(CLIENT_PACKAGE)/clientset \
 		--go-header-file hack/boilerplate.go.txt
-	"$(LISTER_GEN)" --output-dir pkg/client/listers --output-pkg $(CLIENT_PACKAGE)/listers \
+	"$(LISTER_GEN)" --output-dir "$(CLIENT_STAGING)/listers" --output-pkg $(CLIENT_PACKAGE)/listers \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
 	"$(INFORMER_GEN)" --versioned-clientset-package $(CLIENT_PACKAGE)/clientset/versioned \
 		--listers-package $(CLIENT_PACKAGE)/listers \
-		--output-dir pkg/client/informers --output-pkg $(CLIENT_PACKAGE)/informers \
+		--output-dir "$(CLIENT_STAGING)/informers" --output-pkg $(CLIENT_PACKAGE)/informers \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
+	rm -rf pkg/client
+	mv "$(CLIENT_STAGING)" pkg/client
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.

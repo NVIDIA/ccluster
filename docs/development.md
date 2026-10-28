@@ -222,8 +222,9 @@ regenerates and fails on any drift.
 `make client-generate` runs applyconfiguration-gen, client-gen, lister-gen and
 informer-gen from `k8s.io/code-generator`, at the version of `k8s.io/client-go` in
 `go.mod`, over the API packages. They write apply configurations, a typed clientset with
-a fake, listers and a shared informer factory into `pkg/client/`, which is deleted and
-rebuilt on each run. The apply configurations give the clientset its `Apply` methods and
+a fake, listers and a shared informer factory into `dist/_client/`, which replaces
+`pkg/client/` only once all four succeed. A failed run leaves the last client in place:
+`internal/remote` imports it, so without it `make manifests` cannot load the cp operator. The apply configurations give the clientset its `Apply` methods and
 the fake its field-managed `NewClientset`; without them the fake offers only the
 deprecated `NewSimpleClientset`.
 
