@@ -7,8 +7,8 @@ require (
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-logr/logr v1.4.4
 	github.com/invopop/jsonschema v0.14.0
-	github.com/onsi/ginkgo/v2 v2.27.2
-	github.com/onsi/gomega v1.38.2
+	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/gomega v1.40.0
 	github.com/pkg/sftp v1.13.9
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
@@ -49,7 +49,7 @@ require (
 	github.com/google/cel-go v0.29.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
