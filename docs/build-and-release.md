@@ -27,9 +27,10 @@ the Dockerfile's `golang:X.Y.Z` tag in one PR, then rerun the generators (`make 
 generate client-generate helm-generate python-generate`) and commit any changes they make.
 Dependabot's weekly `golang` image bump changes only the Dockerfile, so it fails
 `check-go-version` until the same PR updates `go.mod`. A new Go minor release can need a
-newer golangci-lint (`GOLANGCI_LINT_VERSION` in the Makefile and `.custom-gcl.yml`), whose
-type checker must read that release's export data; Go 1.27 needs v2.14.0 or later. Raise
-the `go` line only when the code needs a newer language version or standard library.
+newer golangci-lint, whose type checker must read that release's export data; upstream
+added Go 1.27 support in v2.13.0. Its version lives in `.custom-gcl.yml` alone, which the
+Makefile reads for the plain install too. Raise the `go` line only when the code needs a
+newer language version or standard library.
 
 ## Images and caching
 

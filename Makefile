@@ -45,13 +45,6 @@ IMAGE_BUILD_ARGS = --build-arg REVISION=$(GIT_SHA)
 # command downloads the pinned toolchain on first use.
 export GOTOOLCHAIN := $(shell sed -n 's/^toolchain //p' go.mod)
 
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
-else
-GOBIN=$(shell go env GOBIN)
-endif
-
 # CONTAINER_TOOL defines the container tool to be used for building images.
 # Be aware that the target commands are only tested with Docker which is
 # scaffolded by default. However, you might want to replace it to use other
@@ -810,7 +803,11 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
-GOLANGCI_LINT_VERSION ?= v2.15.0
+# .custom-gcl.yml holds the golangci-lint version: `golangci-lint custom` reads it when
+# it rebuilds the binary with the plugins, so the install below has to agree with it.
+GOLANGCI_LINT_VERSION ?= $(shell v="$$(sed -n 's/^version: *//p' .custom-gcl.yml)"; \
+  [ -n "$$v" ] || { echo "Set GOLANGCI_LINT_VERSION manually (.custom-gcl.yml has no version line)" >&2; exit 1; }; \
+  printf '%s\n' "$$v")
 KUBEBUILDER_VERSION ?= v4.15.0
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize

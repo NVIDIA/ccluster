@@ -1,3 +1,3 @@
 ### Changed
-- The operator and compute-ssh images are built with Go 1.27.2, the toolchain that
-  `go.mod` now pins for CI, local builds and the images alike.
+- `go.mod` pins the Go toolchain, so CI, local `make` targets, the tools in `bin/` and
+  the release images all build with Go 1.27.2.
