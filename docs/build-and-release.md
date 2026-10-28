@@ -1,9 +1,36 @@
 # Build, CI and release contracts
 
-Read this before changing Docker builds, CI workflows or artifact versioning. For the
-release procedure use the [release skill](../.agents/skills/release/SKILL.md); for commits
-and PRs use [commit-pr](../.agents/skills/commit-pr/SKILL.md). Deployment mechanics are in
+Read this before changing Docker builds, CI workflows, the Go version or artifact
+versioning. For the release procedure use the
+[release skill](../.agents/skills/release/SKILL.md); for commits and PRs use
+[commit-pr](../.agents/skills/commit-pr/SKILL.md). Deployment mechanics are in
 [Development](development.md), and test layers are in [Testing](testing.md).
+
+## Go version
+
+The `toolchain` line in `go.mod` is the one Go version the repository builds with; the
+`go` line above it is only the minimum for modules that import this one, such as users of
+`pkg/client/`. Each build path follows the `toolchain` line:
+
+| Where | How |
+| --- | --- |
+| CI workflows | `setup-go` with `go-version-file: go.mod` installs the `toolchain` version. |
+| Local `make` targets | The Makefile exports `GOTOOLCHAIN` from `go.mod`, so every `go` command a target runs, including tool installs, uses that version whatever Go is installed. The go command downloads it on first use. |
+| Tools in `bin/` | Each Go tool is built into `bin/<tool>@<version>-<toolchain>/`, so a tool or toolchain change names a missing binary and `make` builds it. |
+| Images | The Dockerfile's `golang:` builder tag. `make check-go-version`, run by the `lint` workflow, fails when it differs from the `toolchain` line. |
+
+Running `go` directly outside `make` uses the installed Go when it is newer than the
+`toolchain` line, so generate code and run checks through `make`.
+
+To change the version, edit the `toolchain` line (`go mod edit -toolchain=goX.Y.Z`) and
+the Dockerfile's `golang:X.Y.Z` tag in one PR, then rerun the generators (`make manifests
+generate client-generate helm-generate python-generate`) and commit any changes they make.
+Dependabot's weekly `golang` image bump changes only the Dockerfile, so it fails
+`check-go-version` until the same PR updates `go.mod`. A new Go minor release can need a
+newer golangci-lint, whose type checker must read that release's export data; Go 1.27.2
+needs v2.14.0 or later. Its version lives in `.custom-gcl.yml` alone, which the
+Makefile reads for the plain install too. Raise the `go` line only when the code needs a
+newer language version or standard library.
 
 ## Images and caching
 
@@ -98,10 +125,10 @@ when a bundled chart (the cp chart's `argo-cd`) or a catalog chart dependency ch
 The workflow files are the source of truth for exact path filters. Keep filters aligned
 with each job's inputs when changing build or generation dependencies.
 
-- `lint` covers Go and linter inputs; `test` and `test-e2e` cover Go, build, deployment
-  and test inputs. `test-e2e` builds every image: the suite builds the operators and a
-  workflow step builds the compute-ssh launcher, so a broken Dockerfile stage fails the
-  PR rather than `main.yml`.
+- `lint` covers Go and linter inputs and the Dockerfile, and runs `make check-go-version`;
+  `test` and `test-e2e` cover Go, build, deployment and test inputs. `test-e2e` builds
+  every image: the suite builds the operators and a workflow step builds the compute-ssh
+  launcher, so a broken Dockerfile stage fails the PR rather than `main.yml`.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
   templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
   `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes
@@ -122,5 +149,7 @@ with each job's inputs when changing build or generation dependencies.
 - Dependabot opens weekly version-update PRs for the Go module (`k8s.io/*` and
   controller-runtime in one group), the Python package, the Dockerfile base images and
   GitHub Actions. Their titles use the `build` or `ci` type so `pr-title` accepts them.
+  A `golang` image bump needs a commit that updates `go.mod` to match; see
+  [Go version](#go-version).
 - `dco` and `pr-title` enforce sign-off and the Conventional Commit PR title. The repository
   squash-merges the PR title and body into commit history; follow the commit skill's format.

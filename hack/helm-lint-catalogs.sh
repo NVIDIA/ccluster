@@ -12,13 +12,14 @@
 # and, for a chart without Chart.lock, a new Chart.lock. Repositories are registered in a
 # throwaway Helm repository config, so the developer's own repo list is left alone.
 #
-# Usage: HELM=helm YQ=bin/yq hack/helm-lint-catalogs.sh
+# Usage: HELM=helm YQ=yq hack/helm-lint-catalogs.sh (make helm-lint-catalogs passes the
+# yq it pins in bin/)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 HELM=${HELM:-helm}
-YQ=${YQ:-bin/yq}
+YQ=${YQ:-yq}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

@@ -158,7 +158,8 @@ generation, [Testing](docs/testing.md) for test selection, and
 
 # Requirements
 
-- **Go:** >= 1.25, to build the operators.
+- **Go:** 1.21 or newer. `make` builds with the toolchain pinned in `go.mod` and
+  downloads it on first use.
 - **Deployment targets (external):** a Kubernetes cluster and [Helm](https://helm.sh/).
   [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the
   control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA

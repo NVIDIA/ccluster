@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	gliderssh "github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -39,7 +41,10 @@ func TestAgentForwarding(t *testing.T) {
 	t.Cleanup(func() {
 		_ = server.Close()
 		select {
-		case <-serveDone:
+		case err := <-serveDone:
+			if !errors.Is(err, gliderssh.ErrServerClosed) {
+				t.Errorf("SSH server stopped with %v, want %v", err, gliderssh.ErrServerClosed)
+			}
 		case <-time.After(time.Second):
 			t.Error("SSH server did not stop")
 		}

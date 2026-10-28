@@ -30,7 +30,7 @@ contracts and workflows omitted from this guide.
 | Adding controllers, APIs or catalog components; generators, RBAC or Helm | [Development](docs/development.md) |
 | Writing or running tests | [Testing](docs/testing.md) |
 | Deploying, debugging or removing a local installation | [Development: cluster operations](docs/development.md#cluster-operations) |
-| Docker, CI, artifact versions or publishing workflows | [Build and release contracts](docs/build-and-release.md) |
+| Docker, CI, the Go version, artifact versions or publishing workflows | [Build and release contracts](docs/build-and-release.md) |
 | Python package usage | [Python README](python/README.md) |
 | Committing, pushing or opening a PR | [commit-pr skill](.agents/skills/commit-pr/SKILL.md) |
 | Reviewing a PR or diff | [pr-review skill](.agents/skills/pr-review/SKILL.md) |
