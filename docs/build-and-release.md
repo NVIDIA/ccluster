@@ -139,10 +139,9 @@ with each job's inputs when changing build or generation dependencies.
 - `lint` covers Go and linter inputs and the Dockerfile, and runs `make check-go-version`;
   `test` and `test-e2e` cover Go, build, deployment and test inputs. `test-e2e` builds
   every image: the suite builds the operators and a workflow step builds the compute-ssh
-  launcher, so a broken Dockerfile stage fails the PR rather than `main.yml`. It also
-  covers `catalogs/cluster_base/spire_crds/`, because the suite installs that chart and
-  asserts the CRDs it ships. The suite registers its infra-plane cluster with the
-  `ccluster` CLI it builds from `cmd/ccluster`, which the Go paths already cover.
+  launcher, so a broken Dockerfile stage fails the PR rather than `main.yml`. The suite
+  registers its infra-plane cluster with the `ccluster` CLI it builds from `cmd/ccluster`,
+  which the Go paths already cover.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
   templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
   `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes

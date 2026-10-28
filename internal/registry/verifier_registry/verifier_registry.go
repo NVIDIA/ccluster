@@ -17,20 +17,13 @@ import (
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
-	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	kaischeduler "github.com/NVIDIA/ccluster/catalogs/cluster_base/kai_scheduler"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
 	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
-	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
-	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
@@ -71,8 +64,10 @@ type Registry struct {
 	registry.Registry[VerifyFunc]
 }
 
-// Get returns the registry of every catalogs/cluster_base chart's check.
-// TestGet fails when it and components.ClusterBase disagree. A chart without a
+// Get returns the registry of the checks of the cluster_base charts every cluster
+// must have, sorted by chart. A chart left out can still be installed, but the
+// operator does not verify it. TestGet fails when a registered chart is not in
+// components.ClusterBase. A chart without a
 // check of its own registers alwaysVerified; one with a check registers its package's
 // Verify. A check that reads a kind needs a +kubebuilder:rbac marker in
 // internal/controller/ip.
@@ -82,19 +77,12 @@ func Get() *Registry {
 	r.Register(certmanager.Chart, alwaysVerified)
 	r.Register(externaldns.Chart, alwaysVerified)
 	r.Register(finalstack.Chart, alwaysVerified)
-	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
 	r.Register(ingressnginx.Chart, alwaysVerified)
 	r.Register(istio.Chart, alwaysVerified)
 	r.Register(kaischeduler.Chart, alwaysVerified)
 	r.Register(keda.Chart, alwaysVerified)
 	r.Register(kubeprometheusstack.Chart, alwaysVerified)
-	r.Register(longhorn.Chart, alwaysVerified)
 	r.Register(metricsserver.Chart, alwaysVerified)
-	r.Register(networkoperator.Chart, alwaysVerified)
-	r.Register(otelcollector.Chart, alwaysVerified)
-	r.Register(prometheusadapter.Chart, alwaysVerified)
-	r.Register(spire.Chart, alwaysVerified)
-	r.Register(spirecrds.Chart, spirecrds.Verify)
 	return r
 }

@@ -125,9 +125,10 @@ When adding or changing a component:
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
   choices, not a universally deployable default.
-- A `cluster_base` component is also registered with the ip operator's verifier registry,
-  `verifierregistry.Get()` in `internal/registry/verifier_registry`, which must cover exactly
-  `components.ClusterBase`, in its order (`TestGet` fails otherwise). Start with `alwaysVerified`.
+- A `cluster_base` component that every cluster must have is also registered with the ip
+  operator's verifier registry, `verifierregistry.Get()` in
+  `internal/registry/verifier_registry`, sorted by chart (`TestGet` fails otherwise); one
+  left out is installed but not verified. Start with `alwaysVerified`.
   A check of the chart's own is an exported `Verify` function beside `New` in the chart's
   `component.go` with the `verifierregistry.VerifyFunc` signature (see `spire_crds`; the chart package
   never imports controller code), reads live objects only (never Argo CD or Helm state),

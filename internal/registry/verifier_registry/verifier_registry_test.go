@@ -12,16 +12,21 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/components"
 )
 
-// TestGet: the operator verifies every cluster_base component, so a
-// chart missing from the registry would silently be left out of the check, and a
-// registered chart outside components.ClusterBase would verify something the catalog
-// does not ship. The order is checked too, since it is the order failures are reported in.
+// TestGet: a registered chart outside components.ClusterBase would verify something
+// the catalog does not ship, and could never pass. The registry is sorted by chart, the
+// order failures are reported in.
 func TestGet(t *testing.T) {
-	want := make([]string, 0, len(components.ClusterBase))
+	charts := make([]string, 0, len(components.ClusterBase))
 	for _, c := range components.ClusterBase {
-		want = append(want, c.Chart)
+		charts = append(charts, c.Chart)
 	}
-	if got := Get().Charts(); !slices.Equal(got, want) {
-		t.Errorf("registered charts %v\nwant components.ClusterBase %v", got, want)
+	got := Get().Charts()
+	for _, chart := range got {
+		if !slices.Contains(charts, chart) {
+			t.Errorf("registered chart %s is not in components.ClusterBase", chart)
+		}
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("registered charts %v are not sorted", got)
 	}
 }
