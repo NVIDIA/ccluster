@@ -688,7 +688,7 @@ type: kubernetes.io/service-account-token
 			By("reporting the write forbidden to that identity")
 			Eventually(func(g Gomega) {
 				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "reason")).
-					To(Equal("ClusterUnreachable"))
+					To(Equal("AccessDenied"))
 				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "message")).
 					To(ContainSubstring("forbidden"))
 			}, crossClusterTimeout).Should(Succeed())
