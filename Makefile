@@ -38,6 +38,13 @@ BUILDX_ARGS ?=
 # org.opencontainers.image.revision label; a release retag keeps it, as the commit is the same.
 IMAGE_BUILD_ARGS = --build-arg REVISION=$(GIT_SHA)
 
+# GOTOOLCHAIN pins every go command a target runs to the toolchain line in go.mod, so
+# local builds, tests, lint, generators and tool installs use the same Go as CI (setup-go
+# reads that line) and the images (check-go-version holds the Dockerfile to it). Without
+# it a newer installed Go runs as-is, since go.mod's go line is only a minimum. The go
+# command downloads the pinned toolchain on first use.
+export GOTOOLCHAIN := $(shell sed -n 's/^toolchain //p' go.mod)
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -218,6 +225,14 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 .PHONY: check-headers
 check-headers: ## Fail if a tracked source file lacks the SPDX license header.
 	hack/check-headers.sh
+
+# Dependabot bumps the Dockerfile's golang image but not go.mod, so each such PR fails
+# here until it updates the toolchain line to match.
+.PHONY: check-go-version
+check-go-version: ## Fail unless the Dockerfile's golang image matches the toolchain line in go.mod.
+	@[ -n "$(GOTOOLCHAIN)" ] || { echo "go.mod has no toolchain line, e.g. 'toolchain go1.27.2'" >&2; exit 1; }
+	@image="$$(sed -n 's/^FROM .*golang:\([^ @]*\).*/\1/p' Dockerfile)"; \
+	[ "go$$image" = "$(GOTOOLCHAIN)" ] || { echo "Dockerfile builds with golang:$$image but go.mod has 'toolchain $(GOTOOLCHAIN)': change both together" >&2; exit 1; }
 
 ##@ Build
 
@@ -795,7 +810,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
-GOLANGCI_LINT_VERSION ?= v2.13.0
+GOLANGCI_LINT_VERSION ?= v2.15.0
 KUBEBUILDER_VERSION ?= v4.15.0
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
@@ -870,20 +885,22 @@ $(KUBEBUILDER): $(LOCALBIN)
 	}
 	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
 
-# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
+# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist.
+# The binary is named after the package version and the Go toolchain, so bumping either
+# rebuilds it: generators built with another Go can emit different code.
 # $1 - target path with name of binary
 # $2 - package url which can be installed
 # $3 - specific version of package
 define go-install-tool
-@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
+@[ -f "$(1)-$(3)-$(GOTOOLCHAIN)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)-$(GOTOOLCHAIN)" ] || { \
 set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 rm -f "$(1)" ;\
 GOBIN="$(LOCALBIN)" go install $${package} ;\
-mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)" ;\
+mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)-$(GOTOOLCHAIN)" ;\
 } ;\
-ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
+ln -sf "$$(realpath "$(1)-$(3)-$(GOTOOLCHAIN)")" "$(1)"
 endef
 
 define gomodver

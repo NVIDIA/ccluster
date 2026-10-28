@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -264,7 +265,10 @@ func TestSFTPWorksWhenNoShellIsAvailable(t *testing.T) {
 	defer func() {
 		_ = server.Close()
 		select {
-		case <-serveDone:
+		case err := <-serveDone:
+			if !errors.Is(err, gliderssh.ErrServerClosed) {
+				t.Errorf("SSH server stopped with %v, want %v", err, gliderssh.ErrServerClosed)
+			}
 		case <-time.After(time.Second):
 			t.Fatal("SSH server did not stop")
 		}

@@ -327,7 +327,10 @@ func newShellTestClient(t *testing.T, shell string) (*gossh.Client, <-chan struc
 	t.Cleanup(func() {
 		_ = server.Close()
 		select {
-		case <-serveDone:
+		case err := <-serveDone:
+			if !errors.Is(err, gliderssh.ErrServerClosed) {
+				t.Errorf("SSH server stopped with %v, want %v", err, gliderssh.ErrServerClosed)
+			}
 		case <-time.After(time.Second):
 			t.Error("SSH server did not stop")
 		}

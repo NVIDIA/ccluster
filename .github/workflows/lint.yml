@@ -4,15 +4,19 @@ name: Lint
 
 on:
   pull_request:
-    # Only when Go code or the linter's inputs change; docs, chart, catalog-chart and
-    # Python-only PRs skip it. Keep in sync with docs/build-and-release.md "CI checks".
-    # VERSION is here so a release PR, which changes little else, runs this check too.
+    # Only when Go code, the linter's inputs or the Go version change; docs, chart,
+    # catalog-chart and Python-only PRs skip it. Keep in sync with
+    # docs/build-and-release.md "CI checks". VERSION is here so a release PR, which
+    # changes little else, runs this check too. Dockerfile is here for check-go-version,
+    # which a Dependabot golang image bump must pass.
     paths:
       - 'VERSION'
+      - 'Dockerfile'
       - '**.go'
       - 'go.mod'
       - 'go.sum'
       - '.golangci.yml'
+      - '.custom-gcl.yml'
       - 'Makefile'
       - '.github/workflows/lint.yml'
 
@@ -29,6 +33,8 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Check the Dockerfile's Go version matches go.mod
+        run: make check-go-version
       - name: Check linter configuration
         run: make lint-config
       - name: Run linter
