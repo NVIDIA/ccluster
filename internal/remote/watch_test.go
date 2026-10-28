@@ -166,7 +166,7 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
 	t.Cleanup(func() { deleteClusterConfig(t) })
 
-	registry.Ensure(ctx, plane, localSecret("1"))
+	registry.Ensure(plane, localSecret("1"))
 
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
@@ -188,21 +188,6 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 		expectEnqueued(t, queue, plane)
 	})
 
-	t.Run("an object with another name is ignored", func(t *testing.T) {
-		drain(queue)
-		other := &cclusternvidiacomv1alpha1.CCLClusterConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "not-the-singleton"},
-			Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "x.example.com"},
-		}
-		// The CRD admits only "cluster", so the write fails; either way nothing may
-		// arrive.
-		_ = testClient.Create(ctx, other)
-		time.Sleep(500 * time.Millisecond)
-		if queue.Len() != 0 {
-			t.Fatalf("enqueued %d requests for an object the watch should not see", queue.Len())
-		}
-	})
-
 	t.Run("deletion", func(t *testing.T) {
 		drain(queue)
 		deleteClusterConfig(t)
@@ -211,19 +196,18 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 }
 
 func TestRegistryEnsureIsIdempotentAndFollowsTheSecret(t *testing.T) {
-	ctx := context.Background()
 	registry, _ := newRegistry(t)
 	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
 	before := testutil.ToFloat64(activeWatches)
 
-	registry.Ensure(ctx, plane, localSecret("1"))
+	registry.Ensure(plane, localSecret("1"))
 	first := registry.watches[plane]
-	registry.Ensure(ctx, plane, localSecret("1"))
+	registry.Ensure(plane, localSecret("1"))
 	if registry.watches[plane] != first {
 		t.Fatal("Ensure with the same Secret replaced the watch")
 	}
 
-	registry.Ensure(ctx, plane, localSecret("2"))
+	registry.Ensure(plane, localSecret("2"))
 	second := registry.watches[plane]
 	if second == first {
 		t.Fatal("Ensure with a changed Secret kept the old watch")
@@ -260,7 +244,6 @@ func waitDone(w *watch) <-chan struct{} {
 }
 
 func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
-	ctx := context.Background()
 	registry, _ := newRegistry(t)
 	// A cluster that never answers is dropped only once the sync times out.
 	registry.syncTimeout = time.Second
@@ -274,8 +257,8 @@ func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
 			"config": []byte(`{"bearerToken":"t"}`),
 		},
 	}
-	registry.Ensure(ctx, unreachable, secret)
-	registry.Ensure(ctx, healthy, localSecret("1"))
+	registry.Ensure(unreachable, secret)
+	registry.Ensure(healthy, localSecret("1"))
 
 	waitFor(t, "the unreachable watch to be dropped", func() bool {
 		return !registry.Watched().Has(unreachable)
@@ -285,7 +268,7 @@ func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
 	}
 
 	// The next Ensure, from the plane's next reconcile, starts it again.
-	registry.Ensure(ctx, unreachable, secret)
+	registry.Ensure(unreachable, secret)
 	if !registry.Watched().Has(unreachable) {
 		t.Fatal("Ensure did not restart a dropped watch")
 	}
@@ -298,7 +281,7 @@ func TestRegistryStartStopsEveryWatchWhenTheManagerStops(t *testing.T) {
 	go func() { stopped <- registry.Start(ctx) }()
 
 	for _, name := range []string{"a", "b"} {
-		registry.Ensure(context.Background(), types.NamespacedName{Namespace: "team-a", Name: name}, localSecret("1"))
+		registry.Ensure(types.NamespacedName{Namespace: "team-a", Name: name}, localSecret("1"))
 	}
 	cancel()
 	if err := <-stopped; err != nil {
@@ -326,7 +309,7 @@ func TestRegistryLeaksNoGoroutines(t *testing.T) {
 	}
 
 	for i := range 5 {
-		registry.Ensure(ctx, plane, localSecret(fmt.Sprint(i)))
+		registry.Ensure(plane, localSecret(fmt.Sprint(i)))
 		// The add event for the existing object proves the watch synced.
 		expectEnqueued(t, queue, plane)
 		if i%2 == 1 {

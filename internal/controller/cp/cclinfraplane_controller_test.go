@@ -1128,7 +1128,7 @@ type recordingWatcher struct {
 	log []string
 }
 
-func (w *recordingWatcher) Ensure(_ context.Context, plane types.NamespacedName, secret *corev1.Secret) {
+func (w *recordingWatcher) Ensure(plane types.NamespacedName, secret *corev1.Secret) {
 	w.record("ensure " + plane.String() + " " + secret.Name)
 }
 

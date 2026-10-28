@@ -8,7 +8,8 @@
 - A `ccluster_remote_watches` metric counts the infra-plane clusters being watched.
 
 ### Changed
-- The generated Python models reuse identical classes (`datamodel-codegen --reuse-model`):
-  in `ccluster.v1alpha1.cclinfraplane`, `Condition` is the type of
-  `status.clusterConfig.conditions` and `Condition1`, the type of `status.conditions`, is a
-  subclass of it.
+- **Breaking:** The generated Python models reuse identical classes (`datamodel-codegen
+  --reuse-model`). In `ccluster.v1alpha1.cclinfraplane`, `Condition` is now the type of
+  `status.clusterConfig.conditions`, and `status.conditions` takes `Condition1`, a subclass
+  of it. A `CCLInfraPlaneStatus` built from `Condition` instances fails validation; build it
+  from `Condition1` instances or dicts. Reading conditions is unchanged.

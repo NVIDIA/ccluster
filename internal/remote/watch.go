@@ -55,7 +55,7 @@ type Watcher interface {
 	// it is already watched with the same Secret. A Secret that changed since the
 	// watch started replaces it. It returns at once; a watch that cannot sync within
 	// SyncTimeout is logged and dropped, and the next Ensure starts it again.
-	Ensure(ctx context.Context, plane types.NamespacedName, secret *corev1.Secret)
+	Ensure(plane types.NamespacedName, secret *corev1.Secret)
 
 	// Stop stops watching on behalf of plane. It is a no-op if nothing is watched.
 	Stop(plane types.NamespacedName)
@@ -129,9 +129,9 @@ func (r *Registry) enqueue(plane types.NamespacedName) {
 }
 
 // Ensure implements Watcher.
-func (r *Registry) Ensure(ctx context.Context, plane types.NamespacedName, secret *corev1.Secret) {
+func (r *Registry) Ensure(plane types.NamespacedName, secret *corev1.Secret) {
 	version := secretVersion{uid: secret.UID, resourceVersion: secret.ResourceVersion}
-	log := logf.FromContext(ctx).WithValues("secret", secret.Name)
+	log := logf.Log.WithName("remote").WithValues("CCLInfraPlane", plane.String(), "secret", secret.Name)
 
 	r.mu.Lock()
 	replaced, hadOne := r.watches[plane]

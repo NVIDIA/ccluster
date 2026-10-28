@@ -75,7 +75,7 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 
 	// Never blocks: a watch that cannot start is the write's failure too, and that is
 	// what gets reported.
-	r.RemoteWatches.Ensure(ctx, client.ObjectKeyFromObject(infraPlane), source)
+	r.RemoteWatches.Ensure(client.ObjectKeyFromObject(infraPlane), source)
 
 	config, op, err := r.applyClusterConfig(ctx, infraPlane, source)
 	switch {
