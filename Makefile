@@ -38,7 +38,7 @@ BUILDX_ARGS ?=
 # org.opencontainers.image.revision label; a release retag keeps it, as the commit is the same.
 IMAGE_BUILD_ARGS = --build-arg REVISION=$(GIT_SHA)
 
-# GOTOOLCHAIN pins every go command a target runs to the toolchain line in go.mod, so
+# GOTOOLCHAIN pins every go command a recipe runs to the toolchain line in go.mod, so
 # local builds, tests, lint, generators and tool installs use the same Go as CI (setup-go
 # reads that line) and the images (check-go-version holds the Dockerfile to it). Without
 # it a newer installed Go runs as-is, since go.mod's go line is only a minimum. The go
@@ -791,6 +791,9 @@ KUBEBUILDER ?= $(LOCALBIN)/kubebuilder@$(KUBEBUILDER_VERSION)/kubebuilder
 ## Tool Versions
 # gomodver prints the version go.mod resolves for module $(1). It is defined before the
 # versions that call it, because tool paths are expanded when Make reads their rules.
+# Versions in tool paths are therefore set once with := inside ifndef, so go list runs
+# once per make invocation rather than on every expansion, and a command-line or
+# environment value still overrides them as ?= would.
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
@@ -800,14 +803,18 @@ YQ_VERSION ?= v4.53.6
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 
 #CODE_GENERATOR_VERSION is the k8s.io/code-generator release matching the client-go the generated client is built against
-CODE_GENERATOR_VERSION ?= $(shell v='$(call gomodver,k8s.io/client-go)'; \
+ifndef CODE_GENERATOR_VERSION
+CODE_GENERATOR_VERSION := $(shell v='$(call gomodver,k8s.io/client-go)'; \
   [ -n "$$v" ] || { echo "Set CODE_GENERATOR_VERSION manually (client-go replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v")
+endif
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
-ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
+ifndef ENVTEST_VERSION
+ENVTEST_VERSION := $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_VERSION manually (controller-runtime replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?([0-9]+)\.([0-9]+).*/release-\1.\2/')
+endif
 
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
