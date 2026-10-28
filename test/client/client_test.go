@@ -133,6 +133,7 @@ func TestNamespacedKindsStayInTheirNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gpu-a"},
 		Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
 			ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a-credentials"},
+			Domain:                "gpu-a.example.com",
 		},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
