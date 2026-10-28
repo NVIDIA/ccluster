@@ -35,11 +35,11 @@ Keep leader-election IDs `cp.ccluster.nvidia.com` and `ip.ccluster.nvidia.com` d
 
 ## Per-operator RBAC
 
-`make manifests` generates CRDs over `./api/...` into `config/crd/bases/`, and one RBAC
-role per operator: `./internal/controller/cp/...` into `config/cp/rbac/role.yaml` and
-`./internal/controller/ip/...` into `config/ip/rbac/role.yaml`. Markers only grant rights
-to the operator whose package contains them. The overlays prefix the shared
-`manager-role` name for each operator.
+`make manifests` generates CRDs over `./api/...` into `config/crd/bases/` (through
+`make crd-generate`), and one RBAC role per operator: `./internal/controller/cp/...` into
+`config/cp/rbac/role.yaml` and `./internal/controller/ip/...` into
+`config/ip/rbac/role.yaml`. Markers only grant rights to the operator whose package
+contains them. The overlays prefix the shared `manager-role` name for each operator.
 
 Each deploy overlay includes `config/crd` and deletes the CRDs the other operator serves
 with a `$patch: delete` patch, because kustomize refuses to load a file from outside a
@@ -224,17 +224,21 @@ informer-gen from `k8s.io/code-generator`, at the version of `k8s.io/client-go` 
 `go.mod`, over the API packages. They write apply configurations, a typed clientset with
 a fake, listers and a shared informer factory into `dist/_client/`, which replaces
 `pkg/client/` only once all four succeed. A failed run leaves the last client in place:
-`internal/remote` imports it, so without it `make manifests` cannot load the cp operator. The apply configurations give the clientset its `Apply` methods and
-the fake its field-managed `NewClientset`; without them the fake offers only the
-deprecated `NewSimpleClientset`.
+`internal/remote` imports it, so without it `make manifests` cannot load the cp operator.
+The apply configurations give the clientset its `Apply` methods and the fake its
+field-managed `NewClientset`; without them the fake offers only the deprecated
+`NewSimpleClientset`.
 
 The field-managed fake types every write with an OpenAPI schema that applyconfiguration-gen
 embeds in `pkg/client/applyconfiguration/internal/`; a kind missing from it fails every
 create, update and apply. `hack/clientschema` builds that schema from the CRDs with the
-API server's own CRD OpenAPI builder, so `client-generate` runs `manifests` first. The schema also gives each kind an `Extract` function, which reads back the fields
-one manager owns. A kind is included when its type carries `+genclient`;
-a cluster-scoped kind such as `CCLClusterConfig` also needs `+genclient:nonNamespaced`.
-A new top-level kind needs these markers too.
+API server's own CRD OpenAPI builder, so `client-generate` runs `crd-generate` first. It
+does not run `manifests`, whose RBAC step loads the cp operator and so needs `pkg/client/`
+to exist: `make client-generate` can always rebuild a missing client. The schema also gives
+each kind an `Extract` function, which reads back the fields one manager owns. A kind is
+included when its type carries `+genclient`; a cluster-scoped kind such as
+`CCLClusterConfig` also needs `+genclient:nonNamespaced`. A new top-level kind needs these
+markers too.
 
 The generators take a package's group and version from its last two directories, so the
 API lives in `api/ccluster/v1alpha1/` and the generated packages sit under

@@ -79,9 +79,7 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	# CRDs once, over every API group.
-	"$(CONTROLLER_GEN)" crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases
+manifests: crd-generate controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	# RBAC once per operator, so each ClusterRole holds only that operator's rules.
 	# The role name is the same in both; the overlay namePrefix disambiguates them
 	# into ccluster-cp-manager-role and ccluster-ip-manager-role, which is what lets
@@ -90,6 +88,12 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 		output:rbac:artifacts:config=config/cp/rbac
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role paths="./internal/controller/ip/..." \
 		output:rbac:artifacts:config=config/ip/rbac
+
+# CRDs once, over every API group. It loads only ./api/..., never the operators, so
+# client-generate can depend on it even when pkg/client is missing.
+.PHONY: crd-generate
+crd-generate: controller-gen ## Generate the CustomResourceDefinition and WebhookConfiguration objects from ./api.
+	"$(CONTROLLER_GEN)" crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -103,13 +107,15 @@ CLIENT_PACKAGE = $(shell go list -m)/pkg/client
 CLIENT_SCHEMA ?= dist/clientschema.json
 # Where the generators write before the result replaces pkg/client, so a failed run leaves
 # the last client in place: internal/remote imports it, and without it controller-gen
-# cannot load the cp operator's packages, so make manifests - and with it this target -
-# would fail until pkg/client is restored by hand. The leading underscore keeps ./...
-# patterns away from a half-generated copy.
+# cannot load the cp operator's packages for make manifests, make test or the builds. The
+# leading underscore keeps ./... patterns away from a half-generated copy.
 CLIENT_STAGING ?= dist/_client
 
+# It needs only the CRDs, so it depends on crd-generate rather than manifests: manifests'
+# RBAC step loads the cp operator, which imports pkg/client, so a missing pkg/client could
+# not otherwise be regenerated.
 .PHONY: client-generate
-client-generate: manifests applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
+client-generate: crd-generate applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
 	rm -rf "$(CLIENT_STAGING)"
 	go run ./hack/clientschema --crds "$(CRD_DIR)" --out "$(CLIENT_SCHEMA)"
 	# Apply configurations give the clientset its Apply methods and the fake clientset its
