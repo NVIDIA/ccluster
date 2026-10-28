@@ -15,7 +15,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository and for the cp operator's infra-plane watch in `internal/remote/`; `test/client/` tests them. |
 | `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
-| `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (each registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |
+| `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (those every cluster must have are registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |
 | `hack/pyschema/` → `python/` | CRD spec/status and chart values → JSON Schema → Pydantic package. |
 | `examples/` | Hand-written example CRs. |
 

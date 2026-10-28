@@ -123,10 +123,12 @@ When adding or changing a component:
   `internal/registry/verifier_registry`, sorted by chart (`TestGet` fails otherwise); one
   left out is installed but not verified. Start with `alwaysVerified`.
   A check of the chart's own is an exported `Verify` function beside `New` in the chart's
-  `component.go` with the `verifierregistry.VerifyFunc` signature (see `spire_crds`; the chart package
-  never imports controller code), reads live objects only (never Argo CD or Helm state),
-  and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`, the
-  kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`.
+  `component.go` with the `verifierregistry.VerifyFunc` signature (see `metrics_server`; the chart
+  package never imports controller code), reads live objects only (never Argo CD or Helm
+  state), and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`,
+  the kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`. Chart packages
+  never import `internal/`: a kind they read comes from its upstream types package, as
+  APIService comes from `k8s.io/kube-aggregator`.
 - Every component is also registered with the cp operator's drift registry,
   `driftregistry.Get()` in `internal/registry/drift_registry`, which must cover exactly
   `components.All` (`TestGet` fails otherwise). Start with `noDrift`. A field that a

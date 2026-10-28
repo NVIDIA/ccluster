@@ -24,6 +24,8 @@ on:
       - 'test/**'
       # The suite registers the separate infra-plane cluster with the ccluster CLI.
       - 'python/**'
+      # The suite installs this chart and asserts the APIService it serves.
+      - 'catalogs/cluster_base/metrics_server/**'
       - '.github/workflows/test-e2e.yml'
 
 jobs:
