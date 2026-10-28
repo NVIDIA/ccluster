@@ -79,8 +79,11 @@ report `ClusterConfigApplied=Conflict`.
 
 Specs that only test the control plane's handling of a registration - Secret mirroring,
 `ApplicationCRDMissing` - use a placeholder server such as `https://infra.example.com:6443`
-that is never dialled. `ClusterConfigApplied=CRDMissing` is covered by envtest only: both
-clusters run the infra-plane operator, so neither lacks its CRD.
+that is never reachable. The cp operator still dials it, for the remote watch and the
+`CCLClusterConfig` write, and reports `ClusterConfigApplied=ClusterUnreachable`; these specs
+do not assert `ClusterConfigApplied`. `ClusterConfigApplied=CRDMissing` is covered on the
+ex-cluster target, which is registered before the infra-plane operator is installed there
+and gets it only once the plane reports `CRDMissing`.
 
 The full tier pulls real images and waits for Argo CD convergence. Argo CD clones the
 catalog over the network; a private repository needs `GITHUB_TOKEN`, as with deployment.

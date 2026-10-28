@@ -419,12 +419,14 @@ clean-ip: require-kind ## Delete the infra-plane development Kind cluster.
 clean-all: clean ## Delete the development clusters and all build artifacts (bin/, dist/).
 	rm -rf "$(LOCALBIN)" dist
 
-# kind-create-cluster,<name> - create a Kind cluster unless it is already there.
+# kind-create-cluster,<name> - create a Kind cluster unless it is already there. The
+# name must match a whole line: one cluster's name can be a prefix of another's.
 define kind-create-cluster
-@case "$$($(KIND) get clusters 2>/dev/null)" in \
-	*"$(1)"*) echo "Kind cluster '$(1)' already exists. Skipping creation." ;; \
-	*) echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1) ;; \
-esac
+@if $(KIND) get clusters 2>/dev/null | grep -qxF '$(1)'; then \
+	echo "Kind cluster '$(1)' already exists. Skipping creation."; \
+else \
+	echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1); \
+fi
 endef
 
 ifndef ignore-not-found

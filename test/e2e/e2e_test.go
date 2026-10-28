@@ -574,13 +574,41 @@ var _ = Describe("Manager", Ordered, func() {
 		// that a `ccluster register` token reaches another cluster over the network. The
 		// verdict flipping only after spire_crds is installed there, well inside
 		// --infraplane-resync-period, proves the remote watch is wired to the controller.
+		//
+		// ex-cluster is also registered before the ip chart is installed on it, the order
+		// a user who runs `ccluster register` first meets. Only a real API server proves
+		// that a missing CRD reads as CRDMissing, and that the remote watch, which cannot
+		// start without it, starts once it is installed and delivers the verdict.
 		for _, t := range targets() {
 			It("should write the CCLClusterConfig on the "+t.name+" infra plane and sync its verification back", func() {
 				planeName := "e2e-cluster-config-" + t.name
+				beforeIPChart := t.name == exCluster().name
+
+				if beforeIPChart {
+					undeployIPOperator(t.cluster)
+					DeferCleanup(func() {
+						if CurrentSpecReport().Failed() {
+							deployIPOperator(t.cluster)
+						}
+					})
+				}
 
 				By("registering the " + t.name + " plane")
 				t.register(planeName)
 
+				if beforeIPChart {
+					By("reporting CRDMissing while the ip chart is not installed")
+					Eventually(func(g Gomega) {
+						g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
+						g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "reason")).
+							To(Equal("CRDMissing"))
+					}, crossClusterTimeout).Should(Succeed())
+
+					deployIPOperator(t.cluster)
+				}
+
+				// After a late CRD install the operator notices it through its retry of
+				// a missing CRD, every minute: nothing it watches changes.
 				By("writing the CCLClusterConfig on the plane's cluster with the plane's domain")
 				Eventually(func(g Gomega) {
 					g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
@@ -1165,9 +1193,6 @@ type: kubernetes.io/service-account-token
 					planeName := "e2e-real-rollout-plane-" + t.name
 					applicationName := componentSetName + "-argo-rollouts"
 
-					// server must be exactly this string for Argo CD to connect using its own
-					// ServiceAccount rather than credentials in "config" - see the sample
-					// this mirrors, examples/quickstart/v1alpha1_cclinfraplane.yaml.
 					By("registering the " + t.name + " plane")
 					t.register(planeName)
 					var err error
@@ -1263,7 +1288,8 @@ type: kubernetes.io/service-account-token
 			// this spec drives the same two invariants against a real Argo CD
 			// reconciling two real components (matching
 			// examples/quickstart/v1alpha1_cclcomponentset.yaml), combined into one spec so the
-			// suite only pays for one KEDA + argo-rollouts image pull cycle.
+			// suite pays for one KEDA + argo-rollouts image pull cycle per target, on each
+			// target's node.
 			for _, t := range targets() {
 				It("should release components in order and tear them down in reverse on the "+t.name+" infra plane", func() {
 					componentSetName := "e2e-ordered-release-" + t.name
