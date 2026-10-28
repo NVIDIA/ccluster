@@ -666,7 +666,7 @@ var _ = Describe("Manager", Ordered, func() {
 			By("creating a ServiceAccount with no rights on the plane's cluster")
 			_, err := utils.Run(t.cluster.Kubectl("create", "serviceaccount", serviceAccount, "-n", "default"))
 			Expect(err).NotTo(HaveOccurred())
-			tokenSecret := exec.Command("kubectl", "--context", t.cluster.Context(), "apply", "-f", "-")
+			tokenSecret := t.cluster.Kubectl("apply", "-f", "-")
 			tokenSecret.Stdin = strings.NewReader(fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
