@@ -81,6 +81,6 @@ func Get() *Registry {
 	r.Register(kaischeduler.Chart, alwaysVerified)
 	r.Register(keda.Chart, alwaysVerified)
 	r.Register(kubeprometheusstack.Chart, alwaysVerified)
-	r.Register(metricsserver.Chart, alwaysVerified)
+	r.Register(metricsserver.Chart, metricsserver.Verify)
 	return r
 }

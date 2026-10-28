@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -152,6 +153,48 @@ func undeployIPOperator(c utils.Cluster) {
 	_, _ = utils.Run(exec.Command("make", "undeploy-ip", "KUBE_CONTEXT_IP="+c.Context()))
 	_, _ = utils.Run(c.Kubectl("delete", "crd", "cclclusterconfigs.ccluster.nvidia.com", "--ignore-not-found"))
 	_, _ = utils.Run(c.Kubectl("delete", "ns", ipNamespace, "--ignore-not-found"))
+}
+
+// metricsAPIService is the APIService the metrics_server Verifier reads.
+const metricsAPIService = "v1beta1.metrics.k8s.io"
+
+// installMetricsServer installs catalogs/cluster_base/metrics_server on c. It is the one
+// registered cluster_base component with a Verifier of its own, and kind runs no
+// metrics-server, so installing it is what turns the infra-plane operator's Verified
+// condition True.
+func installMetricsServer(c utils.Cluster) {
+	GinkgoHelper()
+
+	By("installing the metrics_server chart on " + c.Name)
+	// From a copy, so fetching the upstream dependency leaves no Chart.lock or tarball
+	// in the working tree. kind's kubelets serve self-signed certificates, which
+	// metrics-server rejects unless told otherwise.
+	chartDir := filepath.Join(GinkgoT().TempDir(), "metrics_server")
+	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "metrics_server"), chartDir))
+	Expect(err).NotTo(HaveOccurred())
+	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "metrics-server", chartDir,
+		"--kube-context", c.Context(), "--dependency-update",
+		"--namespace", "metrics-server", "--create-namespace", "--wait",
+		"--set-json", `metrics-server.args=["--kubelet-preferred-address-types=InternalIP","--kubelet-insecure-tls"]`))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the metrics_server chart on %s", c.Name)
+}
+
+// uninstallMetricsServer removes what installMetricsServer installed from c.
+func uninstallMetricsServer(c utils.Cluster) {
+	By("removing the metrics_server chart from " + c.Name)
+	_, _ = utils.Run(exec.Command("helm", "uninstall", "metrics-server", "--kube-context", c.Context(),
+		"--namespace", "metrics-server", "--ignore-not-found"))
+	_, _ = utils.Run(c.Kubectl("delete", "ns", "metrics-server", "--ignore-not-found"))
+}
+
+// expectOnlyMetricsServerFailing asserts that a Verified message names metrics_server as
+// the only failing cluster_base component, for want of its APIService - "not found"
+// rather than a read error, which proves the ip chart's ClusterRole lets the manager read
+// APIServices.
+func expectOnlyMetricsServerFailing(g Gomega, message string) {
+	g.Expect(message).To(ContainSubstring(
+		"failing: catalogs/cluster_base/metrics_server (APIService " + metricsAPIService + " not found"))
+	g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
 }
 
 // clusterConfigField reads a field of a CCLInfraPlane's copy of its infra plane's

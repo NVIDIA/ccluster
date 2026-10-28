@@ -573,7 +573,9 @@ var _ = Describe("Manager", Ordered, func() {
 		// its verdict and the cluster's ingress LoadBalancer come back onto the
 		// CCLInfraPlane. Both targets run the same spec:
 		// in-cluster proves the cp operator's own RBAC covers CCLClusterConfig, ex-cluster
-		// that a `ccluster register` token reaches another cluster over the network.
+		// that a `ccluster register` token reaches another cluster over the network. The
+		// verdict flipping only after metrics_server is installed there, well inside
+		// --infraplane-resync-period, proves the remote watch is wired to the controller.
 		//
 		// ex-cluster is also registered before the ip chart is installed on it, the order
 		// a user who runs `ccluster register` first meets. Only a real API server proves
@@ -631,6 +633,17 @@ var _ = Describe("Manager", Ordered, func() {
 				}, crossClusterTimeout).Should(Succeed())
 
 				By("copying the infra-plane operator's verdict onto the CCLInfraPlane")
+				Eventually(func(g Gomega) {
+					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("False"))
+					expectOnlyMetricsServerFailing(g,
+						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
+				}, watchTimeout).Should(Succeed())
+
+				installMetricsServer(t.cluster)
+				DeferCleanup(uninstallMetricsServer, t.cluster)
+
+				// The infra-plane operator rechecks a failing component every minute.
+				By("following the verdict as it changes on the plane's cluster")
 				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("True"),
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
