@@ -74,7 +74,8 @@ spec:
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the CCLClusterConfig resource.
+                  conditions represent the current state of the infra-plane cluster's
+                  CCLClusterConfig.
 
                   Condition types reported by the infra-plane operator:
                     - "Verified": every catalogs/cluster_base component is installed in this
@@ -141,7 +142,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedGeneration:
-                description: observedGeneration is the .metadata.generation the conditions
+                description: |-
+                  observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
                   were computed from.
                 format: int64
                 type: integer

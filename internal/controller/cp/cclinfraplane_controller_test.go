@@ -8,6 +8,8 @@ package cp
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -20,10 +22,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
@@ -86,6 +90,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		// credentials Secret. It defaults to k8sClient: envtest itself plays the
 		// infra-plane cluster, so the CCLClusterConfig lands beside the CCLInfraPlane.
 		var remoteClient client.Client
+
+		// watches records what the reconciler asks of its remote Watcher. The Registry
+		// itself is tested in internal/remote; here only the calls matter.
+		var watches *recordingWatcher
 
 		clusterConfigKey := types.NamespacedName{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName}
 
@@ -212,6 +220,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 		BeforeEach(func() {
 			remoteClient = k8sClient
+			watches = &recordingWatcher{}
 			reconciler = &CCLInfraPlaneReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
@@ -220,7 +229,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				RemoteClients: remote.ClientFactoryFunc(func(*corev1.Secret) (client.Client, error) {
 					return remoteClient, nil
 				}),
-				ResyncPeriod: resyncPeriod,
+				RemoteWatches: watches,
+				ResyncPeriod:  resyncPeriod,
 			}
 
 			By("creating the Argo CD namespace")
@@ -688,7 +698,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
 
-			By("resyncing periodically, since nothing on the infra-plane cluster is watched")
+			By("resyncing periodically, as a safety net behind the watch")
 			Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
 		})
 
@@ -768,7 +778,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(config.Spec.Domain).To(Equal(foreignDomain))
 			Expect(config.Annotations).NotTo(HaveKey(annotationInfraPlaneName))
 
-			By("polling for it to be deleted, since nothing on the infra-plane cluster is watched")
+			By("retrying every minute, behind the watch that reports its deletion")
 			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 
 			By("leaving it in place when the CCLInfraPlane is deleted")
@@ -979,6 +989,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			remoteClient = interceptor.NewClient(watchClient, interceptor.Funcs{
 				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
 					mirrorPresent = k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}) == nil
+					watches.record("delete CCLClusterConfig")
 					return c.Delete(ctx, obj, opts...)
 				},
 			})
@@ -987,6 +998,13 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			Expect(clusterConfigExists()).To(BeFalse())
 			Expect(mirrorPresent).To(BeTrue(), "the mirrored Secret was deleted first")
+
+			By("stopping the watch before deleting, so the deletion does not reconcile a plane going away")
+			calls := watches.calls()
+			Expect(calls).To(ContainElement("delete CCLClusterConfig"))
+			stop := slices.Index(calls, "stop "+typeNamespacedName.String())
+			Expect(stop).To(BeNumerically(">=", 0))
+			Expect(stop).To(BeNumerically("<", slices.Index(calls, "delete CCLClusterConfig")))
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
 		})
@@ -1012,5 +1030,126 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(reachedWith).To(Equal([]string{mirrorNamespacedName.String()}))
 		})
 
+		It("should watch the infra-plane cluster with the plane's credentials", func() {
+			createSecret(credentials)
+			settle()
+
+			Expect(watches.calls()).To(ContainElement("ensure " + typeNamespacedName.String() + " " + secretName))
+		})
+
+		It("should copy the CCLClusterConfig status into status.clusterConfig", func() {
+			createSecret(credentials)
+			infraPlane := settle()
+			Expect(infraPlane.Status.ClusterConfig).NotTo(BeNil())
+			Expect(infraPlane.Status.ClusterConfig.Conditions).To(BeEmpty())
+
+			By("the infra-plane operator reporting on the cluster")
+			config := getClusterConfig()
+			config.Status.ObservedGeneration = config.Generation
+			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+				Type: "Verified", Status: metav1.ConditionFalse, Reason: "ComponentsNotVerified",
+				Message: "spire: trust domain mismatch",
+			})
+			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+
+			// The watch's event is what triggers this reconcile in the operator.
+			infraPlane = reconcileAndGet()
+
+			copied := infraPlane.Status.ClusterConfig
+			Expect(copied).NotTo(BeNil())
+			Expect(copied.ObservedGeneration).To(Equal(config.Generation))
+			verified := apimeta.FindStatusCondition(copied.Conditions, "Verified")
+			Expect(verified).NotTo(BeNil())
+			Expect(verified.Status).To(Equal(metav1.ConditionFalse))
+			Expect(verified.Reason).To(Equal("ComponentsNotVerified"))
+			Expect(verified.Message).To(Equal("spire: trust domain mismatch"))
+
+			By("keeping the CCLInfraPlane's own conditions separate")
+			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, "Verified")).To(BeNil())
+			Expect(apimeta.FindStatusCondition(copied.Conditions, conditionTypeAvailable)).To(BeNil())
+		})
+
+		It("should keep the last copied status when the CCLClusterConfig can no longer be written", func() {
+			createSecret(credentials)
+			settle()
+			config := getClusterConfig()
+			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+				Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+			})
+			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+			reconcileAndGet()
+
+			By("re-stamping the CCLClusterConfig for another CCLInfraPlane and changing its status")
+			config = getClusterConfig()
+			config.Annotations[annotationInfraPlaneName] = "other-plane"
+			Expect(k8sClient.Update(ctx, config)).To(Succeed())
+			config = getClusterConfig()
+			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+				Type: "Verified", Status: metav1.ConditionFalse, Reason: "SomeoneElses",
+			})
+			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+
+			infraPlane := reconcileAndGet()
+
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			verified := apimeta.FindStatusCondition(infraPlane.Status.ClusterConfig.Conditions, "Verified")
+			Expect(verified).NotTo(BeNil())
+			Expect(verified.Reason).To(Equal("ComponentsVerified"), "another plane's status was copied")
+		})
+
+		It("should stop watching when the credentials Secret goes away", func() {
+			createSecret(credentials)
+			settle()
+
+			source := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, secretNamespacedName, source)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, source)).To(Succeed())
+			reconcileAndGet()
+
+			Expect(watches.calls()).To(HaveExactElements(
+				"ensure "+typeNamespacedName.String()+" "+secretName,
+				"stop "+typeNamespacedName.String(),
+			))
+		})
+
+		It("should stop watching a CCLInfraPlane that is gone without its finalizer", func() {
+			missing := types.NamespacedName{Namespace: namespace, Name: "never-existed"}
+			reconcileKey(missing)
+
+			Expect(watches.calls()).To(HaveExactElements("stop " + missing.String()))
+		})
+
 	})
 })
+
+// recordingWatcher is a remote.Watcher that only records the calls made to it, in order.
+type recordingWatcher struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (w *recordingWatcher) Ensure(plane types.NamespacedName, secret *corev1.Secret) {
+	w.record("ensure " + plane.String() + " " + secret.Name)
+}
+
+func (w *recordingWatcher) Stop(plane types.NamespacedName) {
+	w.record("stop " + plane.String())
+}
+
+func (w *recordingWatcher) Source() source.TypedSource[reconcile.Request] {
+	return source.Func(func(context.Context, workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
+		return nil
+	})
+}
+
+func (w *recordingWatcher) record(call string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.log = append(w.log, call)
+}
+
+func (w *recordingWatcher) calls() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.log)
+}

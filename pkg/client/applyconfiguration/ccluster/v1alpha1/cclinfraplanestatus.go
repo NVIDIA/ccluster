@@ -27,6 +27,12 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// observedGeneration is the .metadata.generation the conditions were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
+	// cluster, copied verbatim whenever it changes there. It is what the infra-plane
+	// operator reports about the cluster; ClusterConfigApplied says whether the copy is
+	// current. Its conditions and observedGeneration are the infra-plane operator's, and
+	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
+	ClusterConfig *CCLClusterConfigStatusApplyConfiguration `json:"clusterConfig,omitempty"`
 }
 
 // CCLInfraPlaneStatusApplyConfiguration constructs a declarative configuration of the CCLInfraPlaneStatus type for use with
@@ -53,5 +59,13 @@ func (b *CCLInfraPlaneStatusApplyConfiguration) WithConditions(values ...*v1.Con
 // If called multiple times, the ObservedGeneration field is set to the value of the last call.
 func (b *CCLInfraPlaneStatusApplyConfiguration) WithObservedGeneration(value int64) *CCLInfraPlaneStatusApplyConfiguration {
 	b.ObservedGeneration = &value
+	return b
+}
+
+// WithClusterConfig sets the ClusterConfig field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ClusterConfig field is set to the value of the last call.
+func (b *CCLInfraPlaneStatusApplyConfiguration) WithClusterConfig(value *CCLClusterConfigStatusApplyConfiguration) *CCLInfraPlaneStatusApplyConfiguration {
+	b.ClusterConfig = value
 	return b
 }

@@ -12,7 +12,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `internal/controller/{cp,ip}/` | Per-operator controllers; shared bootstrap is in `internal/manager/`. |
 | `internal/registry/` | Generic per-chart registry (chart path → function) and the `*_registry` packages built on it, such as the ip operator's `verifier_registry` and the cp operator's `drift_registry`. |
 | `api/ccluster/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
-| `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository; `test/client/` tests them. |
+| `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository and for the cp operator's infra-plane watch in `internal/remote/`; `test/client/` tests them. |
 | `internal/argocd/v1alpha1/` | Hand-written partial Argo CD API mirror; extend it rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (each registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |

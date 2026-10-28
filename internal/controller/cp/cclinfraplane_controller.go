@@ -93,8 +93,13 @@ type CCLInfraPlaneReconciler struct {
 	// Secrets, which the operator uses to write each cluster's CCLClusterConfig.
 	RemoteClients remote.ClientFactory
 
+	// RemoteWatches watches each infra-plane cluster's CCLClusterConfig, so a change
+	// there - the infra-plane operator writing status, or drift - reconciles the
+	// CCLInfraPlane at once.
+	RemoteWatches remote.Watcher
+
 	// ResyncPeriod is how often a CCLInfraPlane whose CCLClusterConfig was written is
-	// reconciled again, restoring the CCLClusterConfig if it drifted. Zero disables it.
+	// reconciled again anyway, a safety net behind RemoteWatches. Zero disables it.
 	ResyncPeriod time.Duration
 }
 
@@ -121,10 +126,11 @@ type CCLInfraPlaneReconciler struct {
 // Available is true the project exists, which is what lets the CCLComponentSet controller
 // write Applications into it without checking.
 //
-// Once the cluster is registered, the operator connects to it with the same credentials
-// and writes the CCLClusterConfig singleton the infra-plane operator verifies the cluster
-// against, carrying spec.domain. That is reported as the ClusterConfigApplied condition;
-// both conditions are written in one status patch.
+// Once the cluster is registered, the operator connects to it with the same credentials,
+// watches the CCLClusterConfig singleton the infra-plane operator verifies the cluster
+// against, and writes it with spec.domain. That is reported as the ClusterConfigApplied
+// condition, and the singleton's status is copied into status.clusterConfig; both
+// conditions and the copy are written in one status patch.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
@@ -138,7 +144,10 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &infraPlane); err != nil {
 		if apierrors.IsNotFound(err) {
 			// The controller's logger already carries the request's name and namespace.
+			// Normally the finalizer has stopped the watch; this covers one stripped by
+			// hand.
 			log.Info("Ignored missing CCLInfraPlane")
+			r.RemoteWatches.Stop(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -190,7 +199,9 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, key, &source); err != nil {
 		if apierrors.IsNotFound(err) {
 			// No requeue: the Secret watch re-triggers reconciliation once it appears.
+			// Without credentials there is no cluster to watch.
 			log.Info("Missing credentials Secret", "secret", secretName)
+			r.RemoteWatches.Stop(req.NamespacedName)
 			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
 				reasonSecretNotFound, fmt.Sprintf("Secret %q not found", secretName))
 		}
@@ -225,8 +236,8 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Message: fmt.Sprintf("Mirrored Secret %q into namespace %q",
 			mirrorName, r.ArgoCDNamespace),
 	}
-	clusterConfigApplied, result := r.reconcileClusterConfig(ctx, &infraPlane, &source)
-	return result, r.setConditions(ctx, &infraPlane, available, clusterConfigApplied)
+	clusterConfigApplied, clusterConfigStatus, result := r.reconcileClusterConfig(ctx, &infraPlane, &source)
+	return result, r.patchStatus(ctx, &infraPlane, clusterConfigStatus, available, clusterConfigApplied)
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from
@@ -276,8 +287,10 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 // it, the mirrored Secret if it is still ours, and the namespace's AppProject if this was
 // the last CCLInfraPlane using it, then drops the finalizer so the CCLInfraPlane can go away.
 //
-// The CCLClusterConfig goes first, while the credentials to reach the cluster are still
-// registered; failing to reach the cluster does not block the rest.
+// The watch on the cluster stops first, so deleting the CCLClusterConfig does not
+// reconcile a CCLInfraPlane that is going away. The CCLClusterConfig goes next, while the
+// credentials to reach the cluster are still registered; failing to reach the cluster
+// does not block the rest.
 func (r *CCLInfraPlaneReconciler) finalize(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -288,6 +301,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return nil
 	}
 
+	r.RemoteWatches.Stop(client.ObjectKeyFromObject(infraPlane))
 	r.deleteClusterConfig(ctx, infraPlane)
 
 	var mirror corev1.Secret
@@ -313,7 +327,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 		return err
 	}
 
-	// Patched rather than updated, and NotFound ignored, for the reasons in setConditions:
+	// Patched rather than updated, and NotFound ignored, for the reasons in patchStatus:
 	// the deletion that brought us here may not have reached the cache yet.
 	base := infraPlane.DeepCopy()
 	controllerutil.RemoveFinalizer(infraPlane, finalizerName)
@@ -329,7 +343,7 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	reason, message string,
 ) error {
-	return r.setConditions(ctx, infraPlane, metav1.Condition{
+	return r.patchStatus(ctx, infraPlane, nil, metav1.Condition{
 		Type:    conditionTypeAvailable,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
@@ -342,8 +356,9 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 	})
 }
 
-// setConditions sets conditions, each stamped with the current generation, and the
-// observed generation, then writes the status subresource in one patch.
+// patchStatus sets conditions, each stamped with the current generation, the observed
+// generation and, unless it is nil, the copy of the infra-plane cluster's
+// CCLClusterConfig status, then writes the status subresource in one patch.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
 // on a CCLInfraPlane that was just written the cached copy can carry a stale resource
@@ -351,13 +366,17 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 // status it computed is correct. A patch carries no such precondition. A NotFound is
 // ignored - the object was deleted while we were reconciling it, and there is no status
 // left to record.
-func (r *CCLInfraPlaneReconciler) setConditions(
+func (r *CCLInfraPlaneReconciler) patchStatus(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
 	conditions ...metav1.Condition,
 ) error {
 	base := infraPlane.DeepCopy()
 
+	if clusterConfig != nil {
+		infraPlane.Status.ClusterConfig = clusterConfig
+	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = infraPlane.Generation
 		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, condition)
@@ -407,13 +426,18 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // The Secret watch is unfiltered, so the manager caches every Secret in the cluster. If
 // that becomes costly, scope it with cache.ByObject in internal/manager.
 //
+// Events from the infra-plane clusters arrive through RemoteWatches' source, one for every
+// cluster: watches on them come and go with the CCLInfraPlanes, which a controller's own
+// watches cannot.
+//
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret))
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret)).
+		WatchesRawSource(r.RemoteWatches.Source())
 
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"), "AppProject") {
 		builder = builder.Watches(&argocdv1alpha1.AppProject{},

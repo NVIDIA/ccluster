@@ -28,10 +28,13 @@ type CCLClusterConfigSpec struct {
 	Domain string `json:"domain"`
 }
 
-// CCLClusterConfigStatus defines the observed state of CCLClusterConfig.
+// CCLClusterConfigStatus defines the observed state of CCLClusterConfig. The
+// control-plane operator also copies it, unchanged, into the status of the CCLInfraPlane
+// that registers the cluster.
 // +kubebuilder:title=CCLClusterConfigStatus
 type CCLClusterConfigStatus struct {
-	// conditions represent the current state of the CCLClusterConfig resource.
+	// conditions represent the current state of the infra-plane cluster's
+	// CCLClusterConfig.
 	//
 	// Condition types reported by the infra-plane operator:
 	//   - "Verified": every catalogs/cluster_base component is installed in this
@@ -44,7 +47,8 @@ type CCLClusterConfigStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// observedGeneration is the .metadata.generation the conditions were computed from.
+	// observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
+	// were computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }

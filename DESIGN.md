@@ -229,9 +229,46 @@ back to the mirrored Secret, which it deletes only afterwards. An unreachable cl
 logged and skipped, because a cluster that is gone must not keep its CCLInfraPlane from
 being deleted.
 
-Nothing on the infra-plane cluster is watched, so drift there is found by polling: a
-`CCLInfraPlane` whose `CCLClusterConfig` was written is reconciled again every
-`--infraplane-resync-period` (default 5m), and one whose write failed every minute.
+### Watching the infra-plane cluster, and its status coming back
+
+The controller also **watches** each infra-plane cluster's `CCLClusterConfig`, so a change
+there — the infra-plane operator writing its status, or someone editing or deleting the
+object — reconciles the `CCLInfraPlane` at once. Each reconcile copies the singleton's status,
+verbatim, into `status.clusterConfig`. That field reuses the `CCLClusterConfigStatus` type
+rather than merging its conditions into the CCLInfraPlane's own: the two sets of conditions
+and observedGenerations describe different objects. New fields the infra-plane operator
+reports flow through without a control-plane change. The copy is taken from the live read
+the write makes, never from the watch's cache, and only when the write succeeded; otherwise
+the last copy stays, and `ClusterConfigApplied` says it is stale.
+
+The watches live in `internal/remote`'s `Registry`: one informer per cluster, from the
+generated clientset in `pkg/client` and the same credentials Secret, holding only
+`CCLClusterConfig/cluster` (a `metadata.name` field selector). They come and go with the
+CCLInfraPlanes, which a controller's own watches cannot, so their events reach the
+controller through a single `source.TypedFunc` registered at startup, which hands the
+registry the controller's workqueue; an informer handler only ever calls `queue.Add` with
+the CCLInfraPlane's key, which never blocks and merges duplicates. Reconciliation reads current state, so an extra
+or stale event costs one idempotent pass.
+
+- `Ensure` never blocks a reconcile. It starts the informer in the background and returns;
+  a watch that cannot sync within 30s - the cluster is unreachable, refuses the list, or
+  lacks the CRD - is logged with the last list error and dropped, and the next reconcile
+  starts it again. The watch is only an event source: what the condition reports comes
+  from the write, so one unreachable cluster never holds up another plane's watch.
+- A watch is replaced when its Secret's UID or resourceVersion changes, and stopped when
+  the Secret disappears, when the finalizer runs (before the `CCLClusterConfig` is
+  deleted, so that deletion does not reconcile a plane going away), and when a
+  CCLInfraPlane is found gone. `Stop` waits for the informer's goroutines to finish.
+- Only the elected leader reconciles, so only it holds watches; a new leader rebuilds them
+  on its first pass. The registry is a manager Runnable that stops every watch on
+  shutdown. A lost connection is retried by the informer and enqueues the plane, whose
+  write then reports `ClusterUnreachable`.
+- The `ccluster_remote_watches` gauge counts active watches.
+
+Not everything is visible through the watch: the infra-plane operator and its CRD being
+installed, or a cluster coming back, arrive as no event on the object. A failed write is
+therefore retried every minute, and a written one is reconciled again every
+`--infraplane-resync-period` (default 5m) as a safety net.
 
 ### Status
 
@@ -245,9 +282,10 @@ message names the CCLInfraPlane it was created for, if any),
 `AccessDenied` (the cluster answered Unauthorized or Forbidden: the credentials are
 rejected or lack the rights), `ClusterUnreachable` (any other failure to read or write it,
 with the error as the message), `UnsupportedCredentials` or `InvalidCredentials` (`config`
-is not JSON). It is computed only once `Available` is true, and both are written in one
-status patch; while `Available` is `False` it is `Unknown/NotAvailable`, since nothing keeps
-the `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
+is not JSON); on any of these the copy in `status.clusterConfig` is the last one taken. It
+is computed only once `Available` is true, and both are written in one status patch; while
+`Available` is `False` it is `Unknown/NotAvailable`, since nothing keeps the
+`CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
@@ -332,9 +370,9 @@ the singleton trigger a pass only when its generation changes, so the operator's
 status writes do not rerun every Verifier.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
-control plane writes this object's spec but does not read its status yet; doing so with
-the same credentials is how an infra-plane's health would surface on its `CCLInfraPlane`
-later.
+control plane writes this object's spec and watches it, copying its status into the
+`CCLInfraPlane`'s `status.clusterConfig` (§3), which is how an infra-plane's health
+surfaces on the control plane.
 
 ## 4. `CCLComponentSet` — an ordered bundle of charts
 
@@ -710,7 +748,8 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain`, `Available` and `ClusterConfig` on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
+Printer columns: `Domain`, `Available`, `ClusterConfig` and `Verified` (from
+`status.clusterConfig`) on `CCLInfraPlane`; `Applied` and `Progress` on `CCLComponentSet`;
 `Verified` and `Domain` on `CCLClusterConfig`.
 Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
 informational — nothing reads it — so that
@@ -732,6 +771,8 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   lists CCLInfraPlanes in the Secret's namespace and matches `clusterCredentialsRef`. It
   also watches `AppProject`s: one in the Argo CD namespace maps to every CCLInfraPlane in
   the namespace it is named after, so a project deleted or loosened by hand is repaired.
+  Through a raw source fed by `internal/remote`, it also watches each infra-plane cluster's
+  `CCLClusterConfig` (§3).
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one).
@@ -739,8 +780,8 @@ same-namespace Applications garbage collection would defeat the ordered teardown
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
 an Application, and those arrive as events. Teardown has a 15s retry of its own. The
 infra-plane operator periodically re-verifies the live state it does not write (§3a), and
-the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
-`CCLClusterConfig`, which it cannot watch (§3).
+the `CCLInfraPlane` controller retries a `CCLClusterConfig` it could not write every
+minute, with a slower resync behind its watch (§3).
 
 ## 8. Not built yet
 
@@ -763,11 +804,9 @@ the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
   every other cluster_base chart is still registered with `alwaysVerified`, so the
   remaining checks (SPIRE's trust domain against `spec.domain`, workload readiness,
   issuer readiness) are not written yet.
-- **The control plane does not read `CCLClusterConfig` status.** It writes the spec (§3),
-  but an infra-plane's verification result stays in that cluster; surfacing it on the
-  `CCLInfraPlane` needs a watch on the remote object, which would also replace the
-  periodic resync. Per-component results are also not broken out
-  of the `Verified` condition's message yet.
+- **Per-component verification results.** The `CCLClusterConfig` status reaches the
+  `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
+  condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide.
 - **Component status.** Nothing reports a component's state in its own terms yet: a Job
   that succeeded, a Pod in CrashLoopBackOff. The argocd-server client (§4) is the data

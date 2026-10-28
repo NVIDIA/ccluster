@@ -94,7 +94,8 @@ func main() {
 			"trees through it, over HTTPS without verifying its certificate.")
 	flag.DurationVar(&infraPlaneResyncPeriod, "infraplane-resync-period", 5*time.Minute,
 		"How often each CCLInfraPlane is reconciled again once its infra-plane cluster's "+
-			"CCLClusterConfig has been written, restoring it if it drifted. 0 disables it.")
+			"CCLClusterConfig has been written. A safety net: the operator watches that "+
+			"CCLClusterConfig, so changes to it arrive as events. 0 disables it.")
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
@@ -126,6 +127,11 @@ func setupControllers(mgr ctrl.Manager) error {
 	if err != nil {
 		return err
 	}
+	// Stops every infra-plane watch when the manager stops.
+	remoteWatches := remote.NewRegistry(mgr.GetConfig())
+	if err := mgr.Add(remoteWatches); err != nil {
+		return fmt.Errorf("unable to add the infra-plane watch registry: %w", err)
+	}
 	if err := (&cp.CCLInfraPlaneReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
@@ -135,7 +141,8 @@ func setupControllers(mgr ctrl.Manager) error {
 			Local:  mgr.GetConfig(),
 			Scheme: mgr.GetScheme(),
 		},
-		ResyncPeriod: infraPlaneResyncPeriod,
+		RemoteWatches: remoteWatches,
+		ResyncPeriod:  infraPlaneResyncPeriod,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}

@@ -147,6 +147,43 @@ class Condition(BaseModel):
     """
 
 
+class CCLClusterConfigStatus(BaseModel):
+    """
+    clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
+    cluster, copied verbatim whenever it changes there. It is what the infra-plane
+    operator reports about the cluster; ClusterConfigApplied says whether the copy is
+    current. Its conditions and observedGeneration are the infra-plane operator's, and
+    refer to the CCLClusterConfig, not to this CCLInfraPlane.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    conditions: list[Condition] | None = None
+    """
+    conditions represent the current state of the infra-plane cluster's
+    CCLClusterConfig.
+
+    Condition types reported by the infra-plane operator:
+      - "Verified": every catalogs/cluster_base component is installed in this
+        cluster and configured for it. When False, the message names the charts
+        that failed verification.
+
+    The status of each condition is one of True, False, or Unknown.
+    """
+    observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
+    """
+    observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
+    were computed from.
+    """
+
+
+class Condition1(Condition):
+    """
+    Condition contains details for one aspect of the current state of this API Resource.
+    """
+
+
 class CCLInfraPlaneStatus(BaseModel):
     """
     status defines the observed state of CCLInfraPlane
@@ -155,7 +192,18 @@ class CCLInfraPlaneStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    conditions: list[Condition] | None = None
+    cluster_config: Annotated[
+        CCLClusterConfigStatus | None,
+        Field(alias="clusterConfig", title="CCLClusterConfigStatus"),
+    ] = None
+    """
+    clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
+    cluster, copied verbatim whenever it changes there. It is what the infra-plane
+    operator reports about the cluster; ClusterConfigApplied says whether the copy is
+    current. Its conditions and observedGeneration are the infra-plane operator's, and
+    refer to the CCLClusterConfig, not to this CCLInfraPlane.
+    """
+    conditions: list[Condition1] | None = None
     """
     conditions represent the current state of the CCLInfraPlane resource.
 

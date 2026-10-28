@@ -79,9 +79,7 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	# CRDs once, over every API group.
-	"$(CONTROLLER_GEN)" crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases
+manifests: crd-generate controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	# RBAC once per operator, so each ClusterRole holds only that operator's rules.
 	# The role name is the same in both; the overlay namePrefix disambiguates them
 	# into ccluster-cp-manager-role and ccluster-ip-manager-role, which is what lets
@@ -90,6 +88,12 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 		output:rbac:artifacts:config=config/cp/rbac
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role paths="./internal/controller/ip/..." \
 		output:rbac:artifacts:config=config/ip/rbac
+
+# CRDs once, over every API group. It loads only ./api/..., never the operators, so
+# client-generate can depend on it even when pkg/client is missing.
+.PHONY: crd-generate
+crd-generate: controller-gen ## Generate the CustomResourceDefinition and WebhookConfiguration objects from ./api.
+	"$(CONTROLLER_GEN)" crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -101,28 +105,38 @@ API_PACKAGES = $(shell go list ./api/...)
 CLIENT_PACKAGE = $(shell go list -m)/pkg/client
 # The OpenAPI schema hack/clientschema builds from the CRDs for applyconfiguration-gen.
 CLIENT_SCHEMA ?= dist/clientschema.json
+# Where the generators write before the result replaces pkg/client, so a failed run leaves
+# the last client in place: internal/remote imports it, and without it controller-gen
+# cannot load the cp operator's packages for make manifests, make test or the builds. The
+# leading underscore keeps ./... patterns away from a half-generated copy.
+CLIENT_STAGING ?= dist/_client
 
+# It needs only the CRDs, so it depends on crd-generate rather than manifests: manifests'
+# RBAC step loads the cp operator, which imports pkg/client, so a missing pkg/client could
+# not otherwise be regenerated.
 .PHONY: client-generate
-client-generate: manifests applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
-	rm -rf pkg/client
+client-generate: crd-generate applyconfiguration-gen client-gen lister-gen informer-gen ## Regenerate the Go clientset, listers, informers and apply configurations in pkg/client.
+	rm -rf "$(CLIENT_STAGING)"
 	go run ./hack/clientschema --crds "$(CRD_DIR)" --out "$(CLIENT_SCHEMA)"
 	# Apply configurations give the clientset its Apply methods and the fake clientset its
 	# field-managed NewClientset; without them only the deprecated NewSimpleClientset exists.
 	# The fake tracks field ownership with the schema and fails every write without it.
 	"$(APPLYCONFIGURATION_GEN)" --openapi-schema "$(CLIENT_SCHEMA)" \
-		--output-dir pkg/client/applyconfiguration \
+		--output-dir "$(CLIENT_STAGING)/applyconfiguration" \
 		--output-pkg $(CLIENT_PACKAGE)/applyconfiguration \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
 	"$(CLIENT_GEN)" --clientset-name versioned --input-base "" $(addprefix --input ,$(API_PACKAGES)) \
 		--apply-configuration-package $(CLIENT_PACKAGE)/applyconfiguration \
-		--output-dir pkg/client/clientset --output-pkg $(CLIENT_PACKAGE)/clientset \
+		--output-dir "$(CLIENT_STAGING)/clientset" --output-pkg $(CLIENT_PACKAGE)/clientset \
 		--go-header-file hack/boilerplate.go.txt
-	"$(LISTER_GEN)" --output-dir pkg/client/listers --output-pkg $(CLIENT_PACKAGE)/listers \
+	"$(LISTER_GEN)" --output-dir "$(CLIENT_STAGING)/listers" --output-pkg $(CLIENT_PACKAGE)/listers \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
 	"$(INFORMER_GEN)" --versioned-clientset-package $(CLIENT_PACKAGE)/clientset/versioned \
 		--listers-package $(CLIENT_PACKAGE)/listers \
-		--output-dir pkg/client/informers --output-pkg $(CLIENT_PACKAGE)/informers \
+		--output-dir "$(CLIENT_STAGING)/informers" --output-pkg $(CLIENT_PACKAGE)/informers \
 		--go-header-file hack/boilerplate.go.txt $(API_PACKAGES)
+	rm -rf pkg/client
+	mv "$(CLIENT_STAGING)" pkg/client
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -723,7 +737,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 			--use-annotated --field-constraints --snake-case-field \
 			--allow-population-by-field-name --use-title-as-name \
 			--use-schema-description --use-field-description --use-default \
-			--collapse-root-models --use-double-quotes --disable-timestamp \
+			--collapse-root-models --reuse-model --use-double-quotes --disable-timestamp \
 			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
 			|| exit 1; \
 		case "$$pkg" in catalogs/*) printf '\n\n# CHART is the chart directory, relative to the root of the catalog repository.\nCHART = "%s"\n' "$$pkg" >> "$$out";; esac; \

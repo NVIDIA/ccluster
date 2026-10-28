@@ -62,6 +62,14 @@ type CCLInfraPlaneStatus struct {
 	// observedGeneration is the .metadata.generation the conditions were computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
+	// cluster, copied verbatim whenever it changes there. It is what the infra-plane
+	// operator reports about the cluster; ClusterConfigApplied says whether the copy is
+	// current. Its conditions and observedGeneration are the infra-plane operator's, and
+	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
+	// +optional
+	ClusterConfig *CCLClusterConfigStatus `json:"clusterConfig,omitempty"`
 }
 
 // +genclient
@@ -70,6 +78,7 @@ type CCLInfraPlaneStatus struct {
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
+// +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API

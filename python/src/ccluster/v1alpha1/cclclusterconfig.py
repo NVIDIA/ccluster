@@ -112,7 +112,8 @@ class CCLClusterConfigStatus(BaseModel):
     )
     conditions: list[Condition] | None = None
     """
-    conditions represent the current state of the CCLClusterConfig resource.
+    conditions represent the current state of the infra-plane cluster's
+    CCLClusterConfig.
 
     Condition types reported by the infra-plane operator:
       - "Verified": every catalogs/cluster_base component is installed in this
@@ -123,5 +124,6 @@ class CCLClusterConfigStatus(BaseModel):
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
-    observedGeneration is the .metadata.generation the conditions were computed from.
+    observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
+    were computed from.
     """
