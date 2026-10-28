@@ -701,7 +701,9 @@ type: kubernetes.io/service-account-token
 			_, err = utils.Run(t.cluster.Kubectl("create", "clusterrolebinding", clusterRole,
 				"--clusterrole="+clusterRole, "--serviceaccount=default:"+serviceAccount))
 			Expect(err).NotTo(HaveOccurred())
-			// A failed write is retried every minute; nothing else changes to prompt it.
+			// The watch restarted with the new token keeps retrying its list until the grant
+			// lets it sync, and the CCLClusterConfig it then lists reconciles the plane. Had
+			// it given up first, after remote.SyncTimeout, the write's one-minute retry would.
 			Eventually(func(g Gomega) {
 				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "status")).To(Equal("True"),
 					infraPlaneCondition(planeName, conditionClusterConfigApplied, "message"))
