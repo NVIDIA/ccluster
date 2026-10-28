@@ -812,37 +812,37 @@ KUBEBUILDER_VERSION ?= v4.15.0
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
+$(KUSTOMIZE): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
 .PHONY: yq
 yq: $(YQ) ## Download yq locally if necessary.
-$(YQ): $(LOCALBIN)
+$(YQ): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
-$(CONTROLLER_GEN): $(LOCALBIN)
+$(CONTROLLER_GEN): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
 
 .PHONY: applyconfiguration-gen
 applyconfiguration-gen: $(APPLYCONFIGURATION_GEN) ## Download applyconfiguration-gen locally if necessary.
-$(APPLYCONFIGURATION_GEN): $(LOCALBIN)
+$(APPLYCONFIGURATION_GEN): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(APPLYCONFIGURATION_GEN),k8s.io/code-generator/cmd/applyconfiguration-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: client-gen
 client-gen: $(CLIENT_GEN) ## Download client-gen locally if necessary.
-$(CLIENT_GEN): $(LOCALBIN)
+$(CLIENT_GEN): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(CLIENT_GEN),k8s.io/code-generator/cmd/client-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: lister-gen
 lister-gen: $(LISTER_GEN) ## Download lister-gen locally if necessary.
-$(LISTER_GEN): $(LOCALBIN)
+$(LISTER_GEN): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(LISTER_GEN),k8s.io/code-generator/cmd/lister-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: informer-gen
 informer-gen: $(INFORMER_GEN) ## Download informer-gen locally if necessary.
-$(INFORMER_GEN): $(LOCALBIN)
+$(INFORMER_GEN): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(INFORMER_GEN),k8s.io/code-generator/cmd/informer-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: setup-envtest
@@ -855,12 +855,12 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
+$(ENVTEST): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
+$(GOLANGCI_LINT): $(LOCALBIN) FORCE
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 	@test -f .custom-gcl.yml && { \
 		echo "Building custom golangci-lint with plugins..." && \
@@ -870,7 +870,7 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 
 .PHONY: kubebuilder
 kubebuilder: $(KUBEBUILDER) ## Download kubebuilder locally if necessary.
-$(KUBEBUILDER): $(LOCALBIN)
+$(KUBEBUILDER): $(LOCALBIN) FORCE
 	@[ -f "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] && \
 	[ "$$(readlink -- "$(KUBEBUILDER)" 2>/dev/null)" = "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)" ] || { \
 		set -e; \
@@ -881,6 +881,12 @@ $(KUBEBUILDER): $(LOCALBIN)
 		chmod +x "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)"; \
 	}
 	@ln -sf "$$(realpath "$(KUBEBUILDER)-$(KUBEBUILDER_VERSION)")" "$(KUBEBUILDER)"
+
+# FORCE runs every tool recipe, whose own check against the versioned binary name is what
+# notices a version or toolchain change; a file target alone is up to date whenever the
+# old symlink exists.
+.PHONY: FORCE
+FORCE:
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist.
 # The binary is named after the package version and the Go toolchain, so bumping either
