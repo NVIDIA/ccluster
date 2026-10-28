@@ -108,52 +108,25 @@ var _ = Describe("IP operator", Ordered, func() {
 	})
 
 	// The quickstart example is the CCLClusterConfig under test, so the documented
-	// object is the one proven to work. spire_crds is the one cluster_base component with
-	// a check of its own, so the condition starts False naming it alone, and comes up
-	// True once its chart is installed - which proves the chart's CRD and RBAC let a real
-	// manager reconcile the singleton, read CRDs and write its status.
+	// object is the one proven to work. No registered cluster_base component has a check
+	// of its own yet, so the condition comes up True without installing anything - which
+	// proves the chart's CRD and RBAC let a real manager reconcile the singleton and write
+	// its status.
 	It("should report the cluster_base components verified", func() {
 		By("applying the quickstart CCLClusterConfig")
 		cmd := exec.Command("kubectl", "apply", "-f", filepath.Join("examples", "quickstart", "v1alpha1_cclclusterconfig.yaml"))
 		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply the CCLClusterConfig")
 
-		verified := func(g Gomega) (string, string) {
+		By("reporting every component verified")
+		Eventually(func(g Gomega) {
 			out, err := utils.Run(exec.Command("kubectl", "get", "cclclusterconfig", "cluster", "-o",
 				`jsonpath={range .status.conditions[?(@.type=="Verified")]}{.status}{"\n"}{.message}{end}`))
 			g.Expect(err).NotTo(HaveOccurred())
 			parts := strings.SplitN(out, "\n", 2)
 			g.Expect(parts).To(HaveLen(2), "Verified condition not reported yet")
-			return parts[0], parts[1]
-		}
-
-		By("reporting spire_crds as the only failing component")
-		Eventually(func(g Gomega) {
-			status, message := verified(g)
-			g.Expect(status).To(Equal("False"))
-			// "not found" rather than a read error: the ClusterRole lets the
-			// manager read CRDs, and there are none yet.
-			g.Expect(message).To(ContainSubstring(
-				"failing: catalogs/cluster_base/spire_crds (CRD clusterfederatedtrustdomains.spire.spiffe.io not found"))
-			g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
+			g.Expect(parts[0]).To(Equal("True"), parts[1])
+			g.Expect(parts[1]).To(HavePrefix("All "))
 		}).Should(Succeed())
-
-		By("installing the spire_crds chart")
-		// From a copy, so fetching the upstream dependency leaves no Chart.lock or
-		// tarball in the working tree.
-		chartDir := filepath.Join(GinkgoT().TempDir(), "spire_crds")
-		_, err = utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "spire_crds"), chartDir))
-		Expect(err).NotTo(HaveOccurred())
-		_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "spire-crds", chartDir,
-			"--dependency-update", "--namespace", "spire-system", "--create-namespace", "--wait"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to install the spire_crds chart")
-
-		// The operator rechecks failing components every minute.
-		By("reporting every component verified")
-		Eventually(func(g Gomega) {
-			status, message := verified(g)
-			g.Expect(status).To(Equal("True"), message)
-			g.Expect(message).To(HavePrefix("All "))
-		}).WithTimeout(3 * time.Minute).Should(Succeed())
 	})
 })

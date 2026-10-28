@@ -72,7 +72,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | Piece | Role |
 | --- | --- |
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials (§3). |
-| `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
+| `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs the Verifier of every `catalogs/cluster_base` component in its registry against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
@@ -292,12 +292,16 @@ identifies its result. Every per-chart registry lives under `internal/registry/`
 `*_registry` package whose `Get()` returns its `Registry`, a type embedding the generic
 `registry.Registry`, which maps a chart path to a function with `Register`, `Lookup` and
 `Charts` (registered charts in registration order). Failing charts are reported in that
-order. `TestGet` fails when the registry and `components.ClusterBase` disagree, in content
-or order, so no cluster_base chart goes unverified.
+order, sorted by chart. The registry holds the cluster_base charts a cluster must have,
+which need not be every chart in `catalogs/cluster_base`: one left out (spire, spire_crds,
+prometheus_adapter, fluent_bit, network_operator, opentelemetry_collector and longhorn
+today) can still be installed but is not verified. `TestGet` fails when a registered chart
+is not in `components.ClusterBase` or the registry is not sorted.
 
-Every cluster_base chart starts registered with `alwaysVerified`, which passes without
-looking; a chart replaces it with a check of its own when it has something to
-look at, as spire_crds does with `common.CRDsEstablished` from `catalogs/common`. Those checks read **live objects
+A registered chart starts with `alwaysVerified`, which passes without looking; it
+replaces it with a check of its own when it has something to look at, as spire_crds's
+`Verify` does with `common.CRDsEstablished` from `catalogs/common` (spire_crds is not
+registered today, so that check does not run). Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when
@@ -704,7 +708,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
-| `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |
+| `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component in the ip operator's verifier registry is installed in the infra-plane cluster and configured for it (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
@@ -753,16 +757,12 @@ the `CCLInfraPlane` controller periodically rewrites each infra-plane cluster's
 - **Global values.** The legacy catalog threaded a `Shared` object into every component and
   deep-merged computed per-cluster defaults under the user's values — SPIFFE helper sidecars,
   AWS IRSA environment, Istio CNI paths chosen by cloud provider. None of that is ported.
-  `catalogs/cluster_base/final_stack` is the visible casualty: it has no chart-level values
-  and its five templates read `.Values.global.cluster.domain`, so it renders against the
-  chart's placeholder domain until globals land.
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Only spire_crds has a check of its own (its CRDs are Established);
-  every other cluster_base chart is still registered with `alwaysVerified`, so the
-  remaining checks (SPIRE's trust domain against `spec.domain`, workload readiness,
-  issuer readiness) are not written yet.
+- **Real Verifiers.** Every registered cluster_base chart still uses `alwaysVerified`,
+  so the checks (workload readiness, issuer readiness, external-dns's
+  domain filter against `spec.domain`) are not written yet.
 - **The control plane does not read `CCLClusterConfig` status.** It writes the spec (§3),
   but an infra-plane's verification result stays in that cluster; surfacing it on the
   `CCLInfraPlane` needs a watch on the remote object, which would also replace the
