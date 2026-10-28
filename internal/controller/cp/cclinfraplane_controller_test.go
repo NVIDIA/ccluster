@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -1172,20 +1173,29 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(condition.ObservedGeneration).To(Equal(infraPlane.Generation))
 			}
 
-			// reportIngress has the "infra-plane operator" report the ingress
-			// LoadBalancer, or none if lb is nil, then reconciles as the watch's event
-			// would.
-			reportIngress := func(lb *cclusternvidiacomv1alpha1.LoadBalancerStatus) *cclusternvidiacomv1alpha1.CCLInfraPlane {
+			// ingressName is the wildcard record pointing at the ingress LoadBalancer.
+			ingressName := "*.ingress." + domain
+
+			// reportLoadBalancers has the "infra-plane operator" report lbs, replacing
+			// any it reported before, then reconciles as the watch's event would.
+			reportLoadBalancers := func(lbs ...cclusternvidiacomv1alpha1.LoadBalancerStatus) *cclusternvidiacomv1alpha1.CCLInfraPlane {
 				GinkgoHelper()
 
 				config := getClusterConfig()
-				config.Status.LoadBalancers = nil
-				if lb != nil {
-					lb.Name = "ingress"
-					config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{*lb}
-				}
+				config.Status.LoadBalancers = lbs
 				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 				return reconcileAndGet()
+			}
+
+			// reportIngress reports the ingress LoadBalancer alone, or none if lb is nil.
+			reportIngress := func(lb *cclusternvidiacomv1alpha1.LoadBalancerStatus) *cclusternvidiacomv1alpha1.CCLInfraPlane {
+				GinkgoHelper()
+
+				if lb == nil {
+					return reportLoadBalancers()
+				}
+				lb.Name = "ingress"
+				return reportLoadBalancers(*lb)
 			}
 
 			getDNSEndpoint := func() *externaldnsv1alpha1.DNSEndpoint {
@@ -1236,7 +1246,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
 				dnsEndpoint := getDNSEndpoint()
 				Expect(dnsEndpoint.Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
-					DNSName: "*." + domain, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
 				}))
 				Expect(dnsEndpoint.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
 				Expect(dnsEndpoint.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
@@ -1246,7 +1256,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
-				Expect(condition.Message).To(ContainSubstring("*." + domain + " A 192.0.2.10"))
+				Expect(condition.Message).To(ContainSubstring(ingressName + " A 192.0.2.10"))
 
 				By("staying Published across reconciles that change nothing")
 				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
@@ -1258,7 +1268,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb-1.elb.example.net"})
 
 				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
-					DNSName: "*." + domain, RecordType: "CNAME", Targets: []string{"lb-1.elb.example.net"}, RecordTTL: 60,
+					DNSName: ingressName, RecordType: "CNAME", Targets: []string{"lb-1.elb.example.net"}, RecordTTL: 60,
 				}))
 			})
 
@@ -1268,8 +1278,73 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "2001:db8::10"})
 
 				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
-					DNSName: "*." + domain, RecordType: "AAAA", Targets: []string{"2001:db8::10"}, RecordTTL: 60,
+					DNSName: ingressName, RecordType: "AAAA", Targets: []string{"2001:db8::10"}, RecordTTL: 60,
 				}))
+			})
+
+			It("should point a record named after each LoadBalancer's label at it", func() {
+				settle()
+
+				infraPlane := reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "api", Hostname: "lb-2.elb.example.net"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ssh"},
+				)
+
+				By("leaving out the one with no address yet")
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(
+					externaldnsv1alpha1.Endpoint{
+						DNSName: "*.api." + domain, RecordType: "CNAME", Targets: []string{"lb-2.elb.example.net"}, RecordTTL: 60,
+					},
+					externaldnsv1alpha1.Endpoint{
+						DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+					},
+				))
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+
+				infraPlane = externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				Expect(condition.Message).To(ContainSubstring(
+					"*.api." + domain + " CNAME lb-2.elb.example.net, " + ingressName + " A 192.0.2.10"))
+			})
+
+			It("should report a LoadBalancer whose name cannot be a DNS label, publishing the rest", func() {
+				settle()
+
+				infraPlane := reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
+				)
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonInvalidLoadBalancerName)
+				Expect(dnsEndpointExists()).To(BeFalse())
+
+				By("publishing the ingress beside it, still reporting the bad name")
+				reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"},
+				)
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+				}))
+				infraPlane = externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonInvalidLoadBalancerName)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				Expect(condition.Message).To(ContainSubstring(`"Bad_Name"`))
+			})
+
+			It("should report a LoadBalancer whose record name would be too long", func() {
+				long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+					strings.Repeat("c", 63) + "." + strings.Repeat("d", 50) + ".com"
+
+				endpoints, invalid := wildcardEndpoints(long, &cclusternvidiacomv1alpha1.CCLClusterConfigStatus{
+					LoadBalancers: []cclusternvidiacomv1alpha1.LoadBalancerStatus{{Name: "ingress", IP: "192.0.2.10"}},
+				})
+
+				Expect(endpoints).To(BeEmpty())
+				Expect(invalid).To(HaveExactElements(ContainSubstring("longer than 253 characters")))
 			})
 
 			It("should follow a LoadBalancer whose address changes", func() {

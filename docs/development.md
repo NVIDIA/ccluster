@@ -332,7 +332,8 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 
 The operator always writes a DNSEndpoint per CCLInfraPlane; without
 external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
-`*.<domain>` for each CCLInfraPlane, pointing at its ingress LoadBalancer (DESIGN.md §3):
+`*.<name>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
+`ccluster.nvidia.com/loadbalancer: <name>` (`*.ingress.<domain>` at its ingress; DESIGN.md §3):
 
 1. Create the DNS zones the planes' domains fall under, and delegate them from their
    parents. One zone can serve several planes (`team-a.example.com` for

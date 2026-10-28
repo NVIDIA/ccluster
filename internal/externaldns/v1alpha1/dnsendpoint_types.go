@@ -10,8 +10,8 @@ import (
 )
 
 // DNSEndpoint is a set of DNS records for external-dns's "crd" source to publish. The
-// control-plane operator writes one per CCLInfraPlane, holding the wildcard record of the
-// plane's domain.
+// control-plane operator writes one per CCLInfraPlane, holding a wildcard record under the
+// plane's domain for each of its labelled LoadBalancers.
 //
 // Partial: writing a DNSEndpoint read into this type back **deletes** every field not
 // declared here, such as an endpoint's labels, setIdentifier or providerSpecific. The

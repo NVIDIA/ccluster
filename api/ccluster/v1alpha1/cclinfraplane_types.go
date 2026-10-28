@@ -32,10 +32,12 @@ type CCLInfraPlaneSpec struct {
 
 	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
 	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-	// verifies the cluster against. When the operator publishes DNS, "*.<domain>" points
-	// at the cluster's ingress, in whichever DNS zone the domain falls under. It must be a
-	// lowercase DNS name of at least two labels,
-	// each at most 63 characters, and it cannot be changed once set.
+	// verifies the cluster against. When the operator publishes DNS, "*.<name>.<domain>"
+	// points at each of the cluster's LoadBalancers labelled
+	// ccluster.nvidia.com/loadbalancer: <name>, such as "*.ingress.<domain>" at its
+	// ingress, in whichever DNS zone the domain falls under. It must be a lowercase DNS
+	// name of at least two labels, each at most 63 characters, and it cannot be changed
+	// once set.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -54,9 +56,10 @@ type CCLInfraPlaneStatus struct {
 	//     Secret has been mirrored into the Argo CD namespace.
 	//   - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	//     cluster carries this CCLInfraPlane's domain.
-	//   - "DNSReady": external-dns has accepted the record pointing "*.<domain>" at the
-	//     cluster's ingress LoadBalancer. external-dns also accepts a record that matches
-	//     none of its zones, which it then never publishes.
+	//   - "DNSReady": external-dns has accepted the records pointing "*.<name>.<domain>"
+	//     at each of the cluster's labelled LoadBalancers, and every label value is a DNS
+	//     label. external-dns also accepts a record that matches none of its zones, which
+	//     it then never publishes.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map

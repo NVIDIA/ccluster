@@ -63,8 +63,9 @@ manager:
   ## safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
-  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<domain>" at
-  ## the plane's ingress LoadBalancer. Nothing is published unless the `external-dns`
+  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<name>.<domain>"
+  ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <name>,
+  ## such as "*.ingress.<domain>" at its ingress. Nothing is published unless the `external-dns`
   ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
   ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
   ## for an external-dns installed elsewhere.
@@ -306,8 +307,8 @@ argo-cd:
 ## external-dns — a dependency of this chart, off by default. See the rationale in
 ## Chart.yaml. Values here are passed to the upstream external-dns chart.
 ##
-## It publishes the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<domain>" pointing at
-## the plane's ingress LoadBalancer - into the most specific DNS zone it manages that the
+## It publishes the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<name>.<domain>"
+## pointing at each of the plane's labelled LoadBalancers - into the most specific DNS zone it manages that the
 ## domain falls under. Creating the zones, and delegating them, is the user's: one zone per
 ## plane, or one zone shared by several. A record that falls under none of its zones is
 ## dropped without an error (https://github.com/NVIDIA/ccluster/issues/174).
@@ -345,6 +346,7 @@ external-dns:
 
   extraArgs:
     ## A TXT ownership record is named after the record it owns plus its type, which for
-    ## the wildcard is "a-*.<domain>": a "*" that is not a whole label is not a wildcard,
-    ## and most DNS providers reject it. This names it "a-wildcard.<domain>" instead.
+    ## a wildcard is "a-*.ingress.<domain>": a "*" that is not a whole label is not a
+    ## wildcard, and most DNS providers reject it. This names it
+    ## "a-wildcard.ingress.<domain>" instead.
     txt-wildcard-replacement: wildcard

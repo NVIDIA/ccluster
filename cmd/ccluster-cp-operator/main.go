@@ -109,8 +109,8 @@ func main() {
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
 	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
-		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing *.<domain> "+
-			"at the plane's ingress LoadBalancer, is written to, which external-dns must read. "+
+		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
+			"*.<name>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
 			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
 
 	err := manager.Run(manager.Options{

@@ -48,7 +48,7 @@ dependencies:
     version: 0.0.0-dev
     repository: file://../argocd-token
     condition: argo-cd.enabled
-  # Publishes each CCLInfraPlane's wildcard record from the DNSEndpoint the operator writes,
+  # Publishes each CCLInfraPlane's wildcard records from the DNSEndpoint the operator writes,
   # into the DNS zone the user created for the domain. Like Argo CD, it is installed
   # alongside the operator rather than by it, and the operator only ever writes
   # DNSEndpoints. Off by default: it needs a DNS provider and its credentials.

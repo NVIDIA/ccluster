@@ -74,8 +74,8 @@ type CCLInfraPlaneReconciler struct {
 	ArgoCDNamespace string
 
 	// DNSEndpointNamespace is the namespace the DNSEndpoint of each CCLInfraPlane is
-	// written to, from which external-dns publishes "*.<domain>" pointing at the plane's
-	// ingress LoadBalancer: by default the operator's own, where the cp chart installs
+	// written to, from which external-dns publishes "*.<name>.<domain>" pointing at each
+	// of the plane's labelled LoadBalancers: by default the operator's own, where the cp chart installs
 	// external-dns. CCLInfraPlanes live elsewhere, so that no tenant who can write in
 	// their own namespace can publish a record.
 	DNSEndpointNamespace string
@@ -128,7 +128,7 @@ type CCLInfraPlaneReconciler struct {
 // against, and writes it with spec.domain. That is reported as the ClusterConfigApplied
 // condition, and the singleton's status is copied into status.clusterConfig.
 //
-// The operator then writes a DNSEndpoint pointing "*.<domain>" at the ingress
+// The operator then writes a DNSEndpoint pointing "*.<name>.<domain>" at each labelled
 // LoadBalancer in that copy, for external-dns to publish. That is reported as the
 // DNSReady condition. Every condition and the copy are written in one status patch.
 //

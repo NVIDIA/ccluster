@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -26,17 +28,18 @@ import (
 // The DNSReady condition and its reasons.
 const (
 	// conditionTypeDNSReady reports on the DNSEndpoint that has external-dns publish the
-	// plane's wildcard record.
+	// plane's wildcard records.
 	conditionTypeDNSReady = "DNSReady"
 
-	reasonDNSPublished          = "Published"
-	reasonDNSPending            = "Pending"
-	reasonLoadBalancerPending   = "LoadBalancerPending"
-	reasonDNSEndpointCRDMissing = "DNSEndpointCRDMissing"
-	reasonDNSEndpointConflict   = "DNSEndpointConflict"
+	reasonDNSPublished            = "Published"
+	reasonDNSPending              = "Pending"
+	reasonLoadBalancerPending     = "LoadBalancerPending"
+	reasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
+	reasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
+	reasonDNSEndpointConflict     = "DNSEndpointConflict"
 )
 
-// wildcardTTL is the TTL of the wildcard record, short so that resolvers follow a
+// wildcardTTL is the TTL of the wildcard records, short so that resolvers follow a
 // LoadBalancer whose address changes quickly.
 const wildcardTTL = 60
 
@@ -50,9 +53,10 @@ func dnsEndpointName(namespace, name string) string {
 	return namespace + "-" + name
 }
 
-// reconcileDNS writes the DNSEndpoint that has external-dns point "*.<domain>" at the
-// ingress LoadBalancer reported in clusterConfig, or deletes it while there is no address
-// to point it at. It returns the DNSReady condition. Only unexpected Kubernetes API errors
+// reconcileDNS writes the DNSEndpoint that has external-dns point "*.<name>.<domain>" at
+// each LoadBalancer reported in clusterConfig, <name> being its
+// ccluster.nvidia.com/loadbalancer label value, or deletes it while none has an address
+// to point a record at. It returns the DNSReady condition. Only unexpected Kubernetes API errors
 // are returned; everything else is reported in the condition, and none of it needs a
 // requeue of its own.
 //
@@ -76,18 +80,23 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		}
 	}
 
-	endpoint := wildcardEndpoint(infraPlane.Spec.Domain, clusterConfig)
-	if endpoint == nil {
+	endpoints, invalid := wildcardEndpoints(infraPlane.Spec.Domain, clusterConfig)
+	invalidMessage := "no record for LoadBalancers whose name cannot be a DNS label: " +
+		strings.Join(invalid, "; ")
+	if len(endpoints) == 0 {
 		// No requeue: the address arrives through the watch on the CCLClusterConfig.
 		if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
 			return metav1.Condition{}, err
 		}
+		if len(invalid) > 0 {
+			return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, invalidMessage), nil
+		}
 		return condition(metav1.ConditionFalse, reasonLoadBalancerPending, fmt.Sprintf(
-			"waiting for the infra-plane cluster to report an address for its %q LoadBalancer",
-			"ingress")), nil
+			"waiting for the infra-plane cluster to report an address for a LoadBalancer labelled %s",
+			cclusternvidiacomv1alpha1.LabelLoadBalancer)), nil
 	}
 
-	dnsEndpoint, op, err := r.applyDNSEndpoint(ctx, infraPlane, *endpoint)
+	dnsEndpoint, op, err := r.applyDNSEndpoint(ctx, infraPlane, endpoints)
 	switch {
 	case apimeta.IsNoMatchError(err):
 		// No requeue of its own: without external-dns this is the steady state, and the
@@ -108,40 +117,70 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		return metav1.Condition{}, err
 	case op != controllerutil.OperationResultNone:
 		log.Info("Applied DNSEndpoint", "dnsEndpoint", dnsEndpoint.Name,
-			"dnsEndpointNamespace", dnsEndpoint.Namespace, "dnsName", endpoint.DNSName,
-			"recordType", endpoint.RecordType, "targets", endpoint.Targets, "operation", op)
+			"dnsEndpointNamespace", dnsEndpoint.Namespace, "records", describeRecords(endpoints),
+			"operation", op)
 	}
 
-	record := fmt.Sprintf("%s %s %s", endpoint.DNSName, endpoint.RecordType, endpoint.Targets[0])
-	if dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation {
+	records := describeRecords(endpoints)
+	switch {
+	case dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation:
 		// No requeue: external-dns writing the DNSEndpoint's status is an event.
 		return condition(metav1.ConditionFalse, reasonDNSPending, fmt.Sprintf(
 			"waiting for external-dns to accept DNSEndpoint %q in namespace %q: %s",
-			dnsEndpoint.Name, dnsEndpoint.Namespace, record)), nil
+			dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
+	case len(invalid) > 0:
+		// No requeue: only relabelling the Service fixes this, which reaches the
+		// CCLClusterConfig watch.
+		return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, fmt.Sprintf(
+			"external-dns accepted DNSEndpoint %q in namespace %q: %s; %s",
+			dnsEndpoint.Name, dnsEndpoint.Namespace, records, invalidMessage)), nil
 	}
 	// external-dns accepts a record that matches none of its zones too, and drops it; see
 	// https://github.com/NVIDIA/ccluster/issues/174.
 	return condition(metav1.ConditionTrue, reasonDNSPublished, fmt.Sprintf(
-		"external-dns accepted DNSEndpoint %q in namespace %q: %s; it is published if "+
+		"external-dns accepted DNSEndpoint %q in namespace %q: %s; they are published if "+
 			"external-dns manages a zone that %s falls under",
-		dnsEndpoint.Name, dnsEndpoint.Namespace, record, infraPlane.Spec.Domain)), nil
+		dnsEndpoint.Name, dnsEndpoint.Namespace, records, infraPlane.Spec.Domain)), nil
 }
 
-// wildcardEndpoint returns the "*.<domain>" record pointing at the ingress LoadBalancer
-// in clusterConfig - an A or AAAA record for an IPv4 or IPv6 address, otherwise a CNAME
-// for a hostname - or nil if it has no address.
-func wildcardEndpoint(
+// wildcardEndpoints returns a "*.<name>.<domain>" record for each LoadBalancer in
+// clusterConfig that has an address, in its order. A LoadBalancer whose name is not a
+// DNS label, or makes the record's name too long, gets none and is described in invalid
+// instead: its ccluster.nvidia.com/loadbalancer label value may hold characters a DNS
+// label may not.
+func wildcardEndpoints(
 	domain string,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
-) *externaldnsv1alpha1.Endpoint {
+) (endpoints []externaldnsv1alpha1.Endpoint, invalid []string) {
 	if clusterConfig == nil {
-		return nil
+		return nil, nil
 	}
-	lb := clusterConfig.LoadBalancer("ingress")
-	endpoint := &externaldnsv1alpha1.Endpoint{DNSName: "*." + domain, RecordTTL: wildcardTTL}
+	for _, lb := range clusterConfig.LoadBalancers {
+		dnsName := "*." + lb.Name + "." + domain
+		errs := validation.IsDNS1123Label(lb.Name)
+		if len(dnsName) > validation.DNS1123SubdomainMaxLength {
+			errs = append(errs, fmt.Sprintf("%s is longer than %d characters",
+				dnsName, validation.DNS1123SubdomainMaxLength))
+		}
+		if len(errs) > 0 {
+			invalid = append(invalid, fmt.Sprintf("%q: %s", lb.Name, strings.Join(errs, ", ")))
+			continue
+		}
+		if endpoint := wildcardEndpoint(dnsName, lb); endpoint != nil {
+			endpoints = append(endpoints, *endpoint)
+		}
+	}
+	return endpoints, invalid
+}
+
+// wildcardEndpoint returns the dnsName record pointing at lb - an A or AAAA record for an
+// IPv4 or IPv6 address, otherwise a CNAME for a hostname - or nil if it has no address.
+func wildcardEndpoint(
+	dnsName string,
+	lb cclusternvidiacomv1alpha1.LoadBalancerStatus,
+) *externaldnsv1alpha1.Endpoint {
+	endpoint := &externaldnsv1alpha1.Endpoint{DNSName: dnsName, RecordTTL: wildcardTTL}
 	switch {
-	case lb == nil:
-		return nil
 	case lb.IP != "":
 		endpoint.RecordType = "A"
 		if addr, err := netip.ParseAddr(lb.IP); err == nil && addr.Unmap().Is6() {
@@ -157,14 +196,24 @@ func wildcardEndpoint(
 	return endpoint
 }
 
+// describeRecords lists records as "<name> <type> <target>", separated by commas.
+func describeRecords(endpoints []externaldnsv1alpha1.Endpoint) string {
+	records := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		records = append(records, fmt.Sprintf("%s %s %s",
+			endpoint.DNSName, endpoint.RecordType, strings.Join(endpoint.Targets, ",")))
+	}
+	return strings.Join(records, ", ")
+}
+
 // applyDNSEndpoint creates or updates infraPlane's DNSEndpoint in DNSEndpointNamespace,
-// holding endpoint alone. Like the mirrored Secret it cannot carry an owner reference,
+// holding endpoints alone. Like the mirrored Secret it cannot carry an owner reference,
 // living in another namespace than its CCLInfraPlane, so it is stamped with
 // infraPlaneOwner instead.
 func (r *CCLInfraPlaneReconciler) applyDNSEndpoint(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
-	endpoint externaldnsv1alpha1.Endpoint,
+	endpoints []externaldnsv1alpha1.Endpoint,
 ) (*externaldnsv1alpha1.DNSEndpoint, controllerutil.OperationResult, error) {
 	dnsEndpoint := &externaldnsv1alpha1.DNSEndpoint{
 		ObjectMeta: metav1.ObjectMeta{
@@ -177,7 +226,7 @@ func (r *CCLInfraPlaneReconciler) applyDNSEndpoint(
 			return errDNSEndpointConflict
 		}
 		infraPlaneOwner.stamp(dnsEndpoint, infraPlane)
-		dnsEndpoint.Spec.Endpoints = []externaldnsv1alpha1.Endpoint{endpoint}
+		dnsEndpoint.Spec.Endpoints = endpoints
 		return nil
 	})
 	return dnsEndpoint, op, err
