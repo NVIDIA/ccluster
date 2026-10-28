@@ -128,12 +128,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		return err
 	}
 	// Stops every infra-plane watch when the manager stops.
-	remoteWatches := remote.NewRegistry(remote.WatchOptions{
-		Local:  mgr.GetConfig(),
-		Scheme: mgr.GetScheme(),
-		Object: &cclusternvidiacomv1alpha1.CCLClusterConfig{},
-		Name:   cclusternvidiacomv1alpha1.CCLClusterConfigName,
-	})
+	remoteWatches := remote.NewRegistry(mgr.GetConfig())
 	if err := mgr.Add(remoteWatches); err != nil {
 		return fmt.Errorf("unable to add the infra-plane watch registry: %w", err)
 	}

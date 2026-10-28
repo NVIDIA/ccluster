@@ -81,17 +81,11 @@ func TestMain(m *testing.M) {
 
 type testQueue = workqueue.TypedRateLimitingInterface[reconcile.Request]
 
-// newRegistry returns a Registry for CCLClusterConfig/cluster on envtest, connected to a
-// fresh queue, and stops its watches when the test ends.
+// newRegistry returns a Registry on envtest, connected to a fresh queue, and stops its watches when the test ends.
 func newRegistry(t *testing.T) (*Registry, testQueue) {
 	t.Helper()
 
-	registry := NewRegistry(WatchOptions{
-		Local:  testConfig,
-		Scheme: testScheme,
-		Object: &cclusternvidiacomv1alpha1.CCLClusterConfig{},
-		Name:   cclusternvidiacomv1alpha1.CCLClusterConfigName,
-	})
+	registry := NewRegistry(testConfig)
 	queue := workqueue.NewTypedRateLimitingQueue(
 		workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
 	if err := registry.Source().Start(context.Background(), queue); err != nil {
@@ -268,6 +262,8 @@ func waitDone(w *watch) <-chan struct{} {
 func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
 	ctx := context.Background()
 	registry, _ := newRegistry(t)
+	// A cluster that never answers is dropped only once the sync times out.
+	registry.syncTimeout = time.Second
 	healthy := types.NamespacedName{Namespace: "team-a", Name: "healthy"}
 	unreachable := types.NamespacedName{Namespace: "team-a", Name: "unreachable"}
 

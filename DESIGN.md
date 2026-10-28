@@ -241,23 +241,24 @@ reports flow through without a control-plane change. The copy is taken from the 
 the write makes, never from the watch's cache, and only when the write succeeded; otherwise
 the last copy stays, and `ClusterConfigApplied` says it is stale.
 
-The watches live in `internal/remote`'s `Registry`: one controller-runtime cache per
-cluster, built from the same credentials Secret, holding only `CCLClusterConfig/cluster`
-(a `metadata.name` field selector). They come and go with the CCLInfraPlanes, which a
-controller's own watches cannot, so their events reach the controller through a single
-`source.TypedFunc` registered at startup, which hands the registry the controller's
-workqueue; an informer handler only ever calls `queue.Add` with the CCLInfraPlane's key,
-which never blocks and merges duplicates. Reconciliation reads current state, so an extra
+The watches live in `internal/remote`'s `Registry`: one informer per cluster, from the
+generated clientset in `pkg/client` and the same credentials Secret, holding only
+`CCLClusterConfig/cluster` (a `metadata.name` field selector). They come and go with the
+CCLInfraPlanes, which a controller's own watches cannot, so their events reach the
+controller through a single `source.TypedFunc` registered at startup, which hands the
+registry the controller's workqueue; an informer handler only ever calls `queue.Add` with
+the CCLInfraPlane's key, which never blocks and merges duplicates. Reconciliation reads current state, so an extra
 or stale event costs one idempotent pass.
 
-- `Ensure` never blocks a reconcile. It starts the cache in the background and returns;
-  a watch that cannot sync within 30s is logged and dropped, and the next reconcile starts
-  it again. The watch is only an event source: what the condition reports comes from the
-  write, so one unreachable cluster never holds up another plane's watch.
+- `Ensure` never blocks a reconcile. It starts the informer in the background and returns;
+  a watch that cannot sync within 30s - the cluster is unreachable, refuses the list, or
+  lacks the CRD - is logged with the last list error and dropped, and the next reconcile
+  starts it again. The watch is only an event source: what the condition reports comes
+  from the write, so one unreachable cluster never holds up another plane's watch.
 - A watch is replaced when its Secret's UID or resourceVersion changes, and stopped when
   the Secret disappears, when the finalizer runs (before the `CCLClusterConfig` is
   deleted, so that deletion does not reconcile a plane going away), and when a
-  CCLInfraPlane is found gone. `Stop` waits for the cache's goroutines to finish.
+  CCLInfraPlane is found gone. `Stop` waits for the informer's goroutines to finish.
 - Only the elected leader reconciles, so only it holds watches; a new leader rebuilds them
   on its first pass. The registry is a manager Runnable that stops every watch on
   shutdown. A lost connection is retried by the informer and enqueues the plane, whose

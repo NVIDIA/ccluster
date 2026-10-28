@@ -7,26 +7,28 @@ package remote
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
+	cclusterinformers "github.com/NVIDIA/ccluster/pkg/client/informers/externalversions/ccluster/v1alpha1"
 )
 
 // SyncTimeout bounds how long a new watch may take to finish its first list before it
@@ -43,7 +45,7 @@ func init() {
 	metrics.Registry.MustRegister(activeWatches)
 }
 
-// Watcher watches one named, cluster-scoped object on each infra-plane cluster and
+// Watcher watches the CCLClusterConfig singleton on each infra-plane cluster and
 // enqueues the CCLInfraPlane that registered the cluster whenever it changes.
 //
 // A watch is only an event source. It never blocks or fails a reconcile: what the
@@ -62,22 +64,8 @@ type Watcher interface {
 	Source() source.TypedSource[reconcile.Request]
 }
 
-// WatchOptions configures a Registry.
-type WatchOptions struct {
-	// Local is the operator's own rest.Config, for a Secret that registers the
-	// operator's own cluster.
-	Local *rest.Config
-
-	// Scheme maps Object's type.
-	Scheme *runtime.Scheme
-
-	// Object is the type to watch, and Name the one object of it that matters.
-	Object client.Object
-	Name   string
-}
-
-// Registry is the Watcher the operator runs with: one controller-runtime cache per
-// infra-plane cluster, holding just the named object.
+// Registry is the Watcher the operator runs with: one informer per infra-plane cluster,
+// built from the generated clientset and holding just the CCLClusterConfig singleton.
 //
 // Its events reach the controller through one source registered at startup, so watches
 // come and go without the controller ever adding or removing a watch of its own. It is
@@ -87,19 +75,23 @@ type WatchOptions struct {
 // Its methods are safe for concurrent use, and a slow or unreachable cluster delays
 // nothing but its own watch.
 type Registry struct {
-	opts WatchOptions
+	// local is the operator's own rest.Config, for a Secret that registers the
+	// operator's own cluster.
+	local *rest.Config
+	// syncTimeout is SyncTimeout, shortened by tests.
+	syncTimeout time.Duration
 
 	mu      sync.Mutex
 	watches map[types.NamespacedName]*watch
 	queue   workqueue.TypedRateLimitingInterface[reconcile.Request]
 }
 
-// watch is one infra-plane cluster's cache.
+// watch is one infra-plane cluster's informer.
 type watch struct {
 	// secret identifies the credentials the watch was started with.
 	secret secretVersion
 	cancel context.CancelFunc
-	// wg tracks the goroutines that start the watch and run its cache.
+	// wg tracks the goroutines that start the watch and run its informer.
 	wg sync.WaitGroup
 }
 
@@ -109,9 +101,10 @@ type secretVersion struct {
 	resourceVersion string
 }
 
-// NewRegistry returns a Registry with no watches.
-func NewRegistry(opts WatchOptions) *Registry {
-	return &Registry{opts: opts, watches: map[types.NamespacedName]*watch{}}
+// NewRegistry returns a Registry with no watches. local is the operator's own
+// rest.Config, for a Secret that registers the operator's own cluster.
+func NewRegistry(local *rest.Config) *Registry {
+	return &Registry{local: local, syncTimeout: SyncTimeout, watches: map[types.NamespacedName]*watch{}}
 }
 
 // Source returns the source that hands the Registry its controller's workqueue.
@@ -180,76 +173,72 @@ func (r *Registry) Ensure(ctx context.Context, plane types.NamespacedName, secre
 	}()
 }
 
-// run builds the cache for the cluster secret describes, starts it, and waits for its
-// first list, then enqueues plane on every event on the watched object. It returns an
-// error if the watch never synced; the caller then cancels ctx, which stops the cache.
+// run builds the informer for the cluster secret describes, starts it, and waits for its
+// first list; every event on the CCLClusterConfig then enqueues plane. It returns an error
+// if the watch never synced; the caller then cancels ctx, which stops the informer.
 func (r *Registry) run(
 	ctx context.Context,
 	plane types.NamespacedName,
 	secret *corev1.Secret,
 	w *watch,
 ) error {
-	restConfig, err := RESTConfig(secret, r.opts.Local)
+	restConfig, err := RESTConfig(secret, r.local)
 	if err != nil {
 		return err
 	}
-
-	// Discovery is bounded by RequestTimeout; the watch itself is not, or every watch
-	// connection would be cut after RequestTimeout.
-	httpClient, err := rest.HTTPClientFor(restConfig)
+	// No RequestTimeout, or every watch connection would be cut after it. ctx bounds the
+	// first list instead: run returns after SyncTimeout, and cancelling ctx ends the request.
+	restConfig.Timeout = 0
+	clientset, err := versioned.NewForConfig(restConfig)
 	if err != nil {
 		return err
 	}
-	mapper, err := apiutil.NewDynamicRESTMapper(restConfig, httpClient)
-	if err != nil {
-		return err
-	}
-	watchConfig := rest.CopyConfig(restConfig)
-	watchConfig.Timeout = 0
 
 	log := logf.Log.WithName("remote").WithValues("CCLInfraPlane", plane.String())
-	remoteCache, err := cache.New(watchConfig, cache.Options{
-		Scheme: r.opts.Scheme,
-		Mapper: mapper,
-		ByObject: map[client.Object]cache.ByObject{
-			r.opts.Object: {Field: fields.OneTermEqualSelector("metadata.name", r.opts.Name)},
-		},
-		// The informer backs off and retries by itself. Reconciling the plane is what
-		// turns a lost connection into a condition: its write to the cluster fails.
-		DefaultWatchErrorHandler: func(_ context.Context, _ *toolscache.Reflector, err error) {
+	informer := cclusterinformers.NewFilteredCCLClusterConfigInformer(clientset, 0, toolscache.Indexers{},
+		func(options *metav1.ListOptions) {
+			options.FieldSelector = fields.OneTermEqualSelector(
+				"metadata.name", cclusternvidiacomv1alpha1.CCLClusterConfigName).String()
+		})
+	// The informer backs off and retries by itself. Reconciling the plane is what turns a
+	// lost connection into a condition: its write to the cluster fails. Before the first
+	// sync there is nothing to turn - the reconcile that started the watch reports its own
+	// write - so a failed list is only kept, to say why a watch that never syncs is dropped.
+	var listErr atomic.Pointer[error]
+	if err := informer.SetWatchErrorHandlerWithContext(
+		func(_ context.Context, _ *toolscache.Reflector, err error) {
+			if !informer.HasSynced() {
+				listErr.Store(&err)
+				return
+			}
 			log.Info("Lost watch on infra-plane cluster, retrying", "reason", err.Error())
 			r.enqueue(plane)
-		},
-	})
-	if err != nil {
+		}); err != nil {
 		return err
 	}
-
-	w.wg.Go(func() {
-		if err := remoteCache.Start(ctx); err != nil {
-			log.Error(err, "Failed to run watch on infra-plane cluster")
-		}
-	})
-
-	syncCtx, cancelSync := context.WithTimeout(ctx, SyncTimeout)
-	defer cancelSync()
-	informer, err := remoteCache.GetInformer(syncCtx, r.opts.Object)
-	if err != nil {
-		return err
-	}
-	// GetInformer waits for the sync only once the cache has started, and Start runs in
-	// the goroutine above, so it can return before the first list. Waiting here makes a
-	// cluster that answers discovery but not the list - no list or watch permission, or
-	// a list that hangs - fail within SyncTimeout instead of retrying forever.
-	if !remoteCache.WaitForCacheSync(syncCtx) {
-		return errors.New("watch did not sync within " + SyncTimeout.String())
-	}
-	_, err = informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	registration, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    func(any) { r.enqueue(plane) },
 		UpdateFunc: func(any, any) { r.enqueue(plane) },
 		DeleteFunc: func(any) { r.enqueue(plane) },
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	w.wg.Go(func() { informer.RunWithContext(ctx) })
+
+	// Waiting here makes a cluster that does not answer the list - unreachable, no list
+	// or watch permission, no CCLClusterConfig CRD, or a list that hangs - fail within
+	// SyncTimeout instead of retrying forever.
+	syncCtx, cancelSync := context.WithTimeout(ctx, r.syncTimeout)
+	defer cancelSync()
+	if !toolscache.WaitForCacheSync(syncCtx.Done(), registration.HasSynced) {
+		if err := listErr.Load(); err != nil {
+			return fmt.Errorf("watch did not sync within %s: %w", r.syncTimeout, *err)
+		}
+		return fmt.Errorf("watch did not sync within %s", r.syncTimeout)
+	}
+	return nil
 }
 
 // drop forgets w, if it is still plane's watch, so the next Ensure starts a new one.
