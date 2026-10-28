@@ -20,7 +20,6 @@ type CCLComponentSetSpecApplyConfiguration struct {
 	// Ordering is positional rather than a dependsOn field because nothing yet needs to
 	// express a graph. When that changes, the list order stays a valid topological
 	// order, so adding dependencies will not invalidate existing objects.
-	//
 	Components []ComponentSpecApplyConfiguration `json:"components,omitempty"`
 }
 
