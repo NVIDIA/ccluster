@@ -25,6 +25,10 @@ RELEASE_VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 # is heading towards, used as the base of the dev chart version so an unreleased build
 # sorts after the release it follows and before the one it precedes.
 NEXT_VERSION := $(shell printf '%s' '$(or $(RELEASE_VERSION),0.0.0)' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}')
+# DEV_NUMBER is the number of commits up to HEAD. main is squash-merged and linear, so it
+# grows with every merge and names one commit: the Python package, whose PEP 440 version
+# cannot carry a hash, uses it as <next>.dev<N> where the charts use <next>-dev.<sha>.
+DEV_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
 # REGISTRY is the OCI prefix for both the images and the charts (oci://$(REGISTRY)/charts).
 REGISTRY  ?= ghcr.io/nvidia
 IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
@@ -640,26 +644,28 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 # A main-branch build is keyed by the commit: images are :<sha>, and the charts - which
 # need a semver version - are published as <next>-dev.<sha>, where <next> is the VERSION
 # file with the patch bumped (0.0.2-dev.28ecd0dbadf6 after v0.0.1), with the image tag
-# and --catalog-revision inside them set to the same sha. That is what
-# .github/workflows/main.yml pushes for every merge. The pre-release form keeps dev builds
-# ordered between the release they follow and the one they precede; `helm search --devel`
-# is needed to see them.
+# and --catalog-revision inside them set to the same sha. The Python package is published
+# as <next>.dev<N>, N being the commit count (0.0.2.dev57): PEP 440 has no place for a
+# hash and PyPI refuses local versions. That is what .github/workflows/main.yml pushes for
+# every merge. The pre-release form keeps dev builds ordered between the release they
+# follow and the one they precede; `helm search --devel` and `pip install --pre` (or an
+# exact pin) are needed to see them.
 #
 # A release (VERSION=X.Y.Z, set by .github/workflows/release.yml from the GitHub Release's
 # tag) never rebuilds an image: docker-retag-* adds the version tag to the :<sha> manifest
 # already in the registry. Helm has no server-side retag and the version lives inside the
 # tarball, so the charts are re-packaged from the identical tagged commit with the release
-# version and pointed at the :X.Y.Z image. The Python package is only built for a release.
+# version and pointed at the :X.Y.Z image. The Python package is rebuilt as X.Y.Z.
 #
 # Nothing committed in the charts or python/ is bumped: they carry `version: 0.0.0-dev` and
 # 0.0.0.dev0 forever, and everything below stamps a copy under dist/ from VERSION, or
-# <next>-dev.<sha> / 0.0.0.dev0 when it is unset. The only committed version is the VERSION
-# file, which check-version compares against the tag.
+# <next>-dev.<sha> / <next>.dev<N> when it is unset. The only committed version is the
+# VERSION file, which check-version compares against the tag.
 CHART_VERSION   = $(or $(VERSION),$(NEXT_VERSION)-dev.$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
 # PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
-PY_VERSION      = $(or $(VERSION),0.0.0.dev0)
+PY_VERSION      = $(or $(VERSION),$(NEXT_VERSION).dev$(DEV_NUMBER))
 DIST_CHARTS ?= dist/charts
 DIST_PYTHON ?= dist/python
 
@@ -706,10 +712,14 @@ helm-push-ip: helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
 	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz oci://$(REGISTRY)/charts
 
 # `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
-# locally with `git checkout python/pyproject.toml`. Publishing is left to the release
-# workflow (PyPI trusted publishing), which needs no credentials in the Makefile.
+# locally with `git checkout python/pyproject.toml`. Publishing is left to the workflows
+# (PyPI trusted publishing), which need no credentials in the Makefile. A shallow clone
+# counts only the commits it has, so a dev build refuses one rather than reuse a number.
 .PHONY: python-build
 python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as $(PY_VERSION).
+	@if [ -z "$(VERSION)" ] && [ "$$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then \
+		echo "python-build: a dev build needs the full history to number it; fetch it or set VERSION" >&2; exit 1; \
+	fi
 	rm -rf $(DIST_PYTHON)
 	cd python && "$(UV)" version --no-sync $(PY_VERSION) && "$(UV)" build --out-dir ../$(DIST_PYTHON)
 

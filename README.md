@@ -174,12 +174,20 @@ generation, [Testing](docs/testing.md) for test selection, and
 Every merge to `main` publishes both operator images tagged with the commit hash and both
 charts as a pre-release of the next version, `X.Y.Z-dev.<sha>` (for example
 `0.0.2-dev.<sha>` while the latest release is `v0.0.1`), so any commit can be deployed
-before it is released:
+before it is released. The same merge publishes the matching client to PyPI as
+`ccluster-py==X.Y.Z.dev<N>`, where `N` is the commit's position on `main`, because a
+Python version cannot carry a hash:
 
 ```bash
 make deploy-cp IMG_TAG=<sha>
 helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.2-dev.<sha> ...
+pip install "ccluster-py==0.0.2.dev$(git rev-list --count <sha>)"
 ```
+
+The commit for a published `.dev<N>` is in the file's provenance on PyPI and in the
+summary of the `Main` workflow run that published it. `pip` ignores these pre-releases
+unless pinned exactly or given `--pre`, so `pip install ccluster-py` still installs the
+latest release.
 
 A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or
 `gh release create vX.Y.Z --generate-notes`) and `.github/workflows/release.yml` retags

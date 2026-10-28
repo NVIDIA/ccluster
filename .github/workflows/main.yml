@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Publish every merge to main, keyed by commit hash: both operator images and the
 # compute-ssh launcher image as :<sha>, and both charts as <next>-dev.<sha> (pointing at
-# the :<sha> operator images), all to GHCR.
+# the :<sha> operator images), all to GHCR. ccluster-py goes to PyPI as <next>.dev<N>, N
+# being the commit count, since a PEP 440 version cannot carry the hash.
 #
 # This is the build half of the release flow. release.yml never builds an image; it
-# retags what this workflow pushed. It also lets an unreleased main commit be deployed:
+# retags what this workflow pushed. It also lets an unreleased main commit be deployed
+# and driven with the matching client:
 #   make deploy-cp IMG_TAG=<sha>
 #   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version <next>-dev.<sha>
+#   pip install ccluster-py==<next>.dev<N>
 name: Main
 
 on:
@@ -62,3 +65,36 @@ jobs:
           BUILDX_ARGS="--cache-from type=gha,scope=images --cache-to type=gha,scope=images,mode=max"
       - name: Package and push both charts
         run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+
+  python:
+    name: Publish ccluster-py <next>.dev<N>
+    runs-on: ubuntu-latest
+    # Trusted publishing, as in release.yml: ccluster-py on PyPI has a trusted publisher
+    # for each of the two workflows in the `pypi` environment, so no token is needed.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # The full history, so N counts every commit; python-build refuses a shallow clone.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - name: Build
+        run: make python-build
+      # skip-existing so re-running the workflow for a commit is a no-op here: N names
+      # exactly one commit, so an existing file is this commit's own earlier upload.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/python
+          skip-existing: true
+      # The upload's provenance attestation records the commit as well; this puts the
+      # pairing on the run page.
+      - name: Summarise
+        run: |
+          {
+            echo "Commit \`${GITHUB_SHA}\` published:"
+            echo
+            for f in dist/python/*; do echo "- \`${f##*/}\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
