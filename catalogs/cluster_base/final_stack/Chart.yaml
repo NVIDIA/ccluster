@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
 name: cluster_base_final_stack
-description: Cluster baseline glue - ClusterIssuers, SPIFFE IDs and the OIDC discovery ingress applied once every other cluster_base component is up
+description: Cluster baseline glue - the Let's Encrypt ClusterIssuer, applied once every other cluster_base component is up
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

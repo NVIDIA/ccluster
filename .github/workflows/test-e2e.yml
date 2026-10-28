@@ -24,8 +24,6 @@ on:
       - 'test/**'
       # The suite registers the separate infra-plane cluster with the ccluster CLI.
       - 'python/**'
-      # The suite installs this chart and asserts the CRD names it ships.
-      - 'catalogs/cluster_base/spire_crds/**'
       - '.github/workflows/test-e2e.yml'
 
 jobs:
