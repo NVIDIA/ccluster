@@ -196,29 +196,33 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 }
 
 func TestRegistryEnsureIsIdempotentAndFollowsTheSecret(t *testing.T) {
-	registry, _ := newRegistry(t)
+	ctx := context.Background()
+	registry, queue := newRegistry(t)
 	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
+	t.Cleanup(func() { deleteClusterConfig(t) })
 	before := testutil.ToFloat64(activeWatches)
 
+	// A new watch lists the existing CCLClusterConfig and enqueues the plane, so an
+	// enqueue after Ensure shows that it started a watch.
+	if err := testClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	registry.Ensure(plane, localSecret("1"))
-	first := registry.watches[plane]
+	expectEnqueued(t, queue, plane)
+
 	registry.Ensure(plane, localSecret("1"))
-	if registry.watches[plane] != first {
-		t.Fatal("Ensure with the same Secret replaced the watch")
+	drain(queue)
+	time.Sleep(time.Second)
+	if n := queue.Len(); n != 0 {
+		t.Fatalf("Ensure with the same Secret started a new watch: %d requests enqueued", n)
 	}
 
 	registry.Ensure(plane, localSecret("2"))
-	second := registry.watches[plane]
-	if second == first {
-		t.Fatal("Ensure with a changed Secret kept the old watch")
-	}
-	// Ensure waits for the replaced watch to stop before returning.
-	select {
-	case <-waitDone(first):
-	case <-time.After(time.Second):
-		t.Fatal("the replaced watch is still running")
-	}
-
+	expectEnqueued(t, queue, plane)
 	if got := testutil.ToFloat64(activeWatches) - before; got != 1 {
 		t.Fatalf("active watches grew by %v, want 1", got)
 	}
@@ -231,16 +235,6 @@ func TestRegistryEnsureIsIdempotentAndFollowsTheSecret(t *testing.T) {
 		t.Fatalf("active watches grew by %v after Stop, want 0", got)
 	}
 	registry.Stop(plane) // a no-op the second time
-}
-
-// waitDone returns a channel closed once w's goroutines have finished.
-func waitDone(w *watch) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		w.wg.Wait()
-		close(done)
-	}()
-	return done
 }
 
 func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
