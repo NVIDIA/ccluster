@@ -16,7 +16,7 @@ The `toolchain` line in `go.mod` is the one Go version the repository builds wit
 | --- | --- |
 | CI workflows | `setup-go` with `go-version-file: go.mod` installs the `toolchain` version. |
 | Local `make` targets | The Makefile exports `GOTOOLCHAIN` from `go.mod`, so every `go` command a target runs, including tool installs, uses that version whatever Go is installed. The go command downloads it on first use. |
-| Tools in `bin/` | `go-install-tool` names each binary `<tool>-<version>-<toolchain>`, so a toolchain change rebuilds the generators and golangci-lint. |
+| Tools in `bin/` | Each Go tool is built into `bin/<tool>@<version>-<toolchain>/`, so a tool or toolchain change names a missing binary and `make` builds it. |
 | Images | The Dockerfile's `golang:` builder tag. `make check-go-version`, run by the `lint` workflow, fails when it differs from the `toolchain` line. |
 
 Running `go` directly outside `make` uses the installed Go when it is newer than the
