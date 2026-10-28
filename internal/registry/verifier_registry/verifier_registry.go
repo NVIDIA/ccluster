@@ -15,7 +15,6 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
@@ -75,7 +74,6 @@ func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, alwaysVerified)
 	r.Register(certmanager.Chart, alwaysVerified)
-	r.Register(externaldns.Chart, alwaysVerified)
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
 	r.Register(ingressnginx.Chart, alwaysVerified)
