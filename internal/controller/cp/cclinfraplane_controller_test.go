@@ -698,7 +698,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
 
-			By("resyncing periodically, since nothing on the infra-plane cluster is watched")
+			By("resyncing periodically, as a safety net behind the watch")
 			Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
 		})
 
@@ -778,7 +778,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(config.Spec.Domain).To(Equal(foreignDomain))
 			Expect(config.Annotations).NotTo(HaveKey(annotationInfraPlaneName))
 
-			By("polling for it to be deleted, since nothing on the infra-plane cluster is watched")
+			By("retrying every minute, behind the watch that reports its deletion")
 			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 
 			By("leaving it in place when the CCLInfraPlane is deleted")

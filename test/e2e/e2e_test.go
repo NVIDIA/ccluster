@@ -601,8 +601,8 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = utils.Run(exec.Command("kubectl", "delete", "-f", clusterConfigCRD, "--ignore-not-found"))
 			})
 
-			// The operator retries a missing CRD every minute; nothing on the infra-plane
-			// cluster is watched.
+			// Installing the CRD is no event on the watched CCLClusterConfig, so the
+			// operator notices it through its retry of a missing CRD, every minute.
 			By("writing the CCLClusterConfig with the plane's domain")
 			Eventually(func(g Gomega) {
 				g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "status")).To(Equal("True"))
