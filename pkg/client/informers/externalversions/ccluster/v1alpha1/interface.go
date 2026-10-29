@@ -13,11 +13,11 @@ import (
 // Interface provides access to all the informers in this group version.
 type Interface interface {
 	// CCLClusterConfigs returns a CCLClusterConfigInformer.
-	CCLClusterConfigs() CCLClusterConfigInformer
+	CCLClusterConfigs() TypedCCLClusterConfigInformer
 	// CCLComponentSets returns a CCLComponentSetInformer.
-	CCLComponentSets() CCLComponentSetInformer
+	CCLComponentSets() TypedCCLComponentSetInformer
 	// CCLInfraPlanes returns a CCLInfraPlaneInformer.
-	CCLInfraPlanes() CCLInfraPlaneInformer
+	CCLInfraPlanes() TypedCCLInfraPlaneInformer
 }
 
 type version struct {
@@ -31,17 +31,17 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// CCLClusterConfigs returns a CCLClusterConfigInformer.
-func (v *version) CCLClusterConfigs() CCLClusterConfigInformer {
+// CCLClusterConfigs returns a TypedCCLClusterConfigInformer.
+func (v *version) CCLClusterConfigs() TypedCCLClusterConfigInformer {
 	return &cCLClusterConfigInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
-// CCLComponentSets returns a CCLComponentSetInformer.
-func (v *version) CCLComponentSets() CCLComponentSetInformer {
+// CCLComponentSets returns a TypedCCLComponentSetInformer.
+func (v *version) CCLComponentSets() TypedCCLComponentSetInformer {
 	return &cCLComponentSetInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// CCLInfraPlanes returns a CCLInfraPlaneInformer.
-func (v *version) CCLInfraPlanes() CCLInfraPlaneInformer {
+// CCLInfraPlanes returns a TypedCCLInfraPlaneInformer.
+func (v *version) CCLInfraPlanes() TypedCCLInfraPlaneInformer {
 	return &cCLInfraPlaneInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

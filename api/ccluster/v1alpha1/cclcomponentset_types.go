@@ -186,7 +186,3 @@ type CCLComponentSetList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []CCLComponentSet `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&CCLComponentSet{}, &CCLComponentSetList{})
-}

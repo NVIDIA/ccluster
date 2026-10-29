@@ -16,16 +16,45 @@ import (
 	cclusterv1alpha1 "github.com/NVIDIA/ccluster/pkg/client/listers/ccluster/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // CCLComponentSetInformer provides access to a shared informer and lister for
-// CCLComponentSets.
+// CCLComponentSets. Prefer using the type-safe variant (see [TypedCCLComponentSetInformer]).
 type CCLComponentSetInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() cclusterv1alpha1.CCLComponentSetLister
 }
+
+// TypedCCLComponentSetInformer provides access to a shared informer and lister for
+// CCLComponentSets, including the type-safe TypedInformer variant.
+// It is a superset of CCLComponentSetInformer.
+type TypedCCLComponentSetInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() CCLComponentSetIndexInformer
+	Lister() cclusterv1alpha1.CCLComponentSetLister
+}
+
+// CCLComponentSetIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type CCLComponentSetIndexInformer cache.TypedSharedIndexInformer[*apicclusterv1alpha1.CCLComponentSet]
+
+// CCLComponentSetHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for CCLComponentSet.
+type CCLComponentSetHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apicclusterv1alpha1.CCLComponentSet]
+
+// CCLComponentSetDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for CCLComponentSet.
+type CCLComponentSetDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apicclusterv1alpha1.CCLComponentSet]
+
+// CCLComponentSetFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for CCLComponentSet.
+type CCLComponentSetFilteringHandler = cache.TypedFilteringResourceEventHandler[*apicclusterv1alpha1.CCLComponentSet]
+
+// CCLComponentSetIndexers is a specialization of [cache.TypedIndexers] for CCLComponentSet.
+type CCLComponentSetIndexers = cache.TypedIndexers[*apicclusterv1alpha1.CCLComponentSet]
+
+// DeletedCCLComponentSet is a specialization of [cache.DeletedObject] for CCLComponentSet.
+type DeletedCCLComponentSet = cache.DeletedObject[*apicclusterv1alpha1.CCLComponentSet]
 
 type cCLComponentSetInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -36,55 +65,132 @@ type cCLComponentSetInformer struct {
 // NewCCLComponentSetInformer constructs a new informer for CCLComponentSet type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLComponentSetInformer]).
 func NewCCLComponentSetInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCCLComponentSetInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewCCLComponentSetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedCCLComponentSetInformer constructs a new informer for CCLComponentSet type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLComponentSetInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CCLComponentSetIndexers) CCLComponentSetIndexInformer {
+	return NewTypedCCLComponentSetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredCCLComponentSetInformer constructs a new informer for CCLComponentSet type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredCCLComponentSetInformer]).
 func NewFilteredCCLComponentSetInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedCCLComponentSetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredCCLComponentSetInformer constructs a new informer for CCLComponentSet type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredCCLComponentSetInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CCLComponentSetIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) CCLComponentSetIndexInformer {
+	return NewTypedCCLComponentSetInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewCCLComponentSetInformerWithOptions constructs a new informer for CCLComponentSet type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLComponentSetInformerWithOptions]).
+func NewCCLComponentSetInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedCCLComponentSetInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedCCLComponentSetInformerWithOptions constructs a new informer for CCLComponentSet type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLComponentSetInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) CCLComponentSetIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "ccluster.nvidia.com", Version: "v1alpha1", Resource: "cclcomponentsets"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLComponentSet](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLComponentSets(namespace).List(context.Background(), options)
+				return client.CclusterV1alpha1().CCLComponentSets(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLComponentSets(namespace).Watch(context.Background(), options)
+				return client.CclusterV1alpha1().CCLComponentSets(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLComponentSets(namespace).List(ctx, options)
+				return client.CclusterV1alpha1().CCLComponentSets(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLComponentSets(namespace).Watch(ctx, options)
+				return client.CclusterV1alpha1().CCLComponentSets(namespace).Watch(ctx, opts)
 			},
 		}, client),
 		&apicclusterv1alpha1.CCLComponentSet{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *cCLComponentSetInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCCLComponentSetInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedCCLComponentSetInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *cCLComponentSetInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicclusterv1alpha1.CCLComponentSet{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *cCLComponentSetInformer) TypedInformer() CCLComponentSetIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLComponentSet](f.factory.InformerFor(&apicclusterv1alpha1.CCLComponentSet{}, f.defaultInformer))
 }
 
 func (f *cCLComponentSetInformer) Lister() cclusterv1alpha1.CCLComponentSetLister {
 	return cclusterv1alpha1.NewCCLComponentSetLister(f.Informer().GetIndexer())
+}
+
+// ToTypedCCLComponentSetInformer converts an untyped informer into a TypedCCLComponentSetInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLComponentSet. If that is not the case, calling type-safe methods of the returned
+// TypedCCLComponentSetInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedCCLComponentSetInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedCCLComponentSetInformer(informer CCLComponentSetInformer) TypedCCLComponentSetInformer {
+	if informer, ok := informer.(TypedCCLComponentSetInformer); ok {
+		return informer
+	}
+	return &cCLComponentSetTypedInformerAdapter{informer}
+}
+
+type cCLComponentSetTypedInformerAdapter struct {
+	CCLComponentSetInformer
+}
+
+func (a *cCLComponentSetTypedInformerAdapter) TypedInformer() CCLComponentSetIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLComponentSet](a.Informer())
+}
+
+// ToCCLComponentSetIndexInformer converts an untyped informer into a CCLComponentSetIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLComponentSet. If that is not the case, calling type-safe methods of the returned
+// CCLComponentSetIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a CCLComponentSetIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToCCLComponentSetIndexInformer(informer cache.SharedIndexInformer) CCLComponentSetIndexInformer {
+	if informer, ok := informer.(CCLComponentSetIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLComponentSet](informer)
 }

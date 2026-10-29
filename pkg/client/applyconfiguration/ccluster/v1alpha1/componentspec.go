@@ -26,7 +26,7 @@ type ComponentSpecApplyConfiguration struct {
 	// ComponentEntry names the chart, the namespace it is installed into, and the
 	// values it is installed with. Embedded anonymously so those three stay
 	// component-level fields in YAML.
-	ComponentEntryApplyConfiguration `json:",inline"`
+	ComponentEntryApplyConfiguration `json:""`
 }
 
 // ComponentSpecApplyConfiguration constructs a declarative configuration of the ComponentSpec type for use with

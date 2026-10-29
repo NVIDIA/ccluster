@@ -25,7 +25,7 @@ import (
 // not install anything itself: it creates one Argo CD Application per component, in
 // order, and Argo CD does the work.
 type CCLComponentSetApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration `json:",inline"`
+	v1.TypeMetaApplyConfiguration `json:""`
 	// metadata is a standard object metadata
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	// spec defines the desired state of CCLComponentSet

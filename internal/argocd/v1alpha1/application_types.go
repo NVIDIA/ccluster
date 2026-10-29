@@ -404,7 +404,3 @@ type ApplicationList struct {
 
 	Items []Application `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&Application{}, &ApplicationList{})
-}

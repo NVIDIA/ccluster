@@ -25,7 +25,7 @@ import (
 // reports the outcome in status. It is cluster-scoped and there is exactly one, named
 // "cluster".
 type CCLClusterConfigApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration `json:",inline"`
+	v1.TypeMetaApplyConfiguration `json:""`
 	// metadata is a standard object metadata
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	// spec defines the desired state of CCLClusterConfig

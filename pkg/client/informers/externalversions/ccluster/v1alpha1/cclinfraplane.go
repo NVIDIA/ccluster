@@ -16,16 +16,45 @@ import (
 	cclusterv1alpha1 "github.com/NVIDIA/ccluster/pkg/client/listers/ccluster/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // CCLInfraPlaneInformer provides access to a shared informer and lister for
-// CCLInfraPlanes.
+// CCLInfraPlanes. Prefer using the type-safe variant (see [TypedCCLInfraPlaneInformer]).
 type CCLInfraPlaneInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() cclusterv1alpha1.CCLInfraPlaneLister
 }
+
+// TypedCCLInfraPlaneInformer provides access to a shared informer and lister for
+// CCLInfraPlanes, including the type-safe TypedInformer variant.
+// It is a superset of CCLInfraPlaneInformer.
+type TypedCCLInfraPlaneInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() CCLInfraPlaneIndexInformer
+	Lister() cclusterv1alpha1.CCLInfraPlaneLister
+}
+
+// CCLInfraPlaneIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type CCLInfraPlaneIndexInformer cache.TypedSharedIndexInformer[*apicclusterv1alpha1.CCLInfraPlane]
+
+// CCLInfraPlaneHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for CCLInfraPlane.
+type CCLInfraPlaneHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apicclusterv1alpha1.CCLInfraPlane]
+
+// CCLInfraPlaneDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for CCLInfraPlane.
+type CCLInfraPlaneDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apicclusterv1alpha1.CCLInfraPlane]
+
+// CCLInfraPlaneFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for CCLInfraPlane.
+type CCLInfraPlaneFilteringHandler = cache.TypedFilteringResourceEventHandler[*apicclusterv1alpha1.CCLInfraPlane]
+
+// CCLInfraPlaneIndexers is a specialization of [cache.TypedIndexers] for CCLInfraPlane.
+type CCLInfraPlaneIndexers = cache.TypedIndexers[*apicclusterv1alpha1.CCLInfraPlane]
+
+// DeletedCCLInfraPlane is a specialization of [cache.DeletedObject] for CCLInfraPlane.
+type DeletedCCLInfraPlane = cache.DeletedObject[*apicclusterv1alpha1.CCLInfraPlane]
 
 type cCLInfraPlaneInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -36,55 +65,132 @@ type cCLInfraPlaneInformer struct {
 // NewCCLInfraPlaneInformer constructs a new informer for CCLInfraPlane type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLInfraPlaneInformer]).
 func NewCCLInfraPlaneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCCLInfraPlaneInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewCCLInfraPlaneInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedCCLInfraPlaneInformer constructs a new informer for CCLInfraPlane type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLInfraPlaneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CCLInfraPlaneIndexers) CCLInfraPlaneIndexInformer {
+	return NewTypedCCLInfraPlaneInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredCCLInfraPlaneInformer constructs a new informer for CCLInfraPlane type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredCCLInfraPlaneInformer]).
 func NewFilteredCCLInfraPlaneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedCCLInfraPlaneInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredCCLInfraPlaneInformer constructs a new informer for CCLInfraPlane type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredCCLInfraPlaneInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers CCLInfraPlaneIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) CCLInfraPlaneIndexInformer {
+	return NewTypedCCLInfraPlaneInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewCCLInfraPlaneInformerWithOptions constructs a new informer for CCLInfraPlane type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLInfraPlaneInformerWithOptions]).
+func NewCCLInfraPlaneInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedCCLInfraPlaneInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedCCLInfraPlaneInformerWithOptions constructs a new informer for CCLInfraPlane type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLInfraPlaneInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) CCLInfraPlaneIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "ccluster.nvidia.com", Version: "v1alpha1", Resource: "cclinfraplanes"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLInfraPlane](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).List(context.Background(), options)
+				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).Watch(context.Background(), options)
+				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).List(ctx, options)
+				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).Watch(ctx, options)
+				return client.CclusterV1alpha1().CCLInfraPlanes(namespace).Watch(ctx, opts)
 			},
 		}, client),
 		&apicclusterv1alpha1.CCLInfraPlane{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *cCLInfraPlaneInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCCLInfraPlaneInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedCCLInfraPlaneInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *cCLInfraPlaneInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicclusterv1alpha1.CCLInfraPlane{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *cCLInfraPlaneInformer) TypedInformer() CCLInfraPlaneIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLInfraPlane](f.factory.InformerFor(&apicclusterv1alpha1.CCLInfraPlane{}, f.defaultInformer))
 }
 
 func (f *cCLInfraPlaneInformer) Lister() cclusterv1alpha1.CCLInfraPlaneLister {
 	return cclusterv1alpha1.NewCCLInfraPlaneLister(f.Informer().GetIndexer())
+}
+
+// ToTypedCCLInfraPlaneInformer converts an untyped informer into a TypedCCLInfraPlaneInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLInfraPlane. If that is not the case, calling type-safe methods of the returned
+// TypedCCLInfraPlaneInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedCCLInfraPlaneInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedCCLInfraPlaneInformer(informer CCLInfraPlaneInformer) TypedCCLInfraPlaneInformer {
+	if informer, ok := informer.(TypedCCLInfraPlaneInformer); ok {
+		return informer
+	}
+	return &cCLInfraPlaneTypedInformerAdapter{informer}
+}
+
+type cCLInfraPlaneTypedInformerAdapter struct {
+	CCLInfraPlaneInformer
+}
+
+func (a *cCLInfraPlaneTypedInformerAdapter) TypedInformer() CCLInfraPlaneIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLInfraPlane](a.Informer())
+}
+
+// ToCCLInfraPlaneIndexInformer converts an untyped informer into a CCLInfraPlaneIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLInfraPlane. If that is not the case, calling type-safe methods of the returned
+// CCLInfraPlaneIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a CCLInfraPlaneIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToCCLInfraPlaneIndexInformer(informer cache.SharedIndexInformer) CCLInfraPlaneIndexInformer {
+	if informer, ok := informer.(CCLInfraPlaneIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLInfraPlane](informer)
 }
