@@ -88,14 +88,11 @@ jobs:
           if-no-files-found: error
 
   python:
-    name: Publish to PyPI
+    name: Build Python package
     needs: check
     runs-on: ubuntu-latest
-    # Trusted publishing: PyPI trusts this repository + workflow + environment, no token.
-    environment: pypi
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -103,18 +100,34 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: make python-build VERSION="${TAG#v}"
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/python
       - uses: actions/upload-artifact@v7
         with:
           name: python
           path: dist/python/*
           if-no-files-found: error
 
+  pypi:
+    name: Publish to PyPI
+    needs: python
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI trusts this repository + workflow + environment, no token.
+    # The OIDC token is available to every step of the job, so this job runs no build or
+    # repository code, only the upload of what the python job built.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python
+          path: dist/python
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/python
+
   assets:
     name: Attach release assets
-    needs: [charts, python]
+    needs: [charts, pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -67,14 +67,10 @@ jobs:
         run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
 
   python:
-    name: Publish ccluster-py <next>.dev<N>
+    name: Build ccluster-py <next>.dev<N>
     runs-on: ubuntu-latest
-    # Trusted publishing, as in release.yml: ccluster-py on PyPI has a trusted publisher
-    # for each of the two workflows in the `pypi` environment, so no token is needed.
-    environment: pypi
     permissions:
       contents: read
-      id-token: write
     steps:
       # The full history, so N counts every commit; python-build refuses a shallow clone.
       - uses: actions/checkout@v7
@@ -83,18 +79,40 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Build
         run: make python-build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python
+          path: dist/python/*
+          if-no-files-found: error
+      # PyPI's provenance attestation records the commit as well; this puts the pairing
+      # on the run page.
+      - name: Summarise
+        run: |
+          {
+            echo "Commit \`${GITHUB_SHA}\` built:"
+            echo
+            for f in dist/python/*; do echo "- \`${f##*/}\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pypi:
+    name: Publish ccluster-py to PyPI
+    needs: python
+    runs-on: ubuntu-latest
+    # Trusted publishing, as in release.yml: ccluster-py on PyPI has a trusted publisher
+    # for each of the two workflows in the `pypi` environment, so no token is needed. The
+    # OIDC token is available to every step of the job, so this job runs no build or
+    # repository code, only the upload of what the python job built.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python
+          path: dist/python
       # skip-existing so re-running the workflow for a commit is a no-op here: N names
       # exactly one commit, so an existing file is this commit's own earlier upload.
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/python
           skip-existing: true
-      # The upload's provenance attestation records the commit as well; this puts the
-      # pairing on the run page.
-      - name: Summarise
-        run: |
-          {
-            echo "Commit \`${GITHUB_SHA}\` published:"
-            echo
-            for f in dist/python/*; do echo "- \`${f##*/}\`"; done
-          } >> "$GITHUB_STEP_SUMMARY"

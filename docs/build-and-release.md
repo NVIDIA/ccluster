@@ -96,7 +96,9 @@ from git, so the release PR writes the launcher tag into its `values.yaml` next 
   built for the release's merge commit, packages charts as `X.Y.Z` pointing at those
   images and catalog tag `vX.Y.Z`, publishes Python through the `pypi` trusted-publishing
   environment, and attaches chart and Python archives to the release. PyPI trusts both
-  `main.yml` and `release.yml` in that environment.
+  `main.yml` and `release.yml` in that environment. In both workflows one job builds the
+  Python dists and a second job, the only one with `id-token: write`, uploads them: every
+  step of a job can fetch its OIDC token, so build and repository code never runs there.
 - Never rebuild images for a release or add a second `push: tags:` trigger. A bare pushed
   tag does not publish a release. A commit without published hash-tagged images cannot
   be released through the retag workflow.
