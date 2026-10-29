@@ -283,7 +283,7 @@ therefore retried every minute, and a written one is reconciled again every
 
 `*.<name>.<domain>` points at each LoadBalancer the plane reports, `<name>` being its
 `ccluster.nvidia.com/loadbalancer` label value (§3a), which the operator copies without
-giving any value a meaning (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
+treating any value specially (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
 chose `ingress`, so `*.ingress.<domain>` is the cluster's ingress and an Ingress host such
 as `oidc-discovery.ingress.<domain>` resolves to it. Naming the record after the label,
 rather than claiming all of `*.<domain>` for one LoadBalancer, lets any chart expose
@@ -437,11 +437,12 @@ first `hostname` the Service reports (cloud providers such as AWS address load b
 by name). An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
 of the list and reported in `Verified` instead. The value is the chart's to choose and
-neither operator gives any value a meaning: the catalog's `ingress_nginx` chart labels its
-controller Service `ingress`, and another chart exposes a LoadBalancer the same way, under
-its own name, and gets `*.<name>.<domain>` (§3) with no operator or API change. The label,
-not the name, identifies a Service: the name follows the Helm release, which differs between a `CCLComponentSet` and
-a `helm install`. Like a Verifier, this reads live Services, never Argo CD or Helm release
+becomes the plane's subdomain: the cp operator points `*.<name>.<domain>` at it (§3), so it
+has to be a DNS label and unique on the cluster, and neither operator treats any value
+specially. The catalog's `ingress_nginx` chart labels its controller Service `ingress`, and
+another chart exposes a LoadBalancer the same way, under its own name, with no operator or
+API change. The label, not the name, identifies a Service: the name follows the Helm
+release, which differs between a `CCLComponentSet` and a `helm install`. Like a Verifier, this reads live Services, never Argo CD or Helm release
 state, and an address not assigned yet does not fail `Verified`: it means not reachable
 yet, not misconfigured.
 
