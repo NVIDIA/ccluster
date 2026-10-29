@@ -86,17 +86,25 @@ from git, so the release PR writes the launcher tag into its `values.yaml` next 
 
 - Every merge to `main` runs `main.yml`, publishing all three images as `:<sha>` and charts as
   `<next>-dev.<sha>`, where `next` is the committed version with its patch incremented.
-  The packaged chart points at that image hash and catalog commit.
+  The packaged chart points at that image hash and catalog commit. The same run publishes
+  `ccluster-py==<next>.dev<N>` to PyPI, where `N` is `git rev-list --count <sha>`: PEP 440
+  has no room for a hash and PyPI rejects local versions. `main` is squash-merged and
+  linear, so `N` grows with every merge and names one commit. The job checks out the full
+  history, and `make python-build` refuses a shallow clone for a dev build. The PyPI file's
+  provenance and the run summary record the commit.
 - Publishing a GitHub Release `vX.Y.Z` runs `release.yml`. It retags the images already
   built for the release's merge commit, packages charts as `X.Y.Z` pointing at those
   images and catalog tag `vX.Y.Z`, publishes Python through the `pypi` trusted-publishing
-  environment, and attaches chart and Python archives to the release.
+  environment, and attaches chart and Python archives to the release. PyPI trusts both
+  `main.yml` and `release.yml` in that environment. In both workflows one job builds the
+  Python dists and a second job, the only one with `id-token: write`, uploads them: every
+  step of a job can fetch its OIDC token, so build and repository code never runs there.
 - Never rebuild images for a release or add a second `push: tags:` trigger. A bare pushed
   tag does not publish a release. A commit without published hash-tagged images cannot
   be released through the retag workflow.
 
-Without an explicit Make variable `VERSION`, packaging uses the development chart version,
-image hash and catalog commit. With `VERSION=X.Y.Z`, it stamps release versions and the
+Without an explicit Make variable `VERSION`, packaging uses the development chart and
+Python versions, image hash and catalog commit. With `VERSION=X.Y.Z`, it stamps release versions and the
 catalog tag. `docker-retag-*` requires an explicit version. Fork workflows pass their own
 lowercase `REGISTRY`, as GHCR namespaces must be lowercase.
 
