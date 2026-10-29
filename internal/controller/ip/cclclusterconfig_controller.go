@@ -26,6 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -321,9 +322,11 @@ func (r *CCLClusterConfigReconciler) setStatus(
 // Services are the exception: every API server serves them, so the labelled LoadBalancer
 // Services are watched, and an address reaches status.loadBalancers as soon as the cloud
 // provider assigns it. Only Services carrying LabelLoadBalancer are passed on, all to the
-// singleton, and with no predicate on updates, since the address arrives as a status
-// update. The cache itself is not scoped: it holds every Service, as it holds every
-// object of each kind read, so a Verifier reading a Service sees them all.
+// singleton, and with no predicate on what an update changed, since the address arrives
+// as a status update. An update passes when either side carries the label, so removing
+// it clears the entry at once. The cache itself is not scoped: it holds every Service,
+// as it holds every object of each kind read, so a Verifier reading a Service sees them
+// all.
 //
 // CCLClusterConfig updates are filtered to spec changes. The controller's own status
 // patch is an update too, and without the filter every patch would rerun every Verifier;
@@ -334,9 +337,20 @@ func (r *CCLClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(singletonForService),
-			builder.WithPredicates(predicate.NewPredicateFuncs(isLoadBalancerService))).
+			builder.WithPredicates(loadBalancerServices())).
 		Named("cclclusterconfig").
 		Complete(r)
+}
+
+// loadBalancerServices passes on events for Services carrying LabelLoadBalancer. An
+// update is checked on both sides: filtering on the new Service alone would drop the
+// update that removes the label.
+func loadBalancerServices() predicate.Funcs {
+	funcs := predicate.NewPredicateFuncs(isLoadBalancerService)
+	funcs.UpdateFunc = func(e event.UpdateEvent) bool {
+		return isLoadBalancerService(e.ObjectOld) || isLoadBalancerService(e.ObjectNew)
+	}
+	return funcs
 }
 
 // isLoadBalancerService is whether a Service carries LabelLoadBalancer, whatever its value.

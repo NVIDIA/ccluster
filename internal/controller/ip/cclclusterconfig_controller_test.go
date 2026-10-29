@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
@@ -454,10 +455,27 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	It("passes on events only for Services carrying the label, to the singleton", func() {
 		withLabel := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Labels: labelled("anything")}}
 		upstream := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Labels: upstreamLabels}}
-		Expect(isLoadBalancerService(withLabel)).To(BeTrue())
-		Expect(isLoadBalancerService(upstream)).To(BeFalse())
+		passes := loadBalancerServices()
+		Expect(passes.Create(event.CreateEvent{Object: withLabel})).To(BeTrue())
+		Expect(passes.Create(event.CreateEvent{Object: upstream})).To(BeFalse())
+		Expect(passes.Delete(event.DeleteEvent{Object: withLabel})).To(BeTrue())
+		Expect(passes.Update(event.UpdateEvent{ObjectOld: upstream, ObjectNew: upstream})).To(BeFalse())
 		Expect(singletonForService(ctx, withLabel)).To(ConsistOf(request))
 	})
+
+	// Removing the label is an update whose new Service no longer carries it; dropping
+	// that event would leave the entry in status until the periodic pass.
+	DescribeTable("passes on an update when either side carries the label",
+		func(old, updated map[string]string) {
+			Expect(loadBalancerServices().Update(event.UpdateEvent{
+				ObjectOld: &corev1.Service{ObjectMeta: metav1.ObjectMeta{Labels: old}},
+				ObjectNew: &corev1.Service{ObjectMeta: metav1.ObjectMeta{Labels: updated}},
+			})).To(BeTrue())
+		},
+		Entry("when the label is added", upstreamLabels, ingressLabels),
+		Entry("when the label is removed", ingressLabels, upstreamLabels),
+		Entry("when the address changes under the label", ingressLabels, ingressLabels),
+	)
 })
 
 // meetingVerifier passes only once every expected call to Verify is in flight at the
