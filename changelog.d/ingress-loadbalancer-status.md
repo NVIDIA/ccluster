@@ -9,9 +9,12 @@
   ClusterRole gains read access to Services.
 
 ### Changed
-- `catalogs/cluster_base/ingress_nginx` now enables the controller Service as a
-  `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: ingress`, so an infra plane
-  gets a cloud load balancer on its next sync.
+- **Breaking:** `catalogs/cluster_base/ingress_nginx` now creates the controller Service,
+  as a `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: ingress`, where it used
+  to create none. An infra plane gets a new cloud load balancer on its next sync; a
+  Service provisioned for the controller outside ccluster is no longer needed.
+
+### Removed
 - **Breaking:** the typed `ingress_nginx` values drop `controller.service`, in Go
   (`ingressnginx.Controller.Service`) and in the generated Python models: the Service is
   fixed in the chart's values. Remove the field from any values that set it.
