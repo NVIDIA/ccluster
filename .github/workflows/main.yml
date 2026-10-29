@@ -102,6 +102,9 @@ jobs:
     # for each of the two workflows in the `pypi` environment, so no token is needed. The
     # OIDC token is available to every step of the job, so this job runs no build or
     # repository code, only the upload of what the python job built.
+    # A fork has no trusted publisher on PyPI, so this job would fail on every push to its
+    # main; the images and charts still publish to the fork's own REGISTRY.
+    if: github.repository == 'NVIDIA/ccluster'
     environment: pypi
     permissions:
       id-token: write

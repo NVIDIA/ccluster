@@ -186,8 +186,9 @@ pip install "ccluster-py==0.0.2.dev$(git rev-list --count <sha>)"
 
 The commit for a published `.dev<N>` is in the file's provenance on PyPI and in the
 summary of the `Main` workflow run that published it. `pip` ignores these pre-releases
-unless pinned exactly or given `--pre`, so `pip install ccluster-py` still installs the
-latest release.
+unless pinned exactly, given `--pre`, or no release satisfies the requested range, so
+`pip install ccluster-py` still installs the latest release but `ccluster-py>0.0.8`
+installs a `0.0.9.dev<N>` when 0.0.8 is the latest release.
 
 A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or
 `gh release create vX.Y.Z --generate-notes`) and `.github/workflows/release.yml` retags
