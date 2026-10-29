@@ -14,14 +14,11 @@ import (
 	"fmt"
 	"os"
 
-	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
@@ -44,11 +41,6 @@ func main() {
 		Name:             "ccluster-ip-operator",
 		LeaderElectionID: "ip.ccluster.nvidia.com",
 		Scheme:           scheme,
-		// The operator reads only the Services labelled as LoadBalancers to report;
-		// caching every Service in the cluster would cost memory for nothing.
-		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Service{}: {Label: ip.ServiceCacheSelector},
-		}},
 		SetupControllers: setupControllers,
 	})
 	if err != nil {

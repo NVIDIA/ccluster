@@ -21,7 +21,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -41,10 +40,6 @@ type Options struct {
 
 	// Scheme carries the API types this operator reconciles.
 	Scheme *runtime.Scheme
-
-	// Cache configures the manager's cache, e.g. to hold only some objects of a kind.
-	// The zero value caches every object of each kind read or watched.
-	Cache cache.Options
 
 	// SetupControllers registers the operator's controllers with the manager.
 	// May be nil for an operator that has no controllers yet.
@@ -158,7 +153,6 @@ func Run(opts Options) error {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 opts.Scheme,
-		Cache:                  opts.Cache,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,

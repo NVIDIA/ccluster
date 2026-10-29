@@ -388,7 +388,8 @@ of this singleton (§3). Updates to the singleton trigger a pass only when its g
 changes, so the operator's own status writes do not rerun every Verifier. Services are the
 exception to not watching: every API server serves them, so the labelled ones are watched,
 without a predicate, and an address the cloud provider assigns reaches
-`status.loadBalancers` at once. The manager's cache holds only those Services.
+`status.loadBalancers` at once. The manager's cache is not scoped: it holds every Service,
+as it holds every object of each kind read, so a Verifier reading a Service sees them all.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
 control plane writes this object's spec and watches it, copying its status into the

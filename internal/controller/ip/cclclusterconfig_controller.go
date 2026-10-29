@@ -21,9 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -324,7 +322,8 @@ func (r *CCLClusterConfigReconciler) setStatus(
 // Services are watched, and an address reaches status.loadBalancers as soon as the cloud
 // provider assigns it. Only Services carrying LabelLoadBalancer are passed on, all to the
 // singleton, and with no predicate on updates, since the address arrives as a status
-// update. ServiceCacheSelector keeps the operator's cache to those Services.
+// update. The cache itself is not scoped: it holds every Service, as it holds every
+// object of each kind read, so a Verifier reading a Service sees them all.
 //
 // CCLClusterConfig updates are filtered to spec changes. The controller's own status
 // patch is an update too, and without the filter every patch would rerun every Verifier;
@@ -340,20 +339,10 @@ func (r *CCLClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// ServiceCacheSelector is the only Services the operator's cache holds: the ones carrying
-// LabelLoadBalancer, whatever its value. cmd/ccluster-ip-operator sets it as the
-// manager's cache selector for Services.
-var ServiceCacheSelector = func() labels.Selector {
-	hasLabel, err := labels.NewRequirement(cclusternvidiacomv1alpha1.LabelLoadBalancer, selection.Exists, nil)
-	if err != nil {
-		panic(err)
-	}
-	return labels.NewSelector().Add(*hasLabel)
-}()
-
-// isLoadBalancerService is whether a Service carries LabelLoadBalancer.
+// isLoadBalancerService is whether a Service carries LabelLoadBalancer, whatever its value.
 func isLoadBalancerService(object client.Object) bool {
-	return ServiceCacheSelector.Matches(labels.Set(object.GetLabels()))
+	_, ok := object.GetLabels()[cclusternvidiacomv1alpha1.LabelLoadBalancer]
+	return ok
 }
 
 // singletonForService maps a labelled Service's event to the CCLClusterConfig singleton.
