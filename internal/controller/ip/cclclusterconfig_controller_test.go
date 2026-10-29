@@ -383,6 +383,36 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		}))
 	})
 
+	// The status write has to remove the last entry, not just leave it out: a stale entry
+	// would keep its address published from the control plane.
+	DescribeTable("reports nothing again once the last labelled LoadBalancer stops counting",
+		func(stop func(*corev1.Service)) {
+			svc := service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
+				corev1.LoadBalancerIngress{IP: "192.0.2.10"})
+			reconcileOnce()
+			Expect(status().LoadBalancers).To(HaveLen(1))
+
+			stop(svc)
+			reconcileOnce()
+
+			Expect(status().LoadBalancers).To(BeEmpty())
+			Expect(verified().Status).To(Equal(metav1.ConditionTrue))
+		},
+		Entry("when its Service is deleted", func(svc *corev1.Service) {
+			Expect(k8sClient.Delete(ctx, svc)).To(Succeed())
+		}),
+		Entry("when its label is removed", func(svc *corev1.Service) {
+			patch := client.MergeFrom(svc.DeepCopy())
+			delete(svc.Labels, cclusternvidiacomv1alpha1.LabelLoadBalancer)
+			Expect(k8sClient.Patch(ctx, svc, patch)).To(Succeed())
+		}),
+		Entry("when its type changes to ClusterIP", func(svc *corev1.Service) {
+			patch := client.MergeFrom(svc.DeepCopy())
+			svc.Spec.Type = corev1.ServiceTypeClusterIP
+			Expect(k8sClient.Patch(ctx, svc, patch)).To(Succeed())
+		}),
+	)
+
 	It("leaves out a value claimed by two Services and reports the conflict in Verified", func() {
 		service("ingress-a", corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{IP: "192.0.2.20"})
