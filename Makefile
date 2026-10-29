@@ -154,25 +154,20 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-# The cluster the e2e targets create, use and then destroy. Distinct from
-# KIND_CLUSTER_CP / KIND_CLUSTER_IP (below, in the Build section), the development
-# clusters `make init` creates: `make test-e2e` deletes its cluster when it is done,
-# which must never be one you are working in.
-KIND_CLUSTER_E2E ?= ccluster-test-e2e
+# The two clusters the e2e targets create, use and then destroy: a control plane and a
+# separate infra plane, the same pair `make init` creates for development as
+# KIND_CLUSTER_CP / KIND_CLUSTER_IP (below, in the Build section), but never those
+# clusters - `make test-e2e` uninstalls operators and CRDs and deletes its clusters
+# when it is done, which must never happen to ones you are working in.
+KIND_CLUSTER_E2E_CP ?= ccluster-test-e2e-cp
+KIND_CLUSTER_E2E_IP ?= ccluster-test-e2e-ip
 
+# The ip cluster is created first, so `kind create` leaves the current kubeconfig
+# context on the cp cluster, which is the one the e2e specs use by default.
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER_E2E)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER_E2E)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER_E2E)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER_E2E) ;; \
-	esac
+setup-test-e2e: require-kind ## Set up the two Kind clusters for e2e tests if they do not exist.
+	$(call kind-create-cluster,$(KIND_CLUSTER_E2E_IP))
+	$(call kind-create-cluster,$(KIND_CLUSTER_E2E_CP))
 
 # Set E2E_FULL=true (or use test-e2e-full) to run every e2e spec. The quick tier
 # (default) skips the specs labelled "full" - the ones that need real Argo CD: a real
@@ -189,8 +184,8 @@ E2E_FULL ?= false
 E2E_TIMEOUT ?= $(if $(filter true,$(E2E_FULL)),50m,20m)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E) \
+test-e2e: uv setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E_CP) KIND_CLUSTER_IP=$(KIND_CLUSTER_E2E_IP) UV=$(UV) \
 		go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) \
 		$(if $(filter true,$(E2E_FULL)),,-ginkgo.label-filter="!full")
 	$(MAKE) cleanup-test-e2e
@@ -200,8 +195,9 @@ test-e2e-full: ## Run every e2e test: the quick tier, then real Argo CD rollout,
 	$(MAKE) test-e2e E2E_FULL=true
 
 .PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E)
+cleanup-test-e2e: ## Tear down the two Kind clusters used for e2e tests.
+	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E_CP)
+	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E_IP)
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -423,12 +419,14 @@ clean-ip: require-kind ## Delete the infra-plane development Kind cluster.
 clean-all: clean ## Delete the development clusters and all build artifacts (bin/, dist/).
 	rm -rf "$(LOCALBIN)" dist
 
-# kind-create-cluster,<name> - create a Kind cluster unless it is already there.
+# kind-create-cluster,<name> - create a Kind cluster unless it is already there. The
+# name must match a whole line: one cluster's name can be a prefix of another's.
 define kind-create-cluster
-@case "$$($(KIND) get clusters 2>/dev/null)" in \
-	*"$(1)"*) echo "Kind cluster '$(1)' already exists. Skipping creation." ;; \
-	*) echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1) ;; \
-esac
+@if $(KIND) get clusters 2>/dev/null | grep -qxF '$(1)'; then \
+	echo "Kind cluster '$(1)' already exists. Skipping creation."; \
+else \
+	echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1); \
+fi
 endef
 
 ifndef ignore-not-found

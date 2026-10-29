@@ -105,5 +105,5 @@ to regenerate files.
 - Deleting a CRD deletes its CRs. `make undeploy-cp` keeps CRDs but removes bundled Argo CD;
   finish required CR teardown while the controllers still run.
 - `make clean` deletes development clusters; `make clean-all` also removes tools and
-  build output. E2e creates and deletes its own cluster: never use a working cluster as
-  `KIND_CLUSTER_E2E`.
+  build output. E2e creates and deletes its own two clusters: never use a working cluster
+  as `KIND_CLUSTER_E2E_CP` or `KIND_CLUSTER_E2E_IP`.

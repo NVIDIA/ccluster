@@ -24,6 +24,46 @@ const (
 	defaultKindCluster = "kind"
 )
 
+// Cluster is one of the Kind clusters the e2e suite runs on.
+type Cluster struct {
+	// Name is the Kind cluster's name.
+	Name string
+}
+
+// CP is the control-plane cluster, named by $KIND_CLUSTER. It is also the current
+// kubeconfig context, so plain `kubectl` commands reach it.
+func CP() Cluster {
+	return Cluster{Name: envOr("KIND_CLUSTER", defaultKindCluster)}
+}
+
+// IP is the separate infra-plane cluster, named by $KIND_CLUSTER_IP.
+func IP() Cluster {
+	return Cluster{Name: envOr("KIND_CLUSTER_IP", defaultKindCluster+"-ip")}
+}
+
+// Context is the kubeconfig context Kind created for the cluster.
+func (c Cluster) Context() string {
+	return "kind-" + c.Name
+}
+
+// Server is the cluster's API server address on Kind's Docker network, where the
+// control-plane cluster's Pods can reach it.
+func (c Cluster) Server() string {
+	return "https://" + c.Name + "-control-plane:6443"
+}
+
+// Kubectl returns a kubectl command aimed at the cluster, whatever the current context.
+func (c Cluster) Kubectl(args ...string) *exec.Cmd {
+	return exec.Command("kubectl", append([]string{"--context", c.Context()}, args...)...)
+}
+
+func envOr(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
 func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
 }
@@ -37,7 +77,11 @@ func Run(cmd *exec.Cmd) (string, error) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
 	}
 
-	cmd.Env = append(os.Environ(), "GO111MODULE=on")
+	// Kept rather than replaced, so a caller can add variables of its own.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
 	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
 	output, err := cmd.CombinedOutput()
@@ -122,18 +166,10 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
-func LoadImageToKindClusterWithName(name string) error {
-	cluster := defaultKindCluster
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
-	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
-	kindBinary := defaultKindBinary
-	if v, ok := os.LookupEnv("KIND"); ok {
-		kindBinary = v
-	}
-	cmd := exec.Command(kindBinary, kindOptions...)
+// LoadImageToKindClusterWithName loads a local docker image into cluster.
+func LoadImageToKindClusterWithName(name string, cluster Cluster) error {
+	kindOptions := []string{"load", "docker-image", name, "--name", cluster.Name}
+	cmd := exec.Command(envOr("KIND", defaultKindBinary), kindOptions...)
 	_, err := Run(cmd)
 	return err
 }

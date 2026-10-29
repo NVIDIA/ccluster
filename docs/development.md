@@ -289,7 +289,8 @@ these become Helm's `--kube-context`. Other cluster commands need the pinned kub
 `KUBECTL` is quoted as an executable, so `KUBECTL="kubectl --context foo"` does not work.
 
 Development clusters are `KIND_CLUSTER_CP=ccluster-cp` and `KIND_CLUSTER_IP=ccluster-ip`.
-Tests use `KIND_CLUSTER_E2E=ccluster-test-e2e` and delete it on completion. Never point e2e
+Tests use their own pair, `KIND_CLUSTER_E2E_CP=ccluster-test-e2e-cp` and
+`KIND_CLUSTER_E2E_IP=ccluster-test-e2e-ip`, and delete both on completion. Never point e2e
 at a development or real cluster. `make clean` deletes both development clusters;
 `make clean-all` also deletes `bin/` and `dist/`, requiring tools to be downloaded again.
 
