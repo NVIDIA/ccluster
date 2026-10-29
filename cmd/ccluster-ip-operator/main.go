@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 // ccluster-ip-operator runs in an infra-plane cluster.
 //
 // It runs every catalogs/cluster_base component's Verifier against the CCLClusterConfig
-// singleton and reports the outcome there. It installs nothing.
+// singleton and reports the outcome there, along with the cluster's labelled
+// LoadBalancers. It installs nothing.
 package main
 
 import (

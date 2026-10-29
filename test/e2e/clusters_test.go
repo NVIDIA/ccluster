@@ -228,3 +228,40 @@ const crossClusterTimeout = 3 * time.Minute
 // the cp operator's default --infraplane-resync-period of 5m, so a resync cannot stand in
 // for a broken watch.
 const watchTimeout = 2 * time.Minute
+
+// ingressLoadBalancerIP is the address createIngressLoadBalancer assigns, from the
+// documentation range (RFC 5737).
+const ingressLoadBalancerIP = "192.0.2.10"
+
+// createIngressLoadBalancer creates, in c's default namespace, a LoadBalancer Service
+// labelled as the cluster's ingress, as the catalog's ingress_nginx chart does, and sets
+// the address a cloud provider would. The Service is deleted when the spec ends.
+func createIngressLoadBalancer(c utils.Cluster, name, ip string) {
+	GinkgoHelper()
+
+	service := fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: default
+  labels:
+    ccluster.nvidia.com/loadbalancer: ingress
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+`, name)
+	apply := c.Kubectl("apply", "-f", "-")
+	apply.Stdin = strings.NewReader(service)
+	_, err := utils.Run(apply)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() {
+		_, err := utils.Run(c.Kubectl("delete", "service", name, "-n", "default", "--ignore-not-found"))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	_, err = utils.Run(c.Kubectl("patch", "service", name, "-n", "default", "--subresource=status",
+		"--type=merge", "-p", fmt.Sprintf(`{"status":{"loadBalancer":{"ingress":[{"ip":%q}]}}}`, ip)))
+	Expect(err).NotTo(HaveOccurred())
+}

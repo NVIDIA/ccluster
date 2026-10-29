@@ -67,11 +67,6 @@ class Controller(BaseModel):
         extra="forbid",
         populate_by_name=True,
     )
-    service: Toggle | None = None
-    """
-    Service is shipped disabled; the gateway in front of the cluster is
-    expected to be provisioned out of band.
-    """
     metrics: Metrics | None = None
     """
     Metrics requires the kube-prometheus-stack CRDs. Disable it on a

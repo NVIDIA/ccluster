@@ -31,10 +31,6 @@ type ChartValues struct {
 
 // Controller configures the ingress controller.
 type Controller struct {
-	// Service is shipped disabled; the gateway in front of the cluster is
-	// expected to be provisioned out of band.
-	Service *Toggle `json:"service,omitempty"`
-
 	// Metrics requires the kube-prometheus-stack CRDs. Disable it on a
 	// cluster that does not deploy them.
 	Metrics *Metrics `json:"metrics,omitempty"`

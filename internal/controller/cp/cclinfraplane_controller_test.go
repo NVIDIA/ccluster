@@ -1050,6 +1050,9 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Type: "Verified", Status: metav1.ConditionFalse, Reason: "ComponentsNotVerified",
 				Message: "spire: trust domain mismatch",
 			})
+			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{
+				{Name: "ingress", IP: "192.0.2.10"},
+			}
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 
 			// The watch's event is what triggers this reconcile in the operator.
@@ -1063,6 +1066,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(verified.Status).To(Equal(metav1.ConditionFalse))
 			Expect(verified.Reason).To(Equal("ComponentsNotVerified"))
 			Expect(verified.Message).To(Equal("spire: trust domain mismatch"))
+			Expect(copied.LoadBalancer("ingress")).To(Equal(
+				&cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"}))
 
 			By("keeping the CCLInfraPlane's own conditions separate")
 			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, "Verified")).To(BeNil())

@@ -102,6 +102,32 @@ class Condition(BaseModel):
     """
 
 
+class LoadBalancer(BaseModel):
+    """
+    LoadBalancerStatus is the address of a LoadBalancer Service labelled
+    ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
+    provider assigns one.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    hostname: str | None = None
+    """
+    hostname is the LoadBalancer's DNS name, set by cloud providers whose load
+    balancers are addressed by name rather than by IP: the first hostname the Service
+    reports.
+    """
+    ip: str | None = None
+    """
+    ip is the LoadBalancer's IP address: the first IP the Service reports.
+    """
+    name: Annotated[str, Field(max_length=63, min_length=1)]
+    """
+    name is the Service's ccluster.nvidia.com/loadbalancer label value.
+    """
+
+
 class CCLClusterConfigStatus(BaseModel):
     """
     status defines the observed state of CCLClusterConfig
@@ -121,6 +147,15 @@ class CCLClusterConfigStatus(BaseModel):
         that failed verification.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    load_balancers: Annotated[
+        list[LoadBalancer] | None, Field(alias="loadBalancers")
+    ] = None
+    """
+    loadBalancers are the cluster's LoadBalancer Services labelled
+    ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
+    last observed them. A value carried by more than one Service is left out and
+    reported in the Verified condition.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """

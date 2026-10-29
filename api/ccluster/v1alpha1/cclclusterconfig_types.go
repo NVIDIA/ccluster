@@ -51,6 +51,47 @@ type CCLClusterConfigStatus struct {
 	// were computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// loadBalancers are the cluster's LoadBalancer Services labelled
+	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
+	// last observed them. A value carried by more than one Service is left out and
+	// reported in the Verified condition.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	LoadBalancers []LoadBalancerStatus `json:"loadBalancers,omitempty"`
+}
+
+// LoadBalancerStatus is the address of a LoadBalancer Service labelled
+// ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
+// provider assigns one.
+type LoadBalancerStatus struct {
+	// name is the Service's ccluster.nvidia.com/loadbalancer label value.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// ip is the LoadBalancer's IP address: the first IP the Service reports.
+	// +optional
+	IP string `json:"ip,omitempty"`
+
+	// hostname is the LoadBalancer's DNS name, set by cloud providers whose load
+	// balancers are addressed by name rather than by IP: the first hostname the Service
+	// reports.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+}
+
+// LoadBalancer returns the reported LoadBalancer with the given name, or nil if there is
+// none.
+func (s *CCLClusterConfigStatus) LoadBalancer(name string) *LoadBalancerStatus {
+	for i := range s.LoadBalancers {
+		if s.LoadBalancers[i].Name == name {
+			return &s.LoadBalancers[i]
+		}
+	}
+	return nil
 }
 
 // +genclient

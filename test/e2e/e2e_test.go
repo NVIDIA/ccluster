@@ -569,7 +569,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// The operator writes the CCLClusterConfig singleton into each infra plane and
 		// watches it; the infra-plane operator there verifies the cluster against it, and
-		// its verdict comes back onto the CCLInfraPlane. Both targets run the same spec:
+		// its verdict and the cluster's ingress LoadBalancer come back onto the
+		// CCLInfraPlane. Both targets run the same spec:
 		// in-cluster proves the cp operator's own RBAC covers CCLClusterConfig, ex-cluster
 		// that a `ccluster register` token reaches another cluster over the network. The
 		// verdict flipping only after spire_crds is installed there, well inside
@@ -638,6 +639,19 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("True"),
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
 				}, watchTimeout).Should(Succeed())
+
+				By("reporting no ingress LoadBalancer while the plane has none")
+				Expect(clusterConfigField(planeName, ".loadBalancers")).To(BeEmpty())
+
+				// kind has no load balancer controller, so the spec assigns the address
+				// itself. The infra-plane operator watches the labelled Service, so the
+				// address reaches the CCLInfraPlane without waiting for a periodic pass.
+				By("following the ingress LoadBalancer's IP onto the CCLInfraPlane")
+				createIngressLoadBalancer(t.cluster, "e2e-ingress", ingressLoadBalancerIP)
+				Eventually(func(g Gomega) {
+					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="ingress")].ip`)).
+						To(Equal(ingressLoadBalancerIP))
+				}, crossClusterTimeout).Should(Succeed())
 
 				By("deleting the CCLClusterConfig from the plane's cluster with the CCLInfraPlane")
 				deleteInfraPlane(planeName)
