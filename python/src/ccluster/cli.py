@@ -11,15 +11,17 @@ with that control plane: it creates a cluster-admin ServiceAccount token on the 
 plane and hands it to CCLClient.apply_infraplane on the control plane. Both clusters are
 reached through kubeconfig contexts, so no credentials are stored by ccluster itself.
 unregister reverses register on the control plane and leaves the infra plane alone.
+dashboard serves a read-only web view of the control plane on the loopback interface; it
+needs the dashboard extra, which is imported only when the command runs.
 """
 
 from __future__ import annotations
 
 import base64
 import contextlib
-import json
 import os
 import time
+import webbrowser
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from kubernetes import config as k8s_config
 from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
+from ccluster._kube import api_error
 from ccluster.client import CCLClient
 from ccluster.v1alpha1 import API_VERSION, Kind
 
@@ -50,6 +53,14 @@ CONFIG_ENV = "CCLUSTER_CONFIG"
 # How long register waits for the token controller to fill in the token Secret.
 _TOKEN_TIMEOUT_SECONDS = 30.0
 _TOKEN_POLL_SECONDS = 1.0
+
+# The addresses dashboard may listen on. It acts with the user's kubeconfig credentials, so
+# it must not be reachable from other machines; the dashboard also rejects requests whose
+# Host header names anything else, against DNS rebinding.
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+
+# The top-level modules of the dashboard extra.
+_DASHBOARD_MODULES = {"jinja2", "starlette", "uvicorn"}
 
 
 @click.group(
@@ -186,6 +197,83 @@ def unregister(name: str, namespace: str) -> None:
     click.echo(f"Unregistered CCLInfraPlane {namespace}/{name}")
 
 
+@main.command()
+@click.option(
+    "--namespace",
+    "-n",
+    default=None,
+    help="Control-plane namespace to show. Defaults to the namespace of the control "
+    "plane's kubeconfig context, else default.",
+)
+@click.option(
+    "--listen",
+    default=f"{_LOOPBACK_HOSTS[0]}:8080",
+    show_default=True,
+    callback=lambda ctx, param, value: _parse_listen(value),
+    help="HOST:PORT to serve on. HOST must be 127.0.0.1 or localhost.",
+)
+@click.option("--no-browser", is_flag=True, help="Do not open the dashboard in a browser.")
+def dashboard(namespace: str | None, listen: tuple[str, int], no_browser: bool) -> None:
+    """Serve a read-only web view of the control plane.
+
+    Shows the CCLInfraPlanes and CCLComponentSets of one namespace of the control plane
+    saved by ccluster init, refreshed every few seconds, and opens it in a browser. Other
+    namespaces are at /namespaces/NAMESPACE. Runs until interrupted.
+
+    Every request to Kubernetes uses the control plane's kubeconfig credentials, so the
+    dashboard shows what they may read, and anyone who can reach it acts with them. It
+    therefore only listens on the loopback interface.
+    """
+    try:
+        from ccluster import dashboard as dashboard_app
+    except ImportError as e:
+        if e.name not in _DASHBOARD_MODULES:
+            raise
+        raise click.ClickException(
+            "ccluster dashboard needs the dashboard extra: pip install 'ccluster-py[dashboard]'"
+        ) from e
+
+    host, port = listen
+    control_plane = _load_control_plane()
+    with _kube_errors():
+        api_client = k8s_config.new_client_from_config(context=control_plane)
+        namespace = namespace or _context_namespace(control_plane)
+
+    app = dashboard_app.create_app(
+        dashboard_app.LocalSource(api_client),
+        namespace=namespace,
+        allowed_hosts=list(_LOOPBACK_HOSTS),
+    )
+    url = f"http://{host}:{port}/"
+    click.echo(
+        f"Serving the dashboard for control plane {control_plane}, namespace {namespace}, "
+        f"at {url} (Ctrl+C to stop)"
+    )
+    dashboard_app.serve(
+        app, host=host, port=port, on_started=None if no_browser else lambda: webbrowser.open(url)
+    )
+
+
+def _parse_listen(value: str) -> tuple[str, int]:
+    host, sep, port = value.rpartition(":")
+    if not sep or not port.isdigit() or int(port) > 65535:
+        raise click.BadParameter(f"{value!r} is not HOST:PORT")
+    if host not in _LOOPBACK_HOSTS:
+        raise click.BadParameter(
+            f"{host!r} is not a loopback address; use {' or '.join(_LOOPBACK_HOSTS)}"
+        )
+    return host, int(port)
+
+
+def _context_namespace(context: str) -> str:
+    """Return the namespace the kubeconfig context names, else default, as kubectl does."""
+    contexts, _ = k8s_config.list_kube_config_contexts()
+    for entry in contexts:
+        if entry.get("name") == context:
+            return (entry.get("context") or {}).get("namespace") or "default"
+    return "default"
+
+
 def _config_path() -> Path:
     explicit = os.environ.get(CONFIG_ENV)
     if explicit:
@@ -226,7 +314,7 @@ def _kube_errors() -> Iterator[None]:
     except k8s_config.ConfigException as e:
         raise click.ClickException(f"Kubeconfig could not be loaded: {e}") from e
     except k8s.ApiException as e:
-        raise click.ClickException(_api_error(e)) from e
+        raise click.ClickException(api_error(e)) from e
 
 
 def _cluster_admin_token(api_client: k8s.ApiClient) -> tuple[str, bytes]:
@@ -305,13 +393,3 @@ def _create_if_absent(create, *args) -> None:
     except k8s.ApiException as e:
         if e.status != 409:
             raise
-
-
-def _api_error(e: k8s.ApiException) -> str:
-    """A one-line description of a failed API request, with the server's message if any."""
-    message = e.reason
-    try:
-        message = json.loads(e.body)["message"]
-    except (TypeError, ValueError, KeyError):
-        pass
-    return f"API request failed ({e.status}): {message}"

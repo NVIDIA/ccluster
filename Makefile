@@ -850,7 +850,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 
 .PHONY: python-test
 python-test: uv ## Run the python/ package's tests.
-	cd python && "$(UV)" sync --quiet && "$(UV)" run pytest
+	cd python && "$(UV)" sync --quiet --all-extras && "$(UV)" run pytest
 
 ##@ Dependencies
 

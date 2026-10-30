@@ -1,0 +1,37 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 #}
+{% macro status(value) -%}
+<span class="status status-{{ value | lower if value else 'none' }}">{{ value or "-" }}</span>
+{%- endmacro %}
+
+{% macro terminating(flag) -%}
+{% if flag %} <span class="tag tag-terminating">Terminating</span>{% endif %}
+{%- endmacro %}
+
+{% macro conditions_table(rows, with_generation=false) -%}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Status</th><th>Reason</th><th>Message</th><th>Age</th>{% if with_generation %}<th>Generation</th>{% endif %}</tr>
+    </thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td>{{ c.type }}</td>
+        <td>{{ status(c.status) }}</td>
+        <td>{{ c.reason }}</td>
+        <td class="message">{{ c.message }}</td>
+        <td>{{ c.age }}</td>
+        {% if with_generation %}<td>{{ c.observed_generation if c.observed_generation is not none else "-" }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}
+
+{% macro generation_note(view) -%}
+{% if view.generation is not none and view.observed_generation is not none and view.observed_generation != view.generation %}
+<p class="note">The operator last reconciled generation {{ view.observed_generation }}; the spec is at generation {{ view.generation }}.</p>
+{% endif %}
+{%- endmacro %}

@@ -1,0 +1,60 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 #}
+{% extends "fragment.html" if fragment else "base.html" %}
+{% from "_macros.html" import status, terminating %}
+{% block content %}
+<p class="updated">Updated {{ updated }}</p>
+
+<section>
+  <h2>Infra planes ({{ view.infra_planes | length }})</h2>
+  {% if view.infra_planes %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Domain</th><th>Available</th><th>Cluster config</th><th>Verified</th><th>Age</th></tr>
+      </thead>
+      <tbody>
+        {% for row in view.infra_planes %}
+        <tr>
+          <td><a href="{{ url_for('infra_plane_page', namespace=namespace, name=row.name).path }}">{{ row.name }}</a>{{ terminating(row.terminating) }}</td>
+          <td>{{ row.domain }}</td>
+          <td>{{ status(row.available) }}</td>
+          <td>{{ status(row.cluster_config) }}</td>
+          <td>{{ status(row.verified) }}</td>
+          <td>{{ row.age }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No infra planes in {{ namespace }}.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Component sets ({{ view.component_sets | length }})</h2>
+  {% if view.component_sets %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Applied</th><th>Progress</th><th>Finished</th><th>Age</th></tr>
+      </thead>
+      <tbody>
+        {% for row in view.component_sets %}
+        <tr>
+          <td><a href="{{ url_for('component_set_page', namespace=namespace, name=row.name).path }}">{{ row.name }}</a>{{ terminating(row.terminating) }}</td>
+          <td>{{ status(row.applied) }}</td>
+          <td>{{ row.progress or "-" }}</td>
+          <td>{{ "Yes" if row.finished else "No" }}</td>
+          <td>{{ row.age }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No component sets in {{ namespace }}.</p>
+  {% endif %}
+</section>
+{% endblock %}

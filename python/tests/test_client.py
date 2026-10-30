@@ -15,7 +15,12 @@ from pydantic import ValidationError
 from ccluster import catalogs
 from ccluster import client as client_module
 from ccluster.catalogs.cluster_base import argo_rollouts, keda
-from ccluster.client import CCLClient, component_set_current_conditions
+from ccluster.client import (
+    CCLClient,
+    component_set_current_conditions,
+    component_set_finished,
+    current_conditions,
+)
 from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane, Kind
 
 NS = "tenant"
@@ -526,6 +531,47 @@ def test_current_conditions_are_empty_without_a_status():
     )
 
     assert component_set_current_conditions(component_set) == {}
+
+
+def test_current_conditions_apply_to_infra_planes():
+    plane = CCLInfraPlane.model_validate(
+        {
+            "metadata": {"name": "edge-1", "namespace": NS, "generation": 2},
+            "spec": {
+                "clusterCredentialsRef": {"name": "edge-1-credentials"},
+                "domain": "edge-1.example.com",
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "type": condition_type,
+                        "status": "True",
+                        "reason": "Done",
+                        "message": "",
+                        "lastTransitionTime": "2026-01-01T00:00:00Z",
+                        "observedGeneration": generation,
+                    }
+                    for condition_type, generation in (
+                        ("Available", 2),
+                        ("ClusterConfigApplied", 1),
+                    )
+                ]
+            },
+        }
+    )
+
+    assert set(current_conditions(plane)) == {"Available"}
+
+
+def test_component_set_finished_reads_nothing():
+    component_set = CCLComponentSet.model_validate(
+        component_set_body(VALIDATED, APPLIED, COMPLETE)
+    )
+
+    assert component_set_finished(component_set)
+    assert not component_set_finished(
+        CCLComponentSet.model_validate(component_set_body(VALIDATED, APPLIED, SYNCING))
+    )
 
 
 def test_is_component_set_finished_is_true_once_progressing_is_false(fake):

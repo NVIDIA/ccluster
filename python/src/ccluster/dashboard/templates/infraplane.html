@@ -1,0 +1,31 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 #}
+{% extends "fragment.html" if fragment else "base.html" %}
+{% from "_macros.html" import conditions_table, generation_note, terminating %}
+{% block content %}
+<p class="updated">Updated {{ updated }}</p>
+<h1>CCLInfraPlane {{ view.name }}{{ terminating(view.terminating) }}</h1>
+<dl class="facts">
+  <dt>Domain</dt><dd>{{ view.domain }}</dd>
+  <dt>Credentials Secret</dt><dd>{{ view.credentials_secret }}</dd>
+  <dt>Age</dt><dd>{{ view.age }}</dd>
+</dl>
+{{ generation_note(view) }}
+
+<section>
+  <h2>Conditions</h2>
+  {% if view.conditions %}{{ conditions_table(view.conditions) }}{% else %}<p class="empty">The operator has not reported on this generation yet.</p>{% endif %}
+  {% if view.stale_conditions %}
+  <details>
+    <summary>Conditions from earlier generations ({{ view.stale_conditions | length }})</summary>
+    {{ conditions_table(view.stale_conditions, with_generation=true) }}
+  </details>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Cluster config</h2>
+  <p class="note">Reported by the infra-plane operator about the cluster's CCLClusterConfig.</p>
+  {% if view.cluster_config_conditions %}{{ conditions_table(view.cluster_config_conditions, with_generation=true) }}{% else %}<p class="empty">No report from the infra plane yet.</p>{% endif %}
+</section>
+{% endblock %}

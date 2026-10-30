@@ -245,6 +245,30 @@ reuses them.
 ccluster unregister edge-1 -n tenant-a
 ```
 
+## Dashboard
+
+`ccluster dashboard` serves a read-only web view of the control plane saved by
+`ccluster init`. It needs the `dashboard` extra:
+
+```bash
+pip install 'ccluster-py[dashboard]'
+ccluster dashboard -n tenant-a
+```
+
+It opens `http://127.0.0.1:8080/` in a browser (`--no-browser` to skip that), showing the
+namespace's CCLInfraPlanes and CCLComponentSets, refreshed every few seconds. Each name
+links to a page with its conditions; a component set's page lists its components in rollout
+order with the health, sync status and message Argo CD reports for each. Conditions left
+over from an earlier generation are shown apart from the current ones. Without `-n`, the
+namespace is the one the control plane's kubeconfig context names, else `default`; other
+namespaces are at `/namespaces/<namespace>`.
+
+Every request to Kubernetes uses the kubeconfig context's credentials, so the dashboard
+shows exactly what they may read, and a namespace they cannot read shows the API server's
+`403` message. Anyone who can reach the dashboard acts with those credentials, so it listens
+only on `127.0.0.1` or `localhost` (`--listen localhost:9000`) and answers no request
+addressed to another host name. Stop it with Ctrl+C.
+
 ## What is generated from what
 
 | Python | Source | Via |

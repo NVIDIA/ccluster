@@ -11,6 +11,7 @@ namespace, fixed at construction, over a Kubernetes ApiClient the caller supplie
 from __future__ import annotations
 
 import base64
+from typing import Any
 
 from kubernetes import client as k8s
 from kubernetes.dynamic import DynamicClient
@@ -33,6 +34,8 @@ __all__ = [
     "ClusterConfig",
     "TLSClientConfig",
     "component_set_current_conditions",
+    "component_set_finished",
+    "current_conditions",
 ]
 
 
@@ -113,16 +116,17 @@ def _discover(api_client: k8s.ApiClient) -> _Discovery:
     return discovery
 
 
-def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str, Condition]:
-    """Return the conditions computed from the set's current generation, keyed by type.
+def current_conditions(obj: CCLComponentSet | CCLInfraPlane) -> dict[str, Any]:
+    """Return the conditions computed from the object's current generation, keyed by type.
 
     The operator stamps the generation only on the conditions it writes, so after a
     failed validation or apply the other types keep an older observedGeneration. Those
     are dropped; what remains is what the operator concluded about the spec as it now
-    stands, and the reason and message behind it.
+    stands, and the reason and message behind it. The values are the kind's own
+    generated Condition model.
     """
-    generation = getattr(component_set.metadata, "generation", None)
-    status = component_set.status
+    generation = getattr(obj.metadata, "generation", None)
+    status = obj.status
     if generation is None or status is None or not status.conditions:
         return {}
     return {
@@ -130,6 +134,37 @@ def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str
         for condition in status.conditions
         if condition.observed_generation == generation
     }
+
+
+def component_set_current_conditions(component_set: CCLComponentSet) -> dict[str, Condition]:
+    """current_conditions for a CCLComponentSet."""
+    return current_conditions(component_set)
+
+
+def component_set_finished(component_set: CCLComponentSet) -> bool:
+    """Return whether the set's current generation is applied and reported converged.
+
+    False during deletion or unless validation, Application writes and rollout
+    completion are confirmed for this generation. See
+    CCLClient.is_component_set_finished, which reads the set and calls this.
+    """
+    # deletionTimestamp is server-managed metadata, retained by ObjectMeta's
+    # extra="allow". The finalizer never writes conditions, so a set being torn down
+    # still carries the ones its last generation finished with.
+    if getattr(component_set.metadata, "deletionTimestamp", None) is not None:
+        return False
+
+    conditions = current_conditions(component_set)
+    expected = {
+        "Validated": Status.true,
+        "ComponentsApplied": Status.true,
+        "Progressing": Status.false,
+    }
+    for condition_type, expected_status in expected.items():
+        condition = conditions.get(condition_type)
+        if condition is None or condition.status != expected_status:
+            return False
+    return True
 
 
 class CCLClient:
@@ -305,25 +340,7 @@ class CCLClient:
         acknowledgement. Existing Applications enter request tracking on a spec change;
         updates across already released components are not yet serialized by wave.
         """
-        component_set = self.get_component_set(name=name)
-
-        # deletionTimestamp is server-managed metadata, retained by ObjectMeta's
-        # extra="allow". The finalizer never writes conditions, so a set being torn down
-        # still carries the ones its last generation finished with.
-        if getattr(component_set.metadata, "deletionTimestamp", None) is not None:
-            return False
-
-        conditions = component_set_current_conditions(component_set)
-        expected = {
-            "Validated": Status.true,
-            "ComponentsApplied": Status.true,
-            "Progressing": Status.false,
-        }
-        for condition_type, expected_status in expected.items():
-            condition = conditions.get(condition_type)
-            if condition is None or condition.status != expected_status:
-                return False
-        return True
+        return component_set_finished(self.get_component_set(name=name))
 
     def _infraplane(self, name: str) -> CCLInfraPlane:
         """The CCLInfraPlane called name, pointing at its "<name>-credentials" Secret."""

@@ -1,0 +1,53 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 #}
+{% extends "fragment.html" if fragment else "base.html" %}
+{% from "_macros.html" import conditions_table, generation_note, status, terminating %}
+{% block content %}
+<p class="updated">Updated {{ updated }}</p>
+<h1>CCLComponentSet {{ view.name }}{{ terminating(view.terminating) }}</h1>
+<dl class="facts">
+  <dt>Finished</dt><dd>{{ "Yes" if view.finished else "No" }}</dd>
+  <dt>Age</dt><dd>{{ view.age }}</dd>
+</dl>
+{{ generation_note(view) }}
+
+<section>
+  <h2>Components, in rollout order</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Name</th><th>Chart</th><th>Infra plane</th><th>Namespace</th><th>Health</th><th>Sync</th><th>Message</th></tr>
+      </thead>
+      <tbody>
+        {% for c in view.components %}
+        <tr>
+          <td>{{ c.position if c.position is not none else "-" }}</td>
+          <td>{{ c.name }}{% if c.position is none %} <span class="tag">Removed from spec</span>{% endif %}</td>
+          <td>{{ c.chart }}</td>
+          <td>{% if c.infra_plane %}<a href="{{ url_for('infra_plane_page', namespace=view.namespace, name=c.infra_plane).path }}">{{ c.infra_plane }}</a>{% endif %}</td>
+          <td>{{ c.namespace }}</td>
+          {% if c.released %}
+          <td>{{ c.health or "-" }}</td>
+          <td>{{ c.sync or "-" }}{% if c.compared_to_matches_spec == false %} <span class="tag">Comparing old spec</span>{% endif %}</td>
+          <td class="message">{{ c.message }}</td>
+          {% else %}
+          <td colspan="3" class="muted">Not released yet</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Conditions</h2>
+  {% if view.conditions %}{{ conditions_table(view.conditions) }}{% else %}<p class="empty">The operator has not reported on this generation yet.</p>{% endif %}
+  {% if view.stale_conditions %}
+  <details>
+    <summary>Conditions from earlier generations ({{ view.stale_conditions | length }})</summary>
+    {{ conditions_table(view.stale_conditions, with_generation=true) }}
+  </details>
+  {% endif %}
+</section>
+{% endblock %}
