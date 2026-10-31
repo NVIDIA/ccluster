@@ -286,9 +286,9 @@ func TestApplyComponentSetReplacesTheComponents(t *testing.T) {
 
 func TestIsComponentSetFinished(t *testing.T) {
 	finished := map[string]metav1.ConditionStatus{
-		cclclient.ConditionTypeValidated:         metav1.ConditionTrue,
-		cclclient.ConditionTypeComponentsApplied: metav1.ConditionTrue,
-		cclclient.ConditionTypeProgressing:       metav1.ConditionFalse,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated:         metav1.ConditionTrue,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied: metav1.ConditionTrue,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing:       metav1.ConditionFalse,
 	}
 	tests := []struct {
 		name string
@@ -304,16 +304,16 @@ func TestIsComponentSetFinished(t *testing.T) {
 		{
 			name: "still rolling out",
 			conditions: map[string]metav1.ConditionStatus{
-				cclclient.ConditionTypeValidated:         metav1.ConditionTrue,
-				cclclient.ConditionTypeComponentsApplied: metav1.ConditionTrue,
-				cclclient.ConditionTypeProgressing:       metav1.ConditionTrue,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated:         metav1.ConditionTrue,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied: metav1.ConditionTrue,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing:       metav1.ConditionTrue,
 			},
 			want: false,
 		},
 		{
 			name: "validation failed",
 			conditions: map[string]metav1.ConditionStatus{
-				cclclient.ConditionTypeValidated: metav1.ConditionFalse,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated: metav1.ConditionFalse,
 			},
 			want: false,
 		},
@@ -322,8 +322,11 @@ func TestIsComponentSetFinished(t *testing.T) {
 			// verdict, which says nothing about the spec as it now stands.
 			name:       "converged only for the previous generation",
 			conditions: finished,
-			stale:      []string{cclclient.ConditionTypeComponentsApplied, cclclient.ConditionTypeProgressing},
-			want:       false,
+			stale: []string{
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing,
+			},
+			want: false,
 		},
 		{name: "being deleted", conditions: finished, deleting: true, want: false},
 	}
@@ -367,15 +370,16 @@ func TestComponentSetCurrentConditionsDropsStaleTypes(t *testing.T) {
 	set := &cclusternvidiacomv1alpha1.CCLComponentSet{
 		ObjectMeta: metav1.ObjectMeta{Generation: 3},
 		Status: cclusternvidiacomv1alpha1.CCLComponentSetStatus{Conditions: []metav1.Condition{
-			{Type: cclclient.ConditionTypeValidated, Status: metav1.ConditionFalse,
-				Reason: "InfraPlaneNotFound", ObservedGeneration: 3},
-			{Type: cclclient.ConditionTypeComponentsApplied, Status: metav1.ConditionTrue,
-				Reason: "Applied", ObservedGeneration: 2},
+			{Type: cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated, Status: metav1.ConditionFalse,
+				Reason: cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound, ObservedGeneration: 3},
+			{Type: cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied, Status: metav1.ConditionTrue,
+				Reason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated, ObservedGeneration: 2},
 		}},
 	}
 
 	got := cclclient.ComponentSetCurrentConditions(set)
-	if len(got) != 1 || got[cclclient.ConditionTypeValidated].Reason != "InfraPlaneNotFound" {
+	validated := got[cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated]
+	if len(got) != 1 || validated.Reason != cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound {
 		t.Errorf("ComponentSetCurrentConditions() = %v, want only Validated", got)
 	}
 }

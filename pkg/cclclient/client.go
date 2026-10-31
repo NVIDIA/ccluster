@@ -43,15 +43,6 @@ const FieldManager = "ccluster"
 // examples/quickstart/v1alpha1_cclinfraplane.yaml.
 const InClusterServer = "https://kubernetes.default.svc"
 
-// The CCLComponentSet condition types IsComponentSetFinished reads. The control-plane
-// operator writes them; see conditionType* in
-// internal/controller/cp/cclcomponentset_controller.go.
-const (
-	ConditionTypeValidated         = "Validated"
-	ConditionTypeComponentsApplied = "ComponentsApplied"
-	ConditionTypeProgressing       = "Progressing"
-)
-
 // TLSClientConfig is the tlsClientConfig block of an Argo CD cluster Secret's config.
 type TLSClientConfig struct {
 	Insecure bool `json:"insecure"`
@@ -288,9 +279,9 @@ func (c *Client) IsComponentSetFinished(ctx context.Context, name string) (bool,
 
 	conditions := ComponentSetCurrentConditions(componentSet)
 	expected := map[string]metav1.ConditionStatus{
-		ConditionTypeValidated:         metav1.ConditionTrue,
-		ConditionTypeComponentsApplied: metav1.ConditionTrue,
-		ConditionTypeProgressing:       metav1.ConditionFalse,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated:         metav1.ConditionTrue,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied: metav1.ConditionTrue,
+		cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing:       metav1.ConditionFalse,
 	}
 	for conditionType, status := range expected {
 		condition, ok := conditions[conditionType]
