@@ -295,10 +295,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		It("should report SecretNotFound and mirror nothing when the source Secret is missing", func() {
 			infraPlane := settle()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal(reasonSecretNotFound))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound))
 
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
@@ -402,10 +402,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal(reasonProjectConflict))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonProjectConflict))
 
 			By("leaving the foreign AppProject untouched and mirroring nothing")
 			Expect(getProject(projectNamespacedName).Spec.SourceRepos).To(Equal([]string{"someone-elses"}))
@@ -418,10 +418,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(condition.Reason).To(Equal(reasonClusterSecretCreated))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated))
 			Expect(infraPlane.Status.ObservedGeneration).To(Equal(infraPlane.Generation))
 
 			source := &corev1.Secret{}
@@ -489,10 +489,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal(reasonClusterSecretConflict))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretConflict))
 
 			Expect(getMirror().Data).To(HaveKeyWithValue("config", []byte("someone-elses")))
 		})
@@ -625,7 +625,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		) {
 			GinkgoHelper()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeClusterConfigApplied)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(status))
 			Expect(condition.Reason).To(Equal(reason))
@@ -687,8 +687,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 
@@ -751,7 +751,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := reconcileAndGet()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
 			restored := getClusterConfig()
 			Expect(restored.Spec.Domain).To(Equal(domain))
 			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, "Verified")).To(BeTrue())
@@ -773,7 +773,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
 			config := getClusterConfig()
 			Expect(config.Spec.Domain).To(Equal(foreignDomain))
 			Expect(config.Annotations).NotTo(HaveKey(annotationInfraPlaneName))
@@ -789,12 +789,12 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		It("should write the CCLClusterConfig once a conflicting one is deleted", func() {
 			createSecret(credentials)
 			createForeignClusterConfig(nil)
-			expectClusterConfigApplied(settle(), metav1.ConditionFalse, reasonClusterConfigConflict)
+			expectClusterConfigApplied(settle(), metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
 
 			Expect(k8sClient.Delete(ctx, getClusterConfig())).To(Succeed())
 			infraPlane := reconcileAndGet()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
 			config := getClusterConfig()
 			Expect(config.Spec.Domain).To(Equal(domain))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
@@ -809,14 +809,14 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeClusterConfigApplied)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
 			Expect(condition.Message).To(ContainSubstring("other-namespace/other-plane"))
 			Expect(getClusterConfig().Spec.Domain).To(Equal(foreignDomain))
 			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 
 			By("still registering the cluster with Argo CD")
-			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 
 			By("leaving it in place when the CCLInfraPlane is deleted")
 			deleteAndFinalize(typeNamespacedName)
@@ -838,8 +838,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 			infraPlane := reconcileAndGet()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigCRDMissing)
-			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigCRDMissing)
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 			Expect(clusterConfigExists()).To(BeFalse())
 		})
 
@@ -858,8 +858,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 			infraPlane := reconcileAndGet()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterUnreachable)
-			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterUnreachable)
+			Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 
 			By("still deleting the CCLInfraPlane")
 			deleteAndFinalize(typeNamespacedName)
@@ -887,8 +887,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(reconcileResult().RequeueAfter).To(Equal(clusterConfigRetryInterval))
 				infraPlane := reconcileAndGet()
 
-				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterAccessDenied)
-				Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterAccessDenied)
+				Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 			}
 		})
 
@@ -912,7 +912,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := settle()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
 			config := getClusterConfig()
 			Expect(config.Spec.Domain).To(Equal(foreignDomain))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, "other-plane"))
@@ -920,7 +920,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 		It("should mark ClusterConfigApplied Unknown once the plane is no longer Available", func() {
 			createSecret(credentials)
-			expectClusterConfigApplied(settle(), metav1.ConditionTrue, reasonClusterConfigApplied)
+			expectClusterConfigApplied(settle(), metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
 
 			By("deleting the credentials Secret")
 			Expect(k8sClient.Delete(ctx, &corev1.Secret{
@@ -929,10 +929,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(reconcileResult()).To(Equal(reconcile.Result{}))
 			infraPlane := reconcileAndGet()
 
-			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeAvailable)
+			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
-			Expect(condition.Reason).To(Equal(reasonSecretNotFound))
-			expectClusterConfigApplied(infraPlane, metav1.ConditionUnknown, reasonClusterConfigNotAvailable)
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound))
+			expectClusterConfigApplied(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigNotAvailable)
 		})
 
 		// These go through the real SecretClientFactory, the one the operator runs with.
@@ -946,7 +946,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := settle()
 
-				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
 				Expect(getClusterConfig().Spec.Domain).To(Equal(domain))
 
 				By("deleting it with the CCLInfraPlane")
@@ -962,7 +962,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := settle()
 
-				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonUnsupportedCredentials)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonUnsupportedCredentials)
 				Expect(reconcileResult().RequeueAfter).To(BeZero())
 			})
 
@@ -971,8 +971,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := settle()
 
-				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonInvalidCredentials)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeClusterConfigApplied)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidCredentials)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
 				Expect(condition.Message).NotTo(ContainSubstring("not json"))
 			})
 		})
@@ -1071,7 +1071,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			By("keeping the CCLInfraPlane's own conditions separate")
 			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, "Verified")).To(BeNil())
-			Expect(apimeta.FindStatusCondition(copied.Conditions, conditionTypeAvailable)).To(BeNil())
+			Expect(apimeta.FindStatusCondition(copied.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeNil())
 		})
 
 		It("should keep the last copied status when the CCLClusterConfig can no longer be written", func() {
@@ -1096,7 +1096,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			infraPlane := reconcileAndGet()
 
-			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
 			verified := apimeta.FindStatusCondition(infraPlane.Status.ClusterConfig.Conditions, "Verified")
 			Expect(verified).NotTo(BeNil())
 			Expect(verified.Reason).To(Equal("ComponentsVerified"), "another plane's status was copied")

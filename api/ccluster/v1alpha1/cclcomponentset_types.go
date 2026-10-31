@@ -123,6 +123,39 @@ type CCLComponentSetStatus struct {
 	ComponentSyncs []ComponentSyncStatus `json:"componentSyncs,omitempty"`
 }
 
+// The condition types the control-plane operator reports in CCLComponentSet.status.
+const (
+	// CCLComponentSetConditionValidated reports whether every component's infraPlaneRef
+	// resolves to a CCLInfraPlane that Argo CD can already reach.
+	CCLComponentSetConditionValidated = "Validated"
+	// CCLComponentSetConditionComponentsApplied reports on the Argo CD Applications that
+	// deploy the components onto their infra-plane clusters.
+	CCLComponentSetConditionComponentsApplied = "ComponentsApplied"
+	// CCLComponentSetConditionProgressing reports on the rollout: False once every
+	// component has synced the spec the operator wrote and is healthy.
+	CCLComponentSetConditionProgressing = "Progressing"
+)
+
+// The reasons of the CCLComponentSet conditions.
+const (
+	// Validated.
+	CCLComponentSetReasonComponentsAccepted = "ComponentsAccepted"
+	CCLComponentSetReasonInfraPlaneNotFound = "InfraPlaneNotFound"
+	CCLComponentSetReasonInfraPlaneNotReady = "InfraPlaneNotReady"
+
+	// Progressing. When validation failed and the component being waited on needs an
+	// Application written, Progressing carries the Validated reason instead.
+	CCLComponentSetReasonWaveSyncing     = "WaveSyncing"
+	CCLComponentSetReasonWaveSyncFailed  = "WaveSyncFailed"
+	CCLComponentSetReasonRolloutComplete = "RolloutComplete"
+
+	// ComponentsApplied.
+	CCLComponentSetReasonApplicationsCreated   = "ApplicationsCreated"
+	CCLComponentSetReasonApplicationCRDMissing = "ApplicationCRDMissing"
+	CCLComponentSetReasonApplicationConflict   = "ApplicationConflict"
+	CCLComponentSetReasonApplicationFailed     = "ApplicationFailed"
+)
+
 // ComponentSyncStatus reports the latest observed Application state.
 // The controller derives rollout decisions from Applications, not this report.
 // +kubebuilder:title=ComponentSyncStatus

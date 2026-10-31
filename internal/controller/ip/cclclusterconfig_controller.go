@@ -36,19 +36,6 @@ import (
 	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
-// Condition types and reasons reported on CCLClusterConfig.status.
-const (
-	// conditionTypeVerified reports whether every cluster_base component passed its
-	// Verifier against the spec.
-	conditionTypeVerified = "Verified"
-
-	reasonComponentsVerified    = "ComponentsVerified"
-	reasonComponentsNotVerified = "ComponentsNotVerified"
-	// reasonLoadBalancerConflict is reported when every component verifies but more than
-	// one LoadBalancer Service carries the same ccluster.nvidia.com/loadbalancer value.
-	reasonLoadBalancerConflict = "LoadBalancerConflict"
-)
-
 // Re-verification intervals. Verifiers read state this operator does not write, so
 // there is no event of its own to wait for; a periodic pass is what notices a component
 // arriving or breaking. It is the one place in ccluster that polls.
@@ -120,7 +107,7 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	total, failing := r.verify(ctx, config.Spec)
 
 	verified := verifiedCondition(total, failing, conflicts)
-	previous := apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeVerified)
+	previous := apimeta.FindStatusCondition(config.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 	if previous == nil || previous.Status != verified.Status || previous.Message != verified.Message {
 		log.Info("Verified cluster_base components", "verified", total-len(failing),
 			"total", total, "failing", describe(failing), "conflicts", conflicts)
@@ -196,18 +183,18 @@ func (r *CCLClusterConfigReconciler) verify(
 // verifiedCondition turns the verification outcome, and any LoadBalancer label values
 // claimed by more than one Service, into the Verified condition.
 func verifiedCondition(total int, failing []failure, conflicts []string) metav1.Condition {
-	condition := metav1.Condition{Type: conditionTypeVerified, Status: metav1.ConditionFalse}
+	condition := metav1.Condition{Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionFalse}
 	switch {
 	case len(failing) > 0:
-		condition.Reason = reasonComponentsNotVerified
+		condition.Reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified
 		condition.Message = fmt.Sprintf("%d of %d cluster_base components verified; failing: %s",
 			total-len(failing), total, strings.Join(describe(failing), "; "))
 	case len(conflicts) > 0:
-		condition.Reason = reasonLoadBalancerConflict
+		condition.Reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonLoadBalancerConflict
 		condition.Message = fmt.Sprintf("All %d cluster_base components are installed and configured", total)
 	default:
 		condition.Status = metav1.ConditionTrue
-		condition.Reason = reasonComponentsVerified
+		condition.Reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified
 		condition.Message = fmt.Sprintf("All %d cluster_base components are installed and configured", total)
 	}
 	if len(conflicts) > 0 {

@@ -24,22 +24,6 @@ import (
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
-// The ClusterConfigApplied condition and its reasons.
-const (
-	// conditionTypeClusterConfigApplied reports on the CCLClusterConfig singleton the
-	// operator writes into the infra-plane cluster.
-	conditionTypeClusterConfigApplied = "ClusterConfigApplied"
-
-	reasonClusterConfigApplied      = "Applied"
-	reasonClusterConfigNotAvailable = "NotAvailable"
-	reasonClusterConfigCRDMissing   = "CRDMissing"
-	reasonClusterConfigConflict     = "Conflict"
-	reasonClusterAccessDenied       = "AccessDenied"
-	reasonClusterUnreachable        = "ClusterUnreachable"
-	reasonUnsupportedCredentials    = "UnsupportedCredentials"
-	reasonInvalidCredentials        = "InvalidCredentials"
-)
-
 // clusterConfigRetryInterval is how soon a CCLClusterConfig that could not be written is
 // tried again. The watch on the cluster cannot report these fixes - the plane coming back,
 // the infra-plane operator and its CRD being installed - so they are noticed by polling.
@@ -65,7 +49,7 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
 		return metav1.Condition{
-			Type:               conditionTypeClusterConfigApplied,
+			Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
 			Status:             status,
 			Reason:             reason,
 			Message:            message,
@@ -85,7 +69,7 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 				"name", cclusternvidiacomv1alpha1.CCLClusterConfigName,
 				"domain", infraPlane.Spec.Domain, "operation", op)
 		}
-		return condition(metav1.ConditionTrue, reasonClusterConfigApplied, fmt.Sprintf(
+		return condition(metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied, fmt.Sprintf(
 				"CCLClusterConfig %q on the infra-plane cluster has domain %q",
 				cclusternvidiacomv1alpha1.CCLClusterConfigName, infraPlane.Spec.Domain)),
 			config.Status.DeepCopy(), ctrl.Result{RequeueAfter: r.ResyncPeriod}
@@ -94,26 +78,26 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		// No requeue: the Secret watch re-triggers reconciliation once it changes.
 		log.Info("Skipped CCLClusterConfig for unsupported credentials",
 			"secret", source.Name, "reason", err.Error())
-		return condition(metav1.ConditionFalse, reasonUnsupportedCredentials, err.Error()),
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonUnsupportedCredentials, err.Error()),
 			nil, ctrl.Result{}
 
 	case errors.Is(err, remote.ErrInvalidCredentials):
 		log.Info("Skipped CCLClusterConfig for invalid credentials",
 			"secret", source.Name, "reason", err.Error())
-		return condition(metav1.ConditionFalse, reasonInvalidCredentials, err.Error()),
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidCredentials, err.Error()),
 			nil, ctrl.Result{}
 
 	case errors.Is(err, errClusterConfigConflict):
 		log.Info("Refused to overwrite CCLClusterConfig not created by this CCLInfraPlane",
 			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName, "reason", err.Error())
-		return condition(metav1.ConditionFalse, reasonClusterConfigConflict, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict, fmt.Sprintf(
 				"%v; delete CCLClusterConfig %q on the infra-plane cluster for this CCLInfraPlane to write its own",
 				err, cclusternvidiacomv1alpha1.CCLClusterConfigName)),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	case apimeta.IsNoMatchError(err):
 		log.Info("CCLClusterConfig CRD not installed on infra-plane cluster, skipped CCLClusterConfig")
-		return condition(metav1.ConditionFalse, reasonClusterConfigCRDMissing,
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigCRDMissing,
 				"the CCLClusterConfig CRD is not installed on the infra-plane cluster; "+
 					"install the ccluster-ip chart there"),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
@@ -123,13 +107,13 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		// the credentials Secret is, and re-triggers reconciliation sooner.
 		log.Info("Skipped CCLClusterConfig for credentials the infra-plane cluster refused",
 			"secret", source.Name, "reason", err.Error())
-		return condition(metav1.ConditionFalse, reasonClusterAccessDenied, err.Error()),
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterAccessDenied, err.Error()),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	default:
 		log.Error(err, "Failed to apply CCLClusterConfig on infra-plane cluster",
 			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName)
-		return condition(metav1.ConditionFalse, reasonClusterUnreachable, err.Error()),
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterUnreachable, err.Error()),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 	}
 }

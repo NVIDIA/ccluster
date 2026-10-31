@@ -62,6 +62,24 @@ type CCLClusterConfigStatus struct {
 	LoadBalancers []LoadBalancerStatus `json:"loadBalancers,omitempty"`
 }
 
+// The condition types the infra-plane operator reports in CCLClusterConfig.status.
+const (
+	// CCLClusterConfigConditionVerified reports whether every cluster_base component
+	// passed its Verifier against the spec.
+	CCLClusterConfigConditionVerified = "Verified"
+)
+
+// The reasons of the CCLClusterConfig conditions.
+const (
+	// Verified.
+	CCLClusterConfigReasonComponentsVerified    = "ComponentsVerified"
+	CCLClusterConfigReasonComponentsNotVerified = "ComponentsNotVerified"
+	// CCLClusterConfigReasonLoadBalancerConflict is reported when every component
+	// verifies but more than one LoadBalancer Service carries the same
+	// ccluster.nvidia.com/loadbalancer value.
+	CCLClusterConfigReasonLoadBalancerConflict = "LoadBalancerConflict"
+)
+
 // LoadBalancerStatus is the address of a LoadBalancer Service labelled
 // ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
 // provider assigns one.
