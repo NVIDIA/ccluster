@@ -66,8 +66,8 @@ the operator's finalizer removes the mirrored Argo CD Secret, and leaves the nam
 `ensure_namespace` creates the namespace, and is the only method that does: keeping it
 separate means a mistyped namespace fails against the API server rather than quietly
 gaining a working plane. Everything is server-side applied under the `ccluster` field
-manager, the one the Go client in `pkg/cclclient` and the `ccluster` command use too, so
-re-registering a cluster rotates its token in place, whichever of them registered it. Both `apply_infraplane`
+manager, the one the Go client in `pkg/cclclient` uses too, so re-registering a cluster
+rotates its token in place, whichever client registered it. Both `apply_infraplane`
 and `apply_component_set` return the applied object, a `CCLInfraPlane` or
 `CCLComponentSet`, with the metadata the server filled in and the status the operator has
 written so far.
@@ -187,12 +187,6 @@ then uninstalls the set's charts in reverse order, one at a time, so the object 
 `Progress` column, which carries the `Progressing` condition's reason, and when a deleted
 one has disappeared.
 `examples/create_component_set.py` is the same as a command.
-
-## Command line
-
-The `ccluster` command line that registers clusters with this client's operator is written
-in Go; see [Command line](../README.md#command-line) in the repository README. The
-package installs no command of its own.
 
 ## What is generated from what
 
