@@ -22,6 +22,14 @@ versions at build time, together with this file and the project `LICENSE` under
 `/licenses`. The Go module versions are pinned in [`go.mod`](go.mod) and
 [`go.sum`](go.sum).
 
+## Command line
+
+Each `ccluster_<version>_<os>_<arch>.tar.gz` attached to a release holds the statically
+linked `ccluster` binary, built from the same Go module and covered by the same licenses
+as the images. The archive ships this file and the project `LICENSE` at its root and the
+license and NOTICE file of each linked Go module and the Go standard library under
+`licenses/go`.
+
 ## Operator Helm charts
 
 The packaged `ccluster-cp` chart bundles the following charts. The `ccluster-ip` chart

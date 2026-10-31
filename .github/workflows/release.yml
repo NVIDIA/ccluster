@@ -3,7 +3,7 @@
 # Cut a release from a GitHub Release. Create the release in the GitHub UI (or with
 # `gh release create`) against a tag vX.Y.Z; publishing it fires this workflow with the
 # tag checked out. Nothing in the tree is bumped: VERSION=${tag#v} is stamped into the
-# charts and the Python package, and the images are not rebuilt at all - the :<sha>
+# charts, the CLI and the Python package, and the images are not rebuilt at all - the :<sha>
 # manifests main.yml pushed for the tagged commit are retagged :X.Y.Z, so what ships is
 # exactly what was built for that commit. A tag on a commit that never went through main
 # has no :<sha> image and fails here, on purpose.
@@ -13,7 +13,8 @@
 #   ghcr.io/<owner>/ccluster-compute-ssh:X.Y.Z         (retag of :<sha>)
 #   oci://ghcr.io/<owner>/charts/ccluster-{cp,ip}      (chart version X.Y.Z, appVersion X.Y.Z)
 #   PyPI ccluster-py==X.Y.Z                            (trusted publishing, `pypi` environment)
-#   the chart tarballs and Python dists attached to the GitHub Release
+#   ccluster_X.Y.Z_<os>_<arch>.tar.gz                  (the ccluster CLI, linux/darwin x amd64/arm64)
+#   the chart tarballs, CLI tarballs and Python dists attached to the GitHub Release
 name: Release
 
 on:
@@ -87,6 +88,27 @@ jobs:
           path: dist/charts/*.tgz
           if-no-files-found: error
 
+  cli:
+    name: Build CLI
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: make cli-package VERSION="${TAG#v}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli
+          path: dist/cli/*.tar.gz
+          if-no-files-found: error
+
   python:
     name: Build Python package
     needs: check
@@ -127,7 +149,7 @@ jobs:
 
   assets:
     name: Attach release assets
-    needs: [charts, pypi]
+    needs: [charts, cli, pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -140,4 +162,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" --clobber dist/charts/*.tgz dist/python/*
+        run: gh release upload "$TAG" --clobber dist/charts/*.tgz dist/cli/*.tar.gz dist/python/*

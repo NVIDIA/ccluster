@@ -222,7 +222,6 @@ Generated, deleted and rebuilt on each run:
 - `python/src/ccluster/catalogs/<catalog>/<chart>/` and `python/src/ccluster/catalogs/<chart>/`
 
 Hand-written: `python/src/ccluster/__init__.py`, `python/src/ccluster/client.py`,
-`python/src/ccluster/cli.py`,
 `python/src/ccluster/<version>/base.py`, `python/src/ccluster/catalogs/__init__.py`,
 `python/pyproject.toml`, `python/README.md` and `python/tests/`. Generator changes belong in
 `hack/pyschema/` or the Makefile recipe, never in emitted modules. Optional fields default to

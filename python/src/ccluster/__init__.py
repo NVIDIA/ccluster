@@ -9,7 +9,6 @@ the CRDs and the catalog's Go packages; ccluster.v1alpha1.base is the hand-writt
 CustomResource template they specialise. See python/README.md.
 ccluster.client is hand-written: CCLClient registers infra-plane clusters with the
 control plane and unregisters them, and creates and deletes the component sets deployed
-onto them.
-ccluster.cli is hand-written: the `ccluster` command line, which saves the control plane
-with init, and registers and unregisters infra planes on it.
+onto them. The `ccluster` command line is written in Go, in this repository's
+cmd/ccluster.
 """

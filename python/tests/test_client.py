@@ -207,7 +207,7 @@ def test_apply_infraplane_applies_infra_plane_then_secret(fake):
     assert kinds == [Kind.CCL_INFRA_PLANE, "Secret"]
     for _, ns_arg, _, kwargs in dyn.applied:
         assert ns_arg == "tenant"
-        assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
+        assert kwargs == {"field_manager": "ccluster", "force_conflicts": True}
 
     secret = dyn.applied[1][2]
     assert secret["apiVersion"] == "v1"
@@ -358,7 +358,7 @@ def test_apply_component_set_applies_the_set(fake):
     assert [kind for kind, *_ in dyn.applied] == [Kind.CCL_COMPONENT_SET]
     _, ns_arg, body, kwargs = dyn.applied[0]
     assert ns_arg == "tenant"
-    assert kwargs == {"field_manager": "ccluster-py", "force_conflicts": True}
+    assert kwargs == {"field_manager": "ccluster", "force_conflicts": True}
     assert body["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
     assert body["kind"] == Kind.CCL_COMPONENT_SET
     assert body["metadata"] == {"name": "local-base", "namespace": "tenant"}

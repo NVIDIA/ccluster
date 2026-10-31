@@ -50,7 +50,7 @@ to select these tests without invoking the Ginkgo envtest suite.
 
 ## E2e setup and lifecycle
 
-Docker, kind and uv must be available. E2e creates two clusters, a control plane
+Docker and kind must be available. E2e creates two clusters, a control plane
 `KIND_CLUSTER_E2E_CP` (default `ccluster-test-e2e-cp`) and a separate infra plane
 `KIND_CLUSTER_E2E_IP` (default `ccluster-test-e2e-ip`), the same shape as the development
 pair `make init` creates, and deletes both when done. Never use a working cluster for
@@ -70,7 +70,7 @@ each registered the way a user would register that kind of cluster:
 | Target | Cluster | Registration |
 | --- | --- | --- |
 | `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
-| `ex-cluster` | infra plane | `ccluster register` from `python/`, run with uv: a cluster-admin token and the cluster's CA, with the server on kind's Docker network (`https://<cluster>-control-plane:6443`). |
+| `ex-cluster` | infra plane | `ccluster register`, the CLI built from `cmd/ccluster` by `BeforeSuite`: a cluster-admin token and the cluster's CA, with the server on kind's Docker network (`https://<cluster>-control-plane:6443`). |
 
 To run a spec against both, generate it in a `for _, t := range targets()` loop, register with
 `t.register(planeName)`, and reach the plane's cluster with `t.cluster.Kubectl`. Give each

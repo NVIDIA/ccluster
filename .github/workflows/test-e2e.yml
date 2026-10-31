@@ -22,8 +22,6 @@ on:
       - 'config/**'
       - 'charts/**'
       - 'test/**'
-      # The suite registers the separate infra-plane cluster with the ccluster CLI.
-      - 'python/**'
       # The suite installs this chart and asserts the CRD names it ships.
       - 'catalogs/cluster_base/spire_crds/**'
       - '.github/workflows/test-e2e.yml'
@@ -49,10 +47,6 @@ jobs:
 
       - name: Verify kind installation
         run: kind version
-
-      # The suite registers its infra-plane cluster with the ccluster CLI from python/.
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
 
       # The suite builds both operator images; nothing else builds the launcher image
       # before main.yml does after merge, so a broken Dockerfile stage would land on main.

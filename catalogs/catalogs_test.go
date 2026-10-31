@@ -140,3 +140,31 @@ func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
 		t.Fatalf("Entry() error = %v, want nil", err)
 	}
 }
+
+// TestComponent checks that the caller's name and infra plane reach the component beside
+// the entry Entry builds, and that Entry's validation still applies.
+func TestComponent(t *testing.T) {
+	enabled := true
+	got, err := Component("stub", "gpu-a", chart, namespace,
+		stubValues{Chart: &stubChartValues{Enabled: &enabled}})
+	if err != nil {
+		t.Fatalf("Component() error = %v", err)
+	}
+	if got.Name != "stub" || got.InfraPlaneRef.Name != "gpu-a" {
+		t.Errorf("Component() name = %q, infraPlaneRef = %q, want stub, gpu-a",
+			got.Name, got.InfraPlaneRef.Name)
+	}
+	if got.Chart != chart || got.Namespace != namespace {
+		t.Errorf("Component() chart = %q, namespace = %q, want %q, %q",
+			got.Chart, got.Namespace, chart, namespace)
+	}
+	if got.Values == nil || string(got.Values.Raw) != `{"stub-chart":{"enabled":true}}` {
+		t.Errorf("Component() values = %v, want the marshalled values", got.Values)
+	}
+
+	sentinel := errors.New("queues[0].name not set")
+	if _, err := Component("stub", "gpu-a", chart, namespace,
+		validatingValues{err: sentinel}); !errors.Is(err, sentinel) {
+		t.Errorf("Component() error = %v, want one wrapping %v", err, sentinel)
+	}
+}

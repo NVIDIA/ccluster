@@ -188,8 +188,8 @@ E2E_FULL ?= false
 E2E_TIMEOUT ?= $(if $(filter true,$(E2E_FULL)),50m,20m)
 
 .PHONY: test-e2e
-test-e2e: uv setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E_CP) KIND_CLUSTER_IP=$(KIND_CLUSTER_E2E_IP) UV=$(UV) \
+test-e2e: setup-test-e2e manifests generate fmt vet ## Run the quick e2e tests (no Argo CD). Set E2E_FULL=true, or use test-e2e-full, to run everything.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER_E2E_CP) KIND_CLUSTER_IP=$(KIND_CLUSTER_E2E_IP) \
 		go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout $(E2E_TIMEOUT) \
 		$(if $(filter true,$(E2E_FULL)),,-ginkgo.label-filter="!full")
 	$(MAKE) cleanup-test-e2e
@@ -236,7 +236,7 @@ check-go-version: ## Fail unless the Dockerfile's golang image matches the toolc
 # client-generate runs first: generate loads every package, and a pkg/client generated from
 # API types that have since changed may no longer compile.
 .PHONY: build
-build: client-generate build-cp build-ip docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, the Go client, both binaries, both images, both charts and the Python models.
+build: client-generate build-cp build-ip build-cli docker-build helm-generate python-generate ## Build everything: manifests, CRDs, deepcopy, the Go client, both operator binaries, the CLI, both images, both charts and the Python models.
 
 .PHONY: build-cp
 build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
@@ -245,6 +245,14 @@ build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
 .PHONY: build-ip
 build-ip: manifests generate fmt vet ## Build the ccluster-ip-operator binary.
 	go build -o bin/ccluster-ip-operator ./cmd/ccluster-ip-operator
+
+# The ccluster CLI reports CLI_VERSION (see the Release section); a binary built by
+# `go install` reports its module version instead.
+CLI_LDFLAGS = -X github.com/NVIDIA/ccluster/internal/cli.version=$(CLI_VERSION)
+
+.PHONY: build-cli
+build-cli: generate fmt vet ## Build the ccluster CLI as bin/ccluster.
+	go build -ldflags "$(CLI_LDFLAGS)" -o bin/ccluster ./cmd/ccluster
 
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
@@ -672,10 +680,15 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 CHART_VERSION   = $(or $(VERSION),$(NEXT_VERSION)-dev.$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
+# The CLI is versioned as the charts are.
+CLI_VERSION     = $(CHART_VERSION)
 # PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
 PY_VERSION      = $(or $(VERSION),$(NEXT_VERSION).dev$(DEV_NUMBER))
 DIST_CHARTS ?= dist/charts
 DIST_PYTHON ?= dist/python
+DIST_CLI ?= dist/cli
+# Platforms cli-package builds the CLI for: GOOS/GOARCH pairs.
+CLI_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
 .PHONY: helm-package
 helm-package: helm-package-cp helm-package-ip ## Package both charts into $(DIST_CHARTS) as $(CHART_VERSION).
@@ -718,6 +731,28 @@ helm-push-cp: helm ## Push the packaged cp chart to oci://$(REGISTRY)/charts.
 .PHONY: helm-push-ip
 helm-push-ip: helm ## Push the packaged ip chart to oci://$(REGISTRY)/charts.
 	"$(HELM)" push $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz oci://$(REGISTRY)/charts
+
+# One tarball per platform, ccluster_<version>_<os>_<arch>.tar.gz, holding the static
+# ccluster binary, the project LICENSE and THIRD_PARTY_NOTICES.md, and under licenses/go
+# the license and NOTICE files of every linked Go module and the Go standard library,
+# collected as the Dockerfile does for the images. The release workflow attaches them to
+# the GitHub Release; `go install` is the other way to get the CLI.
+.PHONY: cli-package
+cli-package: go-licenses ## Cross-compile the ccluster CLI into $(DIST_CLI), one tarball per platform in CLI_PLATFORMS, as $(CLI_VERSION).
+	rm -rf $(DIST_CLI) && mkdir -p $(DIST_CLI)
+	for platform in $(CLI_PLATFORMS); do \
+		os="$${platform%/*}"; arch="$${platform#*/}"; \
+		name="ccluster_$(CLI_VERSION)_$${os}_$${arch}"; dir="$(DIST_CLI)/$$name"; \
+		mkdir -p "$$dir"; \
+		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" \
+			go build -trimpath -ldflags "-s -w $(CLI_LDFLAGS)" -o "$$dir/ccluster" ./cmd/ccluster; \
+		cp $(CHART_LICENSE_FILES) "$$dir/"; \
+		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" "$(GO_LICENSES)" save ./cmd/ccluster \
+			--save_path "$$dir/licenses/go" --ignore github.com/NVIDIA/ccluster; \
+		mkdir -p "$$dir/licenses/go/stdlib" && cp "$$(go env GOROOT)/LICENSE" "$$dir/licenses/go/stdlib/"; \
+		tar -C $(DIST_CLI) -czf "$(DIST_CLI)/$$name.tar.gz" "$$name"; \
+		rm -rf "$$dir"; \
+	done
 
 # `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
 # locally with `git checkout python/pyproject.toml`. Publishing is left to the workflows
@@ -796,6 +831,7 @@ CLIENT_GEN ?= $(LOCALBIN)/client-gen@$(CODE_GENERATOR_VERSION)-$(GOTOOLCHAIN)/cl
 LISTER_GEN ?= $(LOCALBIN)/lister-gen@$(CODE_GENERATOR_VERSION)-$(GOTOOLCHAIN)/lister-gen
 INFORMER_GEN ?= $(LOCALBIN)/informer-gen@$(CODE_GENERATOR_VERSION)-$(GOTOOLCHAIN)/informer-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest@$(ENVTEST_VERSION)-$(GOTOOLCHAIN)/setup-envtest
+GO_LICENSES ?= $(LOCALBIN)/go-licenses@$(GO_LICENSES_VERSION)-$(GOTOOLCHAIN)/go-licenses
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint@$(GOLANGCI_LINT_VERSION)-$(GOTOOLCHAIN)/golangci-lint
 # kubebuilder is pinned and downloaded into bin/ like the other tools, because the
 # helm/v2-alpha plugin's output changes between releases (v4.14.0 started emitting the
@@ -845,6 +881,8 @@ GOLANGCI_LINT_VERSION ?= $(shell v="$$(sed -n 's/^version: *//p' .custom-gcl.yml
   [ -n "$$v" ] || { echo "Set GOLANGCI_LINT_VERSION manually (.custom-gcl.yml has no version line)" >&2; exit 1; }; \
   printf '%s\n' "$$v")
 KUBEBUILDER_VERSION ?= v4.15.0
+# The Dockerfile's go-licenses, so the CLI tarballs and the images collect licenses alike.
+GO_LICENSES_VERSION ?= $(shell sed -n 's/^ARG GO_LICENSES_VERSION=//p' Dockerfile)
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -893,6 +931,11 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): | $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: go-licenses
+go-licenses: $(GO_LICENSES) ## Download go-licenses locally if necessary.
+$(GO_LICENSES): | $(LOCALBIN)
+	$(call go-install-tool,$(GO_LICENSES),github.com/google/go-licenses/v2,$(GO_LICENSES_VERSION))
 
 # The plain install is rebuilt in place with the plugins .custom-gcl.yml lists, so a
 # change to that file rebuilds it, and a failed plugin build leaves no binary behind.
