@@ -1,111 +1,105 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""View models: what each page shows, as plain dataclasses built from the API objects.
+"""View models: what the page shows, as plain dataclasses built from the API objects.
 
 Templates only format these, so the rules about what to show - which conditions are
-current, the order components roll out in - live here and are tested without HTML.
+current, what state a component set is in, what needs attention - live here and are tested
+without HTML.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ccluster.client import component_set_finished, current_conditions
 from ccluster.v1alpha1 import CCLComponentSet, CCLInfraPlane
 
+# A component set's state, as the Status column and the summary show it.
+TERMINATING = "Terminating"
+FINISHED = "Finished"
+FAILED = "Failed"
+ROLLING_OUT = "Rolling out"
+SET_STATUSES = (FINISHED, ROLLING_OUT, FAILED, TERMINATING)
 
-@dataclass(frozen=True)
-class ConditionRow:
-    type: str
-    status: str
-    reason: str
-    message: str
-    age: str
-    observed_generation: int | None
+# Argo CD's Application health values, in the order the summary lists them, then the
+# summary's own label for a component the operator has not released yet.
+HEALTHS = ("Healthy", "Progressing", "Degraded", "Suspended", "Missing", "Unknown")
+NOT_RELEASED = "Not released"
+
+# The Progressing reason the operator reports when a component's sync failed.
+_SYNC_FAILED = "WaveSyncFailed"
 
 
 @dataclass(frozen=True)
 class InfraPlaneRow:
-    """One row of the overview, after the CRD's printer columns."""
+    """One row of the infra planes table, after the CRD's printer columns."""
 
+    namespace: str
     name: str
     domain: str
     available: str
     cluster_config: str
     verified: str
     age: str
-    terminating: bool
 
 
 @dataclass(frozen=True)
 class ComponentSetRow:
-    """One row of the overview, after the CRD's printer columns, plus whether it finished."""
+    """One row of the component sets table."""
 
+    namespace: str
     name: str
-    applied: str
+    status: str
+    """One of SET_STATUSES."""
+    healthy: int
+    """Components in spec whose Argo CD health is Healthy."""
+    total: int
+    """Components in spec."""
     progress: str
-    finished: bool
+    """The current Progressing condition's reason, the CRD's Progress column."""
+    applied: str
     age: str
-    terminating: bool
+
+
+@dataclass(frozen=True)
+class Count:
+    label: str
+    count: int
+
+
+@dataclass(frozen=True)
+class Attention:
+    """An object that needs a look, and why."""
+
+    kind: str
+    namespace: str
+    name: str
+    problem: str
+
+
+@dataclass(frozen=True)
+class Summary:
+    infra_planes: int
+    available: int
+    verified: int
+    unavailable: int
+    component_sets: int
+    set_statuses: list[Count]
+    """Component sets per status, in SET_STATUSES order, leaving out zeros."""
+    components: int
+    component_health: list[Count]
+    """Components per Argo CD health, then not released, leaving out zeros."""
+    attention: list[Attention]
 
 
 @dataclass(frozen=True)
 class Overview:
+    summary: Summary
     infra_planes: list[InfraPlaneRow]
     component_sets: list[ComponentSetRow]
-
-
-@dataclass(frozen=True)
-class InfraPlaneDetail:
-    name: str
-    namespace: str
-    domain: str
-    credentials_secret: str
-    age: str
-    terminating: bool
-    generation: int | None
-    observed_generation: int | None
-    conditions: list[ConditionRow]
-    """Conditions computed from the current generation."""
-    stale_conditions: list[ConditionRow]
-    """Conditions left from an earlier generation."""
-    cluster_config_conditions: list[ConditionRow]
-    """The infra-plane operator's conditions on the cluster's CCLClusterConfig."""
-
-
-@dataclass(frozen=True)
-class ComponentRow:
-    position: int | None
-    """1-based place in spec.components, the rollout order; None once removed from it."""
-    name: str
-    chart: str
-    namespace: str
-    infra_plane: str
-    released: bool
-    """Whether the operator has released it, so that status.componentSyncs reports it."""
-    health: str
-    sync: str
-    compared_to_matches_spec: bool | None
-    message: str
-
-
-@dataclass(frozen=True)
-class ComponentSetDetail:
-    name: str
-    namespace: str
-    age: str
-    terminating: bool
-    finished: bool
-    generation: int | None
-    observed_generation: int | None
-    conditions: list[ConditionRow]
-    """Conditions computed from the current generation."""
-    stale_conditions: list[ConditionRow]
-    """Conditions left from an earlier generation."""
-    components: list[ComponentRow]
-    """Components in rollout order, then any that status still reports but spec dropped."""
 
 
 def overview(
@@ -115,85 +109,76 @@ def overview(
 ) -> Overview:
     now = now or _now()
     return Overview(
+        summary=summary(infra_planes, component_sets),
         infra_planes=[_infra_plane_row(plane, now) for plane in infra_planes],
         component_sets=[_component_set_row(component_set, now) for component_set in component_sets],
     )
 
 
-def infra_plane_detail(plane: CCLInfraPlane, now: datetime | None = None) -> InfraPlaneDetail:
-    now = now or _now()
-    current, stale = _split_conditions(plane, now)
-    cluster_config = plane.status.cluster_config if plane.status else None
-    return InfraPlaneDetail(
-        name=plane.metadata.name or "",
-        namespace=plane.metadata.namespace or "",
-        domain=plane.spec.domain,
-        credentials_secret=plane.spec.cluster_credentials_ref.name,
-        age=_age(plane, now),
-        terminating=_terminating(plane),
-        generation=_meta(plane, "generation"),
-        observed_generation=plane.status.observed_generation if plane.status else None,
-        conditions=current,
-        stale_conditions=stale,
-        cluster_config_conditions=[
-            _condition_row(condition, now)
-            for condition in (cluster_config.conditions if cluster_config else None) or []
+def summary(
+    infra_planes: list[CCLInfraPlane], component_sets: list[CCLComponentSet]
+) -> Summary:
+    attention = []
+
+    available = verified = 0
+    for plane in infra_planes:
+        condition = current_conditions(plane).get("Available")
+        if condition is not None and condition.status.value == "True":
+            available += 1
+        else:
+            reason = condition.reason if condition is not None else "not reported yet"
+            attention.append(_attention("CCLInfraPlane", plane, f"not available: {reason}"))
+        verified_condition = _verified(plane)
+        if verified_condition is not None and verified_condition.status.value == "True":
+            verified += 1
+        elif verified_condition is not None and verified_condition.status.value == "False":
+            attention.append(
+                _attention("CCLInfraPlane", plane, f"not verified: {verified_condition.reason}")
+            )
+
+    statuses: Counter[str] = Counter()
+    healths: Counter[str] = Counter()
+    for component_set in component_sets:
+        status = component_set_status(component_set)
+        statuses[status] += 1
+        if status == FAILED:
+            attention.append(
+                _attention("CCLComponentSet", component_set, f"failed: {_failure(component_set)}")
+            )
+        healths.update(_component_healths(component_set))
+
+    return Summary(
+        infra_planes=len(infra_planes),
+        available=available,
+        verified=verified,
+        unavailable=len(infra_planes) - available,
+        component_sets=len(component_sets),
+        set_statuses=[Count(s, statuses[s]) for s in SET_STATUSES if statuses[s]],
+        components=sum(healths.values()),
+        component_health=[
+            Count(h, healths[h]) for h in (*HEALTHS, NOT_RELEASED) if healths[h]
         ],
+        attention=attention,
     )
 
 
-def component_set_detail(
-    component_set: CCLComponentSet, now: datetime | None = None
-) -> ComponentSetDetail:
-    now = now or _now()
-    current, stale = _split_conditions(component_set, now)
-    status = component_set.status
-    syncs = {sync.name: sync for sync in (status.component_syncs if status else None) or []}
+def component_set_status(component_set: CCLComponentSet) -> str:
+    """The set's state: Terminating, else Finished, else Failed, else Rolling out."""
+    if _terminating(component_set):
+        return TERMINATING
+    if component_set_finished(component_set):
+        return FINISHED
+    if _failure(component_set):
+        return FAILED
+    return ROLLING_OUT
 
-    components = []
-    for position, component in enumerate(component_set.spec.components, start=1):
-        sync = syncs.pop(component.name, None)
-        components.append(
-            ComponentRow(
-                position=position,
-                name=component.name,
-                chart=component.chart,
-                namespace=component.namespace,
-                infra_plane=component.infra_plane_ref.name,
-                released=sync is not None,
-                health=(sync.health or "") if sync else "",
-                sync=(sync.sync or "") if sync else "",
-                compared_to_matches_spec=sync.compared_to_matches_spec if sync else None,
-                message=(sync.message or "") if sync else "",
-            )
-        )
-    for sync in syncs.values():
-        components.append(
-            ComponentRow(
-                position=None,
-                name=sync.name,
-                chart="",
-                namespace="",
-                infra_plane="",
-                released=True,
-                health=sync.health or "",
-                sync=sync.sync or "",
-                compared_to_matches_spec=sync.compared_to_matches_spec,
-                message=sync.message or "",
-            )
-        )
 
-    return ComponentSetDetail(
-        name=component_set.metadata.name or "",
-        namespace=component_set.metadata.namespace or "",
-        age=_age(component_set, now),
-        terminating=_terminating(component_set),
-        finished=component_set_finished(component_set),
-        generation=_meta(component_set, "generation"),
-        observed_generation=status.observed_generation if status else None,
-        conditions=current,
-        stale_conditions=stale,
-        components=components,
+def namespaces(
+    infra_planes: list[CCLInfraPlane], component_sets: list[CCLComponentSet]
+) -> list[str]:
+    """The namespaces holding any of the objects, sorted."""
+    return sorted(
+        {obj.metadata.namespace for obj in (*infra_planes, *component_sets) if obj.metadata.namespace}
     )
 
 
@@ -216,60 +201,87 @@ def human_duration(seconds: float) -> str:
 
 def _infra_plane_row(plane: CCLInfraPlane, now: datetime) -> InfraPlaneRow:
     conditions = current_conditions(plane)
-    cluster_config = plane.status.cluster_config if plane.status else None
-    # The CCLClusterConfig's conditions carry its own generation on the infra plane, which
-    # this object cannot check, so they are shown as reported.
-    verified = {
-        condition.type: condition
-        for condition in (cluster_config.conditions if cluster_config else None) or []
-    }
+    verified = _verified(plane)
     return InfraPlaneRow(
+        namespace=plane.metadata.namespace or "",
         name=plane.metadata.name or "",
         domain=plane.spec.domain,
         available=_status(conditions, "Available"),
         cluster_config=_status(conditions, "ClusterConfigApplied"),
-        verified=_status(verified, "Verified"),
+        verified=verified.status.value if verified is not None else "",
         age=_age(plane, now),
-        terminating=_terminating(plane),
     )
 
 
 def _component_set_row(component_set: CCLComponentSet, now: datetime) -> ComponentSetRow:
     conditions = current_conditions(component_set)
     progressing = conditions.get("Progressing")
+    healths = _component_healths(component_set)
     return ComponentSetRow(
+        namespace=component_set.metadata.namespace or "",
         name=component_set.metadata.name or "",
-        applied=_status(conditions, "ComponentsApplied"),
+        status=component_set_status(component_set),
+        healthy=healths.count("Healthy"),
+        total=len(healths),
         progress=progressing.reason if progressing else "",
-        finished=component_set_finished(component_set),
+        applied=_status(conditions, "ComponentsApplied"),
         age=_age(component_set, now),
-        terminating=_terminating(component_set),
     )
 
 
-def _split_conditions(
-    obj: CCLInfraPlane | CCLComponentSet, now: datetime
-) -> tuple[list[ConditionRow], list[ConditionRow]]:
-    current = current_conditions(obj)
-    all_conditions = (obj.status.conditions if obj.status else None) or []
-    return (
-        [_condition_row(condition, now) for condition in current.values()],
-        [
-            _condition_row(condition, now)
-            for condition in all_conditions
-            if current.get(condition.type) is not condition
-        ],
-    )
+def _component_healths(component_set: CCLComponentSet) -> list[str]:
+    """Each spec component's Argo CD health, in spec order; NOT_RELEASED without a report.
+
+    status.componentSyncs reports only the components the operator has released, by name.
+    One it still reports after the spec dropped it is being removed and is not counted.
+    """
+    status = component_set.status
+    syncs = {sync.name: sync for sync in (status.component_syncs if status else None) or []}
+    healths = []
+    for component in component_set.spec.components:
+        sync = syncs.get(component.name)
+        if sync is None:
+            healths.append(NOT_RELEASED)
+        else:
+            healths.append(sync.health if sync.health in HEALTHS else "Unknown")
+    return healths
 
 
-def _condition_row(condition, now: datetime) -> ConditionRow:
-    return ConditionRow(
-        type=condition.type,
-        status=condition.status.value,
-        reason=condition.reason,
-        message=condition.message,
-        age=human_duration((now - condition.last_transition_time).total_seconds()),
-        observed_generation=condition.observed_generation,
+def _failure(component_set: CCLComponentSet) -> str:
+    """Why the current generation failed, as a condition reason, or "" if it has not.
+
+    It has failed when validation fails (an infraPlaneRef does not resolve to an Available
+    CCLInfraPlane) or a component's sync failed.
+    """
+    conditions = current_conditions(component_set)
+    validated = conditions.get("Validated")
+    if validated is not None and validated.status.value == "False":
+        return validated.reason
+    progressing = conditions.get("Progressing")
+    if progressing is not None and progressing.reason == _SYNC_FAILED:
+        return progressing.reason
+    return ""
+
+
+def _verified(plane: CCLInfraPlane):
+    """The infra-plane operator's Verified condition on the cluster's CCLClusterConfig.
+
+    It carries the CCLClusterConfig's own generation on the infra plane, which this object
+    cannot check, so it is taken as reported.
+    """
+    cluster_config = plane.status.cluster_config if plane.status else None
+    for condition in (cluster_config.conditions if cluster_config else None) or []:
+        if condition.type == "Verified":
+            return condition
+    return None
+
+
+def _attention(kind: str, obj: CCLInfraPlane | CCLComponentSet, problem: str) -> Attention:
+    return Attention(
+        kind=kind,
+        namespace=obj.metadata.namespace or "",
+        name=obj.metadata.name or "",
+        problem=problem,
     )
 
 
@@ -278,17 +290,13 @@ def _status(conditions: dict, condition_type: str) -> str:
     return condition.status.value if condition else ""
 
 
-def _meta(obj: CCLInfraPlane | CCLComponentSet, key: str):
-    """A server-managed metadata field, kept by ObjectMeta's extra="allow" as sent."""
-    return getattr(obj.metadata, key, None)
-
-
 def _terminating(obj: CCLInfraPlane | CCLComponentSet) -> bool:
-    return _meta(obj, "deletionTimestamp") is not None
+    """Whether deletion has begun: deletionTimestamp is kept by ObjectMeta's extra="allow"."""
+    return getattr(obj.metadata, "deletionTimestamp", None) is not None
 
 
 def _age(obj: CCLInfraPlane | CCLComponentSet, now: datetime) -> str:
-    created = _meta(obj, "creationTimestamp")
+    created = getattr(obj.metadata, "creationTimestamp", None)
     if not created:
         return ""
     # Python 3.10's fromisoformat does not accept the API server's trailing Z.

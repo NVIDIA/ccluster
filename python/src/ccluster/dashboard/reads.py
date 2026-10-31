@@ -6,6 +6,9 @@
 The group, version and plurals are fixed, so reads go through CustomObjectsApi and need no
 API discovery: DynamicClient would query the API server's /version and discovery
 documents whenever it is constructed.
+
+A namespace of None reads every namespace. Kubernetes answers such a list with every object
+or with 403: it does not narrow a list to the namespaces the caller may read.
 """
 
 from __future__ import annotations
@@ -20,28 +23,20 @@ INFRA_PLANES = "cclinfraplanes"
 COMPONENT_SETS = "cclcomponentsets"
 
 
-def list_infraplanes(api_client: k8s.ApiClient, namespace: str) -> list[CCLInfraPlane]:
+def list_infraplanes(api_client: k8s.ApiClient, namespace: str | None) -> list[CCLInfraPlane]:
     return [
         CCLInfraPlane.model_validate(item)
         for item in _list(api_client, namespace, INFRA_PLANES)
     ]
 
 
-def list_component_sets(api_client: k8s.ApiClient, namespace: str) -> list[CCLComponentSet]:
+def list_component_sets(
+    api_client: k8s.ApiClient, namespace: str | None
+) -> list[CCLComponentSet]:
     return [
         CCLComponentSet.model_validate(item)
         for item in _list(api_client, namespace, COMPONENT_SETS)
     ]
-
-
-def get_infraplane(api_client: k8s.ApiClient, namespace: str, name: str) -> CCLInfraPlane:
-    return CCLInfraPlane.model_validate(_get(api_client, namespace, INFRA_PLANES, name))
-
-
-def get_component_set(
-    api_client: k8s.ApiClient, namespace: str, name: str
-) -> CCLComponentSet:
-    return CCLComponentSet.model_validate(_get(api_client, namespace, COMPONENT_SETS, name))
 
 
 def whoami(api_client: k8s.ApiClient) -> str | None:
@@ -60,13 +55,8 @@ def whoami(api_client: k8s.ApiClient) -> str | None:
     return user_info.username if user_info else None
 
 
-def _list(api_client: k8s.ApiClient, namespace: str, plural: str) -> list[dict]:
-    return k8s.CustomObjectsApi(api_client).list_namespaced_custom_object(
-        GROUP, VERSION, namespace, plural
-    )["items"]
-
-
-def _get(api_client: k8s.ApiClient, namespace: str, plural: str, name: str) -> dict:
-    return k8s.CustomObjectsApi(api_client).get_namespaced_custom_object(
-        GROUP, VERSION, namespace, plural, name
-    )
+def _list(api_client: k8s.ApiClient, namespace: str | None, plural: str) -> list[dict]:
+    api = k8s.CustomObjectsApi(api_client)
+    if namespace is None:
+        return api.list_cluster_custom_object(GROUP, VERSION, plural)["items"]
+    return api.list_namespaced_custom_object(GROUP, VERSION, namespace, plural)["items"]

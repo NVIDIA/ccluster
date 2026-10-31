@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Refreshes the page's content in place. The server sends only the content when a request
-// carries X-Dashboard-Fragment (routes.FRAGMENT_HEADER). A failed refresh keeps what is on
-// screen and says so; refreshing pauses while the tab is hidden.
+// Opens the namespace picked in the dropdown, and refreshes the page's content in place.
+// The server sends only the content when a request carries X-Dashboard-Fragment
+// (routes.FRAGMENT_HEADER). A failed refresh keeps what is on screen and says so;
+// refreshing pauses while the tab is hidden.
 (function () {
   "use strict";
+
+  var form = document.getElementById("namespace-form");
+  if (form) {
+    form.namespace.addEventListener("change", function () {
+      form.submit();
+    });
+  }
 
   var content = document.getElementById("content");
   var notice = document.getElementById("refresh-notice");
@@ -21,7 +29,7 @@
     }
     inFlight = true;
     try {
-      var response = await fetch(window.location.pathname, {
+      var response = await fetch(window.location.pathname + window.location.search, {
         headers: { "X-Dashboard-Fragment": "1" },
         cache: "no-store",
       });

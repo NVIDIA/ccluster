@@ -3,8 +3,9 @@
 
 """ccluster dashboard: a read-only web view of a control plane.
 
-create_app builds the Starlette application: server-rendered pages for the
-CCLInfraPlanes and CCLComponentSets of a namespace, refreshed in place by a small script.
+create_app builds the Starlette application: one server-rendered page summarising the
+CCLInfraPlanes and CCLComponentSets of every namespace, or of the one namespace it serves,
+refreshed in place by a small script.
 It holds no credentials: each request's Kubernetes reads use the ApiClient the
 CredentialSource gives it, and Kubernetes RBAC decides what they return. serve runs it
 with uvicorn. Needs the dashboard extra (Starlette, Jinja2, uvicorn).
@@ -43,9 +44,12 @@ _SECURITY_HEADERS = {
 
 
 def create_app(
-    source: CredentialSource, *, namespace: str, allowed_hosts: list[str]
+    source: CredentialSource, *, namespace: str | None, allowed_hosts: list[str]
 ) -> Starlette:
-    """Build the dashboard for the namespace / redirects to.
+    """Build the dashboard.
+
+    With namespace None it reads across the cluster and lets the viewer pick any namespace
+    holding ccluster objects, or all of them; with a namespace it reads only that one.
 
     allowed_hosts are the host names requests may address. Anything else is refused, so
     that a web page on another domain cannot reach the dashboard through DNS rebinding.

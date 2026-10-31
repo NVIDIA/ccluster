@@ -80,6 +80,23 @@ td.message { white-space: pre-wrap; min-width: 24ch; }
 .status-false { color: var(--false); }
 .status-unknown { color: var(--unknown); }
 .status-none { color: var(--muted); }
+.status-finished { color: var(--true); }
+.status-failed { color: var(--false); }
+.status-rolling-out, .status-terminating { color: var(--unknown); }
+
+form.namespace { display: flex; gap: 8px; align-items: baseline; }
+form.namespace select, form.namespace button { font: inherit; }
+
+dl.summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+dl.summary dt { color: var(--muted); }
+dl.summary dd { margin: 0; }
+dl.summary strong { margin-right: 8px; }
+ul.attention { margin: 0; padding-left: 1.2em; }
 
 .tag {
   margin-left: 6px;
@@ -89,17 +106,5 @@ td.message { white-space: pre-wrap; min-width: 24ch; }
   font-size: 0.8rem;
   color: var(--muted);
 }
-
-dl.facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 2px 16px;
-  margin: 0;
-}
-dl.facts dt { color: var(--muted); }
-dl.facts dd { margin: 0; }
-
-details { margin-top: 12px; }
-summary { cursor: pointer; color: var(--muted); }
 
 .error h1 { color: var(--false); }

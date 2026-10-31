@@ -11,8 +11,17 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="{{ url_for('home').path }}">ccluster</a>
-    <span>Namespace: <a href="{{ url_for('namespace_page', namespace=namespace).path }}">{{ namespace }}</a></span>
+    <a class="brand" href="/">ccluster</a>
+    <form id="namespace-form" class="namespace" method="get" action="/">
+      <label for="namespace">Namespace</label>
+      <select id="namespace" name="namespace">
+        {% if offer_all %}<option value=""{% if selected is none %} selected{% endif %}>All namespaces</option>{% endif %}
+        {% for option in options %}
+        <option value="{{ option }}"{% if option == selected %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Open</button>
+    </form>
     {% if user %}<span class="user">Signed in as {{ user }}</span>{% endif %}
   </header>
   <p id="refresh-notice" class="notice" hidden></p>

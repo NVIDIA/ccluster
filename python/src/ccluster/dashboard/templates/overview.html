@@ -1,0 +1,90 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+   SPDX-License-Identifier: Apache-2.0 #}
+{% extends "fragment.html" if fragment else "base.html" %}
+{% from "_macros.html" import counts, status %}
+{% block content %}
+{% set all_namespaces = selected is none %}
+{% set where = "any namespace" if all_namespaces else selected %}
+{% set s = view.summary %}
+<p class="updated">Updated {{ updated }}</p>
+
+<section>
+  <h2>Summary: {{ "all namespaces" if all_namespaces else selected }}</h2>
+  <dl class="summary">
+    <dt>Infra planes</dt>
+    <dd><strong>{{ s.infra_planes }}</strong>{% if s.infra_planes %} {{ s.available }} available · {{ s.verified }} verified{% if s.unavailable %} · {{ s.unavailable }} unavailable{% endif %}{% endif %}</dd>
+    <dt>Component sets</dt>
+    <dd><strong>{{ s.component_sets }}</strong> {{ counts(s.set_statuses) }}</dd>
+    <dt>Components</dt>
+    <dd><strong>{{ s.components }}</strong> {{ counts(s.component_health) }}</dd>
+    <dt>Needs attention</dt>
+    <dd>
+      {% if s.attention %}
+      <ul class="attention">
+        {% for a in s.attention %}
+        <li>{{ a.kind }} {% if all_namespaces %}{{ a.namespace }}/{% endif %}{{ a.name }}: {{ a.problem }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <span class="muted">Nothing</span>
+      {% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Infra planes ({{ view.infra_planes | length }})</h2>
+  {% if view.infra_planes %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>{% if all_namespaces %}<th>Namespace</th>{% endif %}<th>Name</th><th>Domain</th><th>Available</th><th>Cluster config</th><th>Verified</th><th>Age</th></tr>
+      </thead>
+      <tbody>
+        {% for row in view.infra_planes %}
+        <tr>
+          {% if all_namespaces %}<td>{{ row.namespace }}</td>{% endif %}
+          <td>{{ row.name }}</td>
+          <td>{{ row.domain }}</td>
+          <td>{{ status(row.available) }}</td>
+          <td>{{ status(row.cluster_config) }}</td>
+          <td>{{ status(row.verified) }}</td>
+          <td>{{ row.age }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No infra planes in {{ where }}.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Component sets ({{ view.component_sets | length }})</h2>
+  {% if view.component_sets %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>{% if all_namespaces %}<th>Namespace</th>{% endif %}<th>Name</th><th>Status</th><th>Components</th><th>Progress</th><th>Applied</th><th>Age</th></tr>
+      </thead>
+      <tbody>
+        {% for row in view.component_sets %}
+        <tr>
+          {% if all_namespaces %}<td>{{ row.namespace }}</td>{% endif %}
+          <td>{{ row.name }}</td>
+          <td>{{ status(row.status) }}</td>
+          <td>{{ row.healthy }}/{{ row.total }} healthy</td>
+          <td>{{ row.progress or "-" }}</td>
+          <td>{{ status(row.applied) }}</td>
+          <td>{{ row.age }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No component sets in {{ where }}.</p>
+  {% endif %}
+</section>
+{% endblock %}

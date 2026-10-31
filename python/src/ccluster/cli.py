@@ -202,8 +202,8 @@ def unregister(name: str, namespace: str) -> None:
     "--namespace",
     "-n",
     default=None,
-    help="Control-plane namespace to show. Defaults to the namespace of the control "
-    "plane's kubeconfig context, else default.",
+    help="Show only this control-plane namespace. Without it, the dashboard reads every "
+    "namespace, which needs read access across the cluster.",
 )
 @click.option(
     "--listen",
@@ -216,9 +216,10 @@ def unregister(name: str, namespace: str) -> None:
 def dashboard(namespace: str | None, listen: tuple[str, int], no_browser: bool) -> None:
     """Serve a read-only web view of the control plane.
 
-    Shows the CCLInfraPlanes and CCLComponentSets of one namespace of the control plane
-    saved by ccluster init, refreshed every few seconds, and opens it in a browser. Other
-    namespaces are at /namespaces/NAMESPACE. Runs until interrupted.
+    Opens a page in a browser that summarises the CCLInfraPlanes and CCLComponentSets of the
+    control plane saved by ccluster init and lists them, refreshed every few seconds. By
+    default it covers every namespace, with a dropdown to pick one; with -n it covers only
+    that namespace. Runs until interrupted.
 
     Every request to Kubernetes uses the control plane's kubeconfig credentials, so the
     dashboard shows what they may read, and anyone who can reach it acts with them. It
@@ -237,7 +238,6 @@ def dashboard(namespace: str | None, listen: tuple[str, int], no_browser: bool) 
     control_plane = _load_control_plane()
     with _kube_errors():
         api_client = k8s_config.new_client_from_config(context=control_plane)
-        namespace = namespace or _context_namespace(control_plane)
 
     app = dashboard_app.create_app(
         dashboard_app.LocalSource(api_client),
@@ -245,8 +245,9 @@ def dashboard(namespace: str | None, listen: tuple[str, int], no_browser: bool) 
         allowed_hosts=list(_LOOPBACK_HOSTS),
     )
     url = f"http://{host}:{port}/"
+    scope = f"namespace {namespace}" if namespace else "all namespaces"
     click.echo(
-        f"Serving the dashboard for control plane {control_plane}, namespace {namespace}, "
+        f"Serving the dashboard for control plane {control_plane}, {scope}, "
         f"at {url} (Ctrl+C to stop)"
     )
     dashboard_app.serve(
@@ -263,15 +264,6 @@ def _parse_listen(value: str) -> tuple[str, int]:
             f"{host!r} is not a loopback address; use {' or '.join(_LOOPBACK_HOSTS)}"
         )
     return host, int(port)
-
-
-def _context_namespace(context: str) -> str:
-    """Return the namespace the kubeconfig context names, else default, as kubectl does."""
-    contexts, _ = k8s_config.list_kube_config_contexts()
-    for entry in contexts:
-        if entry.get("name") == context:
-            return (entry.get("context") or {}).get("namespace") or "default"
-    return "default"
 
 
 def _config_path() -> Path:

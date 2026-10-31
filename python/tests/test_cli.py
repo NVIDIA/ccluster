@@ -379,30 +379,24 @@ class FakeDashboard:
 
 @pytest.fixture
 def dashboard(kubeconfig, monkeypatch, config_file):
-    """ccluster dashboard with init already run against the control plane cp, whose
-    kubeconfig context names the namespace tenant-a."""
+    """ccluster dashboard with init already run against the control plane cp."""
     fake = FakeDashboard()
     config_file.parent.mkdir(parents=True)
     config_file.write_text("controlPlane:\n  context: cp\n")
     monkeypatch.setitem(sys.modules, "ccluster.dashboard", fake)
     monkeypatch.setattr(ccluster, "dashboard", fake, raising=False)
-    monkeypatch.setattr(
-        cli.k8s_config,
-        "list_kube_config_contexts",
-        lambda: ([{"name": "cp", "context": {"namespace": "tenant-a"}}, {"name": "ip"}], None),
-    )
     opened = []
     monkeypatch.setattr(cli.webbrowser, "open", opened.append)
     fake.opened = opened
     return fake
 
 
-def test_dashboard_serves_the_contexts_namespace_on_loopback(dashboard):
+def test_dashboard_serves_all_namespaces_on_loopback(dashboard):
     result = invoke("dashboard")
     assert result.exit_code == 0, result.output
-    assert "namespace tenant-a, at http://127.0.0.1:8080/" in result.output
+    assert "control plane cp, all namespaces, at http://127.0.0.1:8080/" in result.output
     assert dashboard.app.source.api_client.context == "cp"
-    assert dashboard.app.namespace == "tenant-a"
+    assert dashboard.app.namespace is None
     assert dashboard.app.allowed_hosts == ["127.0.0.1", "localhost"]
     assert (dashboard.served.host, dashboard.served.port) == ("127.0.0.1", 8080)
 
@@ -413,17 +407,10 @@ def test_dashboard_serves_the_contexts_namespace_on_loopback(dashboard):
 def test_dashboard_namespace_and_listen_options(dashboard):
     result = invoke("dashboard", "-n", "tenant-b", "--listen", "localhost:9000", "--no-browser")
     assert result.exit_code == 0, result.output
+    assert "namespace tenant-b, at http://localhost:9000/" in result.output
     assert dashboard.app.namespace == "tenant-b"
     assert (dashboard.served.host, dashboard.served.port) == ("localhost", 9000)
     assert dashboard.served.on_started is None
-
-
-def test_dashboard_defaults_to_the_default_namespace(dashboard, monkeypatch):
-    monkeypatch.setattr(
-        cli.k8s_config, "list_kube_config_contexts", lambda: ([{"name": "cp", "context": {}}], None)
-    )
-    assert invoke("dashboard").exit_code == 0
-    assert dashboard.app.namespace == "default"
 
 
 @pytest.mark.parametrize(
