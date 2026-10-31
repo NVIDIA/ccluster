@@ -82,6 +82,19 @@ arm64 from the GitHub Release and put the `ccluster` binary on your `PATH`:
 go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z
 ```
 
+The macOS binaries are not yet signed with an Apple Developer ID or notarized, so macOS
+refuses to run one downloaded with a browser, saying Apple cannot check it for
+malicious software. Download the tarball with `curl`, which does not quarantine it, or
+clear the quarantine from a browser download before the first run:
+
+```bash
+curl -fsSL https://github.com/NVIDIA/ccluster/releases/download/vX.Y.Z/ccluster_X.Y.Z_darwin_arm64.tar.gz | tar -xz
+# or, after unpacking a browser download:
+xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
+```
+
+Use `darwin_amd64` on an Intel Mac.
+
 Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
 that it serves the ccluster API, and saves the context name to
 `~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
