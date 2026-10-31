@@ -246,9 +246,10 @@ build-cp: manifests generate fmt vet ## Build the ccluster-cp-operator binary.
 build-ip: manifests generate fmt vet ## Build the ccluster-ip-operator binary.
 	go build -o bin/ccluster-ip-operator ./cmd/ccluster-ip-operator
 
-# The ccluster CLI reports CLI_VERSION (see the Release section); a binary built by
-# `go install` reports its module version instead.
-CLI_LDFLAGS = -X github.com/NVIDIA/ccluster/internal/cli.version=$(CLI_VERSION)
+# The ccluster CLI reports v$(CLI_VERSION) (see the Release section), with the v of the
+# git tag, so a release binary reports what one built by `go install ...@vX.Y.Z` does:
+# its module version.
+CLI_LDFLAGS = -X github.com/NVIDIA/ccluster/internal/cli.version=v$(CLI_VERSION)
 
 .PHONY: build-cli
 build-cli: generate fmt vet ## Build the ccluster CLI as bin/ccluster.
@@ -680,7 +681,8 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 CHART_VERSION   = $(or $(VERSION),$(NEXT_VERSION)-dev.$(IMG_TAG))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
-# The CLI is versioned as the charts are.
+# The CLI is versioned as the charts are; its tarballs are named with this bare version,
+# and the binary reports it with a leading v (CLI_LDFLAGS).
 CLI_VERSION     = $(CHART_VERSION)
 # PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
 PY_VERSION      = $(or $(VERSION),$(NEXT_VERSION).dev$(DEV_NUMBER))
