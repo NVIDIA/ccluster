@@ -138,6 +138,24 @@ reuses them.
 ccluster unregister edge-1 -n tenant-a
 ```
 
+`ccluster completion <shell>` prints a tab-completion script for commands and flags. To load
+it in every new shell:
+
+```bash
+# bash (needs the bash-completion package)
+echo 'eval "$(ccluster completion bash)"' >> ~/.bashrc
+
+# zsh (the first line only if completion is not enabled yet; ccluster's line goes after it)
+echo 'autoload -U compinit; compinit' >> ~/.zshrc
+echo 'eval "$(ccluster completion zsh)"' >> ~/.zshrc
+
+# fish
+ccluster completion fish > ~/.config/fish/completions/ccluster.fish
+```
+
+On Windows, add `ccluster completion powershell | Out-String | Invoke-Expression` to your
+PowerShell profile. Start a new shell for the change to take effect.
+
 The command is built on `pkg/cclclient`, a Go client that registers clusters and applies,
 polls and deletes component sets in one namespace. It is the Go counterpart of the Python
 package's `CCLClient`; both write under the server-side apply field manager `ccluster`.
