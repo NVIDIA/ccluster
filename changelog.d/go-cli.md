@@ -3,6 +3,8 @@
   `ccluster_X.Y.Z_<os>_<arch>.tar.gz` for Linux and macOS on amd64 and arm64 and
   installable with `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z`. It keeps
   the Python command's `init`, `register` and `unregister` and its config file.
+- `ccluster completion bash|zsh|fish|powershell` prints a shell completion script; the
+  README shows how to load it.
 - `github.com/NVIDIA/ccluster/pkg/cclclient`, a Go client designed like the Python
   `CCLClient`: it registers and unregisters infra planes and applies, polls and deletes
   component sets in one namespace. `catalogs.Component` places the entry a chart package's
