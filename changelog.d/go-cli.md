@@ -5,8 +5,8 @@
   the Python command's `init`, `register` and `unregister` and its config file.
 - `github.com/NVIDIA/ccluster/pkg/cclclient`, a Go client designed like the Python
   `CCLClient`: it registers and unregisters infra planes and applies, polls and deletes
-  component sets in one namespace. `catalogs.Component` builds a component from a chart's
-  typed values, like Python's `catalogs.component`.
+  component sets in one namespace. `catalogs.Component` places the entry a chart package's
+  `New` returns onto an infra plane.
 
 ### Changed
 - **Breaking:** `ccluster init` takes `--context` in place of `-cp`/`--control-plane`,

@@ -11,7 +11,8 @@ SPDX-License-Identifier: Apache-2.0
 // counterpart of the Python package's CCLClient, and the two write the same objects
 // under the same field manager, so either can update what the other applied.
 //
-// Build components with catalogs.Component and a chart package's typed Values.
+// Build each component from the entry a chart package's New returns, with
+// catalogs.Component.
 package cclclient
 
 import (
@@ -229,7 +230,7 @@ func (c *Client) GetInfraPlane(
 //
 // components deploy in list order, each onto the CCLInfraPlane its InfraPlaneRef names;
 // those planes must live in the client's namespace and already be Available. One set
-// may target several planes. Build components with catalogs.Component. Applying under
+// may target several planes. Build each with catalogs.Component. Applying under
 // FieldManager means calling again with a different list updates the set in place.
 //
 // The call returns as soon as the object is applied; it does not wait for the rollout to

@@ -125,21 +125,16 @@ func Entry(
 	return out, nil
 }
 
-// Component builds one CCLComponentSet component from a chart's typed values, through
-// Entry. chart is the chart package's Chart constant. The component's name and the
-// infra plane it is deployed to are the caller's, as is the namespace it installs into:
-// none of those are facts about the chart.
+// Component places an entry, built by a chart package's New, in a CCLComponentSet
+// under the given name and onto the given infra plane. Neither is a fact about the
+// chart, so New leaves them to the caller.
 func Component(
-	name, infraPlane, chart, namespace string,
-	values any,
-) (cclusternvidiacomv1alpha1.ComponentSpec, error) {
-	entry, err := Entry(chart, namespace, values)
-	if err != nil {
-		return cclusternvidiacomv1alpha1.ComponentSpec{}, err
-	}
+	name, infraPlane string,
+	entry cclusternvidiacomv1alpha1.ComponentEntry,
+) cclusternvidiacomv1alpha1.ComponentSpec {
 	return cclusternvidiacomv1alpha1.ComponentSpec{
 		Name:           name,
 		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane},
 		ComponentEntry: entry,
-	}, nil
+	}
 }

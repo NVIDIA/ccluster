@@ -10,6 +10,10 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 )
 
 // stubValues mirrors the shape every per-chart Values type has: one key named for the
@@ -142,29 +146,20 @@ func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
 }
 
 // TestComponent checks that the caller's name and infra plane reach the component beside
-// the entry Entry builds, and that Entry's validation still applies.
+// the entry, unchanged.
 func TestComponent(t *testing.T) {
-	enabled := true
-	got, err := Component("stub", "gpu-a", chart, namespace,
-		stubValues{Chart: &stubChartValues{Enabled: &enabled}})
-	if err != nil {
-		t.Fatalf("Component() error = %v", err)
+	entry := cclusternvidiacomv1alpha1.ComponentEntry{
+		Chart:     chart,
+		Namespace: namespace,
+		Values:    &apiextensionsv1.JSON{Raw: []byte(`{"stub-chart":{"enabled":true}}`)},
 	}
-	if got.Name != "stub" || got.InfraPlaneRef.Name != "gpu-a" {
-		t.Errorf("Component() name = %q, infraPlaneRef = %q, want stub, gpu-a",
-			got.Name, got.InfraPlaneRef.Name)
+	got := Component("stub", "gpu-a", entry)
+	want := cclusternvidiacomv1alpha1.ComponentSpec{
+		Name:           "stub",
+		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a"},
+		ComponentEntry: entry,
 	}
-	if got.Chart != chart || got.Namespace != namespace {
-		t.Errorf("Component() chart = %q, namespace = %q, want %q, %q",
-			got.Chart, got.Namespace, chart, namespace)
-	}
-	if got.Values == nil || string(got.Values.Raw) != `{"stub-chart":{"enabled":true}}` {
-		t.Errorf("Component() values = %v, want the marshalled values", got.Values)
-	}
-
-	sentinel := errors.New("queues[0].name not set")
-	if _, err := Component("stub", "gpu-a", chart, namespace,
-		validatingValues{err: sentinel}); !errors.Is(err, sentinel) {
-		t.Errorf("Component() error = %v, want one wrapping %v", err, sentinel)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Component() = %+v, want %+v", got, want)
 	}
 }
