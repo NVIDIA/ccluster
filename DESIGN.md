@@ -240,8 +240,11 @@ being deleted.
 
 The controller also **watches** each infra-plane cluster's `CCLClusterConfig`, so a change
 there — the infra-plane operator writing its status, or someone editing or deleting the
-object — reconciles the `CCLInfraPlane` at once. Each reconcile copies the singleton's status,
-verbatim, into `status.clusterConfig`. That field reuses the `CCLClusterConfigStatus` type
+object — reconciles the `CCLInfraPlane` at once. Each reconcile copies the singleton's status
+into `status.clusterConfig`, verbatim apart from LoadBalancer addresses: each is copied in
+canonical form, and an entry whose address the schema rejects is left out. The infra-plane
+cluster's admin can write that status whatever its CRD says, and since the copy shares the
+schema, one such entry would otherwise fail the `CCLInfraPlane`'s whole status patch. That field reuses the `CCLClusterConfigStatus` type
 rather than merging its conditions into the CCLInfraPlane's own: the two sets of conditions
 and observedGenerations describe different objects. New fields the infra-plane operator
 reports flow through without a control-plane change, such as `loadBalancers`, each of
@@ -302,8 +305,11 @@ The addresses come from `status.clusterConfig`'s `loadBalancers`, so they arrive
 the remote watch; a plane that cannot be reached keeps its last copy, and its records. A
 LoadBalancer without an address has no record; when none has one, the operator deletes
 the `DNSEndpoint`, which withdraws them all. A label value may hold characters a DNS label
-may not (uppercase, `_`, `.`), and with a long domain the name can pass 253 characters:
-such a LoadBalancer gets no record and is reported in `DNSReady`, the rest are published.
+may not (uppercase, `_`, `.`), and with a long domain the name can pass 253 characters.
+An address in a form the schema rejects (§3a) can still arrive from a cluster whose admin
+wrote it, so the operator checks it again rather than trust the infra-plane cluster's API
+server. Such a LoadBalancer gets no record and is reported in `DNSReady`; the rest are
+published.
 
 - **Which zone.** external-dns picks it, not the operator and not the API: of the public
   zones it manages, the most specific one the record's name falls under. With
@@ -355,9 +361,10 @@ is computed only once `Available` is true, and both are written in one status pa
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 `DNSReady` — `True/Published` (external-dns has read the current `DNSEndpoint`, which
-does not mean it wrote the records; see the gap above), or `False` with `LoadBalancerPending` (the plane reports no LoadBalancer
-with an address), `Pending` (external-dns has not read the current `DNSEndpoint` yet),
-`InvalidLoadBalancerName` (a LoadBalancer's name cannot make a record name; the others'
+does not mean it wrote the records; see the gap above), or `False` with
+`LoadBalancerPending` (the plane reports no LoadBalancer with an address), `Pending`
+(external-dns has not read the current `DNSEndpoint` yet), `InvalidLoadBalancer` (a
+LoadBalancer's name cannot make a record name, or its address is not valid; the others'
 records are still written), `DNSEndpointCRDMissing` (external-dns is not installed) or
 `DNSEndpointConflict` (the name is another plane's), or `Unknown/DNSEndpointError` (writing
 or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
@@ -453,7 +460,10 @@ The pass also reports LoadBalancers. A chart opts one in by labelling its Servic
 lists every Service of type `LoadBalancer` carrying the label and reports each in
 `status.loadBalancers`, a list keyed by the label's value, with the first `ip` and the
 first `hostname` the Service reports (cloud providers such as AWS address load balancers
-by name). An entry whose address is not assigned yet has both empty, so "pending" reads
+by name). The schema requires the `ip` in canonical form without a zone, and the
+`hostname` to be a lowercase DNS name that is not an IP address, the rule Kubernetes applies
+to a Service's; the operator writes the `ip` in that form and skips an address that does not
+fit, so that one Service cannot fail the whole status write. An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
 of the list and reported in `Verified` instead. The value is the chart's to choose and
 becomes the plane's subdomain: the cp operator points `*.<name>.<domain>` at it (§3), so it
@@ -847,7 +857,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |

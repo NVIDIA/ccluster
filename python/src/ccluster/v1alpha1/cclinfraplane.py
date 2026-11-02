@@ -161,15 +161,24 @@ class LoadBalancer(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    hostname: str | None = None
+    hostname: Annotated[
+        str | None,
+        Field(
+            max_length=253,
+            pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+        ),
+    ] = None
     """
     hostname is the LoadBalancer's DNS name, set by cloud providers whose load
     balancers are addressed by name rather than by IP: the first hostname the Service
-    reports.
+    reports. It must be a lowercase DNS name, without a trailing dot, that is not an IP
+    address.
     """
-    ip: str | None = None
+    ip: Annotated[str | None, Field(max_length=45)] = None
     """
-    ip is the LoadBalancer's IP address: the first IP the Service reports.
+    ip is the LoadBalancer's IP address: the first IP the Service reports. It must be an
+    IPv4 or IPv6 address in canonical form, without a zone; an IPv4-mapped IPv6 address
+    is written as IPv4.
     """
     name: Annotated[str, Field(max_length=63, min_length=1)]
     """
@@ -202,13 +211,13 @@ class CCLClusterConfigStatus(BaseModel):
     The status of each condition is one of True, False, or Unknown.
     """
     load_balancers: Annotated[
-        list[LoadBalancer] | None, Field(alias="loadBalancers")
+        list[LoadBalancer] | None, Field(alias="loadBalancers", max_length=256)
     ] = None
     """
     loadBalancers are the cluster's LoadBalancer Services labelled
     ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-    last observed them. A value carried by more than one Service is left out and
-    reported in the Verified condition.
+    last observed them, at most 256. A value carried by more than one Service is left
+    out and reported in the Verified condition.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """

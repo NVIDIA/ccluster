@@ -14,8 +14,9 @@ import (
 // with apply.
 //
 // CCLClusterConfigStatus defines the observed state of CCLClusterConfig. The
-// control-plane operator also copies it, unchanged, into the status of the CCLInfraPlane
-// that registers the cluster.
+// control-plane operator also copies it into the status of the CCLInfraPlane that
+// registers the cluster, leaving out any LoadBalancer whose address does not match the
+// format below.
 type CCLClusterConfigStatusApplyConfiguration struct {
 	// conditions represent the current state of the infra-plane cluster's
 	// CCLClusterConfig.
@@ -32,8 +33,8 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-	// last observed them. A value carried by more than one Service is left out and
-	// reported in the Verified condition.
+	// last observed them, at most 256. A value carried by more than one Service is left
+	// out and reported in the Verified condition.
 	LoadBalancers []LoadBalancerStatusApplyConfiguration `json:"loadBalancers,omitempty"`
 }
 

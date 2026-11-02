@@ -371,6 +371,34 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 			}))
 	})
 
+	It("reports an IPv6 address in canonical form", func() {
+		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
+			corev1.LoadBalancerIngress{IP: "2001:DB8:0:0::10"})
+		reconcileOnce()
+
+		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
+			{Name: "ingress", IP: "2001:db8::10"},
+		}))
+	})
+
+	DescribeTable("rejects a LoadBalancer address in any other form at admission",
+		func(lb cclusternvidiacomv1alpha1.LoadBalancerStatus) {
+			var config cclusternvidiacomv1alpha1.CCLClusterConfig
+			Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
+			lb.Name = "ingress"
+			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{lb}
+			err := k8sClient.Status().Update(ctx, &config)
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected %+v to be rejected, got %v", lb, err)
+		},
+		Entry("an ip that is not an IP address", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "lb.example.com"}),
+		Entry("an ip that is not canonical", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "2001:DB8::10"}),
+		Entry("an IPv4-mapped IPv6 ip", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "::ffff:192.0.2.10"}),
+		Entry("an ip with a zone", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "fe80::1%eth0"}),
+		Entry("an uppercase hostname", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "LB.example.com"}),
+		Entry("a hostname with a trailing dot", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb.example.com."}),
+		Entry("a hostname that is an IP address", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "192.0.2.10"}),
+	)
+
 	It("reports every labelled LoadBalancer under its label value, sorted by it", func() {
 		service("ssh", corev1.ServiceTypeLoadBalancer, labelled("ssh"),
 			corev1.LoadBalancerIngress{IP: "192.0.2.30"})

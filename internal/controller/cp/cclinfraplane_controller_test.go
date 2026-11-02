@@ -1356,7 +1356,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
 				)
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer)
 				Expect(dnsEndpointExists()).To(BeFalse())
 
 				By("publishing the ingress beside it, still reporting the bad name")
@@ -1369,7 +1369,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}))
 				infraPlane = externalDNSAccepts()
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer)
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(ContainSubstring(`"Bad_Name"`))
 			})
