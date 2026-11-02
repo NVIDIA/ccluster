@@ -360,11 +360,15 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
    make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
    ```
 
-   Enabling it on an installed release does not restart the operator, which watches
-   DNSEndpoints only if their CRD existed when it started. Restart it, or `DNSReady` stays
-   `Pending` until the next `--infraplane-resync-period`, and for good if that is 0:
+   On an installed release, apply the DNSEndpoint CRD first: Helm installs a chart's CRDs
+   only with the release, so the upgrade that enables external-dns does not. Then restart
+   the operator, which watches DNSEndpoints only if their CRD existed when it started;
+   otherwise `DNSReady` stays `Pending` until the next `--infraplane-resync-period`, and
+   for good if that is 0:
 
    ```bash
+   helm show crds charts/cp/chart/charts/external-dns-*.tgz | kubectl apply -f -
+   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
    kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
    ```
 

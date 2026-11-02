@@ -69,9 +69,11 @@ manager:
   ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
   ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
   ## for an external-dns installed elsewhere. The operator watches DNSEndpoints only if
-  ## their CRD exists when it starts, and enabling external-dns on an installed release
-  ## does not restart it: restart it afterwards. Until then a plane's DNSReady moves on
-  ## only with the resync, and never with --infraplane-resync-period=0.
+  ## their CRD exists when it starts. Enabling external-dns on an installed release
+  ## neither installs that CRD, which Helm does only with the release, nor restarts the
+  ## operator: apply the CRD first and restart the operator afterwards. Until then a
+  ## plane's DNSReady moves on only with the resync, and never with
+  ## --infraplane-resync-period=0.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
@@ -324,7 +326,8 @@ argo-cd:
 ##   - `sources` is the DNSEndpoint CRD alone, so no Service or Ingress is published;
 ##   - `txtOwnerId` limits deletions to the records it created itself.
 ## The DNSEndpoint CRD comes with this chart and is shared with any other external-dns:
-## Helm installs it only if it is missing, and never upgrades or deletes it.
+## Helm installs it only with the release, and only if it is missing, and never upgrades
+## or deletes it.
 ##
 ## The provider, the zones it may write and its credentials are the user's to set, for
 ## instance for Route53 with IRSA:
