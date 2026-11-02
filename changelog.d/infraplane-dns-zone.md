@@ -21,3 +21,7 @@
   `oidc-discovery.<domain>` to `oidc-discovery.ingress.<domain>`, under the ingress's
   wildcard record. The old URL stops resolving to it, so anything configured with it,
   such as an AWS IAM OIDC provider for SPIRE JWTs, must be updated to the new URL.
+- **Breaking:** The `inference_deployment` and `dynamo_deployment` Ingress host moves from
+  `<name>.<namespace>.<domain>` to `<name>.ingress.<domain>`, under the ingress's wildcard
+  record; `domain` is now the plane's domain. The namespace is no longer part of the host,
+  so two deployments with the same name on one plane claim the same host.

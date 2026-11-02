@@ -285,9 +285,12 @@ therefore retried every minute, and a written one is reconciled again every
 `ccluster.nvidia.com/loadbalancer` label value (§3a), which the operator copies without
 treating any value specially (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
 chose `ingress`, so `*.ingress.<domain>` is the cluster's ingress and an Ingress host such
-as `oidc-discovery.ingress.<domain>` resolves to it. Naming the record after the label,
-rather than claiming all of `*.<domain>` for one LoadBalancer, lets any chart expose
-another under its own name with no operator change. The work is split three ways:
+as `oidc-discovery.ingress.<domain>` resolves to it. The `inference_deployment` and
+`dynamo_deployment` charts, given the plane's domain, put their Ingress at
+`<name>.ingress.<domain>`. The host leaves out the namespace, so deployments on one plane
+need distinct names; nothing yet enforces it. Naming the record after the label, rather
+than claiming all of `*.<domain>` for one LoadBalancer, lets any chart expose another under
+its own name with no operator change. The work is split three ways:
 
 | Step | Done by |
 | --- | --- |

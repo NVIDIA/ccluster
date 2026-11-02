@@ -39,7 +39,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: {{ default (printf "%s.%s.%s" .Values.name .Release.Namespace .Values.domain) .Values.deploymentUrl }}
+    - host: {{ default (printf "%s.ingress.%s" .Values.name .Values.domain) .Values.deploymentUrl }}
       http:
         paths:
           - backend:
@@ -52,5 +52,5 @@ spec:
             pathType: ImplementationSpecific
   tls:
     - hosts:
-        - {{ default (printf "%s.%s.%s" .Values.name .Release.Namespace .Values.domain) .Values.deploymentUrl }}
+        - {{ default (printf "%s.ingress.%s" .Values.name .Values.domain) .Values.deploymentUrl }}
       secretName: {{ .Values.name }}-tls
