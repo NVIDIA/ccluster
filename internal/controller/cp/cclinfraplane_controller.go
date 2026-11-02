@@ -131,7 +131,11 @@ type CCLInfraPlaneReconciler struct {
 //
 // The operator then writes a DNSEndpoint pointing "*.<name>.<domain>" at each labelled
 // LoadBalancer in that copy, for external-dns to publish. That is reported as the
-// DNSReady condition. Every condition and the copy are written in one status patch.
+// DNSReady condition. A pass that gets this far writes every condition, and the copy
+// when it took one, in one status patch. A plane that is not Available stops before
+// the CCLClusterConfig and the DNSEndpoint: ClusterConfigApplied and DNSReady turn
+// Unknown and the copy and the records stay as they were. An error that is retried
+// writes no status.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.

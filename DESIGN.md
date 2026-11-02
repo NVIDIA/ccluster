@@ -371,6 +371,10 @@ watch exists only if external-dns's CRD did when the operator started (§7), so 
 installing external-dns the operator is restarted; otherwise `Pending` turns `Published`
 only on a later resync, and never with `--infraplane-resync-period=0`.
 
+An error that is retried with backoff, such as a failed read of the credentials Secret or
+write of the mirror or the AppProject, writes no status, so the conditions keep what they
+last said until a retry succeeds.
+
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
 ```yaml
