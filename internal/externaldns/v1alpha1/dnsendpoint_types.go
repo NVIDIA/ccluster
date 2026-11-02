@@ -67,7 +67,3 @@ type DNSEndpointList struct {
 
 	Items []DNSEndpoint `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&DNSEndpoint{}, &DNSEndpointList{})
-}
