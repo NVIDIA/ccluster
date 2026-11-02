@@ -1262,6 +1262,45 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
 			})
 
+			It("should keep the records but report DNSReady Unknown, with its reason, while the plane is unavailable", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				infraPlane := externalDNSAccepts()
+				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
+				published := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady).Message
+
+				By("deleting the credentials Secret")
+				source := &corev1.Secret{}
+				Expect(k8sClient.Get(ctx, secretNamespacedName, source)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, source)).To(Succeed())
+				infraPlane = reconcileAndGet()
+
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveLen(1), "the records were withdrawn")
+
+				By("noting it once across reconciles")
+				infraPlane = reconcileAndGet()
+				condition = apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
+
+				By("reporting Published again once the Secret is back")
+				createSecret(credentials)
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
+			})
+
+			It("should leave DNSReady unset when the plane is unavailable from the start", func() {
+				Expect(k8sClient.Delete(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+				})).To(Succeed())
+				infraPlane := settle()
+
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+				Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)).To(BeNil())
+			})
+
 			It("should point the wildcard record at the ingress hostname with a CNAME", func() {
 				settle()
 

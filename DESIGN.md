@@ -362,7 +362,10 @@ records are still written), `DNSEndpointCRDMissing` (external-dns is not install
 `DNSEndpointConflict` (the name is another plane's), or `Unknown/DNSEndpointError` (writing
 or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
 same status patch, a `DNSEndpointError` too, so that it does not hold back the other
-conditions or the copy; the error is then returned and retried with backoff.
+conditions or the copy; the error is then returned and retried with backoff. While
+`Available` is `False` the `DNSEndpoint` is neither updated nor withdrawn, so its records
+stay published, and `DNSReady` turns `Unknown` with the reason it had, its message noting
+that the records are kept but not updated.
 `DNSEndpointCRDMissing` waits for the resync; the rest wait for a watch. The `DNSEndpoint`
 watch exists only if external-dns's CRD did when the operator started (§7), so after
 installing external-dns the operator is restarted; otherwise `Pending` turns `Published`

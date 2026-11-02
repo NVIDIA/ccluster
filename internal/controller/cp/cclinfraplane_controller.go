@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -353,26 +354,46 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
+// dnsNotUpdatedMessage starts the DNSReady message while Available is False, ahead of
+// the message the condition had before.
+const dnsNotUpdatedMessage = "the DNSEndpoint is kept but not updated while Available is " +
+	"False; see Available. Last reported: "
+
 // setUnavailable sets the Available condition, which reports on the mirrored cluster
 // Secret, to False. ClusterConfigApplied becomes Unknown: the CCLClusterConfig is not
 // written while the plane is unavailable, so whatever the condition last said is no
-// longer being kept true.
+// longer being kept true. DNSReady, once set, becomes Unknown for the same reason: the
+// DNSEndpoint is neither updated nor withdrawn, so its records stay published as they
+// were. It keeps its reason and message, after a note that says so.
 func (r *CCLInfraPlaneReconciler) setUnavailable(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	reason, message string,
 ) error {
-	return r.patchStatus(ctx, infraPlane, nil, metav1.Condition{
+	conditions := []metav1.Condition{{
 		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
 		Message: message,
-	}, metav1.Condition{
+	}, {
 		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
 		Status:  metav1.ConditionUnknown,
 		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable,
 		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
-	})
+	}}
+	if dnsReady := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady); dnsReady != nil {
+		dnsMessage := dnsReady.Message
+		if !strings.HasPrefix(dnsMessage, dnsNotUpdatedMessage) {
+			dnsMessage = dnsNotUpdatedMessage + dnsMessage
+		}
+		conditions = append(conditions, metav1.Condition{
+			Type:    conditionTypeDNSReady,
+			Status:  metav1.ConditionUnknown,
+			Reason:  dnsReady.Reason,
+			Message: dnsMessage,
+		})
+	}
+	return r.patchStatus(ctx, infraPlane, nil, conditions...)
 }
 
 // patchStatus sets conditions, each stamped with the current generation, the observed
