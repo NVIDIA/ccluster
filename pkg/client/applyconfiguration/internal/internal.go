@@ -155,7 +155,31 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         map:
           fields:
-          - name: componentSyncs
+          - name: componentHealthStatuses
+            type:
+              list:
+                elementType:
+                  map:
+                    fields:
+                    - name: health
+                      type:
+                        scalar: string
+                    - name: lastTransitionTime
+                      type:
+                        scalar: untyped
+                    - name: message
+                      type:
+                        scalar: string
+                    - name: name
+                      type:
+                        scalar: string
+                    - name: reason
+                      type:
+                        scalar: string
+                elementRelationship: associative
+                keys:
+                - name
+          - name: componentSyncStatuses
             type:
               list:
                 elementType:
@@ -164,9 +188,6 @@ var schemaYAML = typed.YAMLObject(`types:
                     - name: comparedToMatchesSpec
                       type:
                         scalar: boolean
-                    - name: health
-                      type:
-                        scalar: string
                     - name: message
                       type:
                         scalar: string

@@ -28,13 +28,24 @@ type CCLComponentSetStatusApplyConfiguration struct {
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// observedGeneration is the .metadata.generation of the spec the operator last
-	// reconciled. componentSyncs always describes this generation. A condition can be
-	// older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
-	// pass that fails validation.
+	// reconciled. componentSyncStatuses always describes this generation;
+	// componentHealthStatuses does not, because health is not a property of a spec. A
+	// condition can be older, as its own observedGeneration says: ComponentsApplied is
+	// not rewritten on a pass that fails validation.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
-	// componentSyncs reports the latest observed Application state for each released
-	// component, judged against the spec at status.observedGeneration.
-	ComponentSyncs []ComponentSyncStatusApplyConfiguration `json:"componentSyncs,omitempty"`
+	// componentSyncStatuses reports the latest observed Application state for each
+	// released component, judged against the spec at status.observedGeneration.
+	ComponentSyncStatuses []ComponentSyncStatusApplyConfiguration `json:"componentSyncStatuses,omitempty"`
+	// componentHealthStatuses reports the health of each released component's live
+	// objects, as its chart judges it from what Argo CD reports, such as a Job that
+	// succeeded or a Pod in CrashLoopBackOff.
+	//
+	// It describes the objects running now, whichever spec they were rendered from.
+	// Whether they are the current spec's is the same component's entry in
+	// componentSyncStatuses; whether the rollout has finished is the Progressing
+	// condition. It is observed periodically as well as on Application changes, so it
+	// can lag the objects by up to a minute.
+	ComponentHealthStatuses []ComponentHealthStatusApplyConfiguration `json:"componentHealthStatuses,omitempty"`
 }
 
 // CCLComponentSetStatusApplyConfiguration constructs a declarative configuration of the CCLComponentSetStatus type for use with
@@ -64,15 +75,28 @@ func (b *CCLComponentSetStatusApplyConfiguration) WithObservedGeneration(value i
 	return b
 }
 
-// WithComponentSyncs adds the given value to the ComponentSyncs field in the declarative configuration
+// WithComponentSyncStatuses adds the given value to the ComponentSyncStatuses field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the ComponentSyncs field.
-func (b *CCLComponentSetStatusApplyConfiguration) WithComponentSyncs(values ...*ComponentSyncStatusApplyConfiguration) *CCLComponentSetStatusApplyConfiguration {
+// If called multiple times, values provided by each call will be appended to the ComponentSyncStatuses field.
+func (b *CCLComponentSetStatusApplyConfiguration) WithComponentSyncStatuses(values ...*ComponentSyncStatusApplyConfiguration) *CCLComponentSetStatusApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
-			panic("nil value passed to WithComponentSyncs")
+			panic("nil value passed to WithComponentSyncStatuses")
 		}
-		b.ComponentSyncs = append(b.ComponentSyncs, *values[i])
+		b.ComponentSyncStatuses = append(b.ComponentSyncStatuses, *values[i])
+	}
+	return b
+}
+
+// WithComponentHealthStatuses adds the given value to the ComponentHealthStatuses field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ComponentHealthStatuses field.
+func (b *CCLComponentSetStatusApplyConfiguration) WithComponentHealthStatuses(values ...*ComponentHealthStatusApplyConfiguration) *CCLComponentSetStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithComponentHealthStatuses")
+		}
+		b.ComponentHealthStatuses = append(b.ComponentHealthStatuses, *values[i])
 	}
 	return b
 }

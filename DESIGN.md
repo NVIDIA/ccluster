@@ -741,8 +741,8 @@ its Service, `--argocd-server-service` in the Argo CD namespace, and does not ve
 server's certificate, which is self-signed unless one is configured. Redirecting that
 Service takes about the access needed to read the token's Secret beside it, so
 verification would add little; TLS still keeps the token off the wire. The operator
-builds the client at startup, without contacting argocd-server, and hands it to the
-component status controller (§7), which reads through it.
+builds the client at startup, without contacting argocd-server. Both cp controllers judge
+component health through it (§7).
 
 ## 5. Ordering: release by withholding
 
@@ -780,8 +780,11 @@ asks for. `status.sync.status`, `status.sync.comparedTo` and `status.health.stat
 written from the output of one comparison, in consecutive statements of one Argo CD
 reconcile. A component is finished when its Application's `spec` is the one
 `applicationSpec()` builds, `status.sync.comparedTo` names that source, destination and
-ignoreDifferences, and the verdict beside them is `Synced` and `Healthy`. It must also have no pending or
+ignoreDifferences, and the verdict beside them is `Synced`. It must also have no pending or
 running operation and no terminal failure attributed to that source and resolved revision.
+Last, the component's health, judged in the same pass by its chart's health function, must
+be `Healthy` or `Succeeded` (§7). Health describes the objects running now; the checks
+before it are what tie those objects to the current spec.
 Argo CD excludes hooks from aggregate health and sync, so a `Healthy`/`Synced` verdict
 can coexist with a running or failed PostSync hook. There is no sync receipt to catch and
 therefore no window in which catching it can be missed: a verdict that does not describe
@@ -830,10 +833,10 @@ Comparison has the following rules:
   resumes the rollout with no CCLComponentSet edit.
 - Judge Applications the operator has never written the same way. There is no state to
   join and no first spec change to wait for.
-- Rebuild `status.componentSyncs` and the `Progressing` condition on every pass, from one
-  list of released Applications, including a pass that fails validation or fails to apply.
-  `componentSyncs` has no generation of its own: `status.observedGeneration`, written in
-  the same patch, says which spec it describes. A report left over from an earlier pass
+- Rebuild `status.componentSyncStatuses` and the `Progressing` condition on every pass, from
+  one list of released Applications, including a pass that fails validation or fails to
+  apply. `componentSyncStatuses` has no generation of its own: `status.observedGeneration`,
+  written in the same patch, says which spec it describes. A report left over from an earlier pass
   would describe a spec that is no longer desired. Leave out an Application whose
   back-reference names another CCLComponentSet: the operator refuses to write it, so its
   state says nothing about this spec. The `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
@@ -933,76 +936,108 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   one, or drift on it, reconciles the plane.
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
-  next one).
-- The component status controller watches `CCLComponentSet` spec changes and the same
+  next one). Its own CCLComponentSet events include status updates; see
+  [component health](#component-health).
+- The component health controller watches `CCLComponentSet` spec changes and the same
   `Application`s.
 
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
-an Application, and those arrive as events. Teardown has a 15s retry of its own. Component
-status also polls, because a Pod failing changes no Application field. The infra-plane
-operator periodically re-verifies the live state it does not write, apart from its
+an Application, or a health report written by the component health controller, and those
+arrive as events. Teardown has a 15s retry of its own. The component health controller
+also polls ([component health](#component-health)). The infra-plane operator periodically re-verifies the live state it does not write, apart from its
 labelled LoadBalancer Services, which it watches (§3a), and the `CCLInfraPlane` controller
 retries a `CCLClusterConfig` it could not write every minute, with a slower resync behind
 its watch (§3).
 
-### Component status
+### Component health
 
-`status.componentStatuses` reports each component in its chart's own terms: a `state` of
-`Pending`, `Starting`, `Running`, `Failing`, `Succeeded`, `Failed` or `Unknown`, a CamelCase
-`reason` such as `CrashLoopBackOff`, a `message`, and `lastObservedTime`.
+`status.componentHealthStatuses` reports each released component's `health`: one of Argo
+CD's `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing` and `Unknown`, or
+`Succeeded` or `Failed` for a component that runs to completion. Each entry also carries a
+CamelCase `reason` such as `CrashLoopBackOff`, a `message`, and `lastTransitionTime`. A
+component without an Application has nothing running and is left out, as it is from
+`componentSyncStatuses`.
 
-| State | Meaning |
-| --- | --- |
-| `Pending` | Waiting on something before it can start: an earlier component, nodes for its Pods, a volume to bind. |
-| `Starting` | Making progress towards running: syncing, pulling images, initializing. |
-| `Running` | Up and healthy. |
-| `Failing` | Unhealthy but able to recover, such as a container in CrashLoopBackOff. |
-| `Succeeded` / `Failed` | A run-to-completion component has finished. |
-| `Unknown` | The state could not be determined. |
+Health describes the objects running now, whichever spec rendered them, so it has no
+generation. Whether they are the current spec's is the component's sync entry; whether the
+rollout has finished is `Progressing`.
 
-A chart decides its own state, the same way the other per-chart registries work. A chart
-package may export a `Status` function beside `New`.
-`internal/registry/status_registry` owns its signature,
+Argo CD's aggregate health alone falls short in three ways:
+- **Pods.** It looks only at the rendered objects. A crash-looping Pod leaves its
+  Deployment `Progressing`, without a reason, until the progress deadline (600s by default).
+- **Kinds without a health check.** It skips them, so a failing DynamoGraphDeployment does
+  not count.
+- **Meaning.** A running Job is `Progressing`, which would hold everything after it.
+
+The resource tree carries each object's health, Pods included. It comes from the same Argo
+CD function as the aggregate, so the tree alone corrects none of an object's verdicts. A
+chart's health function does.
+
+A chart package may export a `Health` function beside `New`.
+`internal/registry/health_registry` owns its signature,
 
 ```go
-type StatusFunc func(entry v1alpha1.ComponentEntry, observed catalogs.ObservedResources) catalogs.Status
+type HealthFunc func(ctx context.Context, entry v1alpha1.ComponentEntry, observed catalogs.Observation) catalogs.Health
 ```
 
-and registers one per chart in `statusregistry.Get()`. `TestGet` holds it to `components.All`.
-Every chart starts on `unknownStatus`, which reports `Unknown/StatusNotImplemented`
-without looking.
+and registers one per chart in `healthregistry.Get()`. `TestGet` holds it to
+`components.All`. A chart without a function of its own registers `catalogs.DefaultHealth`:
+- It starts from the aggregate.
+- A Pod Argo CD reports `Degraded`, other than a Job's, makes the component `Degraded`.
+- The first Pod that is not running explains a `Progressing` component, such as
+  `Unschedulable` with the scheduler's message.
+- A Pod whose owner Argo CD reports `Healthy` does neither. A ReplicaSet keeps an evicted
+  Pod until garbage collection, and Argo CD reports that Pod `Degraded`.
 
-A status function is pure. `ComponentStatusReconciler`
-(`internal/controller/cp/componentstatus_controller.go`) does every read beforehand. It
-reads the Application's resource tree through argocd-server (§4), then each node's live
-manifest and events, and hands the result over as `catalogs.ObservedResources`. That is a
-plain value built from Kubernetes types only, so the catalog imports nothing from Argo CD.
-Rendered objects and their children, such as Pods, are both observed. A node that has
-gone since the tree was cached keeps its place with a nil manifest. Any other failed read
-fails the observation, so a chart is never handed a partial one.
+Three charts have their own:
+- **`job_deployment`:** `Healthy` while a Pod runs, `Succeeded` or `Failed` once the Job
+  finishes. A failed Pod the Job retries is not a failed job.
+- **`dynamo_deployment`:** also reads the DynamoGraphDeployment's `status.state` and
+  `Ready` condition. The worse of that and the default wins.
+- **`compute_deployment`:** names the wait for the SSH Service's load balancer address
+  `LoadBalancerPending`.
 
-Two states come from the controller rather than the chart, because they are the rollout's
-own:
-- **`Pending/NotReleased`:** a component whose Application is still withheld.
-- **`Starting/AwaitingComparison`:** a component whose Application Argo CD has not yet
-  compared against the spec the operator wrote. This is the same `comparedToMatchesSpec`
-  test the rollout uses.
+A health function must keep judging what the previous catalog revision renders, because
+the operator can see an Application deployed from it.
 
-If a component can't be observed, it is `Unknown/StatusUnavailable` with the error, for
-example when argocd-server is down, the token is missing or the tree isn't cached yet.
-A function that panics or returns a state the CRD refuses also gives `Unknown`, with
-`StatusPanicked` or `InvalidStatus`. Components are observed concurrently, each under a
-30-second deadline.
+`catalogs.Observation` carries the aggregate, the tree and a reader. The tree is the only
+read on every judgement, and argocd-server serves it from the application controller's
+cache. A function reads a live object, or its events, through `observed.Reader` only for an
+object the tree singles out, because each such read is a request to the infra-plane
+cluster:
+- The default reads one Pod: its `PodScheduled` condition, or how a container last exited,
+  which is where `OOMKilled` shows. It reads that Pod's events only when the Pod says
+  neither, such as `FailedMount` for one stuck in `ContainerCreating`.
+- `job_deployment` reads a failed Job for the reason Kubernetes gave up.
+- `dynamo_deployment` reads its graph.
 
-It is a separate controller from the rollout, so slow reads, or argocd-server being
-unavailable, never hold up a release. It writes only `status.componentStatuses`, with a
-merge patch.
+The reads of one component run under a 10-second deadline, which `ctx` carries. When the
+tree cannot be read, because argocd-server is down, the token is missing or the tree isn't
+cached yet, health is Argo CD's aggregate with reason `ResourceTreeUnavailable`. A function
+that panics, or reports a health the CRD refuses, also falls back to the aggregate, with
+`HealthFuncPanicked` or `InvalidHealth`. A component is never judged worse than Argo CD judges it because the
+operator could not do better.
 
-Its inputs are not watchable, so it polls: every 30 seconds while any component is
-`Pending`, `Starting`, `Failing` or `Unknown`, and every five minutes once all are
-`Running`, `Succeeded` or `Failed`. It also runs on spec changes and Application events.
-Its own status writes, and the rollout controller's, are filtered out by
-`GenerationChangedPredicate`.
+Two controllers judge health, for two purposes:
+- **`ComponentHealthReconciler`** (`componenthealth_controller.go`) reports it. It polls,
+  because a Pod failing changes no Application field: every 30 seconds while any component
+  is not `Healthy`, `Succeeded` or `Failed`, and every minute once all are. It also runs on
+  spec changes and Application events; `GenerationChangedPredicate` filters out status
+  writes. It is the only writer of `componentHealthStatuses`. It patches only that field,
+  only when a health, reason or message has changed, and moves `lastTransitionTime` only
+  with health, so polling alone writes nothing.
+- **`CCLComponentSetReconciler`** gates on it. `finished` (§5) judges, in the same pass,
+  each released component Argo CD has synced. It never reads `componentHealthStatuses`
+  back: what the other controller last wrote may predate the Applications this pass read.
+
+Both get the same argocd-server client and health registry, and judge through the same
+`judgeAll`, so the health reported is the health the rollout gates on.
+
+The rollout does not poll. A change in health that changes no Application field, such as a
+Job starting to run, reaches it as the CCLComponentSet update `ComponentHealthReconciler`
+writes. That is why the rollout's `For` has no predicate, and must keep none. The two write
+disjoint fields. The rollout's patch carries a resource version, so a health write in
+between makes it requeue and recompute rather than overwrite.
 
 Every Application status write, Argo CD's periodic refresh included, reconciles its
 CCLComponentSet, so that controller's load grows with the number of Applications. A pass
@@ -1050,12 +1085,11 @@ runs one worker (§3).
   name; a Service not labelled, such as a compute deployment's SSH Service, gets none, and
   nothing answers for `<domain>` itself or for names directly under it. Turning DNS off
   leaves the `DNSEndpoint`s, and so the records, behind.
-- **Per-chart status functions.** Every chart is registered with `unknownStatus`, so every
-  released component reports `Unknown/StatusNotImplemented` once Argo CD has compared it
-  (§7). The pod-level states the platform derives today, such as Pulling,
-  CrashLoopBackOff, OOMKilled and ScaledToZero, still have to be written per chart. So do
-  Job completion, Rollout phase, DynamoGraphDeployment state and PVC binding. No status
-  is aggregated across components either.
+- **More health functions.** Every chart but `job_deployment`, `dynamo_deployment` and
+  `compute_deployment` is judged by `catalogs.DefaultHealth` (§7). Not judged yet: an Argo
+  Rollouts canary's phase, image pulls in progress, scale to zero, and a PVC of a
+  `WaitForFirstConsumer` class, which stays `Progressing` until a workload mounts it and
+  would hold anything after it in the same set. No health is aggregated across components.
 - **Test coverage.** `internal/controller/cp` has substantial envtest suites, but they invoke
   `Reconcile` directly rather than running the controllers in the test manager, so the
   watches and map functions are exercised only as plain functions. `test/e2e` splits into a

@@ -138,56 +138,61 @@ spec:
           status:
             description: status defines the observed state of CCLComponentSet
             properties:
-              componentStatuses:
+              componentHealthStatuses:
                 description: |-
-                  componentStatuses reports each component's state in its chart's own terms, such
-                  as a Job that succeeded or a Pod in CrashLoopBackOff, as last observed through
-                  Argo CD. It is observed periodically rather than on every change, so it can lag
-                  behind componentSyncs; lastObservedTime says how far.
+                  componentHealthStatuses reports the health of each released component's live
+                  objects, as its chart judges it from what Argo CD reports, such as a Job that
+                  succeeded or a Pod in CrashLoopBackOff.
+
+                  It describes the objects running now, whichever spec they were rendered from.
+                  Whether they are the current spec's is the same component's entry in
+                  componentSyncStatuses; whether the rollout has finished is the Progressing
+                  condition. It is observed periodically as well as on Application changes, so it
+                  can lag the objects by up to a minute.
                 items:
-                  description: ComponentStatus is one component's state, as its chart
-                    reports it.
+                  description: ComponentHealthStatus is one released component's health.
                   properties:
-                    lastObservedTime:
-                      description: lastObservedTime is when the state was last observed.
+                    health:
+                      description: health is the component's health.
+                      enum:
+                      - Healthy
+                      - Progressing
+                      - Degraded
+                      - Suspended
+                      - Missing
+                      - Unknown
+                      - Succeeded
+                      - Failed
+                      type: string
+                    lastTransitionTime:
+                      description: lastTransitionTime is when health last changed.
                       format: date-time
                       type: string
                     message:
-                      description: message is a human-readable explanation of state.
+                      description: message is a human-readable explanation of health.
                       type: string
                     name:
                       description: name identifies the component in spec.components.
                       type: string
                     reason:
                       description: |-
-                        reason is a CamelCase, machine-readable refinement of state, such as
-                        CrashLoopBackOff or ImagePullBackOff.
-                      type: string
-                    state:
-                      description: state is the component's coarse state.
-                      enum:
-                      - Pending
-                      - Starting
-                      - Running
-                      - Failing
-                      - Succeeded
-                      - Failed
-                      - Unknown
+                        reason is a CamelCase, machine-readable refinement of health, such as
+                        CrashLoopBackOff or Unschedulable.
                       type: string
                   required:
-                  - lastObservedTime
+                  - health
+                  - lastTransitionTime
                   - name
-                  - state
-                  title: ComponentStatus
+                  title: ComponentHealthStatus
                   type: object
                 type: array
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
-              componentSyncs:
+              componentSyncStatuses:
                 description: |-
-                  componentSyncs reports the latest observed Application state for each released
-                  component, judged against the spec at status.observedGeneration.
+                  componentSyncStatuses reports the latest observed Application state for each
+                  released component, judged against the spec at status.observedGeneration.
                 items:
                   description: |-
                     ComponentSyncStatus reports the latest observed Application state.
@@ -196,13 +201,9 @@ spec:
                     comparedToMatchesSpec:
                       description: |-
                         comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-                        desired source, destination and ignoreDifferences. While false, health and sync do
-                        not establish convergence on the desired configuration.
+                        desired source, destination and ignoreDifferences. While false, sync does not
+                        establish convergence on the desired configuration.
                       type: boolean
-                    health:
-                      description: health is Argo CD's observed Application health,
-                        empty before its first comparison.
-                      type: string
                     message:
                       description: message is Argo CD's latest operation message,
                         including progress, retries and failures.
@@ -296,9 +297,10 @@ spec:
               observedGeneration:
                 description: |-
                   observedGeneration is the .metadata.generation of the spec the operator last
-                  reconciled. componentSyncs always describes this generation. A condition can be
-                  older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
-                  pass that fails validation.
+                  reconciled. componentSyncStatuses always describes this generation;
+                  componentHealthStatuses does not, because health is not a property of a spec. A
+                  condition can be older, as its own observedGeneration says: ComponentsApplied is
+                  not rewritten on a pass that fails validation.
                 format: int64
                 type: integer
             title: CCLComponentSetStatus

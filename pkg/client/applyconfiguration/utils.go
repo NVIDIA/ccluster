@@ -40,6 +40,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &cclusterv1alpha1.CCLInfraPlaneStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ComponentEntry"):
 		return &cclusterv1alpha1.ComponentEntryApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ComponentHealthStatus"):
+		return &cclusterv1alpha1.ComponentHealthStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ComponentSpec"):
 		return &cclusterv1alpha1.ComponentSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ComponentSyncStatus"):

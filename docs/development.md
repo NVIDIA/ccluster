@@ -35,6 +35,9 @@ Export every condition type and reason a controller reports from the API package
 the status type it belongs to, never as private constants in the controller. Name them
 after their kind, `<Kind>Condition<Type>` and `<Kind>Reason<Reason>`, such as
 `CCLComponentSetConditionProgressing` and `CCLInfraPlaneReasonClusterSecretCreated`.
+The reasons cp itself sets in `status.componentHealthStatuses` follow the same rule as
+`ComponentHealthReason<Reason>`; a chart's health function exports its own reasons from
+its chart package instead.
 Clients match on these values, so changing one is a breaking API change.
 
 Keep leader-election IDs `cp.ccluster.nvidia.com` and `ip.ccluster.nvidia.com` distinct.
@@ -148,16 +151,22 @@ When adding or changing a component:
   which decodes a component's stored values into the chart's `Values` type, leniently,
   and runs its `Validate`. A check the `Values` type cannot express is a `ValidateFunc` of
   the chart's own.
-- Every component is also registered with the cp operator's status registry,
-  `statusregistry.Get()` in `internal/registry/status_registry`, which must cover exactly
-  `components.All` (`TestGet` fails otherwise). Start with `unknownStatus`. To report the
-  component's state, export a `Status` function beside `New` with the
-  `statusregistry.StatusFunc` signature. It is pure: it receives the component's
-  `ComponentEntry` and `catalogs.ObservedResources` (its objects and their children, with
-  live manifests, events and Argo CD's health) and returns a `catalogs.Status`. Use
-  `OfKind` and `ChildrenOf` to find objects, expect a nil `Manifest` for one that has gone,
-  and keep the message short. See
-  [component status](../DESIGN.md#component-status).
+- Every component is also registered with the cp operator's health registry,
+  `healthregistry.Get()` in `internal/registry/health_registry`, which must cover exactly
+  `components.All` (`TestGet` fails otherwise). Start with `catalogs.DefaultHealth`. When
+  Argo CD's health of the chart's objects does not say whether the component works, such
+  as for a kind without a health check or a Job, export a `Health` function beside `New`
+  with the `healthregistry.HealthFunc` signature. It receives a `ctx`, the component's
+  `ComponentEntry` and a `catalogs.Observation`: Argo CD's aggregate health, the resource
+  tree and a reader. Start from `catalogs.DefaultHealth`, use `OfKind`, `ChildrenOf` and
+  `WithHealth` to find objects, and read a live object or its events through
+  `observed.Reader` only for an object the tree singles out. The next component is released
+  only at `Healthy` or `Succeeded`, so report neither for anything a later component cannot
+  rely on. Export each reason the function sets from the chart package as
+  `Reason<Reason>`, such as `computedeployment.ReasonLoadBalancerPending`, so that a
+  chart's reasons change without an API change. Keep judging what the
+  previous catalog revision renders, and keep the message short. See
+  [component health](../DESIGN.md#component-health).
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
@@ -485,8 +494,9 @@ may update the account, such as admin or an SSO user with `role:admin`:
 The same steps recover a bundled installation whose token and initial admin Secret are
 both gone; the hook Job then logs them instead of creating a token.
 
-Until the token exists, every released component reports `Unknown/StatusUnavailable` in
-`status.componentStatuses`; the rollout itself does not need it.
+Until the token exists, every released component reports Argo CD's aggregate health with
+reason `ResourceTreeUnavailable` in `status.componentHealthStatuses`, and the rollout gates
+on that aggregate health, as it would without the operator's own judgement.
 
 ### Updating and removing an installation
 

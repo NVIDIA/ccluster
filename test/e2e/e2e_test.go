@@ -1345,17 +1345,17 @@ type: kubernetes.io/service-account-token
 
 					// The Application lives in crNamespace, outside the Argo CD namespace, so
 					// argocd-server checks the token's applications get rule against
-					// project/namespace/name. argo-rollouts has no status function yet, and
-					// StatusNotImplemented is reported only after the resource tree, live
-					// manifests and events were all read; a refused read reports
-					// StatusUnavailable instead.
-					By("verifying the operator reads the component through argocd-server with its token")
+					// project/namespace/name. A refused tree read still reports a health,
+					// Argo CD's aggregate, but with reason ResourceTreeUnavailable; a read
+					// that succeeds leaves the reason empty for a healthy default chart.
+					By("verifying the operator judges the component through argocd-server with its token")
 					Eventually(func(g Gomega) {
 						out, err := utils.Run(exec.Command("kubectl", "get", "cclcomponentset", componentSetName,
 							"-n", crNamespace, "-o",
-							`jsonpath={.status.componentStatuses[?(@.name=="argo-rollouts")].reason}`))
+							`jsonpath={.status.componentHealthStatuses[?(@.name=="argo-rollouts")].health}`+
+								`/{.status.componentHealthStatuses[?(@.name=="argo-rollouts")].reason}`))
 						g.Expect(err).NotTo(HaveOccurred())
-						g.Expect(strings.TrimSpace(out)).To(Equal("StatusNotImplemented"))
+						g.Expect(strings.TrimSpace(out)).To(Equal("Healthy/"))
 					}, 2*time.Minute).Should(Succeed())
 
 					// Deleted inline, not via DeferCleanup: each CR's finalizer needs the
@@ -1601,6 +1601,17 @@ type: kubernetes.io/service-account-token
 					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
 						To(Equal("RolloutComplete"))
 				}, 8*time.Minute, 2*time.Second).Should(Succeed())
+
+				// job_deployment's own health function reports a finished Job as Succeeded.
+				By("verifying the operator judges the finished job Succeeded")
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "cclcomponentset", componentSetName,
+						"-n", crNamespace, "-o",
+						`jsonpath={.status.componentHealthStatuses[?(@.name=="job")].health}`+
+							`/{.status.componentHealthStatuses[?(@.name=="job")].reason}`))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(out)).To(Equal("Succeeded/Complete"))
+				}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
 				By("verifying nothing deletes the finished Job")
 				out, err := utils.Run(exec.Command("kubectl", "get", "job", jobName,
