@@ -143,7 +143,8 @@ var _ = Describe("Manager", Ordered, func() {
 		// which removes the CCLClusterConfig CRD with it.
 		By("uninstalling the cp chart's CRDs")
 		cmd = exec.Command("kubectl", "delete", "crd", "--ignore-not-found",
-			"cclinfraplanes.ccluster.nvidia.com", "cclcomponentsets.ccluster.nvidia.com")
+			"cclinfraplanes.ccluster.nvidia.com", "cclcomponentsets.ccluster.nvidia.com",
+			"dnsendpoints.externaldns.k8s.io")
 		_, _ = utils.Run(cmd)
 
 		By("removing manager namespace")
@@ -669,6 +670,84 @@ var _ = Describe("Manager", Ordered, func() {
 			})
 		}
 
+		// The suite deploys the cp chart without external-dns, as the quickstart does. This
+		// spec adds it to the installed release the way docs/development.md describes,
+		// with external-dns's in-memory provider so that no cloud credentials are needed,
+		// and covers what envtest cannot: the DNSEndpoint watch the restarted operator
+		// registers, the Role that lets the chart's external-dns read DNSEndpoints in the
+		// release namespace, and external-dns reading the plane's DNSEndpoint reaching
+		// DNSReady through that watch, within watchTimeout and so not by a resync.
+		It("should report DNSReady Published once the chart's external-dns reads the DNSEndpoint", func() {
+			t := targets()[0]
+			planeName := "e2e-dns-" + t.name
+			dnsEndpointName := crNamespace + "-" + planeName
+
+			// Helm installs a chart's crds/ only when the release is installed, so a
+			// dependency enabled on an installed release brings no CRD with it.
+			By("installing the DNSEndpoint CRD from the vendored external-dns chart")
+			charts, err := filepath.Glob("charts/cp/chart/charts/external-dns-*.tgz")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(charts).To(HaveLen(1), "expected one vendored external-dns chart")
+			crd, err := utils.Run(exec.Command("helm", "show", "crds", charts[0]))
+			Expect(err).NotTo(HaveOccurred())
+			apply := exec.Command("kubectl", "apply", "-f", "-")
+			apply.Stdin = strings.NewReader(crd)
+			_, err = utils.Run(apply)
+			Expect(err).NotTo(HaveOccurred(), "Failed to install the DNSEndpoint CRD")
+
+			By("enabling the chart's external-dns with the in-memory provider")
+			values := filepath.Join(GinkgoT().TempDir(), "dns-values.yaml")
+			Expect(os.WriteFile(values, []byte(`external-dns:
+  provider:
+    name: inmemory
+  extraArgs:
+    - --inmemory-zone=e2e.example.com
+  interval: 10s
+`), 0o600)).To(Succeed())
+			_, err = utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
+				"ARGOCD=false", "DNS=true", "HELM_ARGS=-f "+values))
+			Expect(err).NotTo(HaveOccurred(), "Failed to enable external-dns")
+			DeferCleanup(func() {
+				By("removing external-dns and its CRD, and restarting the controller-manager without the watch")
+				_, err := utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
+					"ARGOCD=false"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "crd", "--ignore-not-found",
+					"dnsendpoints.externaldns.k8s.io"))
+				Expect(err).NotTo(HaveOccurred())
+				controllerPodName = restartControllerManager()
+			})
+
+			By("restarting the controller-manager so it picks up the DNSEndpoint watch")
+			controllerPodName = restartControllerManager()
+
+			By("registering the " + t.name + " plane and giving its ingress an address")
+			t.register(planeName)
+			createIngressLoadBalancer(t.cluster, "e2e-dns-ingress", ingressLoadBalancerIP)
+
+			By("writing the plane's wildcard record into a DNSEndpoint in the release namespace")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "dnsendpoint", dnsEndpointName,
+					"-n", namespace, "-o", "jsonpath={.spec.endpoints[*].dnsName} {.spec.endpoints[*].targets[*]}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("*.ingress." + infraPlaneDomain(planeName) + " " + ingressLoadBalancerIP))
+			}, crossClusterTimeout).Should(Succeed())
+
+			By("reporting Published once external-dns has read it")
+			Eventually(func(g Gomega) {
+				g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("Published"),
+					infraPlaneCondition(planeName, conditionDNSReady, "message"))
+				g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "status")).To(Equal("True"))
+			}, watchTimeout).Should(Succeed())
+
+			By("deleting the DNSEndpoint with the CCLInfraPlane")
+			deleteInfraPlane(planeName)
+			out, err := utils.Run(exec.Command("kubectl", "get", "dnsendpoint", dnsEndpointName,
+				"-n", namespace, "--ignore-not-found", "-o", "name"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(out)).To(BeEmpty())
+		})
+
 		// ex-cluster only: the in-cluster plane has no token, and the cp operator writes
 		// it as itself. Swapping a registered plane's token for one with no rights on the
 		// cluster proves the write runs as the Secret's identity, not the operator's -
@@ -861,24 +940,7 @@ type: kubernetes.io/service-account-token
 			// (Ordered), and the e2e cluster is deleted afterwards regardless.
 
 			By("restarting the controller-manager so it picks up the Application and AppProject watches")
-			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
-				"deploy/ccluster-cp-controller-manager"))
-			Expect(err).NotTo(HaveOccurred())
-			_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status",
-				"deploy/ccluster-cp-controller-manager", "--timeout=2m"))
-			Expect(err).NotTo(HaveOccurred())
-
-			By("tracking the restarted pod so AfterEach can still fetch its logs on failure")
-			Eventually(func(g Gomega) {
-				out, err := utils.Run(exec.Command("kubectl", "get", "pods",
-					"-l", "control-plane=controller-manager", "-n", namespace,
-					"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"))
-				g.Expect(err).NotTo(HaveOccurred())
-				podNames := utils.GetNonEmptyLines(out)
-				g.Expect(podNames).To(HaveLen(1))
-				controllerPodName = podNames[0]
-			}, 2*time.Minute).Should(Succeed())
+			controllerPodName = restartControllerManager()
 
 			By("creating an available CCLInfraPlane for the component to target")
 			_, err = utils.Run(exec.Command("kubectl", "create", "secret", "generic",
@@ -1150,24 +1212,7 @@ type: kubernetes.io/service-account-token
 				// only watch their Argo CD kind if the CRD is served at SetupWithManager
 				// time.
 				By("restarting the controller-manager so it picks up the Application and AppProject watches")
-				_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
-					"deploy/ccluster-cp-controller-manager"))
-				Expect(err).NotTo(HaveOccurred())
-				_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status",
-					"deploy/ccluster-cp-controller-manager", "--timeout=2m"))
-				Expect(err).NotTo(HaveOccurred())
-
-				By("tracking the restarted pod so AfterEach can still fetch its logs on failure")
-				Eventually(func(g Gomega) {
-					out, err := utils.Run(exec.Command("kubectl", "get", "pods",
-						"-l", "control-plane=controller-manager", "-n", namespace,
-						"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}"+
-							"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"))
-					g.Expect(err).NotTo(HaveOccurred())
-					podNames := utils.GetNonEmptyLines(out)
-					g.Expect(podNames).To(HaveLen(1))
-					controllerPodName = podNames[0]
-				}, 2*time.Minute).Should(Succeed())
+				controllerPodName = restartControllerManager()
 			})
 
 			// The upgrade above added Argo CD to an existing release, so the argocd-token
@@ -2429,4 +2474,32 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+
+// restartControllerManager restarts the cp operator, waits for the rollout, and returns
+// the new Pod's name for AfterEach to fetch logs from. The operator watches a kind whose
+// CRD is installed later, such as Argo CD's or external-dns's, only after a restart.
+func restartControllerManager() string {
+	GinkgoHelper()
+
+	_, err := utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart",
+		"deploy/ccluster-cp-controller-manager"))
+	Expect(err).NotTo(HaveOccurred())
+	_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status",
+		"deploy/ccluster-cp-controller-manager", "--timeout=2m"))
+	Expect(err).NotTo(HaveOccurred())
+
+	var podName string
+	Eventually(func(g Gomega) {
+		out, err := utils.Run(exec.Command("kubectl", "get", "pods",
+			"-l", "control-plane=controller-manager", "-n", namespace,
+			"-o", "go-template={{ range .items }}{{ if not .metadata.deletionTimestamp }}"+
+				"{{ .metadata.name }}{{ \"\\n\" }}{{ end }}{{ end }}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		podNames := utils.GetNonEmptyLines(out)
+		g.Expect(podNames).To(HaveLen(1))
+		podName = podNames[0]
+	}, 2*time.Minute).Should(Succeed())
+	return podName
 }
