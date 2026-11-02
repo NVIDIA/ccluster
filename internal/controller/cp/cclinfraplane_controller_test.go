@@ -1238,7 +1238,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
 			})
 
-			It("should point the wildcard record at the ingress IP and report when external-dns accepts it", func() {
+			It("should point the wildcard record at the ingress IP and report when external-dns reads it", func() {
 				settle()
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})

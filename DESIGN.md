@@ -324,10 +324,13 @@ such a LoadBalancer gets no record and is reported in `DNSReady`, the rest are p
 - **Teardown.** The finalizer deletes the `DNSEndpoint`, and external-dns, with
   `policy: sync`, withdraws the record. Zones are the user's and stay.
 - **Readiness, and its gap.** external-dns sets a `DNSEndpoint`'s
-  `status.observedGeneration` once it has read it, so `Published` means external-dns has
-  accepted the record. It also does so for a record that falls under none of its zones,
-  which it drops with a debug-level log, so `Published` cannot yet tell that case apart
-  ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
+  `status.observedGeneration` when it reads it, before it calls the provider, so
+  `Published` means only that external-dns has read the current `DNSEndpoint`. A record it
+  then does not write is reported `Published` all the same: one the provider rejects (for
+  example for lack of IAM rights), one under none of its zones or excluded by
+  `--domain-filter`, one whose name a record with another owner ID holds, a CNAME that
+  another plane's A record wins over, or one whose target ends in a dot. external-dns only
+  logs these ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 
 The operator writes the `DNSEndpoint` whether or not external-dns is installed. Without its
 CRD the write fails, which is reported and retried on the resync rather than every minute,
@@ -351,8 +354,8 @@ is computed only once `Available` is true, and both are written in one status pa
 `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
-`DNSReady` — `True/Published` (external-dns has accepted the current `DNSEndpoint`; see
-the gap above), or `False` with `LoadBalancerPending` (the plane reports no LoadBalancer
+`DNSReady` — `True/Published` (external-dns has read the current `DNSEndpoint`, which
+does not mean it wrote the records; see the gap above), or `False` with `LoadBalancerPending` (the plane reports no LoadBalancer
 with an address), `Pending` (external-dns has not read the current `DNSEndpoint` yet),
 `InvalidLoadBalancerName` (a LoadBalancer's name cannot make a record name; the others'
 records are still written), `DNSEndpointCRDMissing` (external-dns is not installed) or
@@ -834,7 +837,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has accepted the `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
@@ -872,7 +875,7 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   Through a raw source fed by `internal/remote`, it also watches each infra-plane cluster's
   `CCLClusterConfig` (§3), which is also how a new LoadBalancer address reaches the
   plane's wildcard records. With external-dns's CRD installed at startup, it watches
-  `DNSEndpoint`s too, mapped back by their annotations, so external-dns accepting
+  `DNSEndpoint`s too, mapped back by their annotations, so external-dns reading
   one, or drift on it, reconciles the plane.
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
@@ -911,8 +914,9 @@ minute, with a slower resync behind its watch (§3).
   condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide, and DNSEndpoints too
   once external-dns is installed.
-- **Unpublishable records.** A record that falls under no zone external-dns manages is
-  reported `Published` all the same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
+- **Unconfirmed records.** `Published` means only that external-dns read the
+  `DNSEndpoint`; a record it then skips or fails to write is reported `Published` all the
+  same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 - **Overlapping domains.** Nothing stops two CCLInfraPlanes from registering the same
   domain. Their `DNSEndpoint`s then claim the same record, and external-dns publishes one
   of them.

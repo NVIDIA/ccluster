@@ -135,21 +135,21 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	case dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation:
 		// No requeue: external-dns writing the DNSEndpoint's status is an event.
 		return condition(metav1.ConditionFalse, reasonDNSPending, fmt.Sprintf(
-			"waiting for external-dns to accept DNSEndpoint %q in namespace %q: %s",
+			"waiting for external-dns to read DNSEndpoint %q in namespace %q: %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
 	case len(invalid) > 0:
 		// No requeue: only relabelling the Service fixes this, which reaches the
 		// CCLClusterConfig watch.
 		return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, fmt.Sprintf(
-			"external-dns accepted DNSEndpoint %q in namespace %q: %s; %s",
+			"external-dns read DNSEndpoint %q in namespace %q: %s; %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records, invalidMessage)), nil
 	}
-	// external-dns accepts a record that matches none of its zones too, and drops it; see
-	// https://github.com/NVIDIA/ccluster/issues/174.
+	// external-dns marks a DNSEndpoint read before it calls the provider, so this does not
+	// say the records were written; see https://github.com/NVIDIA/ccluster/issues/174.
 	return condition(metav1.ConditionTrue, reasonDNSPublished, fmt.Sprintf(
-		"external-dns accepted DNSEndpoint %q in namespace %q: %s; they are published if "+
-			"external-dns manages a zone that %s falls under",
-		dnsEndpoint.Name, dnsEndpoint.Namespace, records, infraPlane.Spec.Domain)), nil
+		"external-dns read DNSEndpoint %q in namespace %q: %s; it reports whether it wrote "+
+			"them only in its logs",
+		dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
 }
 
 // wildcardEndpoints returns a "*.<name>.<domain>" record for each LoadBalancer in
@@ -273,7 +273,7 @@ func (r *CCLInfraPlaneReconciler) deleteDNSEndpoint(
 }
 
 // infraPlanesForDNSEndpoint maps a DNSEndpoint the operator wrote to its CCLInfraPlane, so
-// external-dns accepting it, or drift on it, reconciles the plane.
+// external-dns reading it, or drift on it, reconciles the plane.
 func (r *CCLInfraPlaneReconciler) infraPlanesForDNSEndpoint(_ context.Context, obj client.Object) []reconcile.Request {
 	if obj.GetNamespace() != r.DNSEndpointNamespace {
 		return nil

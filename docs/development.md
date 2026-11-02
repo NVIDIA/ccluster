@@ -395,11 +395,12 @@ zones:
 }
 ```
 
-`DNSReady=True/Published` means external-dns accepted the record, not that it was written:
-a domain that falls under none of external-dns's zones is dropped with only a debug-level
-log line ([#174](https://github.com/NVIDIA/ccluster/issues/174)). If the name does not
-resolve, check external-dns's logs at `--log-level=debug` for `Skipping record`, and its
-`--domain-filter`. One external-dns writes every plane's record with one set of
+`DNSReady=True/Published` means external-dns read the current DNSEndpoint, not that it
+wrote the records: it marks the DNSEndpoint read before it calls the provider, and a record
+it skips or fails to write shows only in its logs
+([#174](https://github.com/NVIDIA/ccluster/issues/174)). If the name does not resolve,
+check external-dns's logs for provider errors such as denied IAM calls, at
+`--log-level=debug` for `Skipping record`, and its `--domain-filter`. One external-dns writes every plane's record with one set of
 credentials; separate credentials per tenant need an external-dns per tenant, each reading
 only its tenant's DNSEndpoints, which the chart does not set up.
 
