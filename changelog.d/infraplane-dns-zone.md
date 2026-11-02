@@ -7,8 +7,9 @@
   DNSEndpoint is withdrawn while none has one and when the plane is deleted. The records
   go into whichever DNS zone the domain falls under, which the user creates and
   delegates: one per plane, or one shared. A new `DNSReady` condition and `DNS` column
-  report on it, `DNSEndpointCRDMissing` while external-dns is not installed and
-  `InvalidLoadBalancerName` for a label value that cannot be a DNS label. The operator's
+  report on it, `DNSEndpointCRDMissing` while external-dns is not installed,
+  `InvalidLoadBalancerName` for a label value that cannot be a DNS label and
+  `DNSEndpointError` when the DNSEndpoint cannot be written. The operator's
   ClusterRole gains `externaldns.k8s.io` `dnsendpoints`.
 - The cp chart gains an optional external-dns dependency (`external-dns.enabled`, off by
   default) that publishes those DNSEndpoints and nothing else: it reads only the release

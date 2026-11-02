@@ -1399,6 +1399,26 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
 			})
 
+			It("should write the rest of the status before returning a DNSEndpoint error", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				By("moving the ingress while DNSEndpoints cannot be written")
+				reconciler.DNSEndpointNamespace = "no-such-namespace"
+				config := getClusterConfig()
+				config.Status.LoadBalancers[0].IP = "192.0.2.20"
+				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "%v", err)
+
+				infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSEndpointError)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+				Expect(infraPlane.Status.ClusterConfig.LoadBalancers[0].IP).To(Equal("192.0.2.20"))
+			})
+
 			It("should report DNSEndpointCRDMissing, leaving the retry to the resync, when external-dns is not installed", func() {
 				settle()
 				watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})

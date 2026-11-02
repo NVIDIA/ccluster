@@ -244,13 +244,14 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if lastClusterConfig == nil {
 		lastClusterConfig = infraPlane.Status.ClusterConfig
 	}
-	dnsReady, err := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return result, r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
+	// A DNS error is written into DNSReady with everything else before it is returned.
+	dnsReady, dnsErr := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
+	err = r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
 		available, clusterConfigApplied, dnsReady)
+	if dnsErr != nil {
+		return ctrl.Result{}, errors.Join(dnsErr, err)
+	}
+	return result, err
 }
 
 // mirrorClusterSecret creates or updates the Argo CD cluster Secret for infraPlane from

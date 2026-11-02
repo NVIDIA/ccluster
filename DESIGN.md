@@ -353,8 +353,11 @@ the gap above), or `False` with `LoadBalancerPending` (the plane reports no Load
 with an address), `Pending` (external-dns has not read the current `DNSEndpoint` yet),
 `InvalidLoadBalancerName` (a LoadBalancer's name cannot make a record name; the others'
 records are still written), `DNSEndpointCRDMissing` (external-dns is not installed) or
-`DNSEndpointConflict` (the name is another plane's). It is written in the same status patch. `DNSEndpointCRDMissing` waits
-for the resync; the rest wait for a watch.
+`DNSEndpointConflict` (the name is another plane's), or `Unknown/DNSEndpointError` (writing
+or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
+same status patch, a `DNSEndpointError` too, so that it does not hold back the other
+conditions or the copy; the error is then returned and retried with backoff.
+`DNSEndpointCRDMissing` waits for the resync; the rest wait for a watch.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 
@@ -828,7 +831,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has accepted the `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has accepted the `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |

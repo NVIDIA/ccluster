@@ -37,6 +37,7 @@ const (
 	reasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
 	reasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
 	reasonDNSEndpointConflict     = "DNSEndpointConflict"
+	reasonDNSEndpointError        = "DNSEndpointError"
 )
 
 // wildcardTTL is the TTL of the wildcard records, short so that resolvers follow a
@@ -58,7 +59,9 @@ func dnsEndpointName(namespace, name string) string {
 // ccluster.nvidia.com/loadbalancer label value, or deletes it while none has an address
 // to point a record at. It returns the DNSReady condition. Only unexpected Kubernetes API errors
 // are returned; everything else is reported in the condition, and none of it needs a
-// requeue of its own.
+// requeue of its own. An error is returned alongside an Unknown condition carrying it, for
+// the caller to write before it returns the error, so that a DNSEndpoint failing to be
+// written does not hold back the rest of the status.
 //
 // Which DNS zone the record lands in is external-dns's choice: the most specific zone it
 // manages that the domain falls under. Creating that zone, and delegating it, is the
@@ -79,6 +82,10 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 			ObservedGeneration: infraPlane.Generation,
 		}
 	}
+	// Unknown rather than False: the records last published may still be in place.
+	failed := func(err error) (metav1.Condition, error) {
+		return condition(metav1.ConditionUnknown, reasonDNSEndpointError, err.Error()), err
+	}
 
 	endpoints, invalid := wildcardEndpoints(infraPlane.Spec.Domain, clusterConfig)
 	invalidMessage := "no record for LoadBalancers whose name cannot be a DNS label: " +
@@ -86,7 +93,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	if len(endpoints) == 0 {
 		// No requeue: the address arrives through the watch on the CCLClusterConfig.
 		if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
-			return metav1.Condition{}, err
+			return failed(err)
 		}
 		if len(invalid) > 0 {
 			return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, invalidMessage), nil
@@ -114,7 +121,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 			"DNSEndpoint %q in namespace %q belongs to another CCLInfraPlane",
 			dnsEndpoint.Name, dnsEndpoint.Namespace)), nil
 	case err != nil:
-		return metav1.Condition{}, err
+		return failed(err)
 	case op != controllerutil.OperationResultNone:
 		log.Info("Applied DNSEndpoint", "dnsEndpoint", dnsEndpoint.Name,
 			"dnsEndpointNamespace", dnsEndpoint.Namespace, "records", describeRecords(endpoints),
