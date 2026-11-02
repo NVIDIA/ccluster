@@ -40,9 +40,11 @@ const (
 	reasonDNSEndpointError        = "DNSEndpointError"
 )
 
-// wildcardTTL is the TTL of the wildcard records, short so that resolvers follow a
-// LoadBalancer whose address changes quickly.
-const wildcardTTL = 60
+// wildcardTTLSeconds is the TTL of the wildcard records, in seconds, short so that
+// resolvers follow a LoadBalancer whose address changes quickly. On Route53, external-dns
+// turns a CNAME to an AWS load balancer into an alias record and replaces its TTL with
+// the alias's own, so it applies there only to A and AAAA records.
+const wildcardTTLSeconds = 60
 
 // errDNSEndpointConflict reports that the DNSEndpoint name is already taken by another
 // CCLInfraPlane, for the same reason as errClusterSecretConflict.
@@ -186,7 +188,7 @@ func wildcardEndpoint(
 	dnsName string,
 	lb cclusternvidiacomv1alpha1.LoadBalancerStatus,
 ) *externaldnsv1alpha1.Endpoint {
-	endpoint := &externaldnsv1alpha1.Endpoint{DNSName: dnsName, RecordTTL: wildcardTTL}
+	endpoint := &externaldnsv1alpha1.Endpoint{DNSName: dnsName, RecordTTL: wildcardTTLSeconds}
 	switch {
 	case lb.IP != "":
 		endpoint.RecordType = "A"

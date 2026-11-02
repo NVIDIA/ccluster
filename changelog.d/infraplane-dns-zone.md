@@ -17,5 +17,7 @@
   its values. `make deploy-cp DNS=true` enables it.
 
 ### Changed
-- The `final_stack` SPIRE OIDC discovery Ingress moves to
-  `oidc-discovery.ingress.<domain>`, under the ingress's wildcard record.
+- **Breaking:** The `final_stack` SPIRE OIDC discovery Ingress moves from
+  `oidc-discovery.<domain>` to `oidc-discovery.ingress.<domain>`, under the ingress's
+  wildcard record. The old URL stops resolving to it, so anything configured with it,
+  such as an AWS IAM OIDC provider for SPIRE JWTs, must be updated to the new URL.
