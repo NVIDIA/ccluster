@@ -360,6 +360,14 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
    make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
    ```
 
+   Enabling it on an installed release does not restart the operator, which watches
+   DNSEndpoints only if their CRD existed when it started. Restart it, or `DNSReady` stays
+   `Pending` until the next `--infraplane-resync-period`, and for good if that is 0:
+
+   ```bash
+   kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
+   ```
+
 The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
 reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
 should then read only that namespace; `make run-cp`, which has no namespace of its own,

@@ -108,12 +108,15 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	dnsEndpoint, op, err := r.applyDNSEndpoint(ctx, infraPlane, endpoints)
 	switch {
 	case apimeta.IsNoMatchError(err):
-		// No requeue of its own: without external-dns this is the steady state, and the
-		// resync notices external-dns being installed.
+		// No requeue of its own: without external-dns this is the steady state. Once it is
+		// installed the resync writes the DNSEndpoint, but the DNSEndpoint watch starts only
+		// with the operator, so external-dns reading it goes unnoticed until the next
+		// resync, or for good with a resync period of 0, unless the operator is restarted.
 		log.Info("DNSEndpoint CRD not installed, skipped DNSEndpoint",
 			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
 		return condition(metav1.ConditionFalse, reasonDNSEndpointCRDMissing,
-			"the DNSEndpoint CRD is not installed; install external-dns with the cp chart"), nil
+			"the DNSEndpoint CRD is not installed; install external-dns with the cp chart, "+
+				"then restart the operator"), nil
 	case errors.Is(err, errDNSEndpointConflict):
 		// No requeue: only an edit elsewhere can resolve this, and the DNSEndpoint watch
 		// picks that up.

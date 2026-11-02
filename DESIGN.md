@@ -363,7 +363,10 @@ records are still written), `DNSEndpointCRDMissing` (external-dns is not install
 or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
 same status patch, a `DNSEndpointError` too, so that it does not hold back the other
 conditions or the copy; the error is then returned and retried with backoff.
-`DNSEndpointCRDMissing` waits for the resync; the rest wait for a watch.
+`DNSEndpointCRDMissing` waits for the resync; the rest wait for a watch. The `DNSEndpoint`
+watch exists only if external-dns's CRD did when the operator started (§7), so after
+installing external-dns the operator is restarted; otherwise `Pending` turns `Published`
+only on a later resync, and never with `--infraplane-resync-period=0`.
 
 ## 3a. `CCLClusterConfig` — verifying an infra-plane cluster from the inside
 

@@ -68,7 +68,10 @@ manager:
   ## such as "*.ingress.<domain>" at its ingress. Nothing is published unless the `external-dns`
   ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
   ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
-  ## for an external-dns installed elsewhere.
+  ## for an external-dns installed elsewhere. The operator watches DNSEndpoints only if
+  ## their CRD exists when it starts, and enabling external-dns on an installed release
+  ## does not restart it: restart it afterwards. Until then a plane's DNSReady moves on
+  ## only with the resync, and never with --infraplane-resync-period=0.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
