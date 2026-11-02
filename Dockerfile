@@ -6,7 +6,7 @@
 # `docker buildx build --platform linux/amd64,linux/arm64` Go cross-compiles natively via
 # TARGETOS/TARGETARCH instead of running once per platform under emulation. Plain
 # `docker build` sets BUILDPLATFORM to the host and is unaffected.
-FROM --platform=$BUILDPLATFORM golang:1.27.2 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 # PKG selects the Go package to build: ./cmd/ccluster-cp-operator,
