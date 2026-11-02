@@ -2,7 +2,7 @@ module github.com/NVIDIA/ccluster
 
 go 1.26.9
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/creack/pty v1.1.24
