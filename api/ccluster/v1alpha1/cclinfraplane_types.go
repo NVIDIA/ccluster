@@ -106,7 +106,3 @@ type CCLInfraPlaneList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []CCLInfraPlane `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&CCLInfraPlane{}, &CCLInfraPlaneList{})
-}

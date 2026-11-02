@@ -16,16 +16,45 @@ import (
 	cclusterv1alpha1 "github.com/NVIDIA/ccluster/pkg/client/listers/ccluster/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // CCLClusterConfigInformer provides access to a shared informer and lister for
-// CCLClusterConfigs.
+// CCLClusterConfigs. Prefer using the type-safe variant (see [TypedCCLClusterConfigInformer]).
 type CCLClusterConfigInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() cclusterv1alpha1.CCLClusterConfigLister
 }
+
+// TypedCCLClusterConfigInformer provides access to a shared informer and lister for
+// CCLClusterConfigs, including the type-safe TypedInformer variant.
+// It is a superset of CCLClusterConfigInformer.
+type TypedCCLClusterConfigInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() CCLClusterConfigIndexInformer
+	Lister() cclusterv1alpha1.CCLClusterConfigLister
+}
+
+// CCLClusterConfigIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type CCLClusterConfigIndexInformer cache.TypedSharedIndexInformer[*apicclusterv1alpha1.CCLClusterConfig]
+
+// CCLClusterConfigHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for CCLClusterConfig.
+type CCLClusterConfigHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apicclusterv1alpha1.CCLClusterConfig]
+
+// CCLClusterConfigDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for CCLClusterConfig.
+type CCLClusterConfigDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apicclusterv1alpha1.CCLClusterConfig]
+
+// CCLClusterConfigFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for CCLClusterConfig.
+type CCLClusterConfigFilteringHandler = cache.TypedFilteringResourceEventHandler[*apicclusterv1alpha1.CCLClusterConfig]
+
+// CCLClusterConfigIndexers is a specialization of [cache.TypedIndexers] for CCLClusterConfig.
+type CCLClusterConfigIndexers = cache.TypedIndexers[*apicclusterv1alpha1.CCLClusterConfig]
+
+// DeletedCCLClusterConfig is a specialization of [cache.DeletedObject] for CCLClusterConfig.
+type DeletedCCLClusterConfig = cache.DeletedObject[*apicclusterv1alpha1.CCLClusterConfig]
 
 type cCLClusterConfigInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -35,55 +64,132 @@ type cCLClusterConfigInformer struct {
 // NewCCLClusterConfigInformer constructs a new informer for CCLClusterConfig type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLClusterConfigInformer]).
 func NewCCLClusterConfigInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCCLClusterConfigInformer(client, resyncPeriod, indexers, nil)
+	return NewCCLClusterConfigInformerWithOptions(client, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedCCLClusterConfigInformer constructs a new informer for CCLClusterConfig type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLClusterConfigInformer(client versioned.Interface, resyncPeriod time.Duration, indexers CCLClusterConfigIndexers) CCLClusterConfigIndexInformer {
+	return NewTypedCCLClusterConfigInformerWithOptions(client, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredCCLClusterConfigInformer constructs a new informer for CCLClusterConfig type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredCCLClusterConfigInformer]).
 func NewFilteredCCLClusterConfigInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedCCLClusterConfigInformerWithOptions(client, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredCCLClusterConfigInformer constructs a new informer for CCLClusterConfig type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredCCLClusterConfigInformer(client versioned.Interface, resyncPeriod time.Duration, indexers CCLClusterConfigIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) CCLClusterConfigIndexInformer {
+	return NewTypedCCLClusterConfigInformerWithOptions(client, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewCCLClusterConfigInformerWithOptions constructs a new informer for CCLClusterConfig type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedCCLClusterConfigInformerWithOptions]).
+func NewCCLClusterConfigInformerWithOptions(client versioned.Interface, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedCCLClusterConfigInformerWithOptions(client, options)
+}
+
+// NewTypedCCLClusterConfigInformerWithOptions constructs a new informer for CCLClusterConfig type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedCCLClusterConfigInformerWithOptions(client versioned.Interface, options internalinterfaces.InformerOptions) CCLClusterConfigIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "ccluster.nvidia.com", Version: "v1alpha1", Resource: "cclclusterconfigs"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLClusterConfig](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLClusterConfigs().List(context.Background(), options)
+				return client.CclusterV1alpha1().CCLClusterConfigs().List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLClusterConfigs().Watch(context.Background(), options)
+				return client.CclusterV1alpha1().CCLClusterConfigs().Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLClusterConfigs().List(ctx, options)
+				return client.CclusterV1alpha1().CCLClusterConfigs().List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.CclusterV1alpha1().CCLClusterConfigs().Watch(ctx, options)
+				return client.CclusterV1alpha1().CCLClusterConfigs().Watch(ctx, opts)
 			},
 		}, client),
 		&apicclusterv1alpha1.CCLClusterConfig{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *cCLClusterConfigInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCCLClusterConfigInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedCCLClusterConfigInformerWithOptions(client, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *cCLClusterConfigInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicclusterv1alpha1.CCLClusterConfig{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *cCLClusterConfigInformer) TypedInformer() CCLClusterConfigIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLClusterConfig](f.factory.InformerFor(&apicclusterv1alpha1.CCLClusterConfig{}, f.defaultInformer))
 }
 
 func (f *cCLClusterConfigInformer) Lister() cclusterv1alpha1.CCLClusterConfigLister {
 	return cclusterv1alpha1.NewCCLClusterConfigLister(f.Informer().GetIndexer())
+}
+
+// ToTypedCCLClusterConfigInformer converts an untyped informer into a TypedCCLClusterConfigInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLClusterConfig. If that is not the case, calling type-safe methods of the returned
+// TypedCCLClusterConfigInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedCCLClusterConfigInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedCCLClusterConfigInformer(informer CCLClusterConfigInformer) TypedCCLClusterConfigInformer {
+	if informer, ok := informer.(TypedCCLClusterConfigInformer); ok {
+		return informer
+	}
+	return &cCLClusterConfigTypedInformerAdapter{informer}
+}
+
+type cCLClusterConfigTypedInformerAdapter struct {
+	CCLClusterConfigInformer
+}
+
+func (a *cCLClusterConfigTypedInformerAdapter) TypedInformer() CCLClusterConfigIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLClusterConfig](a.Informer())
+}
+
+// ToCCLClusterConfigIndexInformer converts an untyped informer into a CCLClusterConfigIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *CCLClusterConfig. If that is not the case, calling type-safe methods of the returned
+// CCLClusterConfigIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a CCLClusterConfigIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToCCLClusterConfigIndexInformer(informer cache.SharedIndexInformer) CCLClusterConfigIndexInformer {
+	if informer, ok := informer.(CCLClusterConfigIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apicclusterv1alpha1.CCLClusterConfig](informer)
 }

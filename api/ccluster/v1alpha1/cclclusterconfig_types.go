@@ -134,7 +134,3 @@ type CCLClusterConfigList struct {
 	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []CCLClusterConfig `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&CCLClusterConfig{}, &CCLClusterConfigList{})
-}

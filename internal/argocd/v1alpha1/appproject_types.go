@@ -65,7 +65,3 @@ type AppProjectList struct {
 
 	Items []AppProject `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&AppProject{}, &AppProjectList{})
-}
