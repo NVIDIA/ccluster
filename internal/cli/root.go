@@ -13,6 +13,8 @@ SPDX-License-Identifier: Apache-2.0
 // cclclient.Client.ApplyInfraPlane on the control plane. Both clusters are reached
 // through kubeconfig contexts, so no credentials are stored by ccluster itself.
 // unregister reverses register on the control plane and leaves the infra plane alone.
+// list and get read the infra planes and component sets on the control plane and print
+// what they report.
 package cli
 
 import (
@@ -50,6 +52,7 @@ func NewRootCommand() *cobra.Command {
 		},
 		Args: cobra.NoArgs,
 	}
-	root.AddCommand(newInitCommand(), newRegisterCommand(), newUnregisterCommand())
+	root.AddCommand(newInitCommand(), newRegisterCommand(), newUnregisterCommand(),
+		newListCommand(), newGetCommand())
 	return root
 }

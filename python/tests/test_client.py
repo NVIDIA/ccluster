@@ -41,13 +41,21 @@ class FakeDynamicClient:
         self.racing = set()  # namespaces another caller creates between get and create
         self.component_set = None
         self.infra_plane = None
+        self.items = {}  # kind -> the objects a list returns, across namespaces
         self.reads = []
         self.resources = SimpleNamespace(
             get=lambda api_version, kind: FakeResource(kind)
         )
 
-    def get(self, resource, name, namespace=None):
+    def get(self, resource, name=None, namespace=None):
         self.reads.append((resource.kind, name, namespace))
+        if name is None:
+            items = [
+                item
+                for item in self.items.get(resource.kind, [])
+                if namespace is None or item["metadata"]["namespace"] == namespace
+            ]
+            return SimpleNamespace(to_dict=lambda: {"items": items})
         if (resource.kind, name) in self.missing:
             raise NotFoundError(
                 SimpleNamespace(status=404, reason="NotFound", body=b"{}", headers={})
@@ -112,6 +120,12 @@ def make_client(fake):
 def test_constructing_reads_and_writes_no_object(fake):
     _, dyn = make_client(fake)
     assert (dyn.reads, dyn.created, dyn.applied) == ([], [], [])
+
+
+def test_an_empty_namespace_is_rejected(fake):
+    # The Kubernetes client would read "" as every namespace.
+    with pytest.raises(ValueError, match="namespace must not be empty"):
+        CCLClient("", api_client=k8s.ApiClient())
 
 
 def test_ensure_namespace_creates_a_missing_namespace(fake):
@@ -345,6 +359,59 @@ def test_get_infraplane_raises_for_a_missing_plane(fake):
 
     with pytest.raises(NotFoundError):
         c.get_infraplane(name="edge-1")
+
+
+def plane(name, namespace):
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {"clusterCredentialsRef": {"name": f"{name}-credentials"}},
+        "status": {"domain": f"{name}.{namespace}.example.com"},
+    }
+
+
+def component_set(name, namespace):
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "components": [
+                {
+                    "name": "keda",
+                    "infraPlaneRef": {"name": "edge-1"},
+                    "chart": "catalogs/cluster_base/keda",
+                    "namespace": "keda",
+                }
+            ]
+        },
+    }
+
+
+def test_list_infraplanes_returns_the_planes_in_the_namespace(fake):
+    c, dyn = make_client(fake)
+    dyn.items[Kind.CCL_INFRA_PLANE] = [plane("edge-1", NS), plane("edge-2", "other")]
+
+    planes = c.list_infraplanes()
+
+    assert [p.metadata.name for p in planes] == ["edge-1"]
+    assert isinstance(planes[0], CCLInfraPlane)
+    assert dyn.reads[-1] == (Kind.CCL_INFRA_PLANE, None, NS)
+
+
+def test_list_component_sets_returns_the_sets_in_the_namespace(fake):
+    c, dyn = make_client(fake)
+    dyn.items[Kind.CCL_COMPONENT_SET] = [component_set("base", NS), component_set("apps", "other")]
+
+    sets = c.list_component_sets()
+
+    assert [s.metadata.name for s in sets] == ["base"]
+    assert isinstance(sets[0], CCLComponentSet)
+    assert dyn.reads[-1] == (Kind.CCL_COMPONENT_SET, None, NS)
+
+
+def test_lists_of_nothing_are_empty(fake):
+    c, _ = make_client(fake)
+
+    assert c.list_infraplanes() == []
+    assert c.list_component_sets() == []
 
 
 def test_apply_component_set_applies_the_set(fake):
