@@ -38,6 +38,12 @@ SPDX-License-Identifier: Apache-2.0
 // operator registers it in its drift registry (internal/registry/drift_registry) and
 // writes the rules into the chart's Argo CD Application.
 //
+// Every chart is also registered in the validator registry
+// (internal/registry/validator_registry), which decodes a component's stored values into
+// the chart's Values type and runs its Validator. It can apply these types to values
+// however they were written, not only to those built through Entry; until the
+// control-plane operator calls it, hand-written CCLComponentSets still bypass them.
+//
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
 // the zero value — and several charts here need to set a flag to false against a chart

@@ -115,7 +115,8 @@ When adding or changing a component:
   the API types or add a separate required-values parameter.
 - Optional scalars are pointers with `omitempty`, so explicit `false` survives marshaling.
   Required fields are non-pointer without `omitempty`. Add `Values.Validate()` when needed;
-  `catalogs.Entry` calls it. Hand-written CRs bypass this validation.
+  `catalogs.Entry` calls it. Hand-written CRs bypass this validation until a caller of
+  the validator registry below checks them.
 - Register the component in `catalogs/components/components.go`, in the list for its
   directory (`NamespaceBase`, `ClusterBase`, `Deployments` or `Resources`); `All`
   concatenates them, `hack/pyschema` and the tests read it, and `TestAllCoversTheTree`
@@ -141,6 +142,12 @@ When adding or changing a component:
   `catalogs.DriftSpec` rules (see `istio`). A rule names a kind and jq paths, not objects:
   narrow it with a jq `select` on something the chart keeps stable whatever its values,
   such as a webhook's entry name.
+- Every component is also registered with the validator registry,
+  `validatorregistry.Get()` in `internal/registry/validator_registry`, which must cover
+  exactly `components.All` (`TestGet` fails otherwise). Register `Values[<chart>.Values]()`,
+  which decodes a component's stored values into the chart's `Values` type, leniently,
+  and runs its `Validate`. A check the `Values` type cannot express is a `ValidateFunc` of
+  the chart's own.
 - Do not render objects that delete themselves, such as a Job with
   `ttlSecondsAfterFinished`: self-heal creates them again. See
   [the generated Application](../DESIGN.md#the-generated-application).
