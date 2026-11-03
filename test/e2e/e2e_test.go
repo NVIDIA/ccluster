@@ -2484,7 +2484,6 @@ type tokenRequest struct {
 	} `json:"status"`
 }
 
-
 // restartControllerManager restarts the cp operator, waits for the rollout, and returns
 // the new Pod's name for AfterEach to fetch logs from. The operator watches a kind whose
 // CRD is installed later, such as Argo CD's or external-dns's, only after a restart.
