@@ -1275,7 +1275,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(k8sClient.Delete(ctx, source)).To(Succeed())
 				infraPlane = reconcileAndGet()
 
-				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSPublished)
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
 				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
@@ -1297,7 +1297,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				})).To(Succeed())
 				infraPlane := settle()
 
-				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, conditionTypeAvailable)).To(BeTrue())
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
 				Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)).To(BeNil())
 			})
 
@@ -1434,7 +1434,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reconcileAndGet()
 
-				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, reasonClusterConfigConflict)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonConflict)
 				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
 			})
 
@@ -1454,7 +1454,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
 				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSEndpointError)
-				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, reasonClusterConfigApplied)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
 				Expect(infraPlane.Status.ClusterConfig.LoadBalancers[0].IP).To(Equal("192.0.2.20"))
 			})
 
