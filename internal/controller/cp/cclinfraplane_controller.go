@@ -78,8 +78,10 @@ type CCLInfraPlaneReconciler struct {
 	// written to, from which external-dns publishes "*.<name>.<domain>" pointing at each
 	// of the plane's labelled LoadBalancers: by default the operator's own, where the cp
 	// chart installs external-dns. CCLInfraPlanes live elsewhere, so this namespace keeps
-	// DNSEndpoints away from tenants. Whoever can write a CCLInfraPlane is still trusted
-	// with its spec.domain, which names the records published for it.
+	// DNSEndpoints away from tenants: a tenant cannot publish an arbitrary name, only the
+	// records the operator writes under its CCLInfraPlane's spec.domain. Whoever can write
+	// a CCLInfraPlane is trusted with that domain, and nothing yet stops it from
+	// overlapping another plane's: https://github.com/NVIDIA/ccluster/issues/159.
 	DNSEndpointNamespace string
 
 	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one
