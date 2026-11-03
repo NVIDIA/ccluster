@@ -682,6 +682,24 @@ var _ = Describe("Manager", Ordered, func() {
 			planeName := "e2e-dns-" + t.name
 			dnsEndpointName := crNamespace + "-" + planeName
 
+			// Registered before anything is installed, so a failure partway through still
+			// removes the CRD and the chart's external-dns before the later specs.
+			//
+			// When the spec fails, this runs after AfterAll in an Ordered container, so the
+			// operator is already undeployed and the make deploy-cp and the restart below
+			// only add errors and time. That is harmless: the e2e cluster is deleted
+			// afterwards, and nothing here has a finalizer that needs the operator.
+			DeferCleanup(func() {
+				By("removing external-dns and its CRD, and restarting the controller-manager without the watch")
+				_, err := utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
+					"ARGOCD=false"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "crd", "--ignore-not-found",
+					"dnsendpoints.externaldns.k8s.io"))
+				Expect(err).NotTo(HaveOccurred())
+				controllerPodName = restartControllerManager()
+			})
+
 			// Helm installs a chart's crds/ only when the release is installed, so a
 			// dependency enabled on an installed release brings no CRD with it.
 			By("installing the DNSEndpoint CRD from the vendored external-dns chart")
@@ -707,16 +725,6 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
 				"ARGOCD=false", "DNS=true", "HELM_ARGS=-f "+values))
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable external-dns")
-			DeferCleanup(func() {
-				By("removing external-dns and its CRD, and restarting the controller-manager without the watch")
-				_, err := utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
-					"ARGOCD=false"))
-				Expect(err).NotTo(HaveOccurred())
-				_, err = utils.Run(exec.Command("kubectl", "delete", "crd", "--ignore-not-found",
-					"dnsendpoints.externaldns.k8s.io"))
-				Expect(err).NotTo(HaveOccurred())
-				controllerPodName = restartControllerManager()
-			})
 
 			By("restarting the controller-manager so it picks up the DNSEndpoint watch")
 			controllerPodName = restartControllerManager()
