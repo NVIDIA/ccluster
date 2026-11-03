@@ -91,14 +91,14 @@ const (
 	CCLInfraPlaneReasonProjectConflict       = "ProjectConflict"
 
 	// ClusterConfigApplied.
-	CCLInfraPlaneReasonClusterConfigApplied      = "Applied"
-	CCLInfraPlaneReasonClusterConfigNotAvailable = "NotAvailable"
-	CCLInfraPlaneReasonClusterConfigCRDMissing   = "CRDMissing"
-	CCLInfraPlaneReasonClusterConfigConflict     = "Conflict"
-	CCLInfraPlaneReasonClusterAccessDenied       = "AccessDenied"
-	CCLInfraPlaneReasonClusterUnreachable        = "ClusterUnreachable"
-	CCLInfraPlaneReasonUnsupportedCredentials    = "UnsupportedCredentials"
-	CCLInfraPlaneReasonInvalidCredentials        = "InvalidCredentials"
+	CCLInfraPlaneReasonApplied                = "Applied"
+	CCLInfraPlaneReasonNotAvailable           = "NotAvailable"
+	CCLInfraPlaneReasonCRDMissing             = "CRDMissing"
+	CCLInfraPlaneReasonConflict               = "Conflict"
+	CCLInfraPlaneReasonAccessDenied           = "AccessDenied"
+	CCLInfraPlaneReasonClusterUnreachable     = "ClusterUnreachable"
+	CCLInfraPlaneReasonUnsupportedCredentials = "UnsupportedCredentials"
+	CCLInfraPlaneReasonInvalidCredentials     = "InvalidCredentials"
 )
 
 // +genclient

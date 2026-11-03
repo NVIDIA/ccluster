@@ -339,7 +339,7 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 	}, metav1.Condition{
 		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
 		Status:  metav1.ConditionUnknown,
-		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigNotAvailable,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable,
 		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
 	})
 }

@@ -69,7 +69,7 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 				"name", cclusternvidiacomv1alpha1.CCLClusterConfigName,
 				"domain", infraPlane.Spec.Domain, "operation", op)
 		}
-		return condition(metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied, fmt.Sprintf(
+		return condition(metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied, fmt.Sprintf(
 				"CCLClusterConfig %q on the infra-plane cluster has domain %q",
 				cclusternvidiacomv1alpha1.CCLClusterConfigName, infraPlane.Spec.Domain)),
 			config.Status.DeepCopy(), ctrl.Result{RequeueAfter: r.ResyncPeriod}
@@ -90,14 +90,14 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 	case errors.Is(err, errClusterConfigConflict):
 		log.Info("Refused to overwrite CCLClusterConfig not created by this CCLInfraPlane",
 			"name", cclusternvidiacomv1alpha1.CCLClusterConfigName, "reason", err.Error())
-		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonConflict, fmt.Sprintf(
 				"%v; delete CCLClusterConfig %q on the infra-plane cluster for this CCLInfraPlane to write its own",
 				err, cclusternvidiacomv1alpha1.CCLClusterConfigName)),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	case apimeta.IsNoMatchError(err):
 		log.Info("CCLClusterConfig CRD not installed on infra-plane cluster, skipped CCLClusterConfig")
-		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigCRDMissing,
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonCRDMissing,
 				"the CCLClusterConfig CRD is not installed on the infra-plane cluster; "+
 					"install the ccluster-ip chart there"),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
@@ -107,7 +107,7 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 		// the credentials Secret is, and re-triggers reconciliation sooner.
 		log.Info("Skipped CCLClusterConfig for credentials the infra-plane cluster refused",
 			"secret", source.Name, "reason", err.Error())
-		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterAccessDenied, err.Error()),
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonAccessDenied, err.Error()),
 			nil, ctrl.Result{RequeueAfter: clusterConfigRetryInterval}
 
 	default:
