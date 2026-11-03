@@ -709,7 +709,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			By("the infra-plane operator writing status, and someone editing the domain")
 			config := getClusterConfig()
 			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+				Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionTrue, Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified,
 			})
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 			config = getClusterConfig()
@@ -720,7 +720,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			restored := getClusterConfig()
 			Expect(restored.Spec.Domain).To(Equal(domain))
-			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, "Verified")).To(BeTrue())
+			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)).To(BeTrue())
 		})
 
 		It("should restore the domain when the infra-plane operator writes status meanwhile", func() {
@@ -743,7 +743,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 						return err
 					}
 					apimeta.SetStatusCondition(&written.Status.Conditions, metav1.Condition{
-						Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+						Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionTrue, Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified,
 					})
 					return c.Status().Update(ctx, written)
 				},
@@ -754,7 +754,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigApplied)
 			restored := getClusterConfig()
 			Expect(restored.Spec.Domain).To(Equal(domain))
-			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, "Verified")).To(BeTrue())
+			Expect(apimeta.IsStatusConditionTrue(restored.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)).To(BeTrue())
 		})
 
 		It("should re-create a CCLClusterConfig deleted from the infra-plane cluster", func() {
@@ -1047,7 +1047,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			config := getClusterConfig()
 			config.Status.ObservedGeneration = config.Generation
 			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type: "Verified", Status: metav1.ConditionFalse, Reason: "ComponentsNotVerified",
+				Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionFalse, Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified,
 				Message: "spire: trust domain mismatch",
 			})
 			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{
@@ -1061,16 +1061,16 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			copied := infraPlane.Status.ClusterConfig
 			Expect(copied).NotTo(BeNil())
 			Expect(copied.ObservedGeneration).To(Equal(config.Generation))
-			verified := apimeta.FindStatusCondition(copied.Conditions, "Verified")
+			verified := apimeta.FindStatusCondition(copied.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 			Expect(verified).NotTo(BeNil())
 			Expect(verified.Status).To(Equal(metav1.ConditionFalse))
-			Expect(verified.Reason).To(Equal("ComponentsNotVerified"))
+			Expect(verified.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified))
 			Expect(verified.Message).To(Equal("spire: trust domain mismatch"))
 			Expect(copied.LoadBalancer("ingress")).To(Equal(
 				&cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"}))
 
 			By("keeping the CCLInfraPlane's own conditions separate")
-			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, "Verified")).To(BeNil())
+			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)).To(BeNil())
 			Expect(apimeta.FindStatusCondition(copied.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeNil())
 		})
 
@@ -1079,7 +1079,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			settle()
 			config := getClusterConfig()
 			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+				Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionTrue, Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified,
 			})
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 			reconcileAndGet()
@@ -1090,16 +1090,16 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(k8sClient.Update(ctx, config)).To(Succeed())
 			config = getClusterConfig()
 			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type: "Verified", Status: metav1.ConditionFalse, Reason: "SomeoneElses",
+				Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionFalse, Reason: "SomeoneElses",
 			})
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 
 			infraPlane := reconcileAndGet()
 
 			expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigConflict)
-			verified := apimeta.FindStatusCondition(infraPlane.Status.ClusterConfig.Conditions, "Verified")
+			verified := apimeta.FindStatusCondition(infraPlane.Status.ClusterConfig.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 			Expect(verified).NotTo(BeNil())
-			Expect(verified.Reason).To(Equal("ComponentsVerified"), "another plane's status was copied")
+			Expect(verified.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified), "another plane's status was copied")
 		})
 
 		It("should stop watching when the credentials Secret goes away", func() {
