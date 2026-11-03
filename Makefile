@@ -248,7 +248,8 @@ build-ip: manifests generate fmt vet ## Build the ccluster-ip-operator binary.
 
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
-	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd)
+	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd) \
+		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP)
 
 .PHONY: run-ip
 run-ip: manifests generate fmt vet ## Run ccluster-ip-operator from your host.
@@ -470,6 +471,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.repository=$(word 1,$(subst :, ,$(IMG_CP))) \
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
+		--set external-dns.enabled=$(DNS) \
 		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
@@ -533,6 +535,10 @@ ARGOCD_NAMESPACE ?=
 COMMA := ,
 # The manager arg deploy-cp adds for the bundled Argo CD.
 ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=ccluster-cp-argocd-server")
+# Set DNS=true to install the chart's external-dns, which publishes each CCLInfraPlane's
+# wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
+# `-f dns-values.yaml` (docs/development.md).
+DNS ?= false
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.
@@ -610,21 +616,25 @@ helm-adopt-crds-cp: ## Hand CRDs installed by `make install` (or the old kustomi
 # list, so the repo must be registered first or it fails with "no repository
 # definition" on a clean machine (notably CI). `dependency update` resolves the URL
 # directly and does not need this, but it also rewrites Chart.lock, which would defeat
-# the point of pinning. The alias is namespaced so it cannot clobber an existing
-# `argo` entry in a developer's Helm config; matching is by URL, not by name.
+# the point of pinning. The aliases are namespaced so they cannot clobber an existing
+# `argo` or `external-dns` entry in a developer's Helm config; matching is by URL, not by
+# name.
 ARGOCD_REPO_NAME ?= ccluster-argo
 ARGOCD_REPO_URL ?= https://argoproj.github.io/argo-helm
+EXTERNAL_DNS_REPO_NAME ?= ccluster-external-dns
+EXTERNAL_DNS_REPO_URL ?= https://kubernetes-sigs.github.io/external-dns/
 
 .PHONY: helm-repos-cp
 helm-repos-cp: helm ## Register the chart repositories the cp chart's dependencies come from.
 	"$(HELM)" repo add $(ARGOCD_REPO_NAME) $(ARGOCD_REPO_URL) --force-update
+	"$(HELM)" repo add $(EXTERNAL_DNS_REPO_NAME) $(EXTERNAL_DNS_REPO_URL) --force-update
 
 .PHONY: helm-deps-cp
-helm-deps-cp: helm-repos-cp ## Vendor the cp chart's dependencies (Argo CD) exactly as pinned in Chart.lock.
+helm-deps-cp: helm-repos-cp ## Vendor the cp chart's dependencies (Argo CD, external-dns) exactly as pinned in Chart.lock.
 	"$(HELM)" dependency build $(CHART_CP)
 
 .PHONY: helm-deps-update-cp
-helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and refresh Chart.lock. Use when bumping the Argo CD version.
+helm-deps-update-cp: helm-repos-cp ## Re-resolve the cp chart's dependencies and refresh Chart.lock. Use when bumping a dependency's version.
 	"$(HELM)" dependency update $(CHART_CP)
 
 .PHONY: helm-lint

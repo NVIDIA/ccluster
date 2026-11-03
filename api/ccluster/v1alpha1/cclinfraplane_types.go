@@ -32,8 +32,12 @@ type CCLInfraPlaneSpec struct {
 
 	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
 	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-	// verifies the cluster against. It must be a lowercase DNS name of at least two labels,
-	// each at most 63 characters, and it cannot be changed once set.
+	// verifies the cluster against. When the operator publishes DNS, "*.<name>.<domain>"
+	// points at each of the cluster's LoadBalancers labelled
+	// ccluster.nvidia.com/loadbalancer: <name>, such as "*.ingress.<domain>" at its
+	// ingress, in whichever DNS zone the domain falls under. It must be a lowercase DNS
+	// name of at least two labels, each at most 63 characters, and it cannot be changed
+	// once set.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -52,6 +56,11 @@ type CCLInfraPlaneStatus struct {
 	//     Secret has been mirrored into the Argo CD namespace.
 	//   - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	//     cluster carries this CCLInfraPlane's domain.
+	//   - "DNSReady": external-dns has read the current records pointing
+	//     "*.<name>.<domain>" at each of the cluster's labelled LoadBalancers, and every
+	//     label value is a DNS label. external-dns marks the records read before it
+	//     writes them, so True does not mean they were published: the provider may
+	//     reject them, or external-dns may skip them.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -80,6 +89,9 @@ const (
 	// CCLInfraPlaneConditionClusterConfigApplied reports on the CCLClusterConfig
 	// singleton the operator writes into the infra-plane cluster.
 	CCLInfraPlaneConditionClusterConfigApplied = "ClusterConfigApplied"
+	// CCLInfraPlaneConditionDNSReady reports on the DNSEndpoint that has external-dns
+	// publish the plane's wildcard records.
+	CCLInfraPlaneConditionDNSReady = "DNSReady"
 )
 
 // The reasons of the CCLInfraPlane conditions.
@@ -99,6 +111,15 @@ const (
 	CCLInfraPlaneReasonClusterUnreachable     = "ClusterUnreachable"
 	CCLInfraPlaneReasonUnsupportedCredentials = "UnsupportedCredentials"
 	CCLInfraPlaneReasonInvalidCredentials     = "InvalidCredentials"
+
+	// DNSReady.
+	CCLInfraPlaneReasonPublished               = "Published"
+	CCLInfraPlaneReasonPending                 = "Pending"
+	CCLInfraPlaneReasonLoadBalancerPending     = "LoadBalancerPending"
+	CCLInfraPlaneReasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
+	CCLInfraPlaneReasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
+	CCLInfraPlaneReasonDNSEndpointConflict     = "DNSEndpointConflict"
+	CCLInfraPlaneReasonDNSEndpointError        = "DNSEndpointError"
 )
 
 // +genclient
@@ -108,6 +129,7 @@ const (
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
+// +kubebuilder:printcolumn:name="DNS",type=string,JSONPath=`.status.conditions[?(@.type=="DNSReady")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CCLInfraPlane is the Schema for the cclinfraplanes API

@@ -2,7 +2,8 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */ -}}
-{{- $host := printf "oidc-discovery.%s" .Values.global.cluster.domain -}}
+{{- /* Under "*.ingress.<domain>", the record the control plane points at the ingress. */ -}}
+{{- $host := printf "oidc-discovery.ingress.%s" .Values.global.cluster.domain -}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

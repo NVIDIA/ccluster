@@ -28,8 +28,12 @@ type CCLInfraPlaneSpecApplyConfiguration struct {
 	ClusterCredentialsRef *LocalObjectReferenceApplyConfiguration `json:"clusterCredentialsRef,omitempty"`
 	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
 	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-	// verifies the cluster against. It must be a lowercase DNS name of at least two labels,
-	// each at most 63 characters, and it cannot be changed once set.
+	// verifies the cluster against. When the operator publishes DNS, "*.<name>.<domain>"
+	// points at each of the cluster's LoadBalancers labelled
+	// ccluster.nvidia.com/loadbalancer: <name>, such as "*.ingress.<domain>" at its
+	// ingress, in whichever DNS zone the domain falls under. It must be a lowercase DNS
+	// name of at least two labels, each at most 63 characters, and it cannot be changed
+	// once set.
 	Domain *string `json:"domain,omitempty"`
 }
 

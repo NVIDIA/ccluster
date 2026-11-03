@@ -5,8 +5,9 @@
   It watches those Services, so a newly assigned address shows at once. Two Services with
   the same name are left out and reported as `Verified=False/LoadBalancerConflict`. The cp
   operator copies the list into `CCLInfraPlane.status.clusterConfig`. The label's value
-  is the chart's choice; neither operator gives any value a meaning. The ip operator's
-  ClusterRole gains read access to Services.
+  is the chart's choice and becomes the plane's subdomain, `*.<name>.<domain>`, so it has
+  to be a DNS label and unique on the cluster. The ip operator's ClusterRole gains read
+  access to Services.
 
 ### Changed
 - **Breaking:** `catalogs/cluster_base/ingress_nginx` now creates the controller Service,

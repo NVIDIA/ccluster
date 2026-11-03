@@ -5,5 +5,8 @@ dependencies:
 - name: argocd-token
   repository: file://../argocd-token
   version: 0.0.0-dev
-digest: sha256:6d24cabf158a8d894198c94f4f416f00b8f500d83eb5408e94a0e52ee82f117c
-generated: "2026-10-20T12:56:47.278539965-04:00"
+- name: external-dns
+  repository: https://kubernetes-sigs.github.io/external-dns/
+  version: 1.19.0
+digest: sha256:9655cbb51ec7a929be5c2a469fbfb38bf1a220f6f09d2ad8c06c418b30368f12
+generated: "2026-10-26T16:00:23.55263-04:00"

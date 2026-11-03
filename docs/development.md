@@ -335,6 +335,94 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 `ccluster_remote_watches` metric counts active watches. `--infraplane-resync-period`
 (default 5m) is a safety net behind the watch; failed writes are retried every minute.
 
+### DNS and external-dns
+
+The operator always writes a DNSEndpoint per CCLInfraPlane; without
+external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
+`*.<name>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
+`ccluster.nvidia.com/loadbalancer: <name>` (`*.ingress.<domain>` at its ingress; DESIGN.md §3):
+
+1. Create the DNS zones the planes' domains fall under, and delegate them from their
+   parents. One zone can serve several planes (`team-a.example.com` for
+   `gpu-a.team-a.example.com` and `gpu-b.team-a.example.com`), or a plane can have its own
+   (`gpu-a.team-a.example.com`); external-dns writes each record into the most specific
+   zone it manages.
+2. Configure the cp chart's external-dns for your provider. For Route53 with IRSA:
+
+   ```yaml
+   # dns-values.yaml
+   external-dns:
+     provider:
+       name: aws
+     domainFilters:
+       - team-a.example.com
+     serviceAccount:
+       annotations:
+         eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
+   ```
+
+3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`):
+
+   ```bash
+   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
+   ```
+
+   On an installed release, apply the DNSEndpoint CRD first: Helm installs a chart's CRDs
+   only with the release, so the upgrade that enables external-dns does not. Then restart
+   the operator, which watches DNSEndpoints only if their CRD existed when it started;
+   otherwise `DNSReady` stays `Pending` until the next `--infraplane-resync-period`, and
+   for good if that is 0:
+
+   ```bash
+   helm show crds charts/cp/chart/charts/external-dns-*.tgz | kubectl apply -f -
+   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
+   kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
+   ```
+
+The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
+reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
+should then read only that namespace; `make run-cp`, which has no namespace of its own,
+passes the cp chart's (`HELM_NAMESPACE_CP`).
+external-dns's Route53 policy, scoped by name with `team-a.example.com` standing for your
+zones:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["route53:ListHostedZones", "route53:ListTagsForResource", "route53:ListTagsForResources"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ListResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/*",
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.team-a.example.com"]
+        }
+      }
+    }
+  ]
+}
+```
+
+`DNSReady=True/Published` means external-dns read the current DNSEndpoint, not that it
+wrote the records: it marks the DNSEndpoint read before it calls the provider, and a record
+it skips or fails to write shows only in its logs
+([#174](https://github.com/NVIDIA/ccluster/issues/174)). If the name does not resolve,
+check external-dns's logs for provider errors such as denied IAM calls, at
+`--log-level=debug` for `Skipping record`, and its `--domain-filter`. One external-dns writes every plane's record with one set of
+credentials; separate credentials per tenant need an external-dns per tenant, each reading
+only its tenant's DNSEndpoints, which the chart does not set up.
+
 ### Argo CD API token
 
 The operator reads Applications' resource trees, live manifests and events from

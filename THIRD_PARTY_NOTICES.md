@@ -31,6 +31,7 @@ bundles none.
 | --- | --- | --- | --- |
 | argo-cd | 10.4.0 | https://argoproj.github.io/argo-helm | Apache-2.0 |
 | redis-ha (an argo-cd dependency, disabled by default) | 4.38.0 | https://dandydeveloper.github.io/charts/ | Apache-2.0 |
+| external-dns (disabled by default) | 1.19.0 | https://kubernetes-sigs.github.io/external-dns/ | Apache-2.0 |
 
 ## Catalog Helm chart dependencies
 

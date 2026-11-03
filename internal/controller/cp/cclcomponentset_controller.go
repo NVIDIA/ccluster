@@ -16,6 +16,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -422,22 +423,27 @@ func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // argoCDKindInstalled reports whether the API server currently serves the named Argo CD
-// kind. It takes the RESTMapper rather than the manager so the three outcomes below can
-// be tested without standing one up.
+// kind.
 func argoCDKindInstalled(mapper apimeta.RESTMapper, log logr.Logger, kind string) bool {
-	gvk := argocdv1alpha1.GroupVersion.WithKind(kind)
+	return kindInstalled(mapper, log, argocdv1alpha1.GroupVersion.WithKind(kind))
+}
+
+// kindInstalled reports whether the API server currently serves gvk, whose CRD another
+// chart installs. It takes the RESTMapper rather than the manager so the three outcomes
+// below can be tested without standing one up.
+func kindInstalled(mapper apimeta.RESTMapper, log logr.Logger, gvk schema.GroupVersionKind) bool {
 	_, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	switch {
 	case err == nil:
 		return true
 	case apimeta.IsNoMatchError(err):
-		log.Info("Argo CD CRD not installed, not watching its kind; "+
-			"restart the operator after installing Argo CD", "kind", gvk.String())
+		log.Info("CRD not installed, not watching its kind; "+
+			"restart the operator after installing it", "kind", gvk.String())
 		return false
 	default:
 		// Discovery itself failed. Assume the CRD is present rather than silently
 		// dropping the watch for the lifetime of the process.
-		log.Error(err, "Failed to check for an Argo CD CRD, registering the watch anyway",
+		log.Error(err, "Failed to check for a CRD, registering the watch anyway",
 			"kind", gvk.String())
 		return true
 	}

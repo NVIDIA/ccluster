@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
@@ -231,6 +233,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}),
 				RemoteWatches: watches,
 				ResyncPeriod:  resyncPeriod,
+				// The operator's own namespace in production. Specs about DNS move it.
+				DNSEndpointNamespace: argoCDNamespace,
 			}
 
 			By("creating the Argo CD namespace")
@@ -1124,6 +1128,426 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(watches.calls()).To(HaveExactElements("stop " + missing.String()))
 		})
 
+		Context("publishing DNS", func() {
+			const dnsNamespace = "external-dns"
+
+			dnsEndpointKey := types.NamespacedName{Name: mirrorName, Namespace: dnsNamespace}
+
+			BeforeEach(func() {
+				reconciler.DNSEndpointNamespace = dnsNamespace
+
+				err := k8sClient.Create(ctx, &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: dnsNamespace},
+				})
+				if !apierrors.IsAlreadyExists(err) {
+					Expect(err).NotTo(HaveOccurred())
+				}
+				createSecret(credentials)
+			})
+
+			AfterEach(func() {
+				// Runs after the outer AfterEach has finalized the CCLInfraPlanes, so it
+				// only removes what a spec created itself or left to another plane.
+				DeferCleanup(func() {
+					var list externaldnsv1alpha1.DNSEndpointList
+					Expect(k8sClient.List(ctx, &list, client.InNamespace(dnsNamespace))).To(Succeed())
+					for i := range list.Items {
+						Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &list.Items[i]))).To(Succeed())
+					}
+				})
+			})
+
+			// expectDNSReady asserts the DNSReady condition's status and reason, and
+			// that it was computed from the current generation.
+			expectDNSReady := func(
+				infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+				status metav1.ConditionStatus,
+				reason string,
+			) {
+				GinkgoHelper()
+
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition).NotTo(BeNil())
+				Expect(condition.Status).To(Equal(status), condition.Message)
+				Expect(condition.Reason).To(Equal(reason), condition.Message)
+				Expect(condition.ObservedGeneration).To(Equal(infraPlane.Generation))
+			}
+
+			// ingressName is the wildcard record pointing at the ingress LoadBalancer.
+			ingressName := "*.ingress." + domain
+
+			// reportLoadBalancers has the "infra-plane operator" report lbs, replacing
+			// any it reported before, then reconciles as the watch's event would.
+			reportLoadBalancers := func(lbs ...cclusternvidiacomv1alpha1.LoadBalancerStatus) *cclusternvidiacomv1alpha1.CCLInfraPlane {
+				GinkgoHelper()
+
+				config := getClusterConfig()
+				config.Status.LoadBalancers = lbs
+				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+				return reconcileAndGet()
+			}
+
+			// reportIngress reports the ingress LoadBalancer alone, or none if lb is nil.
+			reportIngress := func(lb *cclusternvidiacomv1alpha1.LoadBalancerStatus) *cclusternvidiacomv1alpha1.CCLInfraPlane {
+				GinkgoHelper()
+
+				if lb == nil {
+					return reportLoadBalancers()
+				}
+				lb.Name = "ingress"
+				return reportLoadBalancers(*lb)
+			}
+
+			getDNSEndpoint := func() *externaldnsv1alpha1.DNSEndpoint {
+				GinkgoHelper()
+
+				dnsEndpoint := &externaldnsv1alpha1.DNSEndpoint{}
+				Expect(k8sClient.Get(ctx, dnsEndpointKey, dnsEndpoint)).To(Succeed())
+				return dnsEndpoint
+			}
+
+			dnsEndpointExists := func() bool {
+				GinkgoHelper()
+
+				err := k8sClient.Get(ctx, dnsEndpointKey, &externaldnsv1alpha1.DNSEndpoint{})
+				if apierrors.IsNotFound(err) {
+					return false
+				}
+				Expect(err).NotTo(HaveOccurred())
+				return true
+			}
+
+			// externalDNSAccepts has "external-dns" record that it read the DNSEndpoint's
+			// current generation, then reconciles as the DNSEndpoint watch's event would.
+			externalDNSAccepts := func() *cclusternvidiacomv1alpha1.CCLInfraPlane {
+				GinkgoHelper()
+
+				dnsEndpoint := getDNSEndpoint()
+				dnsEndpoint.Status.ObservedGeneration = dnsEndpoint.Generation
+				Expect(k8sClient.Status().Update(ctx, dnsEndpoint)).To(Succeed())
+				return reconcileAndGet()
+			}
+
+			It("should wait for the ingress LoadBalancer without writing a DNSEndpoint", func() {
+				infraPlane := settle()
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending)
+				Expect(dnsEndpointExists()).To(BeFalse())
+
+				By("waiting for the CCLClusterConfig watch rather than polling")
+				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
+			})
+
+			It("should point the wildcard record at the ingress IP and report when external-dns reads it", func() {
+				settle()
+
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
+				dnsEndpoint := getDNSEndpoint()
+				Expect(dnsEndpoint.Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+				}))
+				Expect(dnsEndpoint.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
+				Expect(dnsEndpoint.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
+				Expect(dnsEndpoint.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
+
+				infraPlane = externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(ContainSubstring(ingressName + " A 192.0.2.10"))
+
+				By("staying Published across reconciles that change nothing")
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+			})
+
+			It("should keep the records but report DNSReady Unknown, with its reason, while the plane is unavailable", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				infraPlane := externalDNSAccepts()
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				published := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady).Message
+
+				By("deleting the credentials Secret")
+				source := &corev1.Secret{}
+				Expect(k8sClient.Get(ctx, secretNamespacedName, source)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, source)).To(Succeed())
+				infraPlane = reconcileAndGet()
+
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveLen(1), "the records were withdrawn")
+
+				By("noting it once across reconciles")
+				infraPlane = reconcileAndGet()
+				condition = apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
+
+				By("reporting Published again once the Secret is back")
+				createSecret(credentials)
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+			})
+
+			It("should leave DNSReady unset when the plane is unavailable from the start", func() {
+				Expect(k8sClient.Delete(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+				})).To(Succeed())
+				infraPlane := settle()
+
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
+				Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)).To(BeNil())
+			})
+
+			It("should point the wildcard record at the ingress hostname with a CNAME", func() {
+				settle()
+
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb-1.elb.example.net"})
+
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "CNAME", Targets: []string{"lb-1.elb.example.net"}, RecordTTL: 60,
+				}))
+			})
+
+			It("should point the wildcard record at an IPv6 ingress address with an AAAA record", func() {
+				settle()
+
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "2001:db8::10"})
+
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "AAAA", Targets: []string{"2001:db8::10"}, RecordTTL: 60,
+				}))
+			})
+
+			It("should point a record named after each LoadBalancer's label at it", func() {
+				settle()
+
+				infraPlane := reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "api", Hostname: "lb-2.elb.example.net"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ssh"},
+				)
+
+				By("leaving out the one with no address yet")
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(
+					externaldnsv1alpha1.Endpoint{
+						DNSName: "*.api." + domain, RecordType: "CNAME", Targets: []string{"lb-2.elb.example.net"}, RecordTTL: 60,
+					},
+					externaldnsv1alpha1.Endpoint{
+						DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+					},
+				))
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
+
+				infraPlane = externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(ContainSubstring(
+					"*.api." + domain + " CNAME lb-2.elb.example.net, " + ingressName + " A 192.0.2.10"))
+			})
+
+			It("should report a LoadBalancer whose name cannot be a DNS label, publishing the rest", func() {
+				settle()
+
+				infraPlane := reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
+				)
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				Expect(dnsEndpointExists()).To(BeFalse())
+
+				By("publishing the ingress beside it, still reporting the bad name")
+				reportLoadBalancers(
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
+					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"},
+				)
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+				}))
+				infraPlane = externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(ContainSubstring(`"Bad_Name"`))
+			})
+
+			It("should report a LoadBalancer whose record name would be too long", func() {
+				long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+					strings.Repeat("c", 63) + "." + strings.Repeat("d", 50) + ".com"
+
+				endpoints, invalid := wildcardEndpoints(long, &cclusternvidiacomv1alpha1.CCLClusterConfigStatus{
+					LoadBalancers: []cclusternvidiacomv1alpha1.LoadBalancerStatus{{Name: "ingress", IP: "192.0.2.10"}},
+				})
+
+				Expect(endpoints).To(BeEmpty())
+				Expect(invalid).To(HaveExactElements(ContainSubstring("longer than 253 characters")))
+			})
+
+			It("should follow a LoadBalancer whose address changes", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				externalDNSAccepts()
+
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.20"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.20"))
+			})
+
+			It("should restore a DNSEndpoint edited by hand", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				dnsEndpoint := getDNSEndpoint()
+				dnsEndpoint.Spec.Endpoints[0].Targets = []string{"198.51.100.1"}
+				Expect(k8sClient.Update(ctx, dnsEndpoint)).To(Succeed())
+				reconcileAndGet()
+
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
+			})
+
+			It("should withdraw the record when the ingress LoadBalancer goes away", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
+
+				infraPlane := reportIngress(nil)
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending)
+				Expect(dnsEndpointExists()).To(BeFalse())
+			})
+
+			It("should keep the record while the CCLClusterConfig can no longer be written", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				By("re-stamping the CCLClusterConfig for another CCLInfraPlane, dropping its LoadBalancer")
+				config := getClusterConfig()
+				config.Annotations[annotationInfraPlaneName] = "other-plane"
+				Expect(k8sClient.Update(ctx, config)).To(Succeed())
+				config = getClusterConfig()
+				config.Status.LoadBalancers = nil
+				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+
+				infraPlane := reconcileAndGet()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonConflict)
+				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.10"))
+			})
+
+			It("should write the rest of the status before returning a DNSEndpoint error", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				By("moving the ingress while DNSEndpoints cannot be written")
+				reconciler.DNSEndpointNamespace = "no-such-namespace"
+				config := getClusterConfig()
+				config.Status.LoadBalancers[0].IP = "192.0.2.20"
+				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "%v", err)
+
+				infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointError)
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
+				Expect(infraPlane.Status.ClusterConfig.LoadBalancers[0].IP).To(Equal("192.0.2.20"))
+			})
+
+			It("should report DNSEndpointCRDMissing, leaving the retry to the resync, when external-dns is not installed", func() {
+				settle()
+				watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+				Expect(err).NotTo(HaveOccurred())
+				noDNSEndpoints := func(obj client.Object) error {
+					if _, ok := obj.(*externaldnsv1alpha1.DNSEndpoint); ok {
+						return &apimeta.NoKindMatchError{GroupKind: externaldnsv1alpha1.GroupVersion.WithKind("DNSEndpoint").GroupKind()}
+					}
+					return nil
+				}
+				reconciler.Client = interceptor.NewClient(watchClient, interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if err := noDNSEndpoints(obj); err != nil {
+							return err
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if err := noDNSEndpoints(obj); err != nil {
+							return err
+						}
+						return c.Create(ctx, obj, opts...)
+					},
+				})
+
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointCRDMissing)
+				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
+
+				By("deleting the plane all the same")
+				deleteAndFinalize(typeNamespacedName)
+			})
+
+			It("should refuse to overwrite a DNSEndpoint owned by another CCLInfraPlane", func() {
+				Expect(k8sClient.Create(ctx, &externaldnsv1alpha1.DNSEndpoint{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: dnsEndpointKey.Name, Namespace: dnsNamespace,
+						Annotations: map[string]string{
+							annotationInfraPlaneName:      "other-plane",
+							annotationInfraPlaneNamespace: "other-namespace",
+						},
+					},
+					Spec: externaldnsv1alpha1.DNSEndpointSpec{Endpoints: []externaldnsv1alpha1.Endpoint{{
+						DNSName: "*.other.example.com", RecordType: "A", Targets: []string{"198.51.100.1"},
+					}}},
+				})).To(Succeed())
+				settle()
+
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointConflict)
+				Expect(getDNSEndpoint().Spec.Endpoints[0].DNSName).To(Equal("*.other.example.com"))
+
+				By("leaving it in place when the CCLInfraPlane is deleted")
+				deleteAndFinalize(typeNamespacedName)
+				Expect(dnsEndpointExists()).To(BeTrue())
+			})
+
+			It("should delete the DNSEndpoint when the CCLInfraPlane is deleted", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
+
+				deleteAndFinalize(typeNamespacedName)
+
+				Expect(dnsEndpointExists()).To(BeFalse())
+				Expect(clusterConfigExists()).To(BeFalse())
+			})
+
+			It("should enqueue the CCLInfraPlane a DNSEndpoint was written for", func() {
+				owned := &externaldnsv1alpha1.DNSEndpoint{ObjectMeta: metav1.ObjectMeta{
+					Name: dnsEndpointKey.Name, Namespace: dnsNamespace,
+					Annotations: map[string]string{
+						annotationInfraPlaneName:      resourceName,
+						annotationInfraPlaneNamespace: namespace,
+					},
+				}}
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, owned)).To(HaveExactElements(
+					reconcile.Request{NamespacedName: typeNamespacedName}))
+
+				By("ignoring one in another namespace, and one without annotations")
+				elsewhere := owned.DeepCopy()
+				elsewhere.Namespace = namespace
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, elsewhere)).To(BeEmpty())
+				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, &externaldnsv1alpha1.DNSEndpoint{
+					ObjectMeta: metav1.ObjectMeta{Name: "unowned", Namespace: dnsNamespace},
+				})).To(BeEmpty())
+			})
+		})
 	})
 })
 

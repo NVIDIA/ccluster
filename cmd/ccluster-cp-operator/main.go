@@ -24,6 +24,7 @@ import (
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 	"github.com/NVIDIA/ccluster/internal/remote"
@@ -58,6 +59,11 @@ var (
 	argoCDTokenSecret   string
 )
 
+// dnsEndpointNamespace is where the DNSEndpoint of each CCLInfraPlane is written. Set by a
+// flag, for the same reason as argoCDNamespace; setupControllers replaces an empty value
+// with the operator's own namespace.
+var dnsEndpointNamespace string
+
 // infraPlaneResyncPeriod is how often a CCLInfraPlane is reconciled again to restore its
 // infra-plane cluster's CCLClusterConfig. Set by a flag, for the same reason as
 // argoCDNamespace.
@@ -74,6 +80,9 @@ func init() {
 	// Registering them is safe on a cluster with no Argo CD: the missing CRDs surface
 	// at reconcile time, from the RESTMapper, rather than at startup.
 	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
+	// external-dns's DNSEndpoint, which the CCLInfraPlane controller creates. Safe on a
+	// cluster without external-dns for the same reason.
+	utilruntime.Must(externaldnsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -99,6 +108,10 @@ func main() {
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
 			"of the Argo CD account the operator reads argocd-server's API as.")
+	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
+		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
+			"*.<name>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
+			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -123,6 +136,12 @@ func setupControllers(mgr ctrl.Manager) error {
 	}
 	argoCDNamespace = namespace
 
+	namespace, err = resolveDNSEndpointNamespace(dnsEndpointNamespace, serviceAccountNamespaceFile)
+	if err != nil {
+		return err
+	}
+	dnsEndpointNamespace = namespace
+
 	argoCDServer, err := newArgoCDServerClient(mgr)
 	if err != nil {
 		return err
@@ -141,8 +160,9 @@ func setupControllers(mgr ctrl.Manager) error {
 			Local:  mgr.GetConfig(),
 			Scheme: mgr.GetScheme(),
 		},
-		RemoteWatches: remoteWatches,
-		ResyncPeriod:  infraPlaneResyncPeriod,
+		RemoteWatches:        remoteWatches,
+		ResyncPeriod:         infraPlaneResyncPeriod,
+		DNSEndpointNamespace: dnsEndpointNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
@@ -160,20 +180,43 @@ func setupControllers(mgr ctrl.Manager) error {
 	return nil
 }
 
-// resolveArgoCDNamespace returns flagValue, or if it is empty the namespace in
-// namespaceFile, the operator's own. Outside a Pod there is no such file, and the
-// namespace has to be given.
+// resolveArgoCDNamespace returns flagValue, or if it is empty the operator's own
+// namespace. Outside a Pod there is none, and the namespace has to be given.
 func resolveArgoCDNamespace(flagValue, namespaceFile string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
+	namespace, err := ownNamespace(namespaceFile)
+	if err != nil {
+		return "", fmt.Errorf("--argocd-namespace is unset and %w", err)
+	}
+	return namespace, nil
+}
+
+// resolveDNSEndpointNamespace returns flagValue, or if it is empty the operator's own
+// namespace, where the cp chart installs external-dns. Outside a Pod there is none, and
+// the namespace has to be given.
+func resolveDNSEndpointNamespace(flagValue, namespaceFile string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	namespace, err := ownNamespace(namespaceFile)
+	if err != nil {
+		return "", fmt.Errorf("--dns-endpoint-namespace is unset and %w", err)
+	}
+	return namespace, nil
+}
+
+// ownNamespace returns the namespace in namespaceFile, the operator's own. Outside a Pod
+// there is no such file.
+func ownNamespace(namespaceFile string) (string, error) {
 	data, err := os.ReadFile(namespaceFile)
 	if err != nil {
-		return "", fmt.Errorf("--argocd-namespace is unset and the operator's own namespace is unknown: %w", err)
+		return "", fmt.Errorf("the operator's own namespace is unknown: %w", err)
 	}
 	namespace := strings.TrimSpace(string(data))
 	if namespace == "" {
-		return "", fmt.Errorf("--argocd-namespace is unset and %s is empty", namespaceFile)
+		return "", fmt.Errorf("%s is empty", namespaceFile)
 	}
 	return namespace, nil
 }

@@ -1,0 +1,36 @@
+# A minimal stand-in for external-dns's DNSEndpoint CRD, so envtest can store the
+# DNSEndpoint the control-plane operator writes for each CCLInfraPlane.
+#
+# Kept beside the Argo CD stand-ins rather than copied from the external-dns chart
+# (external-dns/crds/dnsendpoints.externaldns.k8s.io.yaml in
+# charts/cp/chart/charts/external-dns-*.tgz), so that the tests do not depend on a
+# downloaded chart. The schema is left open: the tests only need the object stored and
+# read back.
+#
+# With a status subresource, matching the real CRD: external-dns writes
+# status.observedGeneration, and the operator's spec writes must not reset it.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  # Required of a CRD in a *.k8s.io group; copied from the real one.
+  annotations:
+    api-approved.kubernetes.io: https://github.com/kubernetes-sigs/external-dns/pull/2007
+  name: dnsendpoints.externaldns.k8s.io
+spec:
+  group: externaldns.k8s.io
+  names:
+    kind: DNSEndpoint
+    listKind: DNSEndpointList
+    plural: dnsendpoints
+    singular: dnsendpoint
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}
