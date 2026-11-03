@@ -386,13 +386,13 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable,
 		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
 	}}
-	if dnsReady := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady); dnsReady != nil {
+	if dnsReady := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady); dnsReady != nil {
 		dnsMessage := dnsReady.Message
 		if !strings.HasPrefix(dnsMessage, dnsNotUpdatedMessage) {
 			dnsMessage = dnsNotUpdatedMessage + dnsMessage
 		}
 		conditions = append(conditions, metav1.Condition{
-			Type:    conditionTypeDNSReady,
+			Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady,
 			Status:  metav1.ConditionUnknown,
 			Reason:  dnsReady.Reason,
 			Message: dnsMessage,

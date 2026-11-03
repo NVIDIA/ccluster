@@ -1166,7 +1166,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			) {
 				GinkgoHelper()
 
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition).NotTo(BeNil())
 				Expect(condition.Status).To(Equal(status), condition.Message)
 				Expect(condition.Reason).To(Equal(reason), condition.Message)
@@ -1231,7 +1231,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			It("should wait for the ingress LoadBalancer without writing a DNSEndpoint", func() {
 				infraPlane := settle()
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonLoadBalancerPending)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending)
 				Expect(dnsEndpointExists()).To(BeFalse())
 
 				By("waiting for the CCLClusterConfig watch rather than polling")
@@ -1243,7 +1243,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
 				dnsEndpoint := getDNSEndpoint()
 				Expect(dnsEndpoint.Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
 					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
@@ -1254,20 +1254,20 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane = externalDNSAccepts()
 
-				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(ContainSubstring(ingressName + " A 192.0.2.10"))
 
 				By("staying Published across reconciles that change nothing")
-				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
 			})
 
 			It("should keep the records but report DNSReady Unknown, with its reason, while the plane is unavailable", func() {
 				settle()
 				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 				infraPlane := externalDNSAccepts()
-				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				published := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady).Message
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				published := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady).Message
 
 				By("deleting the credentials Secret")
 				source := &corev1.Secret{}
@@ -1276,19 +1276,19 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				infraPlane = reconcileAndGet()
 
 				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
-				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSPublished)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
 				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveLen(1), "the records were withdrawn")
 
 				By("noting it once across reconciles")
 				infraPlane = reconcileAndGet()
-				condition = apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				condition = apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(Equal(dnsNotUpdatedMessage + published))
 
 				By("reporting Published again once the Secret is back")
 				createSecret(credentials)
-				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, reasonDNSPublished)
+				expectDNSReady(reconcileAndGet(), metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
 			})
 
 			It("should leave DNSReady unset when the plane is unavailable from the start", func() {
@@ -1298,7 +1298,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				infraPlane := settle()
 
 				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
-				Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)).To(BeNil())
+				Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)).To(BeNil())
 			})
 
 			It("should point the wildcard record at the ingress hostname with a CNAME", func() {
@@ -1339,12 +1339,12 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 						DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
 					},
 				))
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
 
 				infraPlane = externalDNSAccepts()
 
-				expectDNSReady(infraPlane, metav1.ConditionTrue, reasonDNSPublished)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				expectDNSReady(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(ContainSubstring(
 					"*.api." + domain + " CNAME lb-2.elb.example.net, " + ingressName + " A 192.0.2.10"))
 			})
@@ -1356,7 +1356,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
 				)
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonInvalidLoadBalancerName)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
 				Expect(dnsEndpointExists()).To(BeFalse())
 
 				By("publishing the ingress beside it, still reporting the bad name")
@@ -1369,8 +1369,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}))
 				infraPlane = externalDNSAccepts()
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonInvalidLoadBalancerName)
-				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, conditionTypeDNSReady)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(ContainSubstring(`"Bad_Name"`))
 			})
 
@@ -1393,7 +1393,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.20"})
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSPending)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending)
 				Expect(getDNSEndpoint().Spec.Endpoints[0].Targets).To(HaveExactElements("192.0.2.20"))
 			})
 
@@ -1416,7 +1416,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reportIngress(nil)
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonLoadBalancerPending)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending)
 				Expect(dnsEndpointExists()).To(BeFalse())
 			})
 
@@ -1453,7 +1453,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 				Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
-				expectDNSReady(infraPlane, metav1.ConditionUnknown, reasonDNSEndpointError)
+				expectDNSReady(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointError)
 				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
 				Expect(infraPlane.Status.ClusterConfig.LoadBalancers[0].IP).To(Equal("192.0.2.20"))
 			})
@@ -1485,7 +1485,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSEndpointCRDMissing)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointCRDMissing)
 				Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
 
 				By("deleting the plane all the same")
@@ -1509,7 +1509,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, reasonDNSEndpointConflict)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointConflict)
 				Expect(getDNSEndpoint().Spec.Endpoints[0].DNSName).To(Equal("*.other.example.com"))
 
 				By("leaving it in place when the CCLInfraPlane is deleted")

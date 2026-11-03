@@ -25,21 +25,6 @@ import (
 	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 )
 
-// The DNSReady condition and its reasons.
-const (
-	// conditionTypeDNSReady reports on the DNSEndpoint that has external-dns publish the
-	// plane's wildcard records.
-	conditionTypeDNSReady = "DNSReady"
-
-	reasonDNSPublished            = "Published"
-	reasonDNSPending              = "Pending"
-	reasonLoadBalancerPending     = "LoadBalancerPending"
-	reasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
-	reasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
-	reasonDNSEndpointConflict     = "DNSEndpointConflict"
-	reasonDNSEndpointError        = "DNSEndpointError"
-)
-
 // wildcardTTLSeconds is the TTL of the wildcard records, in seconds, short so that
 // resolvers follow a LoadBalancer whose address changes quickly. On Route53, external-dns
 // turns a CNAME to an AWS load balancer into an alias record and replaces its TTL with
@@ -77,7 +62,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
 		return metav1.Condition{
-			Type:               conditionTypeDNSReady,
+			Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady,
 			Status:             status,
 			Reason:             reason,
 			Message:            message,
@@ -86,7 +71,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	}
 	// Unknown rather than False: the records last published may still be in place.
 	failed := func(err error) (metav1.Condition, error) {
-		return condition(metav1.ConditionUnknown, reasonDNSEndpointError, err.Error()), err
+		return condition(metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointError, err.Error()), err
 	}
 
 	endpoints, invalid := wildcardEndpoints(infraPlane.Spec.Domain, clusterConfig)
@@ -98,9 +83,9 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 			return failed(err)
 		}
 		if len(invalid) > 0 {
-			return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, invalidMessage), nil
+			return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName, invalidMessage), nil
 		}
-		return condition(metav1.ConditionFalse, reasonLoadBalancerPending, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending, fmt.Sprintf(
 			"waiting for the infra-plane cluster to report an address for a LoadBalancer labelled %s",
 			cclusternvidiacomv1alpha1.LabelLoadBalancer)), nil
 	}
@@ -114,7 +99,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		// resync, or for good with a resync period of 0, unless the operator is restarted.
 		log.Info("DNSEndpoint CRD not installed, skipped DNSEndpoint",
 			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
-		return condition(metav1.ConditionFalse, reasonDNSEndpointCRDMissing,
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointCRDMissing,
 			"the DNSEndpoint CRD is not installed; install external-dns with the cp chart, "+
 				"then restart the operator"), nil
 	case errors.Is(err, errDNSEndpointConflict):
@@ -122,7 +107,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		// picks that up.
 		log.Info("Refused to overwrite DNSEndpoint owned by another CCLInfraPlane",
 			"dnsEndpoint", dnsEndpoint.Name, "dnsEndpointNamespace", dnsEndpoint.Namespace)
-		return condition(metav1.ConditionFalse, reasonDNSEndpointConflict, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointConflict, fmt.Sprintf(
 			"DNSEndpoint %q in namespace %q belongs to another CCLInfraPlane",
 			dnsEndpoint.Name, dnsEndpoint.Namespace)), nil
 	case err != nil:
@@ -137,19 +122,19 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	switch {
 	case dnsEndpoint.Status.ObservedGeneration < dnsEndpoint.Generation:
 		// No requeue: external-dns writing the DNSEndpoint's status is an event.
-		return condition(metav1.ConditionFalse, reasonDNSPending, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPending, fmt.Sprintf(
 			"waiting for external-dns to read DNSEndpoint %q in namespace %q: %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
 	case len(invalid) > 0:
 		// No requeue: only relabelling the Service fixes this, which reaches the
 		// CCLClusterConfig watch.
-		return condition(metav1.ConditionFalse, reasonInvalidLoadBalancerName, fmt.Sprintf(
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName, fmt.Sprintf(
 			"external-dns read DNSEndpoint %q in namespace %q: %s; %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records, invalidMessage)), nil
 	}
 	// external-dns marks a DNSEndpoint read before it calls the provider, so this does not
 	// say the records were written; see https://github.com/NVIDIA/ccluster/issues/174.
-	return condition(metav1.ConditionTrue, reasonDNSPublished, fmt.Sprintf(
+	return condition(metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonPublished, fmt.Sprintf(
 		"external-dns read DNSEndpoint %q in namespace %q: %s; it reports whether it wrote "+
 			"them only in its logs",
 		dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil

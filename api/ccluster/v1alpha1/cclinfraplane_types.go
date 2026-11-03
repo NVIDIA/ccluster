@@ -89,6 +89,9 @@ const (
 	// CCLInfraPlaneConditionClusterConfigApplied reports on the CCLClusterConfig
 	// singleton the operator writes into the infra-plane cluster.
 	CCLInfraPlaneConditionClusterConfigApplied = "ClusterConfigApplied"
+	// CCLInfraPlaneConditionDNSReady reports on the DNSEndpoint that has external-dns
+	// publish the plane's wildcard records.
+	CCLInfraPlaneConditionDNSReady = "DNSReady"
 )
 
 // The reasons of the CCLInfraPlane conditions.
@@ -108,6 +111,15 @@ const (
 	CCLInfraPlaneReasonClusterUnreachable     = "ClusterUnreachable"
 	CCLInfraPlaneReasonUnsupportedCredentials = "UnsupportedCredentials"
 	CCLInfraPlaneReasonInvalidCredentials     = "InvalidCredentials"
+
+	// DNSReady.
+	CCLInfraPlaneReasonPublished               = "Published"
+	CCLInfraPlaneReasonPending                 = "Pending"
+	CCLInfraPlaneReasonLoadBalancerPending     = "LoadBalancerPending"
+	CCLInfraPlaneReasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
+	CCLInfraPlaneReasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
+	CCLInfraPlaneReasonDNSEndpointConflict     = "DNSEndpointConflict"
+	CCLInfraPlaneReasonDNSEndpointError        = "DNSEndpointError"
 )
 
 // +genclient
