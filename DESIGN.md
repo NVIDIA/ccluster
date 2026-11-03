@@ -928,8 +928,10 @@ minute, with a slower resync behind its watch (§3).
   `DNSEndpoint`; a record it then skips or fails to write is reported `Published` all the
   same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 - **Overlapping domains.** Nothing stops two CCLInfraPlanes from registering the same
-  domain. Their `DNSEndpoint`s then claim the same record, and external-dns publishes one
-  of them.
+  domain, so whoever can write a CCLInfraPlane is trusted with its `spec.domain`. Their
+  `DNSEndpoint`s then claim the same record, and external-dns publishes one of them. It
+  is not random: an A record beats a CNAME, and otherwise the record already published
+  keeps the name ([#159](https://github.com/NVIDIA/ccluster/issues/159)).
 - **More DNS.** Only labelled LoadBalancers get a record, and only the wildcard under their
   name; a Service not labelled, such as a compute deployment's SSH Service, gets none, and
   nothing answers for `<domain>` itself or for names directly under it. Turning DNS off

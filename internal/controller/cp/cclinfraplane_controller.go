@@ -76,9 +76,10 @@ type CCLInfraPlaneReconciler struct {
 
 	// DNSEndpointNamespace is the namespace the DNSEndpoint of each CCLInfraPlane is
 	// written to, from which external-dns publishes "*.<name>.<domain>" pointing at each
-	// of the plane's labelled LoadBalancers: by default the operator's own, where the cp chart installs
-	// external-dns. CCLInfraPlanes live elsewhere, so that no tenant who can write in
-	// their own namespace can publish a record.
+	// of the plane's labelled LoadBalancers: by default the operator's own, where the cp
+	// chart installs external-dns. CCLInfraPlanes live elsewhere, so this namespace keeps
+	// DNSEndpoints away from tenants. Whoever can write a CCLInfraPlane is still trusted
+	// with its spec.domain, which names the records published for it.
 	DNSEndpointNamespace string
 
 	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one
