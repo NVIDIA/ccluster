@@ -70,7 +70,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 	verified := func() *metav1.Condition {
 		var config cclusternvidiacomv1alpha1.CCLClusterConfig
 		Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
-		return apimeta.FindStatusCondition(config.Status.Conditions, conditionTypeVerified)
+		return apimeta.FindStatusCondition(config.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 	}
 
 	BeforeEach(func() {
@@ -106,7 +106,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		condition := verified()
 		Expect(condition).NotTo(BeNil())
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-		Expect(condition.Reason).To(Equal(reasonComponentsNotVerified))
+		Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified))
 		Expect(condition.Message).To(Equal(
 			"0 of 2 cluster_base components verified; failing: " +
 				chartA + " (not ready); " + chartB + " (not ready)"))
@@ -139,7 +139,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 
 		condition = verified()
 		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-		Expect(condition.Reason).To(Equal(reasonComponentsVerified))
+		Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified))
 		Expect(condition.ObservedGeneration).To(Equal(int64(1)))
 	})
 
@@ -285,7 +285,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	}
 
 	verified := func() *metav1.Condition {
-		return apimeta.FindStatusCondition(status().Conditions, conditionTypeVerified)
+		return apimeta.FindStatusCondition(status().Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 	}
 
 	reconcileOnce := func() {
@@ -434,7 +434,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		}))
 		condition := verified()
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-		Expect(condition.Reason).To(Equal(reasonLoadBalancerConflict))
+		Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonLoadBalancerConflict))
 		Expect(condition.Message).To(Equal("All 1 cluster_base components are installed and configured; " +
 			`conflicting LoadBalancers: "ingress" is on default/ingress-a, default/ingress-b`))
 	})
@@ -446,7 +446,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		reconcileOnce()
 
 		condition := verified()
-		Expect(condition.Reason).To(Equal(reasonComponentsNotVerified))
+		Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified))
 		Expect(condition.Message).To(ContainSubstring("catalogs/cluster_base/a (not ready)"))
 		Expect(condition.Message).To(HaveSuffix(
 			`conflicting LoadBalancers: "ingress" is on default/ingress-a, default/ingress-b`))

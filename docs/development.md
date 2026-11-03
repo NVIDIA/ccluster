@@ -31,6 +31,12 @@ comments require generation too. In a host-manager loop, separately update the t
 cluster's CRDs with `make install`; Helm installations receive them through chart deployment.
 An old CRD schema can prune newly added fields on apply.
 
+Export every condition type and reason a controller reports from the API package, beside
+the status type it belongs to, never as private constants in the controller. Name them
+after their kind, `<Kind>Condition<Type>` and `<Kind>Reason<Reason>`, such as
+`CCLComponentSetConditionProgressing` and `CCLInfraPlaneReasonClusterSecretCreated`.
+Clients match on these values, so changing one is a breaking API change.
+
 Keep leader-election IDs `cp.ccluster.nvidia.com` and `ip.ccluster.nvidia.com` distinct.
 
 ## Per-operator RBAC

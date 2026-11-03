@@ -505,20 +505,20 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 ) (status metav1.ConditionStatus, reason, message string, retryErr error) {
 	switch {
 	case err == nil:
-		return metav1.ConditionTrue, reasonApplicationsCreated, fmt.Sprintf(
+		return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated, fmt.Sprintf(
 			"Applied %d of %d components in namespace %q",
 			released, len(componentSet.Spec.Components), componentSet.Namespace), nil
 	case apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err):
 		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
 		// started first.
-		return metav1.ConditionFalse, reasonApplicationCRDMissing, fmt.Sprintf(
+		return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationCRDMissing, fmt.Sprintf(
 			"Argo CD Application CRD not installed: %v", err), nil
 	case errors.Is(err, errApplicationConflict):
-		return metav1.ConditionFalse, reasonApplicationConflict, fmt.Sprintf(
+		return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict, fmt.Sprintf(
 			"An Application in namespace %q belongs to another CCLComponentSet",
 			componentSet.Namespace), nil
 	default:
-		return metav1.ConditionFalse, reasonApplicationFailed, err.Error(), err
+		return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationFailed, err.Error(), err
 	}
 }
 
@@ -593,7 +593,7 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 					"Wave %d (component %q) cannot be deployed until validation passes: %s",
 					wave, component.Name, invalidMessage)
 			}
-			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
 				"Waiting to deploy wave %d (component %q)", wave, component.Name)
 		}
 		if r.finished(componentSet, component, application) {
@@ -612,7 +612,7 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 		case !equality.Semantic.DeepEqual(application.Spec, desired):
 			// The list behind this report predates this reconcile's write. The write's
 			// own event brings the CCLComponentSet back.
-			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
 				"Wave %d (component %q) is waiting for the operator to write the current spec",
 				wave, component.Name)
 
@@ -620,21 +620,21 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 			// The latest comparison does not match the desired source, destination and
 			// ignoreDifferences, so its health and sync statuses cannot establish
 			// completion.
-			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
 				"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
 					"operator wrote", wave, component.Name), application)
 
 		case application.OperationInProgress():
 			// Hooks are excluded from aggregate health and sync. Healthy/Synced can
 			// therefore precede operation completion, including a pending PostSync hook.
-			return metav1.ConditionTrue, reasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
 				"Wave %d (component %q) is waiting for an Argo CD operation to complete",
 				wave, component.Name), application)
 
 		case currentSyncFailed(application, desired):
 			// A failed hook can leave aggregate health Healthy and sync Synced.
 			// A later successful sync of this source and revision resumes the rollout.
-			return metav1.ConditionTrue, reasonWaveSyncFailed, fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed, fmt.Sprintf(
 				"Wave %d (component %q) failed to sync: %s. A successful sync of "+
 					"Application %q in Argo CD resumes the rollout",
 				wave, component.Name, application.OperationMessage(), name)
@@ -642,13 +642,13 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 		default:
 			// Argo CD compared this spec and is unhappy with what it found. Which
 			// resource is unhappy is in status.resources, which this type does not model.
-			return metav1.ConditionTrue, reasonWaveSyncing, fmt.Sprintf(
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
 				"Wave %d (component %q) has health %q, sync %q", wave, component.Name,
 				application.HealthStatus(), application.SyncStatus())
 		}
 	}
 
-	return metav1.ConditionFalse, reasonRolloutComplete, fmt.Sprintf(
+	return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete, fmt.Sprintf(
 		"All %d components have synced the current spec and are healthy",
 		len(componentSet.Spec.Components))
 }

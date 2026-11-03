@@ -29,32 +29,6 @@ import (
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 )
 
-// Condition types and reasons reported on CCLComponentSet.status.
-const (
-	// conditionTypeValidated reports whether every component's infraPlaneRef resolves
-	// to a CCLInfraPlane that Argo CD can already reach.
-	conditionTypeValidated = "Validated"
-	// conditionTypeProgressing reports on the rollout: false once every component has
-	// synced the spec the operator wrote and is healthy.
-	conditionTypeProgressing = "Progressing"
-	// conditionTypeComponentsApplied reports on the Argo CD Applications that deploy
-	// the components onto their infra-plane clusters.
-	conditionTypeComponentsApplied = "ComponentsApplied"
-
-	reasonComponentsAccepted = "ComponentsAccepted"
-	reasonInfraPlaneNotFound = "InfraPlaneNotFound"
-	reasonInfraPlaneNotReady = "InfraPlaneNotReady"
-
-	reasonWaveSyncing     = "WaveSyncing"
-	reasonWaveSyncFailed  = "WaveSyncFailed"
-	reasonRolloutComplete = "RolloutComplete"
-
-	reasonApplicationsCreated   = "ApplicationsCreated"
-	reasonApplicationCRDMissing = "ApplicationCRDMissing"
-	reasonApplicationConflict   = "ApplicationConflict"
-	reasonApplicationFailed     = "ApplicationFailed"
-)
-
 // Metadata written onto the generated Applications.
 const (
 	// Back-references to the CCLComponentSet an Application was created for. An
@@ -185,10 +159,10 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// resolve this, and both are watched.
 		log.Info("Did not apply CCLComponentSet", "reason", reason, "message", message)
 		conditions = append(conditions,
-			condition(conditionTypeValidated, metav1.ConditionFalse, reason, message))
+			condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated, metav1.ConditionFalse, reason, message))
 	} else {
-		conditions = append(conditions, condition(conditionTypeValidated, metav1.ConditionTrue,
-			reasonComponentsAccepted, fmt.Sprintf(
+		conditions = append(conditions, condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue,
+			cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentsAccepted, fmt.Sprintf(
 				"All %d components reference an available CCLInfraPlane",
 				len(componentSet.Spec.Components))))
 
@@ -214,7 +188,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		r.rolloutStatus(&componentSet, reported, reason, message)
 
 	conditions = append(conditions,
-		condition(conditionTypeProgressing, progressStatus, progressReason, progressMessage))
+		condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing, progressStatus, progressReason, progressMessage))
 
 	if err := r.setConditions(ctx, &componentSet, statusBase, conditions...); err != nil {
 		if !apierrors.IsConflict(err) {
@@ -254,7 +228,7 @@ func (r *CCLComponentSetReconciler) applyComponents(
 		log.Info("Did not apply Argo CD Applications", "cclcomponentset", componentSet.Name,
 			"reason", reason, "message", message)
 	}
-	return condition(conditionTypeComponentsApplied, status, reason, message), retryErr
+	return condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied, status, reason, message), retryErr
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
@@ -281,7 +255,7 @@ func (r *CCLComponentSetReconciler) resolveInfraPlanes(
 		key := client.ObjectKey{Namespace: componentSet.Namespace, Name: name}
 		switch err := r.Get(ctx, key, &infraPlane); {
 		case apierrors.IsNotFound(err):
-			return reasonInfraPlaneNotFound, fmt.Sprintf(
+			return cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound, fmt.Sprintf(
 				"Component %q references CCLInfraPlane %q, which does not exist",
 				component.Name, name), nil
 		case err != nil:
@@ -296,12 +270,12 @@ func (r *CCLComponentSetReconciler) resolveInfraPlanes(
 		// stands - so calling it "not yet Available" sends whoever reads the status
 		// after a problem that is not there.
 		if infraPlane.Status.ObservedGeneration < infraPlane.Generation {
-			return reasonInfraPlaneNotReady, fmt.Sprintf(
+			return cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady, fmt.Sprintf(
 				"Component %q references CCLInfraPlane %q, whose status has not caught up "+
 					"with its spec", component.Name, name), nil
 		}
-		if !apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, conditionTypeAvailable) {
-			return reasonInfraPlaneNotReady, fmt.Sprintf(
+		if !apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable) {
+			return cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady, fmt.Sprintf(
 				"Component %q references CCLInfraPlane %q, which is not yet Available",
 				component.Name, name), nil
 		}
@@ -431,7 +405,7 @@ func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// or simply with the operator started before Argo CD, the CCLComponentSet controller
 	// never runs at all. It logs "if kind is a CRD, it should be installed before
 	// calling Start" every ten seconds and reconciles nothing, which also makes the
-	// reasonApplicationCRDMissing branch below unreachable in a real cluster.
+	// ApplicationCRDMissing branch below unreachable in a real cluster.
 	//
 	// Skipping the watch keeps the controller alive: it still reconciles on
 	// CCLComponentSet and CCLInfraPlane events, listApplications tolerates the missing

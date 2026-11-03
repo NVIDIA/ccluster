@@ -72,6 +72,35 @@ type CCLInfraPlaneStatus struct {
 	ClusterConfig *CCLClusterConfigStatus `json:"clusterConfig,omitempty"`
 }
 
+// The condition types the control-plane operator reports in CCLInfraPlane.status.
+const (
+	// CCLInfraPlaneConditionAvailable reports on the cluster's registration with Argo
+	// CD: its namespace's AppProject and its mirrored cluster Secret.
+	CCLInfraPlaneConditionAvailable = "Available"
+	// CCLInfraPlaneConditionClusterConfigApplied reports on the CCLClusterConfig
+	// singleton the operator writes into the infra-plane cluster.
+	CCLInfraPlaneConditionClusterConfigApplied = "ClusterConfigApplied"
+)
+
+// The reasons of the CCLInfraPlane conditions.
+const (
+	// Available.
+	CCLInfraPlaneReasonClusterSecretCreated  = "ClusterSecretCreated"
+	CCLInfraPlaneReasonSecretNotFound        = "SecretNotFound"
+	CCLInfraPlaneReasonClusterSecretConflict = "ClusterSecretConflict"
+	CCLInfraPlaneReasonProjectConflict       = "ProjectConflict"
+
+	// ClusterConfigApplied.
+	CCLInfraPlaneReasonApplied                = "Applied"
+	CCLInfraPlaneReasonNotAvailable           = "NotAvailable"
+	CCLInfraPlaneReasonCRDMissing             = "CRDMissing"
+	CCLInfraPlaneReasonConflict               = "Conflict"
+	CCLInfraPlaneReasonAccessDenied           = "AccessDenied"
+	CCLInfraPlaneReasonClusterUnreachable     = "ClusterUnreachable"
+	CCLInfraPlaneReasonUnsupportedCredentials = "UnsupportedCredentials"
+	CCLInfraPlaneReasonInvalidCredentials     = "InvalidCredentials"
+)
+
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

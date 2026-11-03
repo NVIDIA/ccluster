@@ -361,7 +361,7 @@ func TestApplicationsCondition(t *testing.T) {
 			released:    1,
 			err:         nil,
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonApplicationsCreated,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated,
 			wantMessage: "Applied 1 of 2 components",
 		},
 		{
@@ -370,33 +370,33 @@ func TestApplicationsCondition(t *testing.T) {
 			name:       "reports ApplicationCRDMissing for a NoMatch error without asking for a retry",
 			err:        noMatch,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: reasonApplicationCRDMissing,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationCRDMissing,
 		},
 		{
 			name:       "reports ApplicationCRDMissing for a NotFound error",
 			err:        notFound,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: reasonApplicationCRDMissing,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationCRDMissing,
 		},
 		{
 			// Returning the error here would hot-loop on a condition no retry can fix.
 			name:       "reports ApplicationConflict without asking for a retry",
 			err:        errApplicationConflict,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: reasonApplicationConflict,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict,
 		},
 		{
 			// errors.Is, not ==: a refactor to == would pass every other case here.
 			name:       "reports ApplicationConflict for a wrapped conflict",
 			err:        fmt.Errorf("updating Application: %w", errApplicationConflict),
 			wantStatus: metav1.ConditionFalse,
-			wantReason: reasonApplicationConflict,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict,
 		},
 		{
 			name:       "returns an unclassified error so the request is retried",
 			err:        boom,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: reasonApplicationFailed,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationFailed,
 			wantRetry:  true,
 		},
 	}
@@ -449,9 +449,9 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}),
-			invalid:     reasonInfraPlaneNotFound,
+			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonInfraPlaneNotFound,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantMessage: `Wave 2 (component "b") cannot be deployed until validation passes: ` + invalidMessage,
 		},
 		{
@@ -462,9 +462,9 @@ func TestRolloutStatus(t *testing.T) {
 			existing: specBehind(applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}), "a"),
-			invalid:     reasonInfraPlaneNotFound,
+			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonInfraPlaneNotFound,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantMessage: `Wave 1 (component "a") cannot be written until validation passes: ` + invalidMessage,
 		},
 		{
@@ -474,9 +474,9 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": uncompared(healthyApp()),
 			}),
-			invalid:     reasonInfraPlaneNotFound,
+			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to compare`,
 		},
 		{
@@ -485,7 +485,7 @@ func TestRolloutStatus(t *testing.T) {
 			existing:   nil,
 			// Progressing is True while the rollout is still going.
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Waiting to deploy wave 1 (component "a")`,
 		},
 		{
@@ -496,7 +496,7 @@ func TestRolloutStatus(t *testing.T) {
 				"b": app(argocdv1alpha1.HealthStatusProgressing, "OutOfSync"),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Wave 2 (component "b") has health "Progressing", sync "OutOfSync"`,
 		},
 		{
@@ -508,7 +508,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": uncompared(healthyApp()),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to compare`,
 			notMessage:  "health",
 		},
@@ -521,7 +521,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": uncompared(failedSync(healthyApp())),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: "is waiting for Argo CD to compare the spec the operator wrote",
 			notMessage:  syncFailureMessage,
 		},
@@ -534,7 +534,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": retrying(healthyApp()),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: "is waiting for an Argo CD operation to complete: " + retryMessage,
 		},
 		{
@@ -544,7 +544,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": pending(failedSync(healthyApp())),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: "is waiting for an Argo CD operation to complete",
 			notMessage:  syncFailureMessage,
 		},
@@ -555,7 +555,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": failedSync(app(argocdv1alpha1.HealthStatusHealthy, "OutOfSync")),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncFailed,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed,
 			wantMessage: `Wave 1 (component "a") failed to sync: ` + syncFailureMessage,
 		},
 		{
@@ -565,7 +565,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": app(argocdv1alpha1.HealthStatusDegraded, "OutOfSync"),
 			}),
 			wantStatus:  metav1.ConditionTrue,
-			wantReason:  reasonWaveSyncing,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `has health "Degraded", sync "OutOfSync"`,
 		},
 		{
@@ -575,7 +575,7 @@ func TestRolloutStatus(t *testing.T) {
 				"a": app("", ""),
 			}),
 			wantStatus: metav1.ConditionTrue,
-			wantReason: reasonWaveSyncing,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 		},
 		{
 			// Progressing flips False only when everything is done. A refactor that
@@ -587,7 +587,7 @@ func TestRolloutStatus(t *testing.T) {
 				"b": healthyApp(),
 			}),
 			wantStatus:  metav1.ConditionFalse,
-			wantReason:  reasonRolloutComplete,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete,
 			wantMessage: "All 2 components have synced the current spec and are healthy",
 		},
 	}

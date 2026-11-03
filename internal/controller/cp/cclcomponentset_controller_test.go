@@ -115,9 +115,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				status = metav1.ConditionTrue
 			}
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeAvailable,
+				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             status,
-				Reason:             reasonClusterSecretCreated,
+				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
 				Message:            "set by the test",
 				ObservedGeneration: infraPlane.Generation,
 			})
@@ -385,10 +385,10 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 
 			componentSet := settle()
-			Expect(conditionOf(componentSet, conditionTypeValidated).Status).
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Status).
 				To(Equal(metav1.ConditionTrue))
-			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
-				To(Equal(reasonApplicationsCreated))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated))
 
 			By("creating only the first component")
 			Expect(applicationExists(firstComponent)).To(BeTrue())
@@ -574,7 +574,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				argocdv1alpha1.SyncStatusSynced)
 			Expect(k8sClient.Patch(ctx, getApplication(istio.Name), client.RawPatch(types.MergePatchType,
 				[]byte(`{"status":{"sync":{"comparedTo":{"ignoreDifferences":null}}}}`)))).To(Succeed())
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Message).To(ContainSubstring("waiting for Argo CD to compare"))
 			Expect(applicationExists(secondComponent)).To(BeFalse())
 
@@ -658,7 +658,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Message).
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
 				To(ContainSubstring(secondComponent), "wave 1 should have completed first")
 
 			By("adding helm.valueFiles, which Argo CD would render with")
@@ -677,7 +677,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(found).To(BeTrue(), "the stand-in did not record the drifted source")
 			Expect(compared).To(Equal([]string{"values-prod.yaml"}))
 
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Message).To(ContainSubstring(firstComponent),
 				"wave 1 completed on a comparison of a source the operator did not write")
 
@@ -689,7 +689,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(found).To(BeFalse(), "the operator left a source field it does not model in place")
 
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Message).
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
 				To(ContainSubstring(secondComponent))
 		})
 
@@ -745,16 +745,16 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			release(firstComponent, secondComponent)
 			componentSet := reconcileAndGet()
 			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
-			Expect(conditionOf(componentSet, conditionTypeProgressing).Reason).
-				To(Equal(reasonRolloutComplete))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 
 			By("moving the first component to a CCLInfraPlane that does not exist")
 			componentSet.Spec.Components[0].InfraPlaneRef.Name = "missing-plane"
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
 
 			componentSet = reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeValidated).Reason).
-				To(Equal(reasonInfraPlaneNotFound))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound))
 			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
 			first := componentSet.Status.ComponentSyncs[0]
 			Expect(first.Name).To(Equal(firstComponent))
@@ -765,10 +765,10 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			// The first component now waits for a write the operator will not make
 			// until the reference is fixed, so Progressing names that, not the
 			// previous spec's completion or a write about to happen.
-			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonInfraPlaneNotFound))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound))
 			Expect(progressing.Message).To(ContainSubstring(firstComponent))
 			Expect(progressing.Message).To(ContainSubstring("missing-plane"))
 		})
@@ -790,8 +790,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
 			componentSet = reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
-				To(Equal(reasonApplicationConflict))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
 			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
 			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1),
 				"the Application claimed by another CCLComponentSet was reported")
@@ -800,7 +800,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
 				"a comparison against the previous values was reported for this generation")
 
-			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.ObservedGeneration).To(Equal(componentSet.Generation))
 			Expect(progressing.Message).To(ContainSubstring(firstComponent))
 		})
@@ -811,8 +811,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 			settle()
 			release(firstComponent, secondComponent)
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
-				To(Equal(reasonRolloutComplete))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 
 			By("claiming the second component's Application for a CCLComponentSet elsewhere")
 			application := getApplication(secondComponent)
@@ -821,13 +821,13 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Patch(ctx, application, client.MergeFrom(base))).To(Succeed())
 
 			componentSet := reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeComponentsApplied).Reason).
-				To(Equal(reasonApplicationConflict))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
 			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
 			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
 
-			progressing := conditionOf(componentSet, conditionTypeProgressing)
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing),
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing),
 				"the rollout was reported complete on an Application the operator refuses to write")
 			Expect(progressing.Message).To(ContainSubstring(secondComponent))
 		})
@@ -867,9 +867,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			componentSet := settle()
 
-			validated := conditionOf(componentSet, conditionTypeValidated)
+			validated := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
-			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotFound))
+			Expect(validated.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound))
 			Expect(validated.Message).To(ContainSubstring(planeB))
 
 			Expect(applicationExists(firstComponent)).To(BeFalse())
@@ -881,18 +881,18 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 
 			componentSet := settle()
-			validated := conditionOf(componentSet, conditionTypeValidated)
+			validated := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
-			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotReady))
+			Expect(validated.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady))
 
 			By("making the plane Available")
 			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 			Expect(k8sClient.Get(ctx,
 				types.NamespacedName{Name: planeB, Namespace: namespace}, infraPlane)).To(Succeed())
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeAvailable,
+				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             metav1.ConditionTrue,
-				Reason:             reasonClusterSecretCreated,
+				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
 				Message:            "set by the test",
 				ObservedGeneration: infraPlane.Generation,
 			})
@@ -900,7 +900,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 
 			componentSet = reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeValidated).Status).
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 
 			// Only the first: nothing is deployed yet, so there is nothing for the
@@ -918,7 +918,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
-			Expect(conditionOf(settle(), conditionTypeValidated).Status).
+			Expect(conditionOf(settle(), cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 
 			By("rotating the plane's credentials without letting its controller catch up")
@@ -928,9 +928,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			infraPlane.Spec.ClusterCredentialsRef.Name = planeA + "-rotated"
 			Expect(k8sClient.Update(ctx, infraPlane)).To(Succeed())
 
-			validated := conditionOf(reconcileAndGet(), conditionTypeValidated)
+			validated := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated)
 			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
-			Expect(validated.Reason).To(Equal(reasonInfraPlaneNotReady))
+			Expect(validated.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady))
 			// Available still reads True here, and that is what kubectl prints, so the
 			// message must not blame the condition.
 			Expect(validated.Message).To(ContainSubstring("has not caught up with its spec"))
@@ -938,16 +938,16 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			By("letting the plane's controller catch up")
 			Expect(k8sClient.Get(ctx, planeKey, infraPlane)).To(Succeed())
 			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeAvailable,
+				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             metav1.ConditionTrue,
-				Reason:             reasonClusterSecretCreated,
+				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
 				Message:            "set by the test",
 				ObservedGeneration: infraPlane.Generation,
 			})
 			infraPlane.Status.ObservedGeneration = infraPlane.Generation
 			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
 
-			Expect(conditionOf(reconcileAndGet(), conditionTypeValidated).Status).
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Status).
 				To(Equal(metav1.ConditionTrue))
 		})
 
@@ -957,21 +957,21 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 
 			componentSet := settle()
-			progressing := conditionOf(componentSet, conditionTypeProgressing)
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 			Expect(progressing.Message).To(ContainSubstring(firstComponent))
 
 			release(firstComponent)
 			componentSet = reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeProgressing).Message).
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
 				To(ContainSubstring(secondComponent))
 
 			release(secondComponent)
 			componentSet = reconcileAndGet()
-			progressing = conditionOf(componentSet, conditionTypeProgressing)
+			progressing = conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionFalse))
-			Expect(progressing.Reason).To(Equal(reasonRolloutComplete))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 		})
 
 		It("should preserve explicit null values when updating an Application", func() {
@@ -992,7 +992,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				To(ContainSubstring("removeMe: null"))
 
 			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced)
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionFalse))
 		})
 
 		// The two halves of the write path. A read into the partial Argo CD type drops
@@ -1053,21 +1053,21 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			reconcileAndGet()
 			reportStaleComparison(firstComponent, "Healthy", "Synced")
 
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 			Expect(progressing.Message).To(ContainSubstring("waiting for Argo CD to compare"))
 			Expect(progressing.Message).NotTo(ContainSubstring("health"),
 				"a verdict about the previous spec must not be repeated as the current one")
 
 			By("comparing the spec the operator wrote")
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Message).
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
 				To(ContainSubstring(secondComponent), "wave 1 should no longer be the one holding the rollout")
 
 			release(secondComponent)
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
-				To(Equal(reasonRolloutComplete))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 		})
 
 		// What comparing the source buys over tracking a sync: there is no result to
@@ -1088,8 +1088,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				[]byte(`{"status":{"operationState":null}}`)))).To(Succeed())
 			Expect(getApplication(firstComponent).Status.OperationState).To(BeNil())
 
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
-				To(Equal(reasonRolloutComplete))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 		})
 
 		It("should wait for pending and running operations despite a Healthy and Synced verdict", func() {
@@ -1103,9 +1103,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			application := getApplication(firstComponent)
 			application.Operation = pendingOperation(application.Spec)
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 			Expect(applicationExists(secondComponent)).To(BeFalse())
 
 			By("waiting while a PostSync hook runs or terminates")
@@ -1117,9 +1117,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				application.Status.OperationState.Phase = phase
 				application.Status.OperationState.Message = "waiting for PostSync hook"
 				Expect(k8sClient.Update(ctx, application)).To(Succeed())
-				progressing = conditionOf(reconcileAndGet(), conditionTypeProgressing)
+				progressing = conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 				Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-				Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+				Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 				Expect(progressing.Message).To(ContainSubstring("waiting for PostSync hook"))
 				Expect(applicationExists(secondComponent)).To(BeFalse())
 			}
@@ -1148,9 +1148,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				application.Status.OperationState.Phase = phase
 				application.Status.OperationState.Message = "PostSync hook failed"
 				Expect(k8sClient.Update(ctx, application)).To(Succeed())
-				progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+				progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 				Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-				Expect(progressing.Reason).To(Equal(reasonWaveSyncFailed))
+				Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed))
 				Expect(progressing.Message).To(ContainSubstring("PostSync hook failed"))
 				Expect(applicationExists(secondComponent)).To(BeFalse())
 			}
@@ -1184,8 +1184,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			application.Operation = pendingOperation(application.Spec)
 			application.Status.Sync.ComparedTo.Source = application.Spec.Source
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncing))
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 			Expect(progressing.Message).NotTo(ContainSubstring("previous source failed"))
 			Expect(applicationExists(secondComponent)).To(BeFalse())
 
@@ -1193,8 +1193,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			application = getApplication(firstComponent)
 			application.Operation = nil
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
-				To(Equal(reasonWaveSyncing))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing))
 			Expect(applicationExists(secondComponent)).To(BeFalse())
 
 			By("converging on the new source with the old failure still recorded")
@@ -1229,9 +1229,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			application.Status.OperationState.Message = "sync initialization failed"
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncFailed))
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed))
 			Expect(progressing.Message).To(ContainSubstring("sync initialization failed"))
 		})
 
@@ -1247,8 +1247,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			application.Status.OperationState.Message = "one or more objects failed to apply"
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
-			progressing := conditionOf(reconcileAndGet(), conditionTypeProgressing)
-			Expect(progressing.Reason).To(Equal(reasonWaveSyncFailed))
+			progressing := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed))
 			Expect(progressing.Message).To(ContainSubstring("one or more objects failed to apply"))
 			Expect(applicationExists(secondComponent)).To(BeFalse())
 
@@ -1268,7 +1268,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
 			componentSet := reconcileAndGet()
-			Expect(conditionOf(componentSet, conditionTypeProgressing).Status).To(Equal(metav1.ConditionFalse))
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionFalse))
 			previous := getApplication(firstComponent)
 
 			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
@@ -1279,8 +1279,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			updated := reconcileAndGet()
 			Expect(getApplication(firstComponent).Spec.Source.Helm.Values).
 				To(ContainSubstring("replicaCount: 3"))
-			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
-			Expect(conditionOf(updated, conditionTypeProgressing).ObservedGeneration).To(Equal(updated.Generation))
+			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionTrue))
+			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).ObservedGeneration).To(Equal(updated.Generation))
 		})
 
 		// The operator writes no spec.operation, so an Argo CD operation in flight is
@@ -1317,9 +1317,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				"the operator wrote over an operation Argo CD had not started")
 			Expect(getApplication(secondComponent).Operation).To(BeNil(),
 				"the operator asked Argo CD for a sync")
-			Expect(conditionOf(updated, conditionTypeComponentsApplied).Reason).
-				To(Equal(reasonApplicationsCreated))
-			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue))
+			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated))
+			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionTrue))
 		})
 
 		It("should rewrite the spec when operator configuration changes without a parent spec update", func() {
@@ -1327,15 +1327,15 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components()[:1])
 			settle()
 			reportCurrentComparison(firstComponent, "Healthy", "Synced")
-			Expect(conditionOf(reconcileAndGet(), conditionTypeProgressing).Reason).
-				To(Equal(reasonRolloutComplete))
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 
 			reconciler.CatalogRevision = "another-revision"
 			updated := reconcileAndGet()
 			application := getApplication(firstComponent)
 			Expect(application.Spec.Source.TargetRevision).To(Equal("another-revision"))
 			Expect(application.Operation).To(BeNil(), "the operator asked Argo CD for a sync")
-			Expect(conditionOf(updated, conditionTypeProgressing).Status).To(Equal(metav1.ConditionTrue),
+			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionTrue),
 				"the previous comparison completed the component under its new spec")
 		})
 
@@ -1612,9 +1612,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createComponentSet(components())
 			componentSet := settle()
 
-			applied := conditionOf(componentSet, conditionTypeComponentsApplied)
+			applied := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied)
 			Expect(applied.Status).To(Equal(metav1.ConditionFalse))
-			Expect(applied.Reason).To(Equal(reasonApplicationConflict))
+			Expect(applied.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
 
 			By("leaving the foreign Application untouched")
 			Expect(getApplication(firstComponent).Spec.Source.RepoURL).

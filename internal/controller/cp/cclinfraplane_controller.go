@@ -28,18 +28,6 @@ import (
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
-// Condition types and reasons reported on CCLInfraPlane.status.
-const (
-	// conditionTypeAvailable reports on the cluster's registration with Argo CD: its
-	// namespace's AppProject and its mirrored cluster Secret.
-	conditionTypeAvailable = "Available"
-
-	reasonClusterSecretCreated  = "ClusterSecretCreated"
-	reasonSecretNotFound        = "SecretNotFound"
-	reasonClusterSecretConflict = "ClusterSecretConflict"
-	reasonProjectConflict       = "ProjectConflict"
-)
-
 // Metadata written onto the mirrored Secret in the Argo CD namespace.
 const (
 	// argoCDSecretTypeLabel is how Argo CD discovers the Secrets it should treat as
@@ -181,7 +169,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info("Refused to overwrite AppProject claimed by another namespace",
 			"project", projectName(infraPlane.Namespace), "projectNamespace", r.ArgoCDNamespace)
 		return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
-			reasonProjectConflict, fmt.Sprintf(
+			cclusternvidiacomv1alpha1.CCLInfraPlaneReasonProjectConflict, fmt.Sprintf(
 				"AppProject %q in namespace %q belongs to another namespace",
 				projectName(infraPlane.Namespace), r.ArgoCDNamespace))
 	case err != nil:
@@ -203,7 +191,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Info("Missing credentials Secret", "secret", secretName)
 			r.RemoteWatches.Stop(req.NamespacedName)
 			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
-				reasonSecretNotFound, fmt.Sprintf("Secret %q not found", secretName))
+				cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound, fmt.Sprintf("Secret %q not found", secretName))
 		}
 		return ctrl.Result{}, err
 	}
@@ -216,7 +204,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			log.Info("Refused to overwrite cluster Secret owned by another CCLInfraPlane",
 				"secret", mirrorName, "secretNamespace", r.ArgoCDNamespace)
 			return ctrl.Result{}, r.setUnavailable(ctx, &infraPlane,
-				reasonClusterSecretConflict, fmt.Sprintf(
+				cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretConflict, fmt.Sprintf(
 					"Secret %q in namespace %q belongs to another CCLInfraPlane",
 					mirrorName, r.ArgoCDNamespace))
 		}
@@ -230,9 +218,9 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	available := metav1.Condition{
-		Type:   conditionTypeAvailable,
+		Type:   cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 		Status: metav1.ConditionTrue,
-		Reason: reasonClusterSecretCreated,
+		Reason: cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
 		Message: fmt.Sprintf("Mirrored Secret %q into namespace %q",
 			mirrorName, r.ArgoCDNamespace),
 	}
@@ -344,14 +332,14 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 	reason, message string,
 ) error {
 	return r.patchStatus(ctx, infraPlane, nil, metav1.Condition{
-		Type:    conditionTypeAvailable,
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
 		Message: message,
 	}, metav1.Condition{
-		Type:    conditionTypeClusterConfigApplied,
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
 		Status:  metav1.ConditionUnknown,
-		Reason:  reasonClusterConfigNotAvailable,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable,
 		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
 	})
 }
