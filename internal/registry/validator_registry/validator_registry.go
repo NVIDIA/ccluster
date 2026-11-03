@@ -12,10 +12,10 @@ SPDX-License-Identifier: Apache-2.0
 package validatorregistry
 
 import (
-	"encoding/json"
 	"fmt"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/json"
 
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
@@ -52,6 +52,9 @@ import (
 // for a given CCLComponentSet generation. It returns nil when the values are acceptable,
 // and otherwise an error saying why not. The error is shown to users next to the
 // component, so it should be short and specific.
+//
+// The checks are compiled into the binary, so they describe the catalog it was built
+// from; a catalog revision the binary was not built from can disagree with them.
 type ValidateFunc func(values *apiextensionsv1.JSON) error
 
 // Values returns the ValidateFunc for a chart whose values are described by V, its
@@ -60,14 +63,17 @@ type ValidateFunc func(values *apiextensionsv1.JSON) error
 // callers, made here for values however they were written.
 //
 // Decoding is lenient: keys V does not model pass, because a chart accepts more than its
-// Go type describes. A modelled key holding the wrong JSON type fails. Absent values
+// Go type describes. A modelled key holding the wrong JSON type fails. Keys match V's
+// JSON names case-sensitively, as Helm templates read them: a key differing only in case,
+// such as imageURL for imageUrl, is not the modelled key but another unmodelled one, so
+// it neither sets the modelled value nor is type-checked against it. Absent values
 // decode as the zero V, which is what catalogs.Entry validates when it drops empty
 // values, so a chart with required values rejects a component that sets none.
 func Values[V any]() ValidateFunc {
 	return func(values *apiextensionsv1.JSON) error {
 		var v V
 		if values != nil && len(values.Raw) > 0 {
-			if err := json.Unmarshal(values.Raw, &v); err != nil {
+			if err := json.UnmarshalCaseSensitivePreserveInts(values.Raw, &v); err != nil {
 				return fmt.Errorf("decoding values: %w", err)
 			}
 		}

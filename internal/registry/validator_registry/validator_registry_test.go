@@ -15,6 +15,7 @@ import (
 
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
 	"github.com/NVIDIA/ccluster/catalogs/components"
+	jobdeployment "github.com/NVIDIA/ccluster/catalogs/deployments/job_deployment"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 )
 
@@ -109,6 +110,16 @@ func TestValues(t *testing.T) {
 			name: "a type without Validate still rejects a wrong type", validate: Values[plainValues](),
 			values: raw(`{"replicas":"two"}`), wantErr: "decoding values",
 		},
+		{
+			// Helm reads .Values.name, so Name does not set the required key.
+			name: "a required key in the wrong case does not set it", validate: Values[stubValues](),
+			values: raw(`{"Name":"a"}`), wantIs: errNameMissing,
+		},
+		{
+			// Replicas is not replicas: it is passed on unchecked, like any unmodelled key.
+			name: "an optional key in the wrong case passes as unmodelled", validate: Values[plainValues](),
+			values: raw(`{"Replicas":"two"}`),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -136,6 +147,8 @@ func TestGetChecksChartValues(t *testing.T) {
 		chart   string
 		values  string
 		wantErr bool
+		// wantErrContains, when set, is a substring the error must contain.
+		wantErrContains string
 	}{
 		{name: "keda accepts its values", chart: keda.Chart, values: `{"keda":{"operator":{"replicaCount":1}}}`},
 		{
@@ -150,6 +163,12 @@ func TestGetChecksChartValues(t *testing.T) {
 			name: "kai_gpu_queues runs its Validate", chart: kaigpuqueues.Chart,
 			values: `{"queues":[{"name":"a","gpuQuota":1},{"name":"a","gpuQuota":2}]}`, wantErr: true,
 		},
+		{
+			// The chart reads .Values.imageUrl, which imageURL leaves empty.
+			name: "job_deployment does not take imageURL for imageUrl", chart: jobdeployment.Chart,
+			values:  `{"name":"j","deploymentId":"d","imageURL":"registry.example/app:1"}`,
+			wantErr: true, wantErrContains: "imageUrl",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -157,8 +176,12 @@ func TestGetChecksChartValues(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s is not registered", test.chart)
 			}
-			if err := validate(raw(test.values)); (err != nil) != test.wantErr {
+			err := validate(raw(test.values))
+			if (err != nil) != test.wantErr {
 				t.Errorf("error = %v, want error %v", err, test.wantErr)
+			}
+			if test.wantErrContains != "" && (err == nil || !strings.Contains(err.Error(), test.wantErrContains)) {
+				t.Errorf("error = %v, want one containing %q", err, test.wantErrContains)
 			}
 		})
 	}
