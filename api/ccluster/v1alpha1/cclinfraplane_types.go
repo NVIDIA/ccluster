@@ -43,9 +43,10 @@ type CCLInfraPlaneStatus struct {
 	//     cluster carries this CCLInfraPlane's domain.
 	//   - "DNSReady": external-dns has read the current records pointing
 	//     "*.<lb>.<domain>" at each of the cluster's LoadBalancers labelled
-	//     ccluster.nvidia.com/loadbalancer: <lb>, and every label value is a DNS label. external-dns marks the records read before it
-	//     writes them, so True does not mean they were published: the provider may
-	//     reject them, or external-dns may skip them.
+	//     ccluster.nvidia.com/loadbalancer: <lb>, and every label value is a DNS label.
+	//     external-dns marks the records read before it writes them, so True does not
+	//     mean they were published: the provider may reject them, or external-dns may
+	//     skip them.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map

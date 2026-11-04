@@ -75,15 +75,15 @@ manager:
   ##
   ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<lb>.<domain>"
   ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>,
-  ## such as "*.ingress.<domain>" at its ingress, <domain> being the plane's derived one. Nothing is published unless the `external-dns`
-  ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
-  ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
-  ## for an external-dns installed elsewhere. The operator watches DNSEndpoints only if
-  ## their CRD exists when it starts. Enabling external-dns on an installed release
-  ## neither installs that CRD, which Helm does only with the release, nor restarts the
-  ## operator: apply the CRD first and restart the operator afterwards. Until then a
-  ## plane's DNSReady moves on only with the resync, and never with
-  ## --infraplane-resync-period=0.
+  ## such as "*.ingress.<domain>" at its ingress, <domain> being the plane's derived one.
+  ## Nothing is published unless the `external-dns` dependency below is enabled.
+  ## --dns-endpoint-namespace (default: the operator's own namespace, where that
+  ## external-dns runs) is where the DNSEndpoints go; set it only for an external-dns
+  ## installed elsewhere. The operator watches DNSEndpoints only if their CRD exists when
+  ## it starts. Enabling external-dns on an installed release neither installs that CRD,
+  ## which Helm does only with the release, nor restarts the operator: apply the CRD first
+  ## and restart the operator afterwards. Until then a plane's DNSReady moves on only with
+  ## the resync, and never with --infraplane-resync-period=0.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
