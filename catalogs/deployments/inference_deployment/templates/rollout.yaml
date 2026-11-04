@@ -85,6 +85,7 @@ spec:
       priorityClassName: {{ .Values.priorityClassName | quote }}
       {{- end }}
       # Security is enforced at namespace level via PSA "baseline".
+      {{- if .Values.nodeAffinityLabels }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -96,6 +97,7 @@ spec:
                     values:
                       - {{ $value | quote }}
                   {{- end }}
+      {{- end }}
       containers:
         - image: "{{ .Values.imageUrl }}"
           name: user-container

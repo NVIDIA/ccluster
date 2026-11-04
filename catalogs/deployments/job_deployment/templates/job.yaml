@@ -68,6 +68,7 @@ spec:
       priorityClassName: {{ .Values.priorityClassName | quote }}
       {{- end }}
       restartPolicy: Never
+      {{- if .Values.nodeAffinityLabels }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -79,6 +80,7 @@ spec:
                   values:
                     - {{ $value | quote }}
                 {{- end }}
+      {{- end }}
       containers:
         - name: user-container
           image: "{{ .Values.imageUrl }}"
