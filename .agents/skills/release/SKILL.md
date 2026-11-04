@@ -97,7 +97,9 @@ the one point where fragments become changelog entries.
 - Delete the fragments it consumed, keeping `README.md`:
   `git rm $(ls changelog.d/*.md | grep -v README.md)`. A PR that merges while the release
   PR is open leaves its fragment on `main` for the next release. If you update the release
-  branch from `main`, consolidate and delete any fragment that arrives with it.
+  branch from `main`, consolidate and delete any fragment that arrives with it. If that hits
+  a modify/delete conflict on a fragment, carry its amended text into the new section
+  before deleting it.
 - Add the comparison link for the new version at the top of the link list at the bottom
   of the file:
 

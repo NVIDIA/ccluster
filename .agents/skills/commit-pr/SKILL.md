@@ -60,12 +60,13 @@ incompatible changes `**Breaking:**`. [`changelog.d/README.md`](../../../changel
 has the format. Internal refactors, CI and docs-only changes usually need no fragment.
 Stage the fragment with the same commit.
 
-A fragment is a new file, so it never conflicts with a release and always ships in the
-first release cut after the PR merges; an edit to `CHANGELOG.md` can be merged by git
-into a section that was released while the PR was open. If the change alters or reverts
-behaviour an existing fragment in `changelog.d/` describes, amend that fragment, whoever
-wrote it, so the release notes describe what ships rather than a feature and its undoing;
-once a release has collected a fragment, describe further changes in a new one.
+A new fragment never conflicts with a release and always ships in the first release cut
+after the PR merges; an edit to `CHANGELOG.md` can be merged by git into a section that was
+released while the PR was open. If the change alters or reverts behaviour an existing
+fragment in `changelog.d/` describes, amend that fragment, whoever wrote it, so the release
+notes describe what ships rather than a feature and its undoing; once a release has
+collected a fragment, describe further changes in a new one. An amendment can conflict
+with a release that deletes the fragment, and git reports it rather than merging it.
 The `release` skill is the one place fragments are consolidated into `CHANGELOG.md`.
 
 ## 4. Stage and commit
