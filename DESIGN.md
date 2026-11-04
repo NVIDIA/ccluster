@@ -333,9 +333,9 @@ stays while the plane cannot be reached.
   `Published` means only that external-dns has read the current `DNSEndpoint`. A record it
   then does not write is reported `Published` all the same: one the provider rejects (for
   example for lack of IAM rights), one under none of its zones or excluded by
-  `--domain-filter`, one whose name a record with another owner ID holds, a CNAME that
-  another plane's A record wins over, or one whose target ends in a dot. external-dns only
-  logs these ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
+  `--domain-filter`, one whose name a record with another owner ID holds, or a CNAME that
+  another plane's A record wins over. external-dns only logs these
+  ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 
 The operator writes the `DNSEndpoint` whether or not external-dns is installed. Without its
 CRD the write fails, which is reported and retried on the resync rather than every minute,

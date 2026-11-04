@@ -142,10 +142,11 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 
 // wildcardEndpoints returns a "*.<name>.<domain>" record for each LoadBalancer in
 // clusterConfig that has an address, in its order. A LoadBalancer whose name is not a
-// DNS label, makes the record's name too long, or whose address is not in the form the
-// CCLClusterConfig schema requires gets none and is described in invalid instead: its
+// DNS label, makes the record's name too long, or whose address is not valid
+// (LoadBalancerStatus.Canonical) gets none and is described in invalid instead: its
 // ccluster.nvidia.com/loadbalancer label value may hold characters a DNS label may not,
-// and the infra-plane cluster's admin can write its status, schema or not.
+// and its address arrives as the infra-plane cluster reported it, with only its length
+// checked by the schema.
 func wildcardEndpoints(
 	domain string,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,

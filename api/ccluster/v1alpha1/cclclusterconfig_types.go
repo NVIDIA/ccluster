@@ -34,9 +34,8 @@ type CCLClusterConfigSpec struct {
 }
 
 // CCLClusterConfigStatus defines the observed state of CCLClusterConfig. The
-// control-plane operator also copies it into the status of the CCLInfraPlane that
-// registers the cluster, leaving out any LoadBalancer whose address does not match the
-// format below.
+// control-plane operator also copies it, unchanged, into the status of the CCLInfraPlane
+// that registers the cluster.
 // +kubebuilder:title=CCLClusterConfigStatus
 type CCLClusterConfigStatus struct {
 	// conditions represent the current state of the infra-plane cluster's
