@@ -302,8 +302,13 @@ The addresses come from `status.clusterConfig`'s `loadBalancers`, so they arrive
 the remote watch; a plane that cannot be reached keeps its last copy, and its records. A
 LoadBalancer without an address has no record; when none has one, the operator deletes
 the `DNSEndpoint`, which withdraws them all. A label value may hold characters a DNS label
-may not (uppercase, `_`, `.`), and with a long domain the name can pass 253 characters:
-such a LoadBalancer gets no record and is reported in `DNSReady`, the rest are published.
+may not (uppercase, `_`, `.`), and with a long domain the name can pass 253 characters.
+The address arrives as the Service reported it (§3a), so this is the one place it is
+checked: an IP is published in canonical form, an IPv4-mapped IPv6 one as IPv4, and one
+with a zone is refused, as is a hostname that is not a lowercase DNS name or is an IP.
+Such a LoadBalancer gets no record and is reported in `DNSReady`; the rest are
+published. The copy in `status.clusterConfig` keeps the address unchanged, so the report
+stays while the plane cannot be reached.
 
 - **Which zone.** external-dns picks it, not the operator and not the API: of the public
   zones it manages, the most specific one the record's name falls under. With
@@ -328,9 +333,9 @@ such a LoadBalancer gets no record and is reported in `DNSReady`, the rest are p
   `Published` means only that external-dns has read the current `DNSEndpoint`. A record it
   then does not write is reported `Published` all the same: one the provider rejects (for
   example for lack of IAM rights), one under none of its zones or excluded by
-  `--domain-filter`, one whose name a record with another owner ID holds, a CNAME that
-  another plane's A record wins over, or one whose target ends in a dot. external-dns only
-  logs these ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
+  `--domain-filter`, one whose name a record with another owner ID holds, or a CNAME that
+  another plane's A record wins over. external-dns only logs these
+  ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 
 The operator writes the `DNSEndpoint` whether or not external-dns is installed. Without its
 CRD the write fails, which is reported and retried on the resync rather than every minute,
@@ -355,9 +360,10 @@ is computed only once `Available` is true, and both are written in one status pa
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
 `DNSReady` — `True/Published` (external-dns has read the current `DNSEndpoint`, which
-does not mean it wrote the records; see the gap above), or `False` with `LoadBalancerPending` (the plane reports no LoadBalancer
-with an address), `Pending` (external-dns has not read the current `DNSEndpoint` yet),
-`InvalidLoadBalancerName` (a LoadBalancer's name cannot make a record name; the others'
+does not mean it wrote the records; see the gap above), or `False` with
+`LoadBalancerPending` (the plane reports no LoadBalancer with an address), `Pending`
+(external-dns has not read the current `DNSEndpoint` yet), `InvalidLoadBalancer` (a
+LoadBalancer's name cannot make a record name, or its address is not valid; the others'
 records are still written), `DNSEndpointCRDMissing` (external-dns is not installed) or
 `DNSEndpointConflict` (the name is another plane's), or `Unknown/DNSEndpointError` (writing
 or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
@@ -453,7 +459,12 @@ The pass also reports LoadBalancers. A chart opts one in by labelling its Servic
 lists every Service of type `LoadBalancer` carrying the label and reports each in
 `status.loadBalancers`, a list keyed by the label's value, with the first `ip` and the
 first `hostname` the Service reports (cloud providers such as AWS address load balancers
-by name). An entry whose address is not assigned yet has both empty, so "pending" reads
+by name). Both are written as the Service reports them. Neither the operator nor the
+schema checks them: the cp operator does, where the address becomes a DNS record (§3), and
+reports one it cannot use in `DNSReady`, so a bad address can neither fail this status
+write nor be dropped without a trace. Checking it in the schema would need CEL's IP
+library, which a CRD can use only from Kubernetes 1.31, and a cap on the list to fit CEL's
+cost budget. An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
 of the list and reported in `Verified` instead. The value is the chart's to choose and
 becomes the plane's subdomain: the cp operator points `*.<name>.<domain>` at it (§3), so it
@@ -847,7 +858,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancerName`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |

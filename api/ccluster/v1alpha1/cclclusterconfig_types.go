@@ -6,7 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	"fmt"
+	"net/netip"
+	"strings"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // CCLClusterConfigName is the only name a CCLClusterConfig may have. The kind is a
@@ -81,8 +86,10 @@ const (
 )
 
 // LoadBalancerStatus is the address of a LoadBalancer Service labelled
-// ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
-// provider assigns one.
+// ccluster.nvidia.com/loadbalancer, as the Service reports it. ip and hostname are both
+// empty until the cloud provider assigns one. Neither the schema nor the infra-plane
+// operator checks the address: the control-plane operator does, when it publishes the
+// LoadBalancer's DNS record, and reports one it cannot use in its DNSReady condition.
 type LoadBalancerStatus struct {
 	// name is the Service's ccluster.nvidia.com/loadbalancer label value.
 	// +required
@@ -92,13 +99,60 @@ type LoadBalancerStatus struct {
 
 	// ip is the LoadBalancer's IP address: the first IP the Service reports.
 	// +optional
+	// +kubebuilder:validation:MaxLength=45
 	IP string `json:"ip,omitempty"`
 
 	// hostname is the LoadBalancer's DNS name, set by cloud providers whose load
 	// balancers are addressed by name rather than by IP: the first hostname the Service
 	// reports.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
 	Hostname string `json:"hostname,omitempty"`
+}
+
+// CanonicalLoadBalancerIP returns ip in the form a DNS record takes: canonical, with an
+// IPv4-mapped IPv6 address written as IPv4. It fails if ip is not an IP address, or has
+// a zone.
+func CanonicalLoadBalancerIP(ip string) (string, error) {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return "", fmt.Errorf("ip %q is not an IP address", ip)
+	}
+	if addr.Zone() != "" {
+		return "", fmt.Errorf("ip %q has a zone", ip)
+	}
+	return addr.Unmap().String(), nil
+}
+
+// ValidateLoadBalancerHostname returns why hostname cannot be a CNAME target, a lowercase
+// DNS name that is not an IP address, or nil. It is the rule Kubernetes
+// applies to a Service's load-balancer hostname.
+func ValidateLoadBalancerHostname(hostname string) error {
+	if _, err := netip.ParseAddr(hostname); err == nil {
+		return fmt.Errorf("hostname %q is an IP address", hostname)
+	}
+	if errs := validation.IsDNS1123Subdomain(hostname); len(errs) > 0 {
+		return fmt.Errorf("hostname %q is not a DNS name: %s", hostname, strings.Join(errs, ", "))
+	}
+	return nil
+}
+
+// Canonical returns lb with its address in the form a DNS record takes, or why it cannot
+// be: CanonicalLoadBalancerIP and ValidateLoadBalancerHostname applied to whichever is set.
+func (lb LoadBalancerStatus) Canonical() (LoadBalancerStatus, error) {
+	if lb.IP != "" {
+		ip, err := CanonicalLoadBalancerIP(lb.IP)
+		if err != nil {
+			return lb, err
+		}
+		lb.IP = ip
+	}
+	if lb.Hostname != "" {
+		if err := ValidateLoadBalancerHostname(lb.Hostname); err != nil {
+			return lb, err
+		}
+	}
+	return lb, nil
 }
 
 // LoadBalancer returns the reported LoadBalancer with the given name, or nil if there is

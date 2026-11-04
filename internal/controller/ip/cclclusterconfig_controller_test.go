@@ -371,6 +371,16 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 			}))
 	})
 
+	It("reports an address as the Service lists it, leaving the checks to the cp operator", func() {
+		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
+			corev1.LoadBalancerIngress{IP: "2001:DB8:0:0::10"})
+		reconcileOnce()
+
+		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
+			{Name: "ingress", IP: "2001:DB8:0:0::10"},
+		}))
+	})
+
 	It("reports every labelled LoadBalancer under its label value, sorted by it", func() {
 		service("ssh", corev1.ServiceTypeLoadBalancer, labelled("ssh"),
 			corev1.LoadBalancerIngress{IP: "192.0.2.30"})

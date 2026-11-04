@@ -1356,7 +1356,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "Bad_Name", IP: "192.0.2.30"},
 				)
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer)
 				Expect(dnsEndpointExists()).To(BeFalse())
 
 				By("publishing the ingress beside it, still reporting the bad name")
@@ -1369,9 +1369,28 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				}))
 				infraPlane = externalDNSAccepts()
 
-				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName)
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer)
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
 				Expect(condition.Message).To(ContainSubstring(`"Bad_Name"`))
+			})
+
+			It("should report a LoadBalancer whose address is not valid, copying it unchanged", func() {
+				settle()
+
+				reported := []cclusternvidiacomv1alpha1.LoadBalancerStatus{
+					{Name: "api", Hostname: "LB.example.com"},
+					{Name: "ingress", IP: "192.0.2.10"},
+				}
+				reportLoadBalancers(reported...)
+				Expect(getDNSEndpoint().Spec.Endpoints).To(HaveExactElements(externaldnsv1alpha1.Endpoint{
+					DNSName: ingressName, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: 60,
+				}))
+				infraPlane := externalDNSAccepts()
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer)
+				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady)
+				Expect(condition.Message).To(ContainSubstring(`hostname "LB.example.com" is not a DNS name`))
+				Expect(infraPlane.Status.ClusterConfig.LoadBalancers).To(Equal(reported))
 			})
 
 			It("should report a LoadBalancer whose record name would be too long", func() {

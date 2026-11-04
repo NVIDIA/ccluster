@@ -261,7 +261,9 @@ func (r *CCLClusterConfigReconciler) observeLoadBalancers(
 }
 
 // loadBalancerStatus takes the first IP and the first hostname a LoadBalancer Service
-// reports; both are empty until the cloud provider assigns an address.
+// reports, as it reports them; both are empty until the cloud provider assigns an address.
+// The cp operator checks them when it publishes the record and reports one it cannot use,
+// so nothing is dropped here without a trace.
 func loadBalancerStatus(name string, ingress []corev1.LoadBalancerIngress) cclusternvidiacomv1alpha1.LoadBalancerStatus {
 	status := cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: name}
 	for _, address := range ingress {

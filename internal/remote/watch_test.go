@@ -180,7 +180,9 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 	t.Run("status written by the infra-plane operator", func(t *testing.T) {
 		drain(queue)
 		apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-			Type: "Verified", Status: metav1.ConditionTrue, Reason: "ComponentsVerified",
+			Type:   cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified,
+			Status: metav1.ConditionTrue,
+			Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified,
 		})
 		if err := testClient.Status().Update(ctx, config); err != nil {
 			t.Fatal(err)

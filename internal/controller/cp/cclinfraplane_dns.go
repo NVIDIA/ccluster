@@ -75,15 +75,15 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	}
 
 	endpoints, invalid := wildcardEndpoints(infraPlane.Spec.Domain, clusterConfig)
-	invalidMessage := "no record for LoadBalancers whose name cannot be a DNS label: " +
-		strings.Join(invalid, "; ")
+	invalidMessage := "no record for LoadBalancers whose name cannot be a DNS label or whose " +
+		"address is not valid: " + strings.Join(invalid, "; ")
 	if len(endpoints) == 0 {
 		// No requeue: the address arrives through the watch on the CCLClusterConfig.
 		if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
 			return failed(err)
 		}
 		if len(invalid) > 0 {
-			return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName, invalidMessage), nil
+			return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer, invalidMessage), nil
 		}
 		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonLoadBalancerPending, fmt.Sprintf(
 			"waiting for the infra-plane cluster to report an address for a LoadBalancer labelled %s",
@@ -126,9 +126,9 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 			"waiting for external-dns to read DNSEndpoint %q in namespace %q: %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
 	case len(invalid) > 0:
-		// No requeue: only relabelling the Service fixes this, which reaches the
-		// CCLClusterConfig watch.
-		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancerName, fmt.Sprintf(
+		// No requeue: only a change on the infra-plane cluster fixes this, which reaches
+		// the CCLClusterConfig watch.
+		return condition(metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonInvalidLoadBalancer, fmt.Sprintf(
 			"external-dns read DNSEndpoint %q in namespace %q: %s; %s",
 			dnsEndpoint.Name, dnsEndpoint.Namespace, records, invalidMessage)), nil
 	}
@@ -142,9 +142,11 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 
 // wildcardEndpoints returns a "*.<name>.<domain>" record for each LoadBalancer in
 // clusterConfig that has an address, in its order. A LoadBalancer whose name is not a
-// DNS label, or makes the record's name too long, gets none and is described in invalid
-// instead: its ccluster.nvidia.com/loadbalancer label value may hold characters a DNS
-// label may not.
+// DNS label, makes the record's name too long, or whose address is not valid
+// (LoadBalancerStatus.Canonical) gets none and is described in invalid instead: its
+// ccluster.nvidia.com/loadbalancer label value may hold characters a DNS label may not,
+// and its address arrives as the infra-plane cluster reported it, with only its length
+// checked by the schema.
 func wildcardEndpoints(
 	domain string,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
@@ -159,11 +161,15 @@ func wildcardEndpoints(
 			errs = append(errs, fmt.Sprintf("%s is longer than %d characters",
 				dnsName, validation.DNS1123SubdomainMaxLength))
 		}
+		canonical, err := lb.Canonical()
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
 		if len(errs) > 0 {
 			invalid = append(invalid, fmt.Sprintf("%q: %s", lb.Name, strings.Join(errs, ", ")))
 			continue
 		}
-		if endpoint := wildcardEndpoint(dnsName, lb); endpoint != nil {
+		if endpoint := wildcardEndpoint(dnsName, canonical); endpoint != nil {
 			endpoints = append(endpoints, *endpoint)
 		}
 	}
@@ -171,7 +177,8 @@ func wildcardEndpoints(
 }
 
 // wildcardEndpoint returns the dnsName record pointing at lb - an A or AAAA record for an
-// IPv4 or IPv6 address, otherwise a CNAME for a hostname - or nil if it has no address.
+// IPv4 or IPv6 address, otherwise a CNAME for a hostname - or nil if it has no address. lb
+// must be canonical (LoadBalancerStatus.Canonical).
 func wildcardEndpoint(
 	dnsName string,
 	lb cclusternvidiacomv1alpha1.LoadBalancerStatus,
@@ -180,7 +187,7 @@ func wildcardEndpoint(
 	switch {
 	case lb.IP != "":
 		endpoint.RecordType = "A"
-		if addr, err := netip.ParseAddr(lb.IP); err == nil && addr.Unmap().Is6() {
+		if addr, err := netip.ParseAddr(lb.IP); err == nil && addr.Is6() {
 			endpoint.RecordType = "AAAA"
 		}
 		endpoint.Targets = []string{lb.IP}

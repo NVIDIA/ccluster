@@ -198,18 +198,22 @@ spec:
                     items:
                       description: |-
                         LoadBalancerStatus is the address of a LoadBalancer Service labelled
-                        ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
-                        provider assigns one.
+                        ccluster.nvidia.com/loadbalancer, as the Service reports it. ip and hostname are both
+                        empty until the cloud provider assigns one. Neither the schema nor the infra-plane
+                        operator checks the address: the control-plane operator does, when it publishes the
+                        LoadBalancer's DNS record, and reports one it cannot use in its DNSReady condition.
                       properties:
                         hostname:
                           description: |-
                             hostname is the LoadBalancer's DNS name, set by cloud providers whose load
                             balancers are addressed by name rather than by IP: the first hostname the Service
                             reports.
+                          maxLength: 253
                           type: string
                         ip:
                           description: 'ip is the LoadBalancer''s IP address: the
                             first IP the Service reports.'
+                          maxLength: 45
                           type: string
                         name:
                           description: name is the Service's ccluster.nvidia.com/loadbalancer

@@ -105,20 +105,22 @@ class Condition(BaseModel):
 class LoadBalancer(BaseModel):
     """
     LoadBalancerStatus is the address of a LoadBalancer Service labelled
-    ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
-    provider assigns one.
+    ccluster.nvidia.com/loadbalancer, as the Service reports it. ip and hostname are both
+    empty until the cloud provider assigns one. Neither the schema nor the infra-plane
+    operator checks the address: the control-plane operator does, when it publishes the
+    LoadBalancer's DNS record, and reports one it cannot use in its DNSReady condition.
     """
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    hostname: str | None = None
+    hostname: Annotated[str | None, Field(max_length=253)] = None
     """
     hostname is the LoadBalancer's DNS name, set by cloud providers whose load
     balancers are addressed by name rather than by IP: the first hostname the Service
     reports.
     """
-    ip: str | None = None
+    ip: Annotated[str | None, Field(max_length=45)] = None
     """
     ip is the LoadBalancer's IP address: the first IP the Service reports.
     """

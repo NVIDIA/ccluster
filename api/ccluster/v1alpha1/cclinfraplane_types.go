@@ -113,13 +113,13 @@ const (
 	CCLInfraPlaneReasonInvalidCredentials     = "InvalidCredentials"
 
 	// DNSReady.
-	CCLInfraPlaneReasonPublished               = "Published"
-	CCLInfraPlaneReasonPending                 = "Pending"
-	CCLInfraPlaneReasonLoadBalancerPending     = "LoadBalancerPending"
-	CCLInfraPlaneReasonInvalidLoadBalancerName = "InvalidLoadBalancerName"
-	CCLInfraPlaneReasonDNSEndpointCRDMissing   = "DNSEndpointCRDMissing"
-	CCLInfraPlaneReasonDNSEndpointConflict     = "DNSEndpointConflict"
-	CCLInfraPlaneReasonDNSEndpointError        = "DNSEndpointError"
+	CCLInfraPlaneReasonPublished             = "Published"
+	CCLInfraPlaneReasonPending               = "Pending"
+	CCLInfraPlaneReasonLoadBalancerPending   = "LoadBalancerPending"
+	CCLInfraPlaneReasonInvalidLoadBalancer   = "InvalidLoadBalancer"
+	CCLInfraPlaneReasonDNSEndpointCRDMissing = "DNSEndpointCRDMissing"
+	CCLInfraPlaneReasonDNSEndpointConflict   = "DNSEndpointConflict"
+	CCLInfraPlaneReasonDNSEndpointError      = "DNSEndpointError"
 )
 
 // +genclient
