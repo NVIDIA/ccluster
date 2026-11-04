@@ -56,7 +56,8 @@ image. Released versions are published to GHCR and can be installed without a cl
 ```bash
 # Control-plane cluster: ccluster-cp-operator + Argo CD
 helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
-  -n ccluster-cp-system --create-namespace
+  -n ccluster-cp-system --create-namespace \
+  --set-json 'manager.args=["--leader-elect","--catalog-repo-url=https://github.com/NVIDIA/ccluster","--catalog-revision=vX.Y.Z","--argocd-server-service=ccluster-cp-argocd-server","--base-domain=planes.example.com"]'
 
 # Infra-plane cluster: ccluster-ip-operator
 helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z \
@@ -64,9 +65,14 @@ helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
 ```
 
 Each released chart references `ghcr.io/nvidia/ccluster-{cp,ip}-operator:X.Y.Z` and pins
-`--catalog-revision` to the matching `vX.Y.Z` tag. The Pydantic models for the API and the
-catalog ship as `pip install ccluster-py` (imported as `ccluster`), and the Go client as
-the module's `pkg/cclclient` package.
+`--catalog-revision` to the matching `vX.Y.Z` tag. The cp operator does not start without
+`--base-domain`, the DNS domain every CCLInfraPlane's domain is derived under (see
+[DESIGN.md](DESIGN.md#3-cclinfraplane--registering-a-cluster)). Setting it replaces the
+chart's whole `manager.args` list, so the command above repeats the chart's other
+arguments, `--catalog-revision=vX.Y.Z` among them: without it the operator deploys the
+catalog from `main`. Change both versions together on every `helm upgrade`. The Pydantic
+models for the API and the catalog ship as `pip install ccluster-py` (imported as
+`ccluster`), and the Go client as the module's `pkg/cclclient` package.
 
 The charts themselves live in `charts/cp/chart` and `charts/ip/chart`; they are generated
 from the kustomize overlays in `config/`, so regenerate them with `make helm-generate`

@@ -43,6 +43,12 @@ manager:
   ## control planes must not share one, or same-named planes in same-named namespaces
   ## claim the same records.
   ##
+  ## Setting args with --set, --set-json or a values file replaces this whole list, not
+  ## just one entry, so start from it and keep every entry. A released chart's list pins
+  ## --catalog-revision to the release's vX.Y.Z tag, which `helm show values` prints;
+  ## leave it out and the operator deploys the catalog from main. Change it with the chart
+  ## version on every upgrade: --reuse-values keeps the old one.
+  ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
   ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
   ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
