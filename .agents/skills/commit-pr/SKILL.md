@@ -62,9 +62,10 @@ Stage the fragment with the same commit.
 
 A fragment is a new file, so it never conflicts with a release and always ships in the
 first release cut after the PR merges; an edit to `CHANGELOG.md` can be merged by git
-into a section that was released while the PR was open. Do not edit other people's
-fragments. You may amend your own while it is still in `changelog.d/` (for instance when
-a follow-up PR changes what you shipped); once a release has collected it, add a new one.
+into a section that was released while the PR was open. If the change alters or reverts
+behaviour an existing fragment in `changelog.d/` describes, amend that fragment, whoever
+wrote it, so the release notes describe what ships rather than a feature and its undoing;
+once a release has collected a fragment, describe further changes in a new one.
 The `release` skill is the one place fragments are consolidated into `CHANGELOG.md`.
 
 ## 4. Stage and commit

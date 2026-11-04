@@ -68,8 +68,10 @@ not for coverage. Check that assertions test the contract, not the implementatio
 
 **Docs and metadata.** A user-visible change adds a fragment `changelog.d/<short-topic>.md`
 in the format of `changelog.d/README.md`. Outside a release PR, any edit to
-`CHANGELOG.md` or to someone else's fragment is a finding: only the `release` skill
-moves fragments into the changelog.
+`CHANGELOG.md` is a finding: only the `release` skill moves fragments into the changelog.
+Amending an existing fragment in `changelog.d/` is expected, whoever wrote it, when the PR
+changes or reverts the unreleased behaviour it describes; check the amended text matches
+what now ships. A stale fragment the PR contradicts but leaves unchanged is a finding.
 `AGENTS.md`, `DESIGN.md` and `README.md` still describe what the code now does. The PR
 title is a valid Conventional Commit and the body follows the plain-text format (prose,
 blank line, hyphen bullets, no Markdown), since it becomes the commit message.
