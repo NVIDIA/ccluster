@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The required values only: renders nothing.
+name: app
+suffix: 8f3a21c0
+secretStoreRef:
+  name: vault
+  kind: ClusterSecretStore

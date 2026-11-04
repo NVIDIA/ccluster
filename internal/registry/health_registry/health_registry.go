@@ -33,6 +33,7 @@ import (
 	namespacebase "github.com/NVIDIA/ccluster/catalogs/namespace_base"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	persistentvolume "github.com/NVIDIA/ccluster/catalogs/resources/persistent_volume"
+	workloadsecrets "github.com/NVIDIA/ccluster/catalogs/resources/workload_secrets"
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
@@ -78,5 +79,6 @@ func Get() *Registry {
 	r.Register(jobdeployment.Chart, jobdeployment.Health)
 	r.Register(kaigpuqueues.Chart, catalogs.DefaultHealth)
 	r.Register(persistentvolume.Chart, catalogs.DefaultHealth)
+	r.Register(workloadsecrets.Chart, catalogs.DefaultHealth)
 	return r
 }

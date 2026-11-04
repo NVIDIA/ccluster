@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# catalogs/resources/workload_secrets has no defaults: name, suffix and secretStoreRef are
+# required, and env and imagePull each render one ExternalSecret. See component.go for
+# the schema.

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/NVIDIA/ccluster/catalogs/deployments/deploymentstest"
 )
 
 // TestNodeAffinity checks that the workload charts pin pods to nodes only when
@@ -21,7 +23,7 @@ func TestNodeAffinity(t *testing.T) {
 		"operator": "In",
 		"values":   []any{"a100"},
 	}}}}
-	helm := helmBinary(t)
+	helm := deploymentstest.HelmBinary(t)
 	for _, tt := range []struct {
 		name   string
 		chart  string
@@ -53,12 +55,13 @@ decodePool: *pool
 		t.Run(tt.name, func(t *testing.T) {
 			files := []string{filepath.Join(tt.chart, "ci", "default-values.yaml")}
 			if tt.values != "" {
-				files = append(files, writeValues(t, tt.values))
+				files = append(files, deploymentstest.WriteValues(t, tt.values))
 			}
-			if got := nodeSelectorTerms(renderChart(t, helm, tt.chart, files...)); len(got) != 0 {
+			if got := nodeSelectorTerms(deploymentstest.RenderChart(t, helm, tt.chart, files...)); len(got) != 0 {
 				t.Errorf("without nodeAffinityLabels, nodeSelectorTerms = %v, want none", got)
 			}
-			got := nodeSelectorTerms(renderChart(t, helm, tt.chart, append(files, writeValues(t, tt.labels))...))
+			withLabels := append(files, deploymentstest.WriteValues(t, tt.labels))
+			got := nodeSelectorTerms(deploymentstest.RenderChart(t, helm, tt.chart, withLabels...))
 			if len(got) != tt.pinned {
 				t.Fatalf("with nodeAffinityLabels, %d nodeSelectorTerms, want %d", len(got), tt.pinned)
 			}
@@ -75,7 +78,7 @@ decodePool: *pool
 func nodeSelectorTerms(objects []map[string]any) []any {
 	var lists []any
 	for _, obj := range objects {
-		visit(obj, func(key string, value any) {
+		deploymentstest.Visit(obj, func(key string, value any) {
 			if key == "nodeSelectorTerms" {
 				lists = append(lists, value)
 			}

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package deploymentstest holds the test helpers the deployment charts share.
+// Package deploymentstest holds the test helpers the catalog charts' tests share.
 package deploymentstest
 
 import (
