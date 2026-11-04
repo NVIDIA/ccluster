@@ -635,7 +635,10 @@ collide. Two in one namespace still can: the name joins with `-`, so set `a` wit
 and the other reports `ApplicationConflict`; a manifest copied in from elsewhere ends the
 same way. With several workers (`--componentset-max-concurrent-reconciles`) both can see
 the Application missing and create it. The loser's `AlreadyExists` is retried as a stale
-read, and the re-read finds the winner's back-reference, so the outcome is the same.
+read, through the cache, for about 300ms (`retry.DefaultBackoff`). If the winner's
+Application reaches the cache in that time, the loser reports `ApplicationConflict` on
+that pass. Otherwise that pass reports `ApplicationFailed` with the `AlreadyExists` error,
+and its rate-limited retry reports `ApplicationConflict`. The end state is the same.
 
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
@@ -945,7 +948,8 @@ CCLComponentSet, so that controller's load grows with the number of Applications
 that changes nothing the status reports does not write it. The controller runs
 `--componentset-max-concurrent-reconciles` workers, four by default; the
 `cclcomponentset` controller's `workqueue_depth` and `workqueue_queue_duration_seconds`
-metrics show when more would help. Different CCLComponentSets write disjoint
+staying high, with `controller_runtime_active_workers` at the worker count, show when
+more would help. Different CCLComponentSets write disjoint
 Applications, apart from the name collision in §4. The `CCLInfraPlane` controller always
 runs one worker (§3).
 

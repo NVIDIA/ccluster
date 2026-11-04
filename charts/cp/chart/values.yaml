@@ -93,7 +93,8 @@ manager:
   ##
   ## --componentset-max-concurrent-reconciles (default 4) is how many CCLComponentSets
   ## the operator reconciles at once. Raise it when the cclcomponentset controller's
-  ## workqueue_depth and workqueue_queue_duration_seconds metrics stay high.
+  ## workqueue_depth and workqueue_queue_duration_seconds metrics stay high and
+  ## controller_runtime_active_workers sits at the worker count.
   ## CCLInfraPlanes are always reconciled one at a time.
   args:
     - --leader-elect

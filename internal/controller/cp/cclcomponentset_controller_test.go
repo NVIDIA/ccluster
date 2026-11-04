@@ -1716,32 +1716,40 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 			for _, racer := range racers {
-				Expect(racer.sawMissing).To(BeTrue(), "the race to create was not staged")
+				Expect(racer.staged).To(BeTrue(), "the race to create was not staged")
 			}
 
-			By("reconciling both again, one after the other")
-			for _, key := range keys {
-				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-				Expect(err).NotTo(HaveOccurred())
-			}
+			// What each set's ComponentsApplied reports, by set name.
+			reasons := func() map[string]string {
+				GinkgoHelper()
 
-			reasons := map[string]string{}
-			for _, key := range keys {
-				componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
-				Expect(k8sClient.Get(ctx, key, componentSet)).To(Succeed())
-				reasons[key.Name] = conditionOf(componentSet,
-					cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason
+				byName := map[string]string{}
+				for _, key := range keys {
+					componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+					Expect(k8sClient.Get(ctx, key, componentSet)).To(Succeed())
+					byName[key.Name] = conditionOf(componentSet,
+						cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason
+				}
+				return byName
 			}
-			Expect(reasons).To(ConsistOf(
+			raced := reasons()
+			Expect(raced).To(ConsistOf(
 				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated,
 				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
 
 			application := &argocdv1alpha1.Application{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shared, Namespace: namespace},
 				application)).To(Succeed())
-			Expect(reasons).To(HaveKeyWithValue(application.Annotations[annotationComponentSetName],
+			Expect(raced).To(HaveKeyWithValue(application.Annotations[annotationComponentSetName],
 				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated),
 				"the Application belongs to the CCLComponentSet reporting the conflict")
+
+			By("keeping the outcome when both are reconciled again, one after the other")
+			for _, key := range keys {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(reasons()).To(Equal(raced))
 		})
 	})
 })
@@ -1860,13 +1868,16 @@ func (w *countedStatusWriter) Update(
 }
 
 // meetAtApplicationGet holds the first Application read made through it until every client
-// sharing arrived has made its own, so all of them act on the same read. sawMissing records
-// whether that read found nothing.
+// sharing arrived has made its own, so all of them act on the same read. staged records
+// whether they all met and that read found nothing.
+//
+// The wait is bounded, so a client that never reads an Application fails the spec on
+// staged rather than holding the others forever.
 type meetAtApplicationGet struct {
 	client.Client
-	arrived    *sync.WaitGroup
-	once       sync.Once
-	sawMissing bool
+	arrived *sync.WaitGroup
+	once    sync.Once
+	staged  bool
 }
 
 func (c *meetAtApplicationGet) Get(
@@ -1878,9 +1889,17 @@ func (c *meetAtApplicationGet) Get(
 	err := c.Client.Get(ctx, key, obj, opts...)
 	if _, ok := obj.(*argocdv1alpha1.Application); ok {
 		c.once.Do(func() {
-			c.sawMissing = apierrors.IsNotFound(err)
 			c.arrived.Done()
-			c.arrived.Wait()
+			met := make(chan struct{})
+			go func() {
+				c.arrived.Wait()
+				close(met)
+			}()
+			select {
+			case <-met:
+				c.staged = apierrors.IsNotFound(err)
+			case <-time.After(5 * time.Second): // Inside the spec's 10s wait for the racers.
+			}
 		})
 	}
 	return err

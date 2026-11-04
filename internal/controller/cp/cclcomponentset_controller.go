@@ -90,9 +90,10 @@ type CCLComponentSetReconciler struct {
 	ArgoCDServer *apiclient.Client
 
 	// MaxConcurrentReconciles is how many CCLComponentSets are reconciled at once. Zero
-	// leaves controller-runtime's default of one. Different CCLComponentSets write
-	// disjoint objects; the one overlap, two that map to one Application name, ends in
-	// ApplicationConflict for one of them in parallel as it does serially.
+	// falls back to the manager's controller default, which is one unless set. Different
+	// CCLComponentSets write disjoint objects; the one overlap, two that map to one
+	// Application name, ends in ApplicationConflict for one of them in parallel as it
+	// does serially.
 	MaxConcurrentReconciles int
 }
 

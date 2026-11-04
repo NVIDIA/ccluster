@@ -35,8 +35,9 @@ import (
 // The operator's own naming can produce it: applicationName joins with "-", so set "a"
 // with component "b-c" and set "a-b" with component "c" both want "a-b-c" in one
 // namespace. The first to write it keeps it. Reconciled in parallel, both can see it
-// missing and create it; the loser's AlreadyExists is a staleRead, and the read it
-// retries finds the winner's back-reference. A manifest copied from another namespace
+// missing and create it. The loser's AlreadyExists is a staleRead: its retried reads
+// usually find the winner's back-reference in the cache, and if they do not, the pass
+// fails and its retry reports the conflict. A manifest copied from another namespace
 // produces it too.
 var errApplicationConflict = errors.New("application belongs to another CCLComponentSet")
 
@@ -212,8 +213,9 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		Namespace: componentSet.Namespace,
 	}
 
-	// DefaultBackoff, not DefaultRetry: the interval grows (10ms, 50ms, 250ms, 1250ms),
-	// which gives the informer time to catch up. DefaultRetry stays at 10ms.
+	// DefaultBackoff, not DefaultRetry: four reads with growing waits (10ms, 50ms, 250ms,
+	// about 310ms in all), which gives the informer time to catch up. DefaultRetry stays
+	// at 10ms.
 	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
 		// A fresh object every call: Get decodes into whatever it is given, so reusing
 		// one would leave its stamp behind for before to copy.
