@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -489,11 +490,17 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start. The DNSEndpoint
 // watch likewise needs external-dns's CRD.
+//
+// The controller runs one worker, set here so that a manager-wide default cannot raise
+// it. The CCLInfraPlanes in a namespace share its AppProject: in parallel, the last
+// plane's finalizer could delete the project just after another plane reported
+// Available=True, which would then no longer mean the project exists.
 func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret)).
-		WatchesRawSource(r.RemoteWatches.Source())
+		WatchesRawSource(r.RemoteWatches.Source()).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 1})
 
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"), "AppProject") {
 		builder = builder.Watches(&argocdv1alpha1.AppProject{},

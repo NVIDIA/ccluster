@@ -237,7 +237,9 @@ Pods have, and are refused: a plane registered with `execProviderConfig` or `aws
 works for Argo CD but reports `UnsupportedCredentials` here. Every request is bounded by a
 30s timeout, so an unreachable cluster fails a reconcile rather than hanging it, but it
 still holds the controller's single worker for up to that long, and every other
-CCLInfraPlane waits. Configurable reconcile concurrency is tracked in #116.
+CCLInfraPlane waits. The controller keeps one worker on purpose: the planes in a namespace
+share its AppProject, and in parallel the last plane's finalizer could delete the project
+just after another plane reported `Available=True`.
 
 The `CCLClusterConfig` is stamped with the same `infraPlaneOwner` annotations as the
 mirrored Secret, but without the adopt-if-unclaimed rule: a CCLInfraPlane writes and deletes
@@ -627,8 +629,13 @@ IgnoreDifferences: <the chart's DriftFunc, if registered>(),
 
 Argo CD picks these up because the cp chart sets `application.namespaces: "*"`, and accepts
 them because the project's `sourceNamespaces` names the namespace. Since Applications and
-CCLComponentSet now share a namespace, two same-named CCLComponentSets can no longer collide on
-an Application name; the ownership check remains for a manifest copied in from elsewhere.
+CCLComponentSet share a namespace, same-named CCLComponentSets in different namespaces never
+collide. Two in one namespace still can: the name joins with `-`, so set `a` with component
+`b-c` and set `a-b` with component `c` both map to `a-b-c`. The first to write it keeps it,
+and the other reports `ApplicationConflict`; a manifest copied in from elsewhere ends the
+same way. With several workers (`--componentset-max-concurrent-reconciles`) both can see
+the Application missing and create it. The loser's `AlreadyExists` is retried as a stale
+read, and the re-read finds the winner's back-reference, so the outcome is the same.
 
 plus the `resources-finalizer.argocd.argoproj.io` finalizer, without which deleting an
 Application is non-cascading: Argo CD's record disappears and the chart stays installed and
@@ -932,6 +939,15 @@ infra-plane operator periodically re-verifies the live state it does not write, 
 its labelled LoadBalancer Services, which it watches (§3a), and
 the `CCLInfraPlane` controller retries a `CCLClusterConfig` it could not write every
 minute, with a slower resync behind its watch (§3).
+
+Every Application status write, Argo CD's periodic refresh included, reconciles its
+CCLComponentSet, so that controller's load grows with the number of Applications. A pass
+that changes nothing the status reports does not write it. The controller runs
+`--componentset-max-concurrent-reconciles` workers, four by default; the
+`cclcomponentset` controller's `workqueue_depth` and `workqueue_queue_duration_seconds`
+metrics show when more would help. Different CCLComponentSets write disjoint
+Applications, apart from the name collision in §4. The `CCLInfraPlane` controller always
+runs one worker (§3).
 
 ## 8. Not built yet
 

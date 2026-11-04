@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -86,6 +88,12 @@ type CCLComponentSetReconciler struct {
 	// ArgoCDServer reads what an Application deployed through argocd-server. Nothing
 	// reads through it yet.
 	ArgoCDServer *apiclient.Client
+
+	// MaxConcurrentReconciles is how many CCLComponentSets are reconciled at once. Zero
+	// leaves controller-runtime's default of one. Different CCLComponentSets write
+	// disjoint objects; the one overlap, two that map to one Application name, ends in
+	// ApplicationConflict for one of them in parallel as it does serially.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch;create;update;patch;delete
@@ -329,11 +337,16 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 }
 
 // setConditions sets the given conditions and the observed generation, then writes the
-// status subresource in one patch.
+// status subresource in one patch, unless the status is the one base already holds.
 //
 // Carry the original resource version so a concurrent spec edit cannot receive a
 // completion computed for older input. A conflict is returned for Reconcile to requeue; a
 // missing object has no status left to record.
+//
+// Skipping an unchanged status matters because every Application status write, Argo CD's
+// periodic refresh included, brings the CCLComponentSet back. A skipped write is safe
+// against a stale read: a newer CCLComponentSet has its own watch event, and that pass
+// compares against the newer status.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -346,6 +359,9 @@ func (r *CCLComponentSetReconciler) setConditions(
 	}
 	componentSet.Status.ObservedGeneration = componentSet.Generation
 
+	if equality.Semantic.DeepEqual(componentSet.Status, base.Status) {
+		return nil
+	}
 	return client.IgnoreNotFound(r.Status().Patch(ctx, componentSet,
 		client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})))
 }
@@ -397,7 +413,8 @@ func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{}).
 		Watches(&cclusternvidiacomv1alpha1.CCLInfraPlane{},
-			handler.EnqueueRequestsFromMapFunc(r.componentSetsForInfraPlane))
+			handler.EnqueueRequestsFromMapFunc(r.componentSetsForInfraPlane)).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles})
 
 	// The Application watch is registered only when Argo CD's CRD is already
 	// installed. controller-runtime blocks a controller from starting until every

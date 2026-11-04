@@ -30,10 +30,14 @@ import (
 )
 
 // errApplicationConflict reports that an Argo CD Application of the wanted name exists
-// but back-references a different CCLComponentSet. Applications live in their
-// CCLComponentSet's namespace, so the operator's own naming cannot produce this; it means
-// an Application manifest was copied from another namespace, and it is refused rather
-// than overwritten.
+// but back-references a different CCLComponentSet. It is refused rather than overwritten.
+//
+// The operator's own naming can produce it: applicationName joins with "-", so set "a"
+// with component "b-c" and set "a-b" with component "c" both want "a-b-c" in one
+// namespace. The first to write it keeps it. Reconciled in parallel, both can see it
+// missing and create it; the loser's AlreadyExists is a staleRead, and the read it
+// retries finds the winner's back-reference. A manifest copied from another namespace
+// produces it too.
 var errApplicationConflict = errors.New("application belongs to another CCLComponentSet")
 
 // applicationName is the name Argo CD gives the Application for a component.

@@ -90,6 +90,11 @@ manager:
   ## which Helm does only with the release, nor restarts the operator: apply the CRD first
   ## and restart the operator afterwards. Until then a plane's DNSReady moves on only with
   ## the resync, and never with --infraplane-resync-period=0.
+  ##
+  ## --componentset-max-concurrent-reconciles (default 4) is how many CCLComponentSets
+  ## the operator reconciles at once. Raise it when the cclcomponentset controller's
+  ## workqueue_depth and workqueue_queue_duration_seconds metrics stay high.
+  ## CCLInfraPlanes are always reconciled one at a time.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
