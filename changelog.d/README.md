@@ -18,6 +18,11 @@ subsections and bullets only, with no version heading:
 ```
 
 Use the subsections `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` and `Security`,
-in that order, and mark incompatible changes `**Breaking:**`. Edit only your own
-fragment; a follow-up PR in the same cycle may amend it, and one after a release adds a
-new fragment. Internal refactors, CI and docs-only changes usually need none.
+in that order, and mark incompatible changes `**Breaking:**`. Internal refactors, CI and
+docs-only changes usually need none.
+
+A fragment still in this directory describes unreleased behaviour, so a later pull request
+that changes or reverts that behaviour amends the fragment, whoever wrote it, rather than
+adding a bullet that undoes it: the release notes describe what ships, not how it got
+there. Put the pull request's own new changes in its own fragment. Once a release has
+collected a fragment, describe further changes in a new one.
