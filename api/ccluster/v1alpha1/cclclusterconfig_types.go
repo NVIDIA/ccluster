@@ -60,11 +60,10 @@ type CCLClusterConfigStatus struct {
 
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-	// last observed them, at most 256. A value carried by more than one Service is left
-	// out and reported in the Verified condition.
+	// last observed them. A value carried by more than one Service is left out and
+	// reported in the Verified condition.
 	// +listType=map
 	// +listMapKey=name
-	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	LoadBalancers []LoadBalancerStatus `json:"loadBalancers,omitempty"`
 }
@@ -97,22 +96,21 @@ type LoadBalancerStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// ip is the LoadBalancer's IP address: the first IP the Service reports. It must be an
-	// IPv4 or IPv6 address in canonical form, without a zone; an IPv4-mapped IPv6 address
-	// is written as IPv4.
+	// ip is the LoadBalancer's IP address: the first IP the Service reports, as an IPv4
+	// or IPv6 address in canonical form, without a zone; an IPv4-mapped IPv6 address is
+	// written as IPv4. The operators check this form rather than the schema, and the
+	// control-plane operator publishes no record for an ip in any other.
 	// +optional
 	// +kubebuilder:validation:MaxLength=45
-	// +kubebuilder:validation:XValidation:rule="isIP(self) && ip.isCanonical(self)",message="ip must be an IPv4 or IPv6 address in canonical form, without a zone"
 	IP string `json:"ip,omitempty"`
 
 	// hostname is the LoadBalancer's DNS name, set by cloud providers whose load
 	// balancers are addressed by name rather than by IP: the first hostname the Service
 	// reports. It must be a lowercase DNS name, without a trailing dot, that is not an IP
-	// address.
+	// address; the schema checks the DNS name, and the operators also that it is not an IP.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
-	// +kubebuilder:validation:XValidation:rule="!isIP(self)",message="hostname must not be an IP address"
 	Hostname string `json:"hostname,omitempty"`
 }
 
@@ -143,7 +141,7 @@ func ValidateLoadBalancerHostname(hostname string) error {
 	return nil
 }
 
-// Canonical returns lb with its address in the form the schema requires, or why it cannot
+// Canonical returns lb with its address in the form loadBalancers[] takes, or why it cannot
 // be: CanonicalLoadBalancerIP and ValidateLoadBalancerHostname applied to whichever is set.
 func (lb LoadBalancerStatus) Canonical() (LoadBalancerStatus, error) {
 	if lb.IP != "" {

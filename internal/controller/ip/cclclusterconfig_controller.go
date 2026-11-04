@@ -262,9 +262,10 @@ func (r *CCLClusterConfigReconciler) observeLoadBalancers(
 
 // loadBalancerStatus takes the first IP and the first hostname a LoadBalancer Service
 // reports; both are empty until the cloud provider assigns an address. The IP is written
-// in canonical form, and an address the CCLClusterConfig schema would reject is skipped,
-// so that one Service cannot fail the whole status write. Kubernetes validates both
-// fields of a Service's status, so this only matters for a legacy or unusual value.
+// in canonical form, and an address not in the form loadBalancers[] takes is skipped: a
+// hostname the CCLClusterConfig schema rejects would fail the whole status write, and the
+// cp operator would publish no record for an invalid IP. Kubernetes validates both fields
+// of a Service's status, so this only matters for a legacy or unusual value.
 func loadBalancerStatus(name string, ingress []corev1.LoadBalancerIngress) cclusternvidiacomv1alpha1.LoadBalancerStatus {
 	status := cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: name}
 	for _, address := range ingress {

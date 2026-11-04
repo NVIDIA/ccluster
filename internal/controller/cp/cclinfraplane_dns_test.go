@@ -5,9 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package cp
 
-// Plain table tests for addresses the CCLClusterConfig schema rejects. envtest cannot stage
-// them, because its API server enforces that schema, but an infra-plane cluster's admin
-// can write them, so the operator must not trust the schema.
+// Plain table tests for addresses the operator rejects. envtest cannot stage those the
+// CCLClusterConfig schema also rejects, such as an uppercase hostname, because its API
+// server enforces that schema, but an infra-plane cluster's admin can write them, so the
+// operator must not trust the schema.
 
 import (
 	"strings"

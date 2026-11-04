@@ -381,7 +381,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		}))
 	})
 
-	DescribeTable("rejects a LoadBalancer address in any other form at admission",
+	DescribeTable("rejects a LoadBalancer hostname that is not a DNS name at admission",
 		func(lb cclusternvidiacomv1alpha1.LoadBalancerStatus) {
 			var config cclusternvidiacomv1alpha1.CCLClusterConfig
 			Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
@@ -390,13 +390,9 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 			err := k8sClient.Status().Update(ctx, &config)
 			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected %+v to be rejected, got %v", lb, err)
 		},
-		Entry("an ip that is not an IP address", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "lb.example.com"}),
-		Entry("an ip that is not canonical", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "2001:DB8::10"}),
-		Entry("an IPv4-mapped IPv6 ip", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "::ffff:192.0.2.10"}),
-		Entry("an ip with a zone", cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "fe80::1%eth0"}),
 		Entry("an uppercase hostname", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "LB.example.com"}),
 		Entry("a hostname with a trailing dot", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb.example.com."}),
-		Entry("a hostname that is an IP address", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "192.0.2.10"}),
+		Entry("a hostname with an underscore", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb_1.example.com"}),
 	)
 
 	It("reports every labelled LoadBalancer under its label value, sorted by it", func() {

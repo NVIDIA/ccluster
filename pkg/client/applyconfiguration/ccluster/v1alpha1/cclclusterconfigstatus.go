@@ -33,8 +33,8 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
-	// last observed them, at most 256. A value carried by more than one Service is left
-	// out and reported in the Verified condition.
+	// last observed them. A value carried by more than one Service is left out and
+	// reported in the Verified condition.
 	LoadBalancers []LoadBalancerStatusApplyConfiguration `json:"loadBalancers,omitempty"`
 }
 
