@@ -254,7 +254,10 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	// A DNS error is written into DNSReady with everything else before it is returned.
 	// DNS reads the copy as taken, so that DNSReady can report an invalid address that the
-	// copy written to status leaves out.
+	// copy written to status leaves out. The last copy, used while the cluster cannot be
+	// reached, was filtered when it was written, so DNSReady stops reporting the invalid
+	// address until the cluster is reached again. Its records do not change: the invalid
+	// LoadBalancer had none.
 	dnsReady, dnsErr := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
 	err = r.patchStatus(ctx, &infraPlane, withValidLoadBalancers(clusterConfigStatus),
 		available, clusterConfigApplied, dnsReady)
