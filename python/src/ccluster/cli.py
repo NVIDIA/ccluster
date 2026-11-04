@@ -112,12 +112,6 @@ def init(control_plane: str) -> None:
     help="Kubeconfig context of the infra-plane cluster to register.",
 )
 @click.option(
-    "--domain",
-    required=True,
-    help="The infra-plane cluster's DNS domain, written to its CCLClusterConfig. "
-    "Cannot be changed once registered.",
-)
-@click.option(
     "--server",
     default=None,
     help="Infra-plane API server URL that Argo CD in the control plane connects to. "
@@ -127,7 +121,6 @@ def register(
     name: str,
     namespace: str,
     infra_plane: str,
-    domain: str,
     server: str | None,
 ) -> None:
     """Register a cluster with the control plane.
@@ -135,9 +128,10 @@ def register(
     The control plane is the one saved by ccluster init. On the infra plane, creates the
     ServiceAccount kube-system/ccluster-manager, binds it to cluster-admin, and reads its
     long-lived token. On the control plane, applies the Secret NAME-credentials carrying
-    that token and the cluster CA, and the CCLInfraPlane NAME pointing at it with the given
-    domain. The control-plane operator then writes the domain to the infra plane's
-    CCLClusterConfig. Re-running reuses the same token.
+    that token and the cluster CA, and the CCLInfraPlane NAME pointing at it. The
+    control-plane operator then writes the plane's domain, NAME.NAMESPACE.<its base domain>,
+    to the infra plane's CCLClusterConfig, so NAME must be a DNS label. Re-running reuses
+    the same token.
 
     Pass --server when the kubeconfig's address is not reachable from the control plane,
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
@@ -153,7 +147,7 @@ def register(
         client = CCLClient(namespace, api_client=control_api)
         client.ensure_namespace()
         plane = client.apply_infraplane(
-            name=name, domain=domain, server=server, bearer_token=token, ca_cert=ca_cert
+            name=name, server=server, bearer_token=token, ca_cert=ca_cert
         )
     click.echo(
         f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "

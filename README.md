@@ -115,7 +115,7 @@ ccluster init --control-plane kind-ccluster-cp
 context, with that control plane:
 
 ```bash
-ccluster register edge-1 -n tenant-a --infra-plane kind-ccluster-ip --domain edge-1.example.com \
+ccluster register edge-1 -n tenant-a --infra-plane kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
 
@@ -124,8 +124,9 @@ to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there
 the same rights `argocd cluster add` grants), and reads the long-lived token the token
 controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
 it creates the namespace if needed, then applies the Secret `<name>-credentials` carrying
-that token and the cluster CA and the `CCLInfraPlane` pointing at it with `--domain`. The
-control-plane operator uses the same token to write the domain to the infra plane's
+that token and the cluster CA and the `CCLInfraPlane` pointing at it. The
+control-plane operator uses the same token to write the plane's derived domain
+(`edge-1.tenant-a.<base domain>`) to the infra plane's
 `CCLClusterConfig`. Anyone who can read `<name>-credentials` there is cluster-admin on the
 infra plane, so keep read access to that namespace's Secrets tight. Running it again reuses
 the same token.

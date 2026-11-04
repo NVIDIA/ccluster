@@ -41,6 +41,11 @@ type Options struct {
 	// Scheme carries the API types this operator reconciles.
 	Scheme *runtime.Scheme
 
+	// ValidateFlags checks the operator's own flags once they are parsed, before the
+	// manager connects to a cluster, so a bad flag fails fast with its own error. May be
+	// nil.
+	ValidateFlags func() error
+
 	// SetupControllers registers the operator's controllers with the manager.
 	// May be nil for an operator that has no controllers yet.
 	SetupControllers func(mgr ctrl.Manager) error
@@ -79,6 +84,12 @@ func Run(opts Options) error {
 	}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if opts.ValidateFlags != nil {
+		if err := opts.ValidateFlags(); err != nil {
+			return err
+		}
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	setupLog := ctrl.Log.WithName("setup").WithValues("operator", opts.Name)

@@ -59,9 +59,6 @@ type ClusterConfig struct {
 type InfraPlaneOptions struct {
 	// Name is the CCLInfraPlane's name. Its credentials Secret is "<Name>-credentials".
 	Name string
-	// Domain is the cluster's DNS domain. The operator writes it to the cluster's
-	// CCLClusterConfig, and it cannot be changed once the CCLInfraPlane exists.
-	Domain string
 	// Server is the API server URL Argo CD in the control plane connects to. Empty means
 	// https://kubernetes.default.svc, the address Argo CD treats as its own cluster.
 	Server string
@@ -144,11 +141,10 @@ func (c *Client) EnsureNamespace(ctx context.Context) error {
 // at opts.Server.
 //
 // It server-side applies the CCLInfraPlane, then the Secret "<name>-credentials" it
-// points at, in Argo CD's cluster-secret shape. The plane goes first so that a domain
-// the API server rejects - malformed, or changed on an existing plane - fails the call
-// before the credentials are written: the operator acts on a changed Secret at once, so
-// new credentials under the old domain would retarget the existing plane. The call
-// returns as soon as both objects are applied; it does not wait for the operator to
+// points at, in Argo CD's cluster-secret shape. The plane goes first so that a name
+// the API server rejects, one that is not a DNS label, fails the call before the
+// credentials are written. The operator derives the plane's domain from its name and
+// namespace. The call returns as soon as both objects are applied; it does not wait for the operator to
 // report Available.
 //
 // Server, BearerToken and CACert are all optional. With none given, this registers the
@@ -178,8 +174,7 @@ func (c *Client) ApplyInfraPlane(
 	plane, err := c.ccl.CclusterV1alpha1().CCLInfraPlanes(c.namespace).Apply(ctx,
 		cclusterac.CCLInfraPlane(opts.Name, c.namespace).
 			WithSpec(cclusterac.CCLInfraPlaneSpec().
-				WithClusterCredentialsRef(cclusterac.LocalObjectReference().WithName(secretName)).
-				WithDomain(opts.Domain)),
+				WithClusterCredentialsRef(cclusterac.LocalObjectReference().WithName(secretName))),
 		applyOptions())
 	if err != nil {
 		return nil, err

@@ -9,4 +9,3 @@ metadata:
 spec:
   clusterCredentialsRef:
     name: {{ .CredentialsName }}
-  domain: {{ .Domain }}

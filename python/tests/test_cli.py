@@ -20,7 +20,6 @@ from ccluster.cli import main
 TOKEN = "infra-token"
 CA = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 KUBECONFIG_SERVER = "https://127.0.0.1:6443"
-DOMAIN = "edge-1.example.com"
 
 
 def invoke(*args):
@@ -211,7 +210,6 @@ def infra(kubeconfig, monkeypatch, config_file):
 def test_register_creates_admin_token_and_infraplane(infra):
     result = invoke(
         "register", "edge-1", "--namespace", "tenant-a", "--infra-plane", "ip",
-        "--domain", DOMAIN,
     )
     assert result.exit_code == 0, result.output
     assert result.output == f"Registered CCLInfraPlane tenant-a/edge-1 for {KUBECONFIG_SERVER}\n"
@@ -232,14 +230,14 @@ def test_register_creates_admin_token_and_infraplane(infra):
     assert client.namespace == "tenant-a"
     assert client.ensured
     assert client.applied == {
-        "name": "edge-1", "domain": DOMAIN, "server": KUBECONFIG_SERVER,
+        "name": "edge-1", "server": KUBECONFIG_SERVER,
         "bearer_token": TOKEN, "ca_cert": CA,
     }
 
 
 def test_register_short_options_and_server_override(infra):
     result = invoke(
-        "register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN,
+        "register", "edge-1", "-n", "tenant-a", "-ip", "ip",
         "--server", "https://edge-1:6443",
     )
     assert result.exit_code == 0, result.output
@@ -248,7 +246,7 @@ def test_register_short_options_and_server_override(infra):
 
 def test_register_again_reuses_existing_objects(infra):
     infra.existing = {"ServiceAccount", "ClusterRoleBinding", "Secret"}
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 0, result.output
     assert infra.created == []
     assert FakeCCLClient.instances[0].applied["bearer_token"] == TOKEN
@@ -256,21 +254,21 @@ def test_register_again_reuses_existing_objects(infra):
 
 def test_register_fails_when_token_never_arrives(infra):
     infra.populated = False
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "kube-system/ccluster-manager-token was not given a token" in result.output
     assert FakeCCLClient.instances == []
 
 
 def test_register_reports_unknown_context(infra):
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "nope", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "nope")
     assert result.exit_code == 1
     assert "Kubeconfig could not be loaded" in result.output
 
 
 def test_register_needs_init(infra, config_file):
     config_file.unlink()
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "No control plane is configured; run ccluster init first" in result.output
     assert infra.created == []
@@ -278,9 +276,17 @@ def test_register_needs_init(infra, config_file):
 
 def test_register_rejects_invalid_config(infra, config_file):
     config_file.write_text("controlPlane: [")
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "is not valid YAML" in result.output
+
+
+def test_register_has_no_domain_option(infra):
+    # The operator derives the domain from the plane's name and namespace.
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", "x.example.com")
+    assert result.exit_code == 2
+    assert "No such option '--domain'" in result.output
+    assert infra.created == []
 
 
 def test_register_reports_api_errors(infra, monkeypatch):
@@ -288,14 +294,14 @@ def test_register_reports_api_errors(infra, monkeypatch):
         raise ApiException(status=403, reason="Forbidden")
 
     monkeypatch.setattr(FakeCCLClient, "ensure_namespace", forbidden)
-    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--domain", DOMAIN)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "API request failed (403): Forbidden" in result.output
 
 
-@pytest.mark.parametrize("missing", ["-n", "-ip", "--domain"])
-def test_register_requires_namespace_infra_plane_and_domain(infra, missing):
-    args = {"-n": "tenant-a", "-ip": "ip", "--domain": DOMAIN}
+@pytest.mark.parametrize("missing", ["-n", "-ip"])
+def test_register_requires_namespace_and_infra_plane(infra, missing):
+    args = {"-n": "tenant-a", "-ip": "ip"}
     del args[missing]
     result = invoke("register", "edge-1", *[x for kv in args.items() for x in kv])
     assert result.exit_code == 2

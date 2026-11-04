@@ -258,7 +258,7 @@ build-cli: generate fmt vet ## Build the ccluster CLI as bin/ccluster.
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
 	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd) \
-		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP)
+		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP) --base-domain=$(BASE_DOMAIN)
 
 .PHONY: run-ip
 run-ip: manifests generate fmt vet ## Run ccluster-ip-operator from your host.
@@ -481,7 +481,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
 		--set external-dns.enabled=$(DNS) \
-		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
+		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)","--base-domain=$(BASE_DOMAIN)"$(ARGOCD_SERVER_ARGS)]' \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -548,6 +548,10 @@ ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-serv
 # wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
 # `-f dns-values.yaml` (docs/development.md).
 DNS ?= false
+# The cp operator's required --base-domain, which every CCLInfraPlane's domain is derived
+# under: <name>.<namespace>.<BASE_DOMAIN>. With DNS=true, the external-dns zone must
+# cover it.
+BASE_DOMAIN ?= example.com
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
 # repo-server clones the repository itself, so the revision must be pushed.

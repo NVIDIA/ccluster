@@ -44,8 +44,7 @@ var (
 )
 
 const (
-	token  = "infra-token"
-	domain = "edge-1.example.com"
+	token = "infra-token"
 )
 
 var caCert = []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
@@ -194,7 +193,7 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 	namespace := newNamespaceName()
 	fillTokenSecret(t)
 
-	out, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip", "--domain", domain)
+	out, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,8 +219,8 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plane.Spec.Domain != domain {
-		t.Errorf("domain = %q, want %q", plane.Spec.Domain, domain)
+	if plane.Spec.ClusterCredentialsRef.Name != "edge-1-credentials" {
+		t.Errorf("clusterCredentialsRef = %q, want edge-1-credentials", plane.Spec.ClusterCredentialsRef.Name)
 	}
 	credentials := credentialsConfig(t, namespace, "edge-1")
 	if credentials.server != apiServer.Host || credentials.config.BearerToken != token ||
@@ -234,7 +233,7 @@ func TestRegisterAgainReusesTheTokenAndHonoursServer(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	fillTokenSecret(t)
-	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip", "--domain", domain}
+	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip"}
 
 	if _, err := run(t, args...); err != nil {
 		t.Fatal(err)
@@ -256,7 +255,7 @@ func TestRegisterFailsWhenTokenNeverArrives(t *testing.T) {
 	tokenTimeout = 50 * time.Millisecond
 
 	expectError(t, "secret kube-system/ccluster-manager-token was not given a token within 50ms",
-		"register", "edge-1", "-n", namespace, "--infra-plane", "ip", "--domain", domain)
+		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
 	if _, err := kubeClient.CoreV1().Namespaces().Get(t.Context(), namespace,
 		metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Errorf("namespace %s: error = %v, want the control plane left alone", namespace, err)
@@ -272,33 +271,25 @@ func TestRegisterRejects(t *testing.T) {
 	}{
 		{
 			name: "an unknown context", config: "controlPlane:\n  context: cp\n",
-			args: []string{"--infra-plane", "nope", "--domain", domain},
+			args: []string{"--infra-plane", "nope"},
 			want: "kubeconfig could not be loaded",
 		},
 		{
 			name: "a missing init",
-			args: []string{"--infra-plane", "ip", "--domain", domain},
+			args: []string{"--infra-plane", "ip"},
 			want: "no control plane is configured; run ccluster init first",
 		},
 		{
 			name: "a config file without a control plane", config: "- cp\n",
-			args: []string{"--infra-plane", "ip", "--domain", domain},
+			args: []string{"--infra-plane", "ip"},
 			want: "no control plane is configured; run ccluster init first",
 		},
 		{
 			name: "an invalid config file", config: "controlPlane: [",
-			args: []string{"--infra-plane", "ip", "--domain", domain},
+			args: []string{"--infra-plane", "ip"},
 			want: "is not valid YAML",
 		},
-		{
-			// The infra-plane objects are created before the domain reaches the API
-			// server, which then rejects it.
-			name: "a malformed domain", config: "controlPlane:\n  context: cp\n",
-			args: []string{"--infra-plane", "ip", "--domain", "Not_A_Domain"},
-			want: "API request failed (422): CCLInfraPlane.ccluster.nvidia.com \"edge-1\" is invalid",
-		},
-		{name: "no infra plane", args: []string{"--domain", domain}, want: `required flag(s) "infra-plane" not set`},
-		{name: "no domain", args: []string{"--infra-plane", "ip"}, want: `required flag(s) "domain" not set`},
+		{name: "no infra plane", args: []string{}, want: `required flag(s) "infra-plane" not set`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -315,7 +306,7 @@ func TestRegisterRejects(t *testing.T) {
 	t.Run("no namespace flag", func(t *testing.T) {
 		setUpInitialized(t)
 		expectError(t, `required flag(s) "namespace" not set`,
-			"register", "edge-1", "--infra-plane", "ip", "--domain", domain)
+			"register", "edge-1", "--infra-plane", "ip")
 	})
 }
 
@@ -326,7 +317,7 @@ func TestUnregisterDeletesTheInfraPlane(t *testing.T) {
 	if err := client.EnsureNamespace(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: "edge-1", Domain: domain}); err != nil {
+	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: "edge-1"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -23,8 +23,8 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	// cluster carries this CCLInfraPlane's domain.
 	// - "DNSReady": external-dns has read the current records pointing
-	// "*.<name>.<domain>" at each of the cluster's labelled LoadBalancers, and every
-	// label value is a DNS label. external-dns marks the records read before it
+	// "*.<lb>.<domain>" at each of the cluster's LoadBalancers labelled
+	// ccluster.nvidia.com/loadbalancer: <lb>, and every label value is a DNS label. external-dns marks the records read before it
 	// writes them, so True does not mean they were published: the provider may
 	// reject them, or external-dns may skip them.
 	//
@@ -36,7 +36,8 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// cluster, copied verbatim whenever it changes there. It is what the infra-plane
 	// operator reports about the cluster; ClusterConfigApplied says whether the copy is
 	// current. Its conditions and observedGeneration are the infra-plane operator's, and
-	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
+	// refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
+	// plane's domain once the infra-plane operator has verified the cluster against it.
 	ClusterConfig *CCLClusterConfigStatusApplyConfiguration `json:"clusterConfig,omitempty"`
 }
 

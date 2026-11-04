@@ -94,7 +94,7 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := configs.ApplyStatus(ctx, cclusterac.CCLClusterConfig(name).
-		WithStatus(cclusterac.CCLClusterConfigStatus().WithConditions(metav1ac.Condition().
+		WithStatus(cclusterac.CCLClusterConfigStatus().WithDomain("gpu-a.example.com").WithConditions(metav1ac.Condition().
 			WithType("Verified").WithStatus(metav1.ConditionTrue).WithReason("ComponentsVerified").
 			WithMessage("").WithLastTransitionTime(metav1.Now()))), apply); err != nil {
 		t.Fatal(err)
@@ -106,6 +106,9 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 	}
 	if got.Spec.Domain != "gpu-a.example.com" {
 		t.Errorf("spec.domain = %q, want gpu-a.example.com", got.Spec.Domain)
+	}
+	if got.Status.Domain != "gpu-a.example.com" {
+		t.Errorf("status.domain = %q, want gpu-a.example.com", got.Status.Domain)
 	}
 	if !apimeta.IsStatusConditionTrue(got.Status.Conditions, "Verified") {
 		t.Errorf("status.conditions = %v, want Verified=True", got.Status.Conditions)
@@ -133,7 +136,6 @@ func TestNamespacedKindsStayInTheirNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gpu-a"},
 		Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
 			ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a-credentials"},
-			Domain:                "gpu-a.example.com",
 		},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)

@@ -24,8 +24,8 @@ CCluster's operators are therefore a translation layer: they turn two small, dec
 custom resources into Argo CD `Application`s and cluster `Secret`s, and read Argo CD's health
 back to decide what to do next. The one object the control plane writes into an infra-plane
 cluster itself, rather than through Argo CD, is that cluster's `CCLClusterConfig` (§3): the
-infra-plane operator's input, which carries the domain the `CCLInfraPlane` was registered
-with. It calls no cloud API: each plane's wildcard DNS records are published by external-dns,
+infra-plane operator's input, which carries the domain the operator derives for the
+`CCLInfraPlane`. It calls no cloud API: each plane's wildcard DNS records are published by external-dns,
 from a `DNSEndpoint` the operator writes (§3).
 
 ### Why the operator never installs Argo CD
@@ -97,15 +97,33 @@ metadata:
 spec:
   clusterCredentialsRef:
     name: ccluster-local-credentials
-  domain: ccluster-local.example.com
 ```
 
 A `CCLInfraPlane` names one Kubernetes cluster that CCluster may deploy to. `clusterCredentialsRef`
 points at a `Secret` in the **same namespace** holding that cluster's Argo CD credentials —
-the usual `server`, `config`, and optionally `tlsClientConfig` keys. `domain` is the
-cluster's DNS domain; it is validated like `CCLClusterConfig`'s and cannot be changed once
-set, so a cluster is re-registered rather than renamed. With DNS published,
-`*.<name>.<domain>` resolves to each LoadBalancer the plane reports (§3).
+the usual `server`, `config`, and optionally `tlsClientConfig` keys.
+
+The cluster's DNS domain is not in the spec: the operator derives it as
+`<name>.<namespace>.<base domain>`, the base domain being its required `--base-domain`
+flag, so `ccluster-local` above, with `--base-domain=example.com`, is
+`ccluster-local.default.example.com`. A CEL rule keeps the name a DNS label, as a
+namespace already is. The domain is written to the cluster's `CCLClusterConfig` (below),
+where it is also the SPIFFE trust domain, and with DNS published `*.<lb>.<domain>` resolves
+to each LoadBalancer the plane reports (below). The infra-plane operator reports the
+domain it verified the cluster against in the `CCLClusterConfig`'s `status.domain`, which
+reaches the plane as `status.clusterConfig.domain` and its `Domain` column.
+
+Deriving the domain, rather than taking it from the user, makes it unique by
+construction: name and namespace are unique together, and every plane's domain sits
+exactly two labels under the base domain, so no plane's domain equals or falls under
+another's, and no record published for one plane can shadow another's. A tenant who can
+write a `CCLInfraPlane` reaches only names under its own namespace,
+`*.<namespace>.<base domain>`, and one DNS zone for the base domain covers every plane. It
+also follows that the base domain is set once: changing it moves every plane's domain, its
+records and its trust domain on the next reconcile, and two control planes must not share
+one. The operator checks the flag at startup — a lowercase DNS name of at most 125
+characters, so that `<name>.<namespace>.` in front of it, each at most 63, always fits in
+253 — and refuses to start without it.
 
 `CCLInfraPlaneReconciler` (`internal/controller/cp/cclinfraplane_controller.go`) mirrors that
 Secret into the Argo CD namespace (`--argocd-namespace`, by default the operator's own,
@@ -200,9 +218,9 @@ on delete — and only if the ownership check still agrees they are ours.
 ### The infra-plane cluster's `CCLClusterConfig`
 
 Once the cluster Secret is mirrored, the controller connects to the infra-plane cluster and
-creates or updates its `CCLClusterConfig` singleton (§3a) with `spec.domain`
-(`cclinfraplane_clusterconfig.go`). This is the control plane's one direct write to an
-infra-plane cluster; everything else goes through Argo CD. It is written directly, not as
+creates or updates its `CCLClusterConfig` singleton (§3a) with the plane's derived domain
+as `spec.domain` (`cclinfraplane_clusterconfig.go`). This is the control plane's one
+direct write to an infra-plane cluster; everything else goes through Argo CD. It is written directly, not as
 an Argo CD Application, so that writing it does not depend on Argo CD, and so that its
 status can be read back into the `CCLInfraPlane` straight from the cluster rather than
 through argocd-server and polling. The cost is in the credentials it can use, below.
@@ -281,8 +299,9 @@ therefore retried every minute, and a written one is reconciled again every
 
 ### DNS: a wildcard record per LoadBalancer, published by external-dns
 
-`*.<name>.<domain>` points at each LoadBalancer the plane reports, `<name>` being its
-`ccluster.nvidia.com/loadbalancer` label value (§3a), which the operator copies without
+`*.<lb>.<domain>` points at each LoadBalancer the plane reports, `<lb>` being its
+`ccluster.nvidia.com/loadbalancer` label value (§3a) and `<domain>` the plane's
+`<name>.<namespace>.<base domain>`, which the operator copies without
 treating any value specially (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
 chose `ingress`, so `*.ingress.<domain>` is the cluster's ingress and an Ingress host such
 as `oidc-discovery.ingress.<domain>` resolves to it. The `inference_deployment` and
@@ -294,8 +313,8 @@ its own name with no operator change. The work is split three ways:
 
 | Step | Done by |
 | --- | --- |
-| Create the DNS zone the domain falls under, and delegate it from its parent | the user, outside ccluster |
-| Write `DNSEndpoint` `<namespace>-<name>`: per LoadBalancer with an address, `*.<name>.<domain>`, an A or AAAA record for its IPv4 or IPv6 address, or a CNAME for its hostname, TTL 60 | the operator |
+| Create the DNS zone the base domain falls under, and delegate it from its parent | the user, outside ccluster |
+| Write `DNSEndpoint` `<namespace>-<name>`: per LoadBalancer with an address, `*.<lb>.<domain>`, an A or AAAA record for its IPv4 or IPv6 address, or a CNAME for its hostname, TTL 60 | the operator |
 | Publish the record, and the TXT record that marks it as external-dns's, into that zone | external-dns, from the cp chart |
 
 The addresses come from `status.clusterConfig`'s `loadBalancers`, so they arrive through
@@ -311,10 +330,11 @@ published. The copy in `status.clusterConfig` keeps the address unchanged, so th
 stays while the plane cannot be reached.
 
 - **Which zone.** external-dns picks it, not the operator and not the API: of the public
-  zones it manages, the most specific one the record's name falls under. With
-  `gpu-a.team-a.example.com`, a zone `team-a.example.com` is shared by the tenant's planes,
-  and a zone `gpu-a.team-a.example.com`, if the user creates one, is the plane's own. The
-  operator code is the same either way, which is why `CCLInfraPlane` has no zone field.
+  zones it manages, the most specific one the record's name falls under. One zone for the
+  base domain, such as `example.com`, holds every plane's records; with
+  `gpu-a.team-a.example.com`, a zone `team-a.example.com`, if the user creates one, is
+  shared by the tenant's planes, and a zone `gpu-a.team-a.example.com` is the plane's own.
+  The operator code is the same either way, which is why `CCLInfraPlane` has no zone field.
 - **Why external-dns.** The operator stays provider-neutral and calls no cloud API, so it
   holds no cloud credentials. Zones belong with the rest of the user's DNS, typically in
   infrastructure code.
@@ -403,8 +423,10 @@ and it answers it the same way whichever installer put the charts there: a
 `CCLClusterConfig` is the operator's one input, a cluster-scoped singleton (the CRD's CEL
 rule admits only the name `cluster`). Its spec carries just what the checks consume today:
 the cluster's domain, which is also its SPIFFE trust domain. For a registered cluster the
-control-plane operator creates it from the `CCLInfraPlane`'s `domain` (§3); a cluster run
-without a control plane gets one by hand. The operator is idle until it exists.
+control-plane operator creates it with the `CCLInfraPlane`'s derived domain (§3); a cluster
+run without a control plane gets one by hand. The operator is idle until it exists. Each
+pass reports the `spec.domain` it verified against in `status.domain`, with the
+`observedGeneration` of the same pass, which the control-plane operator copies back.
 
 ### Checks live with the catalog, registration with the operator
 
@@ -467,7 +489,7 @@ library, which a CRD can use only from Kubernetes 1.31, and a cap on the list to
 cost budget. An entry whose address is not assigned yet has both empty, so "pending" reads
 differently from "absent". A value two Services carry has no right answer: it is left out
 of the list and reported in `Verified` instead. The value is the chart's to choose and
-becomes the plane's subdomain: the cp operator points `*.<name>.<domain>` at it (§3), so it
+becomes the plane's subdomain: the cp operator points `*.<value>.<domain>` at it (§3), so it
 has to be a DNS label and unique on the cluster, and neither operator treats any value
 specially. The catalog's `ingress_nginx` chart labels its controller Service `ingress`, and
 another chart exposes a LoadBalancer the same way, under its own name, with no operator or
@@ -858,7 +880,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<name>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
@@ -868,8 +890,8 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain`, `Available`, `ClusterConfig`, `Verified` (from
-`status.clusterConfig`) and `DNS` on `CCLInfraPlane`; `Applied` and `Progress` on
+Printer columns: `Domain` and `Verified` (both from `status.clusterConfig`), `Available`,
+`ClusterConfig` and `DNS` on `CCLInfraPlane`; `Applied` and `Progress` on
 `CCLComponentSet`; `Verified` and `Domain` on `CCLClusterConfig`. No column shows the
 LoadBalancers: a printer column shows only the first JSONPath match, and naming one
 would give a label value a meaning.
@@ -938,11 +960,9 @@ minute, with a slower resync behind its watch (§3).
 - **Unconfirmed records.** `Published` means only that external-dns read the
   `DNSEndpoint`; a record it then skips or fails to write is reported `Published` all the
   same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
-- **Overlapping domains.** Nothing stops two CCLInfraPlanes from registering the same
-  domain, so whoever can write a CCLInfraPlane is trusted with its `spec.domain`. Their
-  `DNSEndpoint`s then claim the same record, and external-dns publishes one of them. It
-  is not random: an A record beats a CNAME, and otherwise the record already published
-  keeps the name ([#159](https://github.com/NVIDIA/ccluster/issues/159)).
+- **Shared base domains.** Planes' domains cannot overlap within one control plane (§3),
+  but nothing stops two control planes from being given the same `--base-domain`. Their
+  same-named planes in same-named namespaces then claim the same records.
 - **More DNS.** Only labelled LoadBalancers get a record, and only the wildcard under their
   name; a Service not labelled, such as a compute deployment's SSH Service, gets none, and
   nothing answers for `<domain>` itself or for names directly under it. Turning DNS off

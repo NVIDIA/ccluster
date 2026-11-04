@@ -77,6 +77,9 @@ var schemaYAML = typed.YAMLObject(`types:
                 elementRelationship: associative
                 keys:
                 - type
+          - name: domain
+            type:
+              scalar: string
           - name: loadBalancers
             type:
               list:
@@ -229,9 +232,6 @@ var schemaYAML = typed.YAMLObject(`types:
                 - name: name
                   type:
                     scalar: string
-          - name: domain
-            type:
-              scalar: string
     - name: status
       type:
         map:
@@ -267,6 +267,9 @@ var schemaYAML = typed.YAMLObject(`types:
                       elementRelationship: associative
                       keys:
                       - type
+                - name: domain
+                  type:
+                    scalar: string
                 - name: loadBalancers
                   type:
                     list:

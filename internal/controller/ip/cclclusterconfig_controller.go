@@ -277,8 +277,8 @@ func loadBalancerStatus(name string, ingress []corev1.LoadBalancerIngress) cclus
 	return status
 }
 
-// setStatus sets the Verified condition, the LoadBalancers and the observed generation,
-// then writes the status subresource.
+// setStatus sets the Verified condition, the LoadBalancers, the domain and the observed
+// generation, then writes the status subresource.
 //
 // A plain merge patch, without an optimistic lock: this controller is the only writer of
 // this status, so a racing write has nothing to clobber, and a result computed for an
@@ -297,6 +297,9 @@ func (r *CCLClusterConfigReconciler) setStatus(
 	apimeta.SetStatusCondition(&config.Status.Conditions, verified)
 	config.Status.LoadBalancers = loadBalancers
 	config.Status.ObservedGeneration = config.Generation
+	// The spec the Verifiers ran against in this pass: config is not read again before
+	// this patch.
+	config.Status.Domain = config.Spec.Domain
 
 	return client.IgnoreNotFound(r.Status().Patch(ctx, config, client.MergeFrom(base)))
 }

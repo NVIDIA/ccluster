@@ -58,9 +58,11 @@ Every method takes the object's name by keyword.
 
 `apply_infraplane` applies a Secret named `<name>-credentials` in Argo CD's
 cluster-secret shape (`server`, and a `config` carrying the bearer token and the CA) and a
-`CCLInfraPlane` pointing at it, with the cluster's `domain`. The operator writes that
-domain to the infra-plane cluster's `CCLClusterConfig`, and it cannot be changed once the
-CCLInfraPlane exists;
+`CCLInfraPlane` pointing at it. The operator derives the cluster's DNS domain from the
+plane, `<name>.<namespace>.<base domain>` with the base domain its `--base-domain`, so the
+name must be a DNS label. It writes that domain to the infra-plane cluster's
+`CCLClusterConfig`, and the plane's `status.clusterConfig.domain` shows it once the
+infra-plane operator has verified the cluster;
 `delete_infraplane` deletes the Secret and the CCLInfraPlane, the CCLInfraPlane first so
 the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace.
 `ensure_namespace` creates the namespace, and is the only method that does: keeping it
@@ -83,7 +85,6 @@ client = CCLClient("tenant-a", api_client=api_client)
 client.ensure_namespace()
 plane = client.apply_infraplane(
     name="edge-1",
-    domain="edge-1.example.com",
     server="https://10.0.0.1:6443",
     bearer_token=open("token").read(),
     ca_cert=open("ca.crt").read(),
@@ -96,7 +97,7 @@ client.delete_infraplane(name="edge-1")
 Argo CD's special-cased in-cluster address, no ServiceAccount or token needed:
 
 ```python
-plane = client.apply_infraplane(name="ccluster-local", domain="local.example.com")
+plane = client.apply_infraplane(name="ccluster-local")
 ```
 
 From a workstation, pass an `ApiClient` built from your kubeconfig:
@@ -131,7 +132,7 @@ from ccluster.client import CCLClient, component_set_current_conditions
 
 client = CCLClient("tenant-a", api_client=api_client)   # api_client as above
 client.ensure_namespace()
-client.apply_infraplane(name="ccluster-local", domain="local.example.com")
+client.apply_infraplane(name="ccluster-local")
 cs = client.apply_component_set(
     name="local-base",
     components=[
@@ -211,7 +212,7 @@ ccluster init -cp kind-ccluster-cp
 context, with that control plane:
 
 ```bash
-ccluster register edge-1 -n tenant-a -ip kind-ccluster-ip --domain edge-1.example.com \
+ccluster register edge-1 -n tenant-a -ip kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
 
@@ -219,10 +220,11 @@ On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`,
 to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
 the same rights `argocd cluster add` grants), and reads the long-lived token the token
 controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
-it creates the namespace if needed and calls `apply_infraplane` with that token, the
-cluster CA and `--domain`. The control-plane operator uses the same token to write the
-domain to the infra plane's `CCLClusterConfig`. Anyone who can read `<name>-credentials` there is cluster-admin on the infra
-plane, so keep read access to that namespace's Secrets tight. Running it again reuses the
+it creates the namespace if needed and calls `apply_infraplane` with that token and the
+cluster CA. The control-plane operator uses the same token to write the plane's domain,
+`edge-1.tenant-a.<base domain>`, to the infra plane's `CCLClusterConfig`. Anyone who can
+read `<name>-credentials` there is cluster-admin on the infra plane, so keep read access to
+that namespace's Secrets tight. Running it again reuses the
 same token.
 
 `--server` is the address Argo CD dials, and defaults to the infra-plane context's server in

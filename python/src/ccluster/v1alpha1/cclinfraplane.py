@@ -64,24 +64,6 @@ class CCLInfraPlaneSpec(BaseModel):
     referenced Secret holds. See
     https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
     """
-    domain: Annotated[
-        str,
-        Field(
-            max_length=253,
-            min_length=1,
-            pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$",
-        ),
-    ]
-    """
-    domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
-    to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-    verifies the cluster against. When the operator publishes DNS, "*.<name>.<domain>"
-    points at each of the cluster's LoadBalancers labelled
-    ccluster.nvidia.com/loadbalancer: <name>, such as "*.ingress.<domain>" at its
-    ingress, in whichever DNS zone the domain falls under. It must be a lowercase DNS
-    name of at least two labels, each at most 63 characters, and it cannot be changed
-    once set.
-    """
 
 
 class Status(Enum):
@@ -185,7 +167,8 @@ class CCLClusterConfigStatus(BaseModel):
     cluster, copied verbatim whenever it changes there. It is what the infra-plane
     operator reports about the cluster; ClusterConfigApplied says whether the copy is
     current. Its conditions and observedGeneration are the infra-plane operator's, and
-    refer to the CCLClusterConfig, not to this CCLInfraPlane.
+    refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
+    plane's domain once the infra-plane operator has verified the cluster against it.
     """
 
     model_config = ConfigDict(
@@ -202,6 +185,18 @@ class CCLClusterConfigStatus(BaseModel):
         that failed verification.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    domain: Annotated[
+        str | None,
+        Field(
+            max_length=253,
+            pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$",
+        ),
+    ] = None
+    """
+    domain is the spec.domain the infra-plane operator last verified the cluster
+    against, in the same pass as observedGeneration. The control-plane operator copies
+    it, with the rest of this status, into the CCLInfraPlane that registers the cluster.
     """
     load_balancers: Annotated[
         list[LoadBalancer] | None, Field(alias="loadBalancers")
@@ -242,7 +237,8 @@ class CCLInfraPlaneStatus(BaseModel):
     cluster, copied verbatim whenever it changes there. It is what the infra-plane
     operator reports about the cluster; ClusterConfigApplied says whether the copy is
     current. Its conditions and observedGeneration are the infra-plane operator's, and
-    refer to the CCLClusterConfig, not to this CCLInfraPlane.
+    refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
+    plane's domain once the infra-plane operator has verified the cluster against it.
     """
     conditions: list[Condition1] | None = None
     """
@@ -254,8 +250,8 @@ class CCLInfraPlaneStatus(BaseModel):
       - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
         cluster carries this CCLInfraPlane's domain.
       - "DNSReady": external-dns has read the current records pointing
-        "*.<name>.<domain>" at each of the cluster's labelled LoadBalancers, and every
-        label value is a DNS label. external-dns marks the records read before it
+        "*.<lb>.<domain>" at each of the cluster's LoadBalancers labelled
+        ccluster.nvidia.com/loadbalancer: <lb>, and every label value is a DNS label. external-dns marks the records read before it
         writes them, so True does not mean they were published: the provider may
         reject them, or external-dns may skip them.
 

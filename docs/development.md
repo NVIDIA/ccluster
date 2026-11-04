@@ -337,16 +337,20 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 
 ### DNS and external-dns
 
+Every CCLInfraPlane's domain is `<name>.<namespace>.<base domain>`, the base domain being
+the cp operator's required `--base-domain`. `make deploy-cp` and `make run-cp` pass
+`BASE_DOMAIN`, `example.com` by default; set it once per control plane, since changing it
+moves every plane's domain (DESIGN.md §3).
+
 The operator always writes a DNSEndpoint per CCLInfraPlane; without
 external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
-`*.<name>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
-`ccluster.nvidia.com/loadbalancer: <name>` (`*.ingress.<domain>` at its ingress; DESIGN.md §3):
+`*.<lb>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
+`ccluster.nvidia.com/loadbalancer: <lb>` (`*.ingress.<domain>` at its ingress; DESIGN.md §3):
 
-1. Create the DNS zones the planes' domains fall under, and delegate them from their
-   parents. One zone can serve several planes (`team-a.example.com` for
-   `gpu-a.team-a.example.com` and `gpu-b.team-a.example.com`), or a plane can have its own
-   (`gpu-a.team-a.example.com`); external-dns writes each record into the most specific
-   zone it manages.
+1. Create the DNS zone for the base domain, say `planes.example.com`, and delegate it from
+   its parent. It covers every plane. external-dns writes each record into the most
+   specific zone it manages, so a tenant (`team-a.planes.example.com`) or a plane
+   (`gpu-a.team-a.planes.example.com`) can also have a zone of its own.
 2. Configure the cp chart's external-dns for your provider. For Route53 with IRSA:
 
    ```yaml
@@ -355,7 +359,7 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
      provider:
        name: aws
      domainFilters:
-       - team-a.example.com
+       - planes.example.com
      serviceAccount:
        annotations:
          eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
@@ -364,7 +368,8 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
 3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`):
 
    ```bash
-   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
+   make deploy-cp KUBE_CONTEXT_CP=<context> BASE_DOMAIN=planes.example.com DNS=true \
+     HELM_ARGS='-f dns-values.yaml'
    ```
 
    On an installed release, apply the DNSEndpoint CRD first: Helm installs a chart's CRDs
@@ -375,7 +380,8 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
 
    ```bash
    helm show crds charts/cp/chart/charts/external-dns-*.tgz | kubectl apply -f -
-   make deploy-cp KUBE_CONTEXT_CP=<context> DNS=true HELM_ARGS='-f dns-values.yaml'
+   make deploy-cp KUBE_CONTEXT_CP=<context> BASE_DOMAIN=planes.example.com DNS=true \
+     HELM_ARGS='-f dns-values.yaml'
    kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
    ```
 
@@ -383,8 +389,8 @@ The operator writes the DNSEndpoints into its own namespace, which the chart's e
 reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
 should then read only that namespace; `make run-cp`, which has no namespace of its own,
 passes the cp chart's (`HELM_NAMESPACE_CP`).
-external-dns's Route53 policy, scoped by name with `team-a.example.com` standing for your
-zones:
+external-dns's Route53 policy, scoped by name with `planes.example.com` standing for your
+base domain:
 
 ```json
 {
@@ -406,7 +412,7 @@ zones:
       "Resource": "arn:aws:route53:::hostedzone/*",
       "Condition": {
         "ForAllValues:StringLike": {
-          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.team-a.example.com"]
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["*.planes.example.com"]
         }
       }
     }

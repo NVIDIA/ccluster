@@ -182,22 +182,19 @@ class CCLClient:
         self,
         *,
         name: str,
-        domain: str,
         server: str | None = None,
         bearer_token: str | None = None,
         ca_cert: str | bytes | None = None,
     ) -> CCLInfraPlane:
         """Create or update the CCLInfraPlane called name, for the cluster at server.
 
-        domain is the cluster's DNS domain. The operator writes it to the cluster's
-        CCLClusterConfig, and it cannot be changed once the CCLInfraPlane exists.
+        The operator derives the cluster's DNS domain, "<name>.<namespace>.<base domain>",
+        and writes it to the cluster's CCLClusterConfig, so name must be a DNS label.
 
         Server-side applies the CCLInfraPlane, then the Secret named "<name>-credentials"
         it points at, in Argo CD's cluster-secret shape. The plane goes first so that a
-        domain the API server rejects - malformed, or changed on an existing plane - fails
-        the call before the credentials are written: the operator acts on a changed
-        Secret at once, so new credentials under the old domain would retarget the
-        existing plane. ca_cert is the API server's CA certificate in PEM. The call
+        name the API server rejects fails the call before the credentials are written.
+        ca_cert is the API server's CA certificate in PEM. The call
         returns as soon as both objects are applied; it does not wait for the operator to
         report Available.
 
@@ -218,7 +215,6 @@ class CCLClient:
             metadata=ObjectMeta(name=name, namespace=self.namespace),
             spec=CCLInfraPlaneSpec(
                 cluster_credentials_ref=LocalObjectReference(name=secret_name),
-                domain=domain,
             ),
         )
         cluster_config = ClusterConfig(

@@ -110,7 +110,6 @@ func registerWithCLI(planeName string) {
 	_, err := utils.Run(cclusterCLI("register", planeName,
 		"--namespace", crNamespace,
 		"--infra-plane", ip.Context(),
-		"--domain", infraPlaneDomain(planeName),
 		"--server", ip.Server()))
 	Expect(err).NotTo(HaveOccurred(), "ccluster register failed")
 	DeferCleanup(func() {

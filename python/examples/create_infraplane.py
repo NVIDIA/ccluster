@@ -6,13 +6,16 @@
 The bearer token and CA certificate are those of a ServiceAccount on the cluster being
 registered, with the rights Argo CD needs there. Inside the control-plane cluster:
 
-    python create_infraplane.py --namespace tenant-a --domain edge-1.example.com \\
+    python create_infraplane.py --namespace tenant-a \\
         edge-1 https://10.0.0.1:6443 --token-file token --ca-file ca.crt
 
 Omit server, --token-file and --ca-file to register the cluster the operator itself runs
 in instead, credential-free:
 
-    python create_infraplane.py --namespace tenant-a --domain local.example.com ccluster-local
+    python create_infraplane.py --namespace tenant-a ccluster-local
+
+The operator derives the cluster's DNS domain, <name>.<namespace>.<its base domain>, so the
+name must be a DNS label.
 
 From a workstation, add --kubeconfig to connect with the current kubeconfig context
 instead of the in-cluster configuration.
@@ -42,11 +45,6 @@ def main() -> None:
         required=True,
         help="namespace to register it in; created if it does not exist",
     )
-    parser.add_argument(
-        "--domain",
-        required=True,
-        help="the cluster's DNS domain, written to its CCLClusterConfig; cannot be changed later",
-    )
     parser.add_argument("--token-file", type=Path, default=None)
     parser.add_argument(
         "--ca-file", type=Path, default=None, help="CA certificate, PEM"
@@ -67,7 +65,6 @@ def main() -> None:
     client.ensure_namespace()
     plane = client.apply_infraplane(
         name=args.name,
-        domain=args.domain,
         server=args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
         ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
