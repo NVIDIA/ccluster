@@ -10,20 +10,18 @@ package v1alpha1
 // with apply.
 //
 // LoadBalancerStatus is the address of a LoadBalancer Service labelled
-// ccluster.nvidia.com/loadbalancer. ip and hostname are both empty until the cloud
-// provider assigns one.
+// ccluster.nvidia.com/loadbalancer, as the Service reports it. ip and hostname are both
+// empty until the cloud provider assigns one. Neither the schema nor the infra-plane
+// operator checks the address: the control-plane operator does, when it publishes the
+// LoadBalancer's DNS record, and reports one it cannot use in its DNSReady condition.
 type LoadBalancerStatusApplyConfiguration struct {
 	// name is the Service's ccluster.nvidia.com/loadbalancer label value.
 	Name *string `json:"name,omitempty"`
-	// ip is the LoadBalancer's IP address: the first IP the Service reports, as an IPv4
-	// or IPv6 address in canonical form, without a zone; an IPv4-mapped IPv6 address is
-	// written as IPv4. The operators check this form rather than the schema, and the
-	// control-plane operator publishes no record for an ip in any other.
+	// ip is the LoadBalancer's IP address: the first IP the Service reports.
 	IP *string `json:"ip,omitempty"`
 	// hostname is the LoadBalancer's DNS name, set by cloud providers whose load
 	// balancers are addressed by name rather than by IP: the first hostname the Service
-	// reports. It must be a lowercase DNS name, without a trailing dot, that is not an IP
-	// address; the schema checks the DNS name, and the operators also that it is not an IP.
+	// reports.
 	Hostname *string `json:"hostname,omitempty"`
 }
 

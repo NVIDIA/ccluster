@@ -255,25 +255,3 @@ func (r *CCLInfraPlaneReconciler) teardownCredentials(
 	}
 	return &mirror, nil
 }
-
-// withValidLoadBalancers returns a copy of clusterConfig, or nil for nil, with each
-// LoadBalancer's address in canonical form and any whose address is not valid left out.
-// The infra-plane cluster's admin can write its CCLClusterConfig status whatever its
-// schema says, and status.clusterConfig shares that schema, so one invalid hostname would
-// otherwise fail the CCLInfraPlane's whole status patch; an invalid IP is left out too, so
-// the copy holds only addresses the DNS records can use. DNSReady reports what is left out.
-func withValidLoadBalancers(
-	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
-) *cclusternvidiacomv1alpha1.CCLClusterConfigStatus {
-	if clusterConfig == nil {
-		return nil
-	}
-	valid := clusterConfig.DeepCopy()
-	valid.LoadBalancers = nil
-	for _, lb := range clusterConfig.LoadBalancers {
-		if canonical, err := lb.Canonical(); err == nil {
-			valid.LoadBalancers = append(valid.LoadBalancers, canonical)
-		}
-	}
-	return valid
-}

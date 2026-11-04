@@ -5,10 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 package cp
 
-// Plain table tests for addresses the operator rejects. envtest cannot stage those the
-// CCLClusterConfig schema also rejects, such as an uppercase hostname, because its API
-// server enforces that schema, but an infra-plane cluster's admin can write them, so the
-// operator must not trust the schema.
+// Plain table tests for every address form the operator rejects or rewrites. The
+// CCLClusterConfig schema accepts them all, so the controller suite covers one end to end.
 
 import (
 	"strings"
@@ -69,43 +67,6 @@ func TestWildcardEndpointsRejectInvalidAddresses(t *testing.T) {
 				t.Errorf("invalid = %q, want one containing %q", invalid, tc.invalid)
 			}
 		})
-	}
-}
-
-func TestWithValidLoadBalancersCopiesOnlyValidAddresses(t *testing.T) {
-	if withValidLoadBalancers(nil) != nil {
-		t.Fatal("withValidLoadBalancers(nil) is not nil")
-	}
-
-	taken := &cclusternvidiacomv1alpha1.CCLClusterConfigStatus{
-		ObservedGeneration: 3,
-		LoadBalancers: []cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "api", IP: "::ffff:192.0.2.20"},
-			{Name: "bad", IP: "not-an-ip"},
-			{Name: "ingress", Hostname: "lb-1.elb.example.net"},
-			{Name: "ssh"},
-		},
-	}
-	got := withValidLoadBalancers(taken)
-
-	want := []cclusternvidiacomv1alpha1.LoadBalancerStatus{
-		{Name: "api", IP: "192.0.2.20"},
-		{Name: "ingress", Hostname: "lb-1.elb.example.net"},
-		{Name: "ssh"},
-	}
-	if len(got.LoadBalancers) != len(want) {
-		t.Fatalf("LoadBalancers = %+v, want %+v", got.LoadBalancers, want)
-	}
-	for i := range want {
-		if got.LoadBalancers[i] != want[i] {
-			t.Errorf("LoadBalancers[%d] = %+v, want %+v", i, got.LoadBalancers[i], want[i])
-		}
-	}
-	if got.ObservedGeneration != 3 {
-		t.Errorf("ObservedGeneration = %d, want 3", got.ObservedGeneration)
-	}
-	if taken.LoadBalancers[0].IP != "::ffff:192.0.2.20" || len(taken.LoadBalancers) != 4 {
-		t.Errorf("the copy taken was modified: %+v", taken.LoadBalancers)
 	}
 }
 

@@ -371,29 +371,15 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 			}))
 	})
 
-	It("reports an IPv6 address in canonical form", func() {
+	It("reports an address as the Service lists it, leaving the checks to the cp operator", func() {
 		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{IP: "2001:DB8:0:0::10"})
 		reconcileOnce()
 
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ingress", IP: "2001:db8::10"},
+			{Name: "ingress", IP: "2001:DB8:0:0::10"},
 		}))
 	})
-
-	DescribeTable("rejects a LoadBalancer hostname that is not a DNS name at admission",
-		func(lb cclusternvidiacomv1alpha1.LoadBalancerStatus) {
-			var config cclusternvidiacomv1alpha1.CCLClusterConfig
-			Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
-			lb.Name = "ingress"
-			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{lb}
-			err := k8sClient.Status().Update(ctx, &config)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected %+v to be rejected, got %v", lb, err)
-		},
-		Entry("an uppercase hostname", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "LB.example.com"}),
-		Entry("a hostname with a trailing dot", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb.example.com."}),
-		Entry("a hostname with an underscore", cclusternvidiacomv1alpha1.LoadBalancerStatus{Hostname: "lb_1.example.com"}),
-	)
 
 	It("reports every labelled LoadBalancer under its label value, sorted by it", func() {
 		service("ssh", corev1.ServiceTypeLoadBalancer, labelled("ssh"),
