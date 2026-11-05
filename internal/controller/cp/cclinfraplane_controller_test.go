@@ -309,6 +309,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+
+			By("reporting the derived domain without reaching the cluster")
+			Expect(infraPlane.Status.Domain).To(Equal(domain))
+			Expect(infraPlane.Status.ClusterConfig).To(BeNil())
 		})
 
 		// The project comes before the Secret: it exists for as long as any CCLInfraPlane
@@ -683,6 +687,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			config := getClusterConfig()
 			Expect(config.Spec.Domain).To(Equal(domain))
+			Expect(infraPlane.Status.Domain).To(Equal(domain))
 			Expect(config.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))

@@ -15,7 +15,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.clusterConfig.domain
+    - jsonPath: .status.domain
       name: Domain
       type: string
     - jsonPath: .status.conditions[?(@.type=="Available")].status
@@ -44,8 +44,9 @@ spec:
           --base-domain, so the name must be a DNS label. The operator writes that domain to the
           cluster's CCLClusterConfig and points "*.<lb>.<domain>" at each of the cluster's
           LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>, such as
-          "*.ingress.<domain>" at its ingress. status.clusterConfig.domain shows the domain once
-          the infra-plane operator has verified the cluster against it.
+          "*.ingress.<domain>" at its ingress. status.domain shows the domain as soon as the
+          operator has reconciled the plane, and status.clusterConfig.domain once the
+          infra-plane operator has verified the cluster against it.
         properties:
           apiVersion:
             description: |-
@@ -106,7 +107,8 @@ spec:
                   operator reports about the cluster; ClusterConfigApplied says whether the copy is
                   current. Its conditions and observedGeneration are the infra-plane operator's, and
                   refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
-                  plane's domain once the infra-plane operator has verified the cluster against it.
+                  plane's domain once the infra-plane operator has verified the cluster against it;
+                  see domain.
                 properties:
                   conditions:
                     description: |-
@@ -308,6 +310,15 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              domain:
+                description: |-
+                  domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
+                  the control-plane operator from its --base-domain and written on every status
+                  update, whether or not the cluster is reachable. It is the domain the operator
+                  writes to the cluster's CCLClusterConfig and publishes "*.<lb>.<domain>" records
+                  under. clusterConfig.domain is the domain the infra-plane operator last verified
+                  the cluster against; the two differ until it has verified the current one.
+                type: string
               observedGeneration:
                 description: observedGeneration is the .metadata.generation the conditions
                   were computed from.

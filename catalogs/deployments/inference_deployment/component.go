@@ -28,7 +28,7 @@ type Values struct {
 	deployments.Workload
 
 	// Domain is the infra plane's domain, <plane>.<namespace>.<base domain>, which its
-	// CCLInfraPlane shows as status.clusterConfig.domain. The Ingress host is
+	// CCLInfraPlane shows as status.domain. The Ingress host is
 	// <name>.ingress.<domain>, under the *.ingress.<domain> record the control-plane
 	// operator publishes for the cluster's ingress, unless DeploymentURL overrides it. The
 	// host does not include the namespace, so deployment names must be unique across the

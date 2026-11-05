@@ -136,7 +136,8 @@ func (r *CCLInfraPlaneReconciler) domainOf(infraPlane *cclusternvidiacomv1alpha1
 // watches the CCLClusterConfig singleton the infra-plane operator verifies the cluster
 // against, and writes it with the plane's domain, "<name>.<namespace>.<BaseDomain>". That
 // is reported as the ClusterConfigApplied condition, and the singleton's status is copied
-// into status.clusterConfig.
+// into status.clusterConfig. Every status write also records the domain in status.domain,
+// so it shows even while the cluster cannot be reached.
 //
 // The operator then writes a DNSEndpoint pointing "*.<lb>.<domain>" at each labelled
 // LoadBalancer in that copy, for external-dns to publish. That is reported as the
@@ -410,7 +411,7 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 }
 
 // patchStatus sets conditions, each stamped with the current generation, the observed
-// generation and, unless it is nil, the copy of the infra-plane cluster's
+// generation, the plane's domain and, unless it is nil, the copy of the infra-plane cluster's
 // CCLClusterConfig status, then writes the status subresource in one patch.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
@@ -435,6 +436,7 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, condition)
 	}
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
+	infraPlane.Status.Domain = r.domainOf(infraPlane)
 
 	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))
 }

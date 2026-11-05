@@ -1,8 +1,10 @@
 ### Added
+- `CCLInfraPlane` gains `status.domain`, the domain the cp operator derives for the plane,
+  written on every status update whether or not the cluster is reachable. A new `Domain`
+  column on `CCLInfraPlane` shows it.
 - `CCLClusterConfig` gains `status.domain`: the `spec.domain` the ip operator last verified
   the cluster against, from the same pass as `observedGeneration`. The cp operator copies
-  it into the plane's `status.clusterConfig.domain`, which a new `Domain` column on
-  `CCLInfraPlane` shows.
+  it into the plane's `status.clusterConfig.domain`.
 - Python: `CCLClient.check_infraplane` dry-runs the CCLInfraPlane `apply_infraplane`
   writes, so the API server checks it without anything being written.
 

@@ -109,9 +109,11 @@ flag, so `ccluster-local` above, with `--base-domain=example.com`, is
 `ccluster-local.default.example.com`. A CEL rule keeps the name a DNS label, as a
 namespace already is. The domain is written to the cluster's `CCLClusterConfig` (below),
 where it is also the SPIFFE trust domain, and with DNS published `*.<lb>.<domain>` resolves
-to each LoadBalancer the plane reports (below). The infra-plane operator reports the
-domain it verified the cluster against in the `CCLClusterConfig`'s `status.domain`, which
-reaches the plane as `status.clusterConfig.domain` and its `Domain` column.
+to each LoadBalancer the plane reports (below). The control-plane operator records the
+domain in the plane's `status.domain`, which its `Domain` column shows, on every status
+write, so it shows even while the cluster is unreachable. The infra-plane operator reports
+the domain it verified the cluster against in the `CCLClusterConfig`'s `status.domain`,
+which reaches the plane as `status.clusterConfig.domain`.
 
 Deriving the domain, rather than taking it from the user, makes it unique by
 construction: name and namespace are unique together, and every plane's domain sits

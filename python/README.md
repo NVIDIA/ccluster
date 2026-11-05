@@ -61,8 +61,9 @@ cluster-secret shape (`server`, and a `config` carrying the bearer token and the
 `CCLInfraPlane` pointing at it. The operator derives the cluster's DNS domain from the
 plane, `<name>.<namespace>.<base domain>` with the base domain its `--base-domain`, so the
 name must be a DNS label. It writes that domain to the infra-plane cluster's
-`CCLClusterConfig`, and the plane's `status.clusterConfig.domain` shows it once the
-infra-plane operator has verified the cluster;
+`CCLClusterConfig`. The plane's `status.domain` shows it once the control-plane operator
+has reconciled the plane, and `status.clusterConfig.domain` once the infra-plane
+operator has verified the cluster;
 `check_infraplane` dry-runs the same CCLInfraPlane apply, so the API server checks it, its
 name included, without writing anything; call it before creating credentials the plane
 needs;

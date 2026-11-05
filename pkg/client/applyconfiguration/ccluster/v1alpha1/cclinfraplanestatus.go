@@ -33,12 +33,20 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// observedGeneration is the .metadata.generation the conditions were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
+	// the control-plane operator from its --base-domain and written on every status
+	// update, whether or not the cluster is reachable. It is the domain the operator
+	// writes to the cluster's CCLClusterConfig and publishes "*.<lb>.<domain>" records
+	// under. clusterConfig.domain is the domain the infra-plane operator last verified
+	// the cluster against; the two differ until it has verified the current one.
+	Domain *string `json:"domain,omitempty"`
 	// clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
 	// cluster, copied verbatim whenever it changes there. It is what the infra-plane
 	// operator reports about the cluster; ClusterConfigApplied says whether the copy is
 	// current. Its conditions and observedGeneration are the infra-plane operator's, and
 	// refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
-	// plane's domain once the infra-plane operator has verified the cluster against it.
+	// plane's domain once the infra-plane operator has verified the cluster against it;
+	// see domain.
 	ClusterConfig *CCLClusterConfigStatusApplyConfiguration `json:"clusterConfig,omitempty"`
 }
 
@@ -66,6 +74,14 @@ func (b *CCLInfraPlaneStatusApplyConfiguration) WithConditions(values ...*v1.Con
 // If called multiple times, the ObservedGeneration field is set to the value of the last call.
 func (b *CCLInfraPlaneStatusApplyConfiguration) WithObservedGeneration(value int64) *CCLInfraPlaneStatusApplyConfiguration {
 	b.ObservedGeneration = &value
+	return b
+}
+
+// WithDomain sets the Domain field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Domain field is set to the value of the last call.
+func (b *CCLInfraPlaneStatusApplyConfiguration) WithDomain(value string) *CCLInfraPlaneStatusApplyConfiguration {
+	b.Domain = &value
 	return b
 }
 

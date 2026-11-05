@@ -168,7 +168,8 @@ class CCLClusterConfigStatus(BaseModel):
     operator reports about the cluster; ClusterConfigApplied says whether the copy is
     current. Its conditions and observedGeneration are the infra-plane operator's, and
     refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
-    plane's domain once the infra-plane operator has verified the cluster against it.
+    plane's domain once the infra-plane operator has verified the cluster against it;
+    see domain.
     """
 
     model_config = ConfigDict(
@@ -238,7 +239,8 @@ class CCLInfraPlaneStatus(BaseModel):
     operator reports about the cluster; ClusterConfigApplied says whether the copy is
     current. Its conditions and observedGeneration are the infra-plane operator's, and
     refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
-    plane's domain once the infra-plane operator has verified the cluster against it.
+    plane's domain once the infra-plane operator has verified the cluster against it;
+    see domain.
     """
     conditions: list[Condition1] | None = None
     """
@@ -257,6 +259,15 @@ class CCLInfraPlaneStatus(BaseModel):
         skip them.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    domain: str | None = None
+    """
+    domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
+    the control-plane operator from its --base-domain and written on every status
+    update, whether or not the cluster is reachable. It is the domain the operator
+    writes to the cluster's CCLClusterConfig and publishes "*.<lb>.<domain>" records
+    under. clusterConfig.domain is the domain the infra-plane operator last verified
+    the cluster against; the two differ until it has verified the current one.
     """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
