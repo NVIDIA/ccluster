@@ -8,6 +8,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -66,7 +67,7 @@ example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runRegister(cmd, args[0], opts)
+			return runRegister(cmd.Context(), cmd.OutOrStdout(), args[0], opts)
 		},
 	}
 	flags := cmd.Flags()
@@ -85,8 +86,7 @@ example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 	return cmd
 }
 
-func runRegister(cmd *cobra.Command, name string, opts registerOptions) error {
-	ctx := cmd.Context()
+func runRegister(ctx context.Context, out io.Writer, name string, opts registerOptions) error {
 	controlPlane, err := loadControlPlane()
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func runRegister(cmd *cobra.Command, name string, opts registerOptions) error {
 	if err != nil {
 		return apiError(err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered CCLInfraPlane %s/%s for %s\n",
+	_, _ = fmt.Fprintf(out, "Registered CCLInfraPlane %s/%s for %s\n",
 		plane.Namespace, plane.Name, server)
 	return nil
 }
