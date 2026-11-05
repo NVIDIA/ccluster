@@ -55,6 +55,19 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      # Every kind node shares the runner's per-user inotify limits. The runner's default
+      # instance limit runs out once both clusters carry the full tier's workloads, and
+      # istio-cni-node then crash-loops with "watcher create: too many open files". These
+      # are the values kind's known-issues page recommends; a higher limit is kept.
+      - name: Raise inotify limits for kind
+        run: |
+          for setting in fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288; do
+            key="${setting%=*}" want="${setting#*=}"
+            have="$(sysctl -n "$key")"
+            echo "$key: $have"
+            if [ "$have" -lt "$want" ]; then sudo sysctl -w "$key=$want"; fi
+          done
+
       # The suite builds both operator images; nothing else builds the launcher image
       # before main.yml does after merge, so a broken Dockerfile stage would land on main.
       - name: Build the compute-ssh image

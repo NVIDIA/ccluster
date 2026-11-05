@@ -57,6 +57,12 @@ pair `make init` creates, and deletes both when done. Never use a working cluste
 either name: the suite uninstalls operators and CRDs. Use `make cleanup-test-e2e` if an
 interrupted run leaves the test clusters behind.
 
+The kind nodes share the host's per-user inotify limits, and the full tier exhausts a
+stock Linux default such as 128 instances: `istio-cni-node` then crash-loops with `watcher create: too many
+open files` and the istio spec times out. Raise them as kind's known issues recommend,
+as the e2e workflow does:
+`sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288`.
+
 ### Two clusters and the infra-plane targets
 
 The control-plane cluster is the current kubeconfig context, so a plain `kubectl` in a spec
