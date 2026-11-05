@@ -229,7 +229,8 @@ func (c *Client) GetInfraPlane(
 // FieldManager means calling again with a different list updates the set in place.
 //
 // The call returns as soon as the object is applied; it does not wait for the rollout to
-// finish. Poll IsComponentSetFinished to check convergence.
+// finish. Poll IsComponentSetFinished, or check a set already in hand with
+// ComponentSetFinished, to see when it has converged.
 //
 // The client's namespace is the set's own, on the control plane. The namespace a
 // component installs into is on its infra plane, created there by Argo CD from the
@@ -249,22 +250,28 @@ func (c *Client) ApplyComponentSet(
 		applyOptions())
 }
 
-// IsComponentSetFinished reports whether the current generation is applied and reported
-// converged.
-//
-// It reads once. It returns false during deletion or unless validation, Application
-// writes and rollout completion are confirmed for this generation. The caller controls
-// polling and timeouts. A missing set is an error for which apierrors.IsNotFound is true.
+// IsComponentSetFinished reads the CCLComponentSet called name once and reports
+// ComponentSetFinished for it. The caller controls polling and timeouts. A missing set
+// is an error for which apierrors.IsNotFound is true.
 func (c *Client) IsComponentSetFinished(ctx context.Context, name string) (bool, error) {
 	componentSet, err := c.GetComponentSet(ctx, name)
 	if err != nil {
 		return false, err
 	}
+	return ComponentSetFinished(componentSet), nil
+}
 
+// ComponentSetFinished reports whether componentSet's current generation is applied and
+// reported converged. It returns false during deletion or unless validation, Application
+// writes and rollout completion are confirmed for this generation.
+//
+// It makes no API call, so a program that already holds the object, from an informer's
+// cache or a list, can check it directly.
+func ComponentSetFinished(componentSet *cclusternvidiacomv1alpha1.CCLComponentSet) bool {
 	// The finalizer never writes conditions, so a set being torn down still carries the
 	// ones its last generation finished with.
 	if componentSet.DeletionTimestamp != nil {
-		return false, nil
+		return false
 	}
 
 	conditions := ComponentSetCurrentConditions(componentSet)
@@ -276,10 +283,10 @@ func (c *Client) IsComponentSetFinished(ctx context.Context, name string) (bool,
 	for conditionType, status := range expected {
 		condition, ok := conditions[conditionType]
 		if !ok || condition.Status != status {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // DeleteComponentSet removes the CCLComponentSet called name.

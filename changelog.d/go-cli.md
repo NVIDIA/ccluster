@@ -10,8 +10,9 @@
   completion script; the README shows how to load it.
 - `github.com/NVIDIA/ccluster/pkg/cclclient`, a Go client designed like the Python
   `CCLClient`: it registers and unregisters infra planes and applies, polls and deletes
-  component sets in one namespace. `catalogs.Component` places the entry a chart package's
-  `New` returns onto an infra plane.
+  component sets in one namespace. `ComponentSetFinished` checks a set already in hand,
+  such as one from an informer, for convergence. `catalogs.Component` places the entry a
+  chart package's `New` returns onto an infra plane.
 
 ### Changed
 - **Breaking:** The Python `CCLClient`, and so the Python `ccluster` command, applies

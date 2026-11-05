@@ -356,6 +356,15 @@ func TestIsComponentSetFinished(t *testing.T) {
 			if got != test.want {
 				t.Errorf("IsComponentSetFinished() = %v, want %v", got, test.want)
 			}
+
+			// The same verdict from the object itself, as an informer user would check it.
+			stored, err := client.GetComponentSet(ctx, set.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cclclient.ComponentSetFinished(stored); got != test.want {
+				t.Errorf("ComponentSetFinished() = %v, want %v", got, test.want)
+			}
 		})
 	}
 }
