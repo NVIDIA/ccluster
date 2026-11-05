@@ -243,7 +243,7 @@ metadata:
   name: %s
   namespace: default
   labels:
-    ccluster.nvidia.com/loadbalancer: ingress
+    ccluster.nvidia.com/loadbalancer: nginx
 spec:
   type: LoadBalancer
   ports:

@@ -658,7 +658,7 @@ var _ = Describe("Manager", Ordered, func() {
 				By("following the ingress LoadBalancer's IP onto the CCLInfraPlane")
 				createIngressLoadBalancer(t.cluster, "e2e-ingress", ingressLoadBalancerIP)
 				Eventually(func(g Gomega) {
-					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="ingress")].ip`)).
+					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="nginx")].ip`)).
 						To(Equal(ingressLoadBalancerIP))
 				}, crossClusterTimeout).Should(Succeed())
 
@@ -746,7 +746,7 @@ var _ = Describe("Manager", Ordered, func() {
 				out, err := utils.Run(exec.Command("kubectl", "get", "dnsendpoint", dnsEndpointName,
 					"-n", namespace, "-o", "jsonpath={.spec.endpoints[*].dnsName} {.spec.endpoints[*].targets[*]}"))
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(out).To(Equal("*.ingress." + infraPlaneDomain(planeName) + " " + ingressLoadBalancerIP))
+				g.Expect(out).To(Equal("*.nginx." + infraPlaneDomain(planeName) + " " + ingressLoadBalancerIP))
 			}, crossClusterTimeout).Should(Succeed())
 
 			By("reporting Published once external-dns has read it")

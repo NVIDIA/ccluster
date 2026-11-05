@@ -345,7 +345,7 @@ moves every plane's domain (DESIGN.md §3).
 The operator always writes a DNSEndpoint per CCLInfraPlane; without
 external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
 `*.<lb>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
-`ccluster.nvidia.com/loadbalancer: <lb>` (`*.ingress.<domain>` at its ingress; DESIGN.md §3):
+`ccluster.nvidia.com/loadbalancer: <lb>` (`*.nginx.<domain>` at its ingress; DESIGN.md §3):
 
 1. Create the DNS zone for the base domain, say `planes.example.com`, and delegate it from
    its parent. It covers every plane. external-dns writes each record into the most

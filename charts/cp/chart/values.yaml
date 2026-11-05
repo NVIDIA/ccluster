@@ -81,7 +81,7 @@ manager:
   ##
   ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<lb>.<domain>"
   ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>,
-  ## such as "*.ingress.<domain>" at its ingress, <domain> being the plane's derived one.
+  ## such as "*.nginx.<domain>" at its ingress, <domain> being the plane's derived one.
   ## Nothing is published unless the `external-dns` dependency below is enabled.
   ## --dns-endpoint-namespace (default: the operator's own namespace, where that
   ## external-dns runs) is where the DNSEndpoints go; set it only for an external-dns
@@ -369,7 +369,7 @@ external-dns:
 
   extraArgs:
     ## A TXT ownership record is named after the record it owns plus its type, which for
-    ## a wildcard is "a-*.ingress.<domain>": a "*" that is not a whole label is not a
+    ## a wildcard is "a-*.nginx.<domain>": a "*" that is not a whole label is not a
     ## wildcard, and most DNS providers reject it. This names it
-    ## "a-wildcard.ingress.<domain>" instead.
+    ## "a-wildcard.nginx.<domain>" instead.
     txt-wildcard-replacement: wildcard

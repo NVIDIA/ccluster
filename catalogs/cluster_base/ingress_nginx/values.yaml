@@ -6,12 +6,12 @@ ingress-nginx:
     # The controller's LoadBalancer is the cluster's ingress. Its
     # ccluster.nvidia.com/loadbalancer label has the infra-plane operator report its
     # address in CCLClusterConfig's status.loadBalancers under the name this chart
-    # chose, "ingress", which the control plane points "*.ingress.<domain>" at.
+    # chose, "nginx", which the control plane points "*.nginx.<domain>" at.
     service:
       enabled: true
       type: LoadBalancer
       labels:
-        ccluster.nvidia.com/loadbalancer: ingress
+        ccluster.nvidia.com/loadbalancer: nginx
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:

@@ -11,7 +11,7 @@
 
 ### Changed
 - **Breaking:** `catalogs/cluster_base/ingress_nginx` now creates the controller Service,
-  as a `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: ingress`, where it used
+  as a `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: nginx`, where it used
   to create none. An infra plane gets a new cloud load balancer on its next sync; a
   Service provisioned for the controller outside ccluster is no longer needed.
 
