@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/cclclient"
 	cclusterac "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
@@ -175,8 +176,8 @@ func TestApplyInfraPlaneDefaultsToTheInClusterServer(t *testing.T) {
 	}
 
 	secret := credentialsSecret(t, client, "local")
-	if got := string(secret.Data["server"]); got != cclclient.InClusterServer {
-		t.Errorf("server = %q, want %q", got, cclclient.InClusterServer)
+	if got := string(secret.Data["server"]); got != argocdv1alpha1.InClusterServer {
+		t.Errorf("server = %q, want %q", got, argocdv1alpha1.InClusterServer)
 	}
 	want := map[string]any{"tlsClientConfig": map[string]any{"insecure": false}}
 	if got := clusterConfig(t, secret); !reflect.DeepEqual(got, want) {

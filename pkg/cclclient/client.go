@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	cclusterac "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )
@@ -37,12 +38,6 @@ import (
 // this client wrote without conflicting with itself, and what marks the objects as ours
 // in managedFields. The Python CCLClient uses the same name.
 const FieldManager = "ccluster"
-
-// InClusterServer is the server URL Argo CD special-cases: it connects with its own
-// ServiceAccount rather than anything in the Secret's config, so no token or CA is needed
-// to register the cluster the operator itself runs in. See
-// examples/quickstart/v1alpha1_cclinfraplane.yaml.
-const InClusterServer = "https://kubernetes.default.svc"
 
 // TLSClientConfig is the tlsClientConfig block of an Argo CD cluster Secret's config.
 type TLSClientConfig struct {
@@ -68,7 +63,7 @@ type InfraPlaneOptions struct {
 	// CCLClusterConfig, and it cannot be changed once the CCLInfraPlane exists.
 	Domain string
 	// Server is the API server URL Argo CD in the control plane connects to. Empty means
-	// InClusterServer.
+	// https://kubernetes.default.svc, the address Argo CD treats as its own cluster.
 	Server string
 	// BearerToken is the token Argo CD and the operator authenticate with. Optional.
 	BearerToken string
@@ -157,9 +152,9 @@ func (c *Client) EnsureNamespace(ctx context.Context) error {
 // report Available.
 //
 // Server, BearerToken and CACert are all optional. With none given, this registers the
-// cluster the operator itself runs in: Server defaults to InClusterServer, and the token
-// and CA stay unset, which Argo CD accepts for that address by connecting with its own
-// ServiceAccount instead.
+// cluster the operator itself runs in: Server defaults to https://kubernetes.default.svc,
+// and the token and CA stay unset, which Argo CD accepts for that address by connecting
+// with its own ServiceAccount instead.
 //
 // The namespace must already exist; call EnsureNamespace first for the first plane of a
 // namespace.
@@ -169,7 +164,7 @@ func (c *Client) ApplyInfraPlane(
 ) (*cclusternvidiacomv1alpha1.CCLInfraPlane, error) {
 	server := opts.Server
 	if server == "" {
-		server = InClusterServer
+		server = argocdv1alpha1.InClusterServer
 	}
 	config, err := json.Marshal(ClusterConfig{
 		BearerToken:     opts.BearerToken,
@@ -193,8 +188,8 @@ func (c *Client) ApplyInfraPlane(
 		corev1ac.Secret(secretName, c.namespace).
 			WithType(corev1.SecretTypeOpaque).
 			WithStringData(map[string]string{
-				"server": server,
-				"config": string(config),
+				argocdv1alpha1.ClusterSecretServerKey: server,
+				argocdv1alpha1.ClusterSecretConfigKey: string(config),
 			}),
 		applyOptions()); err != nil {
 		return nil, err
