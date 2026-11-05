@@ -211,12 +211,7 @@ class CCLClient:
             ca_cert = ca_cert.encode()
         secret_name = _credentials_secret_name(name)
 
-        plane = CCLInfraPlane(
-            metadata=ObjectMeta(name=name, namespace=self.namespace),
-            spec=CCLInfraPlaneSpec(
-                cluster_credentials_ref=LocalObjectReference(name=secret_name),
-            ),
-        )
+        plane = self._infraplane(name)
         cluster_config = ClusterConfig(
             bearer_token=bearer_token,
             tls_client_config=TLSClientConfig(
@@ -240,6 +235,18 @@ class CCLClient:
         )
         self._apply(self._discovery.secret_gvr, secret)
         return applied
+
+    def check_infraplane(self, *, name: str) -> None:
+        """Raise if the API server would refuse the CCLInfraPlane apply_infraplane(name=name) writes.
+
+        Dry-runs the server-side apply of the plane, so the API server checks it against
+        the CRD's own rules, such as name being a DNS label, and writes nothing. Call it
+        before creating anything the plane needs, such as the infra plane's credentials.
+        Like apply_infraplane, it needs the namespace to exist already.
+        """
+        self._apply_object(
+            self._discovery.infra_plane_gvr, self._infraplane(name), dry_run=True
+        )
 
     def delete_infraplane(self, *, name: str) -> None:
         """Remove the CCLInfraPlane called name and its credentials Secret.
@@ -318,7 +325,18 @@ class CCLClient:
                 return False
         return True
 
-    def _apply_object(self, gvr, obj: BaseModel) -> dict:
+    def _infraplane(self, name: str) -> CCLInfraPlane:
+        """The CCLInfraPlane called name, pointing at its "<name>-credentials" Secret."""
+        return CCLInfraPlane(
+            metadata=ObjectMeta(name=name, namespace=self.namespace),
+            spec=CCLInfraPlaneSpec(
+                cluster_credentials_ref=LocalObjectReference(
+                    name=_credentials_secret_name(name)
+                ),
+            ),
+        )
+
+    def _apply_object(self, gvr, obj: BaseModel, *, dry_run: bool = False) -> dict:
         """Server-side apply one of this API's objects and return it as the server holds it.
 
         obj is a whole object from ccluster.v1alpha1.base; the returned dict carries the
@@ -326,7 +344,7 @@ class CCLClient:
         validates back into the same class.
         """
         body = obj.model_dump(mode="json", by_alias=True, exclude_none=True)
-        return self._apply(gvr, body).to_dict()
+        return self._apply(gvr, body, dry_run=dry_run).to_dict()
 
     def delete_component_set(self, *, name: str) -> None:
         """Remove the CCLComponentSet called name.
@@ -346,13 +364,17 @@ class CCLClient:
             self._get(self._discovery.component_set_gvr, name)
         )
 
-    def _apply(self, gvr, body):
+    def _apply(self, gvr, body, *, dry_run: bool = False):
+        # dry_run="All" has the API server validate and admit the object without
+        # persisting it.
+        extra = {"dry_run": "All"} if dry_run else {}
         return self._discovery.dynamic.server_side_apply(
             gvr,
             body=self._api.sanitize_for_serialization(body),
             namespace=self.namespace,
             field_manager=_FIELD_MANAGER,
             force_conflicts=True,
+            **extra,
         )
 
     def _delete(self, gvr, name: str) -> None:

@@ -63,6 +63,9 @@ plane, `<name>.<namespace>.<base domain>` with the base domain its `--base-domai
 name must be a DNS label. It writes that domain to the infra-plane cluster's
 `CCLClusterConfig`, and the plane's `status.clusterConfig.domain` shows it once the
 infra-plane operator has verified the cluster;
+`check_infraplane` dry-runs the same CCLInfraPlane apply, so the API server checks it, its
+name included, without writing anything; call it before creating credentials the plane
+needs;
 `delete_infraplane` deletes the Secret and the CCLInfraPlane, the CCLInfraPlane first so
 the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace.
 `ensure_namespace` creates the namespace, and is the only method that does: keeping it
@@ -216,12 +219,13 @@ ccluster register edge-1 -n tenant-a -ip kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
 
-On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`, binds it
+It first creates the namespace on the control plane if needed and calls
+`check_infraplane`, so a name the API server refuses fails before anything is created on
+the infra plane. On the infra plane it then creates the ServiceAccount `kube-system/ccluster-manager`, binds it
 to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
 the same rights `argocd cluster add` grants), and reads the long-lived token the token
 controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
-it creates the namespace if needed and calls `apply_infraplane` with that token and the
-cluster CA. The control-plane operator uses the same token to write the plane's domain,
+it calls `apply_infraplane` with that token and the cluster CA. The control-plane operator uses the same token to write the plane's domain,
 `edge-1.tenant-a.<base domain>`, to the infra plane's `CCLClusterConfig`. Anyone who can
 read `<name>-credentials` there is cluster-admin on the infra plane, so keep read access to
 that namespace's Secrets tight. Running it again reuses the

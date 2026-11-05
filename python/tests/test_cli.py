@@ -107,12 +107,16 @@ class FakeCCLClient:
         self.namespace = namespace
         self.api_client = api_client
         self.ensured = False
+        self.checked = None
         self.applied = None
         self.deleted = None
         FakeCCLClient.instances.append(self)
 
     def ensure_namespace(self):
         self.ensured = True
+
+    def check_infraplane(self, *, name):
+        self.checked = name
 
     def delete_infraplane(self, *, name):
         self.deleted = name
@@ -229,6 +233,7 @@ def test_register_creates_admin_token_and_infraplane(infra):
     assert client.api_client.context == "cp"
     assert client.namespace == "tenant-a"
     assert client.ensured
+    assert client.checked == "edge-1"
     assert client.applied == {
         "name": "edge-1", "server": KUBECONFIG_SERVER,
         "bearer_token": TOKEN, "ca_cert": CA,
@@ -257,7 +262,21 @@ def test_register_fails_when_token_never_arrives(infra):
     result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
     assert "kube-system/ccluster-manager-token was not given a token" in result.output
-    assert FakeCCLClient.instances == []
+    assert FakeCCLClient.instances[0].applied is None
+
+
+def test_register_creates_nothing_on_the_infra_plane_for_a_refused_plane(infra, monkeypatch):
+    # The API server refuses a NAME that is not a DNS label; that must fail register
+    # before the cluster-admin ServiceAccount, binding and token exist.
+    def invalid(self, *, name):
+        raise ApiException(status=422, reason="Invalid")
+
+    monkeypatch.setattr(FakeCCLClient, "check_infraplane", invalid)
+    result = invoke("register", "edge.1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1
+    assert "API request failed (422): Invalid" in result.output
+    assert infra.created == []
+    assert FakeCCLClient.instances[0].applied is None
 
 
 def test_register_reports_unknown_context(infra):

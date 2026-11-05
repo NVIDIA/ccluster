@@ -3,6 +3,8 @@
   the cluster against, from the same pass as `observedGeneration`. The cp operator copies
   it into the plane's `status.clusterConfig.domain`, which a new `Domain` column on
   `CCLInfraPlane` shows.
+- Python: `CCLClient.check_infraplane` dry-runs the CCLInfraPlane `apply_infraplane`
+  writes, so the API server checks it without anything being written.
 
 ### Changed
 - **Breaking:** The cp operator requires `--base-domain` and refuses to start without a
@@ -16,3 +18,8 @@
   defaults to `example.com`.
 - **Breaking:** A CCLInfraPlane's name must be a DNS label of at most 63 characters, since
   the domain is derived from it.
+
+### Fixed
+- The Python `ccluster register` has the control plane check the CCLInfraPlane, its name included,
+  before creating the cluster-admin ServiceAccount, binding and token on the infra plane,
+  so a refused name leaves nothing behind there (#165).

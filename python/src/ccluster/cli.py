@@ -130,8 +130,9 @@ def register(
     long-lived token. On the control plane, applies the Secret NAME-credentials carrying
     that token and the cluster CA, and the CCLInfraPlane NAME pointing at it. The
     control-plane operator then writes the plane's domain, NAME.NAMESPACE.<its base domain>,
-    to the infra plane's CCLClusterConfig, so NAME must be a DNS label. Re-running reuses
-    the same token.
+    to the infra plane's CCLClusterConfig, so NAME must be a DNS label. The control plane
+    checks the CCLInfraPlane first, so a NAME it refuses creates nothing on the infra plane.
+    Re-running reuses the same token.
 
     Pass --server when the kubeconfig's address is not reachable from the control plane,
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
@@ -141,11 +142,15 @@ def register(
         infra_api = k8s_config.new_client_from_config(context=infra_plane)
         control_api = k8s_config.new_client_from_config(context=control_plane)
 
+        # The API server checks the plane, NAME included, before anything is created on
+        # the infra plane, so a plane it would refuse leaves no cluster-admin token behind.
+        client = CCLClient(namespace, api_client=control_api)
+        client.ensure_namespace()
+        client.check_infraplane(name=name)
+
         token, ca_cert = _cluster_admin_token(infra_api)
         server = server or infra_api.configuration.host
 
-        client = CCLClient(namespace, api_client=control_api)
-        client.ensure_namespace()
         plane = client.apply_infraplane(
             name=name, server=server, bearer_token=token, ca_cert=ca_cert
         )

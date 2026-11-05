@@ -271,6 +271,27 @@ def test_apply_infraplane_writes_no_secret_when_the_plane_is_rejected(fake):
     assert dyn.applied == []
 
 
+def test_check_infraplane_dry_runs_the_plane_apply_infraplane_writes(fake):
+    c, dyn = make_client(fake)
+
+    c.check_infraplane(name="edge-1")
+    c.apply_infraplane(name="edge-1")
+
+    (_, ns_arg, checked, kwargs), (_, _, applied, _), _ = dyn.applied
+    assert ns_arg == "tenant"
+    assert kwargs == {
+        "field_manager": "ccluster", "force_conflicts": True, "dry_run": "All",
+    }
+    assert checked == applied
+
+
+def test_check_infraplane_raises_when_the_plane_is_rejected(fake):
+    c, dyn = make_client(fake)
+    dyn.rejected = {Kind.CCL_INFRA_PLANE.value}
+    with pytest.raises(UnprocessibleEntityError):
+        c.check_infraplane(name="edge.1")
+
+
 def test_delete_infraplane_deletes_infra_plane_before_secret(fake):
     c, dyn = make_client(fake)
     c.delete_infraplane(name="edge-1")
