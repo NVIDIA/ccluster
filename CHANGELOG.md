@@ -7,6 +7,199 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 Changes merged since the latest release are in [`changelog.d/`](changelog.d/), one file per
 pull request, until a release collects them here.
 
+## [0.0.9] - 2026-11-05
+
+### Added
+- A Go build of the `ccluster` command line, released as
+  `ccluster_X.Y.Z_<os>_<arch>.tar.gz` for Linux and macOS on amd64 and arm64 and
+  installable with `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z`. It has the
+  Python command's `init`, `register` and `unregister`, their long flags and the same
+  config file; it does not accept the short forms `-cp` and `-ip`. The Python command stays
+  in `ccluster-py`; install one or the other, since both are called `ccluster`.
+  `ccluster completion bash|zsh|fish` prints a shell completion script; the README shows
+  how to load it.
+- `github.com/NVIDIA/ccluster/pkg/cclclient`, a Go client designed like the Python
+  `CCLClient`: it registers and unregisters infra planes and applies, polls and deletes
+  component sets in one namespace. `ComponentSetFinished` checks a set already in hand,
+  such as one from an informer, for convergence. `catalogs.Component` places the entry a
+  chart package's `New` returns onto an infra plane.
+- A generated Go client for the API in `github.com/NVIDIA/ccluster/pkg/client`: a typed
+  clientset with server-side apply and a fake that tracks field ownership, apply
+  configurations with `Extract` functions, listers and a shared informer factory for
+  `CCLInfraPlane`, `CCLComponentSet` and `CCLClusterConfig`.
+- The API's Go package exports the condition types and reasons the operators report,
+  such as `CCLComponentSetConditionProgressing` and `CCLComponentSetReasonWaveSyncFailed`,
+  so Go code can match conditions without repeating their strings.
+- `CCLInfraPlane` gains `status.domain`, the domain the cp operator derives for the plane,
+  written on every status update whether or not the cluster is reachable, and a `Domain`
+  column. `CCLClusterConfig` gains `status.domain`: the `spec.domain` the ip operator last
+  verified the cluster against, from the same pass as `observedGeneration`.
+- The cp operator writes the `CCLClusterConfig` singleton into each infra-plane cluster,
+  carrying the plane's derived domain, using the plane's credentials Secret (the one Argo
+  CD uses). A new `ClusterConfigApplied` condition reports `Applied`, `CRDMissing`,
+  `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials` or
+  `InvalidCredentials`, and `Unknown/NotAvailable` while `Available` is `False`. A plane
+  writes and deletes only the `CCLClusterConfig` it created: any other, such as one applied
+  by hand, is left alone and reported as `Conflict`, retried every minute, until it is
+  deleted. Deleting the `CCLInfraPlane` deletes the `CCLClusterConfig` it created. A plane
+  registering the cp cluster itself is written with the operator's own ServiceAccount,
+  which the cp role now grants `cclclusterconfigs`. New cp flag `--infraplane-resync-period`
+  (default 5m) sets how often a written `CCLClusterConfig` is rewritten to restore drift.
+- The cp operator watches each infra-plane cluster's `CCLClusterConfig` and copies its
+  status, verbatim, into the new `CCLInfraPlane.status.clusterConfig`, so the ip operator's
+  `Verified` condition is visible on the control plane; `kubectl get cclinfraplane` shows it
+  in a `Verified` column. A change on the infra plane, including a deleted
+  `CCLClusterConfig`, reconciles the `CCLInfraPlane` at once, and
+  `--infraplane-resync-period` is a safety net. A `ccluster_remote_watches` metric counts
+  the infra-plane clusters being watched.
+- The ip operator reports the cluster's LoadBalancers in a new
+  `CCLClusterConfig.status.loadBalancers`: every Service of type `LoadBalancer` labelled
+  `ccluster.nvidia.com/loadbalancer: <lb>`, listed by name with its `ip` and `hostname`.
+  It watches those Services, so a newly assigned address shows at once. Two Services with
+  the same name are left out and reported as `Verified=False/LoadBalancerConflict`. The cp
+  operator copies the list into `CCLInfraPlane.status.clusterConfig`. The label's value is
+  the chart's choice and becomes the plane's subdomain, `*.<lb>.<domain>`, so it has to be
+  a DNS label and unique on the cluster. The ip operator's ClusterRole gains read access to
+  Services.
+- The cp operator writes an external-dns `DNSEndpoint` per `CCLInfraPlane` into its own
+  namespace (or `--dns-endpoint-namespace`), pointing `*.<lb>.<domain>` at each of the
+  plane's LoadBalancers labelled `ccluster.nvidia.com/loadbalancer: <lb>`, such as
+  `*.nginx.<domain>` at its ingress: an A or AAAA record for an IPv4 or IPv6 address, in
+  canonical form and with an IPv4-mapped IPv6 address as IPv4, a CNAME for a hostname. A
+  LoadBalancer without an address has no record, and the DNSEndpoint is withdrawn while
+  none has one and when the plane is deleted. The records go into the most specific DNS
+  zone external-dns manages that the domain falls under, which the user creates and
+  delegates. A new `DNSReady` condition and `DNS` column report on it,
+  `DNSEndpointCRDMissing` while external-dns is not installed, `InvalidLoadBalancer` for a
+  LoadBalancer that gets no record because its label value cannot be a DNS label or its
+  address is not valid, such as an IP with a zone or a hostname that is not a lowercase DNS
+  name, and `DNSEndpointError` when the DNSEndpoint cannot be written. The operator's
+  ClusterRole gains `externaldns.k8s.io` `dnsendpoints`.
+- The cp chart gains an optional external-dns dependency (`external-dns.enabled`, off by
+  default) that publishes those DNSEndpoints and nothing else: it reads only the release
+  namespace and only the `crd` source. Its provider, zones and credentials are set through
+  its values. `make deploy-cp DNS=true` enables it.
+- The cp chart declares `ccluster-cp`, a read-only Argo CD account (`apiKey` only,
+  `applications, get` on every Application), for the operator to read Applications'
+  resource trees, live manifests and events from argocd-server. When the chart installs
+  Argo CD, a post-install hook creates the account's token and stores it in Secret
+  `ccluster-cp-argocd-token`; with an existing Argo CD, the user creates it. The cp
+  operator reads argocd-server's API through its Service in the Argo CD namespace, which
+  must be in the operator's cluster. New flags `--argocd-server-service` (default
+  `argocd-server`) and `--argocd-token-secret` name the Service and the token Secret; the
+  cp chart's default arguments set the Service for the bundled Argo CD.
+- `inference_deployment`, `compute_deployment`, `job_deployment` and `dynamo_deployment`
+  take `imagePullSecretNames` and `secretEnvVars`, which name Secrets in the release
+  namespace. Secret values no longer have to pass through the CCLComponentSet or the Argo
+  CD Application, and a pull Secret kept current by another tool is used on the next pull.
+  `imagePullSecretNames` are added to every pod's `imagePullSecrets` after the chart's
+  own, each once. Each `secretEnvVars` entry, `{secretName, key}`, is set after `envVars`
+  as a `secretKeyRef`. The charts never create or read these Secrets. With both values
+  unset, the rendered objects are unchanged. In `dynamo_deployment`, `secretEnvVars` is
+  filtered as `envVars` is: `DYN_ROUTER_MODE` sets the Frontend's router mode, and
+  `DYN_EVENT_PLANE`, `DYN_REQUEST_PLANE`, `PYTHONHASHSEED`, `DYN_SELF_HOST_METADATA`,
+  `DYN_ROUTER_QUEUE_THRESHOLD`, `DYN_DISABLE_FRONTEND_ADMIN_API`,
+  `DYN_DISABLE_FRONTEND_NVEXT` and `DYN_VLLM_ENABLE_INFERENCE_V1_GENERATE` are dropped.
+  `Validate` rejects a `secretEnvVars` variable that is also in `envVars` or that the
+  chart can set itself, and `HF_TOKEN` set by both `hfToken` and `secretEnvVars`.
+- Python: `CCLClient.check_infraplane` dry-runs the CCLInfraPlane `apply_infraplane`
+  writes, so the API server checks it without anything being written.
+- Every merge to `main` publishes `ccluster-py` to PyPI as a pre-release of the next
+  version, `X.Y.Z.dev<N>` with `N` the commit count, next to the `X.Y.Z-dev.<sha>` charts
+  of the same commit, so a development chart has a matching client. `pip` installs it only
+  when pinned exactly, given `--pre`, or no release satisfies the requested range.
+
+### Changed
+- **Breaking:** The cp operator requires `--base-domain` and refuses to start without a
+  valid one. Each CCLInfraPlane's domain is derived as `<name>.<namespace>.<base-domain>`.
+  The cp operator writes that domain to the plane's `CCLClusterConfig` and publishes
+  `*.<lb>.<name>.<namespace>.<base-domain>` for each labelled LoadBalancer. Two planes can
+  never claim equal or overlapping domains (#159), and one DNS zone for the base domain
+  covers every plane. Changing the base domain moves every plane's domain, records and
+  SPIFFE trust domain, so set it once per control plane. Add `--base-domain` to the cp
+  chart's `manager.args`. `make deploy-cp` and `make run-cp` pass `BASE_DOMAIN`, which
+  defaults to `example.com`.
+- **Breaking:** A CCLInfraPlane's name must be a DNS label of at most 63 characters, since
+  the domain is derived from it.
+- **Breaking:** A `CCLClusterConfig` applied by hand to a cluster a `CCLInfraPlane`
+  registers makes that plane report `Conflict`. Delete it so the cp operator writes its
+  own.
+- **Breaking:** `catalogs/cluster_base/ingress_nginx` now creates the controller Service,
+  as a `LoadBalancer` labelled `ccluster.nvidia.com/loadbalancer: nginx`, where it used to
+  create none. An infra plane gets a new cloud load balancer on its next sync; a Service
+  provisioned for the controller outside ccluster is no longer needed.
+- **Breaking:** The `final_stack` SPIRE OIDC discovery Ingress moves from
+  `oidc-discovery.<domain>` to `oidc-discovery.nginx.<domain>`, under the ingress's
+  wildcard record. The old URL stops resolving to it, so anything configured with it, such
+  as an AWS IAM OIDC provider for SPIRE JWTs, must be updated to the new URL.
+- **Breaking:** The `inference_deployment` and `dynamo_deployment` Ingress host moves from
+  `<name>.<namespace>.<domain>` to `<name>.nginx.<domain>`, under the ingress's wildcard
+  record; `domain` is now the plane's domain. The namespace is no longer part of the host,
+  so two deployments with the same name on one plane claim the same host.
+- **Breaking:** The API's Go package moves from `github.com/NVIDIA/ccluster/api/v1alpha1`
+  to `github.com/NVIDIA/ccluster/api/ccluster/v1alpha1`, the group/version layout the
+  Kubernetes code generators expect. Go code that imports it changes its import path; the
+  CRDs and their `apiVersion` are unchanged.
+- **Breaking:** `SchemeBuilder` in `api/ccluster/v1alpha1` is now an apimachinery
+  `runtime.SchemeBuilder` rather than controller-runtime's deprecated `scheme.Builder`, so
+  the API package no longer imports controller-runtime. `AddToScheme` is unchanged.
+- **Breaking:** The Python `CCLClient`, and so the Python `ccluster` command, applies
+  under the field manager `ccluster` instead of `ccluster-py`, the same as the Go client
+  and command, so either can update or shrink what the other applied.
+- **Breaking:** The generated Python models reuse identical classes (`datamodel-codegen
+  --reuse-model`). In `ccluster.v1alpha1.cclinfraplane`, `Condition` is now the type of
+  `status.clusterConfig.conditions`, and `status.conditions` takes `Condition1`, a subclass
+  of it. A `CCLInfraPlaneStatus` built from `Condition` instances fails validation; build it
+  from `Condition1` instances or dicts. Reading conditions is unchanged.
+- **Breaking:** The cp chart pins the bundled Argo CD's names with
+  `argo-cd.fullnameOverride: ccluster-cp-argocd`, so its objects are named
+  `ccluster-cp-argocd-*` whatever the release name. A release named `ccluster-cp` keeps
+  its names. Upgrading a release with another name renames Argo CD's Deployments,
+  StatefulSet, Services and ClusterRoles: Helm deletes the old objects and creates new
+  ones, so Argo CD is briefly unavailable, and anything that refers to
+  `<release>-argocd-server`, such as an Ingress, must be pointed at
+  `ccluster-cp-argocd-server`. Secrets and `argocd-cm` keep their names.
+- The operators, the API package and the generated Go client in
+  `github.com/NVIDIA/ccluster/pkg/client` are built against Kubernetes v0.37.1 libraries
+  and controller-runtime v0.25.2. The client's shared informer factory gains
+  `StartWithContext`, `WaitForCacheSyncWithContext` and per-informer options.
+- `go.mod` pins the Go toolchain, so CI, local `make` targets, the tools in `bin/` and the
+  release images all build with the same Go version.
+- The cp operator requeues a `CCLComponentSet` whose status write conflicts with a newer
+  version, instead of returning the conflict as a reconcile error. These conflicts are
+  routine, from a lagging cache or another writer, and no longer log `Reconciler error`
+  with a stack trace or count toward `controller_runtime_reconcile_errors_total`.
+
+### Removed
+- **Breaking:** the typed `ingress_nginx` values drop `controller.service`, in Go
+  (`ingressnginx.Controller.Service`) and in the generated Python models: the Service is
+  fixed in the chart's values. Remove the field from any values that set it.
+
+### Fixed
+- `CCLComponentSet` rebuilds `status.componentSyncs` and the `Progressing` condition on a
+  pass that fails validation or fails to apply. Before, such a pass advanced
+  `status.observedGeneration` but kept the previous spec's report, so
+  `comparedToMatchesSpec` could read `true`, and `Progressing` could read
+  `RolloutComplete`, for a spec Argo CD had not compared. On a pass that fails validation,
+  a component waiting for the operator is reported under the `Validated` reason, such as
+  `InfraPlaneNotFound`.
+- `CCLComponentSet` status leaves out an Application whose back-reference names another
+  `CCLComponentSet`. Before, `status.componentSyncs` could report that Application's health
+  and sync as one of its own components.
+- `inference_deployment`, `compute_deployment` and `job_deployment` pods schedule when
+  `nodeAffinityLabels` is unset or empty. The charts rendered a required node affinity
+  whose only `nodeSelectorTerms` entry had no expressions, which Kubernetes matches to no
+  node, so the pod stayed `Pending`. Without labels the charts now render no node affinity,
+  as `dynamo_deployment` already did; with labels the output is unchanged.
+- The Python `ccluster register` has the control plane check the CCLInfraPlane, its name
+  included, before creating the cluster-admin ServiceAccount, binding and token on the
+  infra-plane cluster, so a refused name leaves nothing behind there (#165).
+
+### Security
+- The operator and compute-ssh images are built with Go 1.27.3 and golang.org/x/net
+  v0.60.0, picking up the fixes in https://go.dev/cl/847187 and the `crypto/x509`
+  security fixes in Go 1.27.3.
+
 ## [0.0.8] - 2026-10-21
 
 ### Changed
@@ -353,6 +546,7 @@ Template for future releases:
 ### Security
 -->
 
+[0.0.9]: https://github.com/NVIDIA/ccluster/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/NVIDIA/ccluster/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/NVIDIA/ccluster/compare/v0.0.5...v0.0.6
