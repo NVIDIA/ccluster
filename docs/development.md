@@ -292,7 +292,7 @@ Pin a dedicated kubeconfig before touching a cluster. For example, after creatin
 control-plane development cluster:
 
 ```bash
-kind get kubeconfig --name ccluster-cp > ~/.kube/ccluster-dev.yaml
+kubectl config view --minify --flatten --context kind-ccluster-cp > ~/.kube/ccluster-dev.yaml
 export KUBECONFIG=~/.kube/ccluster-dev.yaml
 ```
 

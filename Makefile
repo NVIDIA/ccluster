@@ -169,7 +169,7 @@ KIND_CLUSTER_E2E_IP ?= ccluster-test-e2e-ip
 # The ip cluster is created first, so `kind create` leaves the current kubeconfig
 # context on the cp cluster, which is the one the e2e specs use by default.
 .PHONY: setup-test-e2e
-setup-test-e2e: require-kind ## Set up the two Kind clusters for e2e tests if they do not exist.
+setup-test-e2e: check-kind-host ## Set up the two Kind clusters for e2e tests if they do not exist.
 	$(call kind-create-cluster,$(KIND_CLUSTER_E2E_IP))
 	$(call kind-create-cluster,$(KIND_CLUSTER_E2E_CP))
 
@@ -199,7 +199,7 @@ test-e2e-full: ## Run every e2e test: the quick tier, then real Argo CD rollout,
 	$(MAKE) test-e2e E2E_FULL=true
 
 .PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the two Kind clusters used for e2e tests.
+cleanup-test-e2e: kind ## Tear down the two Kind clusters used for e2e tests.
 	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E_CP)
 	@$(KIND) delete cluster --name $(KIND_CLUSTER_E2E_IP)
 
@@ -300,11 +300,11 @@ KIND_CLUSTER_IP ?= ccluster-ip
 load: load-cp load-ip ## Load each manager image into its development Kind cluster.
 
 .PHONY: load-cp
-load-cp: docker-build-cp ## Load the ccluster-cp-operator image into KIND_CLUSTER_CP.
+load-cp: docker-build-cp kind ## Load the ccluster-cp-operator image into KIND_CLUSTER_CP.
 	$(KIND) load docker-image $(IMG_CP) --name $(KIND_CLUSTER_CP)
 
 .PHONY: load-ip
-load-ip: docker-build-ip ## Load the ccluster-ip-operator image into KIND_CLUSTER_IP.
+load-ip: docker-build-ip kind ## Load the ccluster-ip-operator image into KIND_CLUSTER_IP.
 	$(KIND) load docker-image $(IMG_IP) --name $(KIND_CLUSTER_IP)
 
 .PHONY: docker-push
@@ -396,19 +396,39 @@ init: init-ip init-cp ## Create both development Kind clusters. Leaves the kubec
 	@echo "Current kubeconfig context: $$("$(KUBECTL)" config current-context)"
 
 .PHONY: init-cp
-init-cp: require-kind ## Create the control-plane development Kind cluster if it does not exist.
+init-cp: check-kind-host ## Create the control-plane development Kind cluster if it does not exist.
 	$(call kind-create-cluster,$(KIND_CLUSTER_CP))
 
 .PHONY: init-ip
-init-ip: require-kind ## Create the infra-plane development Kind cluster if it does not exist.
+init-ip: check-kind-host ## Create the infra-plane development Kind cluster if it does not exist.
 	$(call kind-create-cluster,$(KIND_CLUSTER_IP))
 
-.PHONY: require-kind
-require-kind:
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
+# Every kind node shares the host kernel's per-user inotify limits. Below these, kind's
+# recommended values, the full e2e tier exhausts them and istio-cni-node crash-loops with
+# "watcher create: too many open files". This prints the environment that local and CI
+# runs must agree on, then fails on a host that is short. It never changes the host: the
+# e2e workflow raises the limits with sudo first. macOS keeps the limits inside Docker's VM.
+INOTIFY_MIN_INSTANCES ?= 512
+INOTIFY_MIN_WATCHES ?= 524288
+
+.PHONY: check-kind-host
+check-kind-host: kind ## Print the kind environment and fail if the host's inotify limits are too low.
+	@echo "kind:       $$("$(KIND)" version)"
+	@echo "node image: $(KIND_NODE_IMAGE)"
+	@echo "docker:     $$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable)"
+	@echo "cpus:       $$(getconf _NPROCESSORS_ONLN)"
+	@if [ -r /proc/sys/fs/inotify/max_user_instances ]; then \
+		instances=$$(cat /proc/sys/fs/inotify/max_user_instances); \
+		watches=$$(cat /proc/sys/fs/inotify/max_user_watches); \
+		echo "inotify:    max_user_instances=$$instances max_user_watches=$$watches"; \
+		if [ "$$instances" -lt $(INOTIFY_MIN_INSTANCES) ] || [ "$$watches" -lt $(INOTIFY_MIN_WATCHES) ]; then \
+			echo "The inotify limits are below what kind needs. Raise them with:" >&2; \
+			echo "  sudo sysctl -w fs.inotify.max_user_instances=$(INOTIFY_MIN_INSTANCES) fs.inotify.max_user_watches=$(INOTIFY_MIN_WATCHES)" >&2; \
+			exit 1; \
+		fi; \
+	else \
+		echo "inotify:    not readable on this host; skipped"; \
+	fi
 
 # Destroys both development clusters and everything deployed to them. There is no
 # confirmation, matching cleanup-test-e2e. `make init` builds them back empty.
@@ -416,11 +436,11 @@ require-kind:
 clean: clean-ip clean-cp ## Delete both development Kind clusters. Destructive.
 
 .PHONY: clean-cp
-clean-cp: require-kind ## Delete the control-plane development Kind cluster.
+clean-cp: kind ## Delete the control-plane development Kind cluster.
 	$(KIND) delete cluster --name $(KIND_CLUSTER_CP)
 
 .PHONY: clean-ip
-clean-ip: require-kind ## Delete the infra-plane development Kind cluster.
+clean-ip: kind ## Delete the infra-plane development Kind cluster.
 	$(KIND) delete cluster --name $(KIND_CLUSTER_IP)
 
 # Everything `clean` does, plus every build artifact: the compiled binaries and the
@@ -439,7 +459,7 @@ define kind-create-cluster
 @if $(KIND) get clusters 2>/dev/null | grep -qxF '$(1)'; then \
 	echo "Kind cluster '$(1)' already exists. Skipping creation."; \
 else \
-	echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1); \
+	echo "Creating Kind cluster '$(1)'..."; $(KIND) create cluster --name $(1) --image $(KIND_NODE_IMAGE); \
 fi
 endef
 
@@ -828,7 +848,7 @@ $(LOCALBIN):
 # emit different code. The binary keeps its own name because the k8s code generators
 # write it into the "Code generated by" header.
 KUBECTL ?= kubectl
-KIND ?= kind
+KIND ?= $(LOCALBIN)/kind@$(KIND_VERSION)-$(GOTOOLCHAIN)/kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize@$(KUSTOMIZE_VERSION)-$(GOTOOLCHAIN)/kustomize
 YQ ?= $(LOCALBIN)/yq@$(YQ_VERSION)-$(GOTOOLCHAIN)/yq
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen@$(CONTROLLER_TOOLS_VERSION)-$(GOTOOLCHAIN)/controller-gen
@@ -889,7 +909,17 @@ GOLANGCI_LINT_VERSION ?= $(shell v="$$(sed -n 's/^version: *//p' .custom-gcl.yml
 KUBEBUILDER_VERSION ?= v4.15.0
 # The Dockerfile's go-licenses, so the CLI tarballs and the images collect licenses alike.
 GO_LICENSES_VERSION ?= $(shell sed -n 's/^ARG GO_LICENSES_VERSION=//p' Dockerfile)
+# kind and the node image it creates clusters from are pinned together, so local runs and
+# CI get the same Kubernetes. Take the image, with its digest, from the kind release's
+# notes; bump both in one change. Dependabot updates neither.
+KIND_VERSION ?= v0.33.0
+KIND_NODE_IMAGE ?= kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 DATAMODEL_CODEGEN_VERSION ?= 0.76.1
+.PHONY: kind
+kind: $(KIND) ## Build kind locally if necessary.
+$(KIND): | $(LOCALBIN)
+	$(call go-install-tool,$(KIND),sigs.k8s.io/kind,$(KIND_VERSION))
+
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): | $(LOCALBIN)

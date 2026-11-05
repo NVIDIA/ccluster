@@ -226,7 +226,7 @@ Go programs can use the generated clientset, listers and informers in [`pkg/clie
 
 Each of those has `-cp` / `-ip` halves (`make build-cp`, `make deploy-ip`, ...) if you only
 want to touch one operator. `make clean` deletes both clusters; `make clean-all` also wipes
-`bin/` and `dist/`, so the next build re-downloads `controller-gen`, `kustomize`, `envtest`
+`bin/` and `dist/`, so the next build re-downloads `controller-gen`, `kustomize`, `envtest`, `kind`
 and `kubebuilder`.
 
 For the fastest inner loop, run the control-plane manager on your host against the cluster's
@@ -248,7 +248,7 @@ default kubeconfig, and `kind create cluster` switches the current context out f
 you. Pin a dedicated kubeconfig before running any of the above:
 
 ```bash
-kind get kubeconfig --name ccluster-cp > ~/.kube/ccluster-dev.yaml
+kubectl config view --minify --flatten --context kind-ccluster-cp > ~/.kube/ccluster-dev.yaml
 export KUBECONFIG=~/.kube/ccluster-dev.yaml
 ```
 
@@ -264,9 +264,10 @@ generation, [Testing](docs/testing.md) for test selection, and
   [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the
   control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA
   GPU Operator / drivers on the cluster.
-- **Local development:** [kind](https://kind.sigs.k8s.io/), Docker and
-  [uv](https://docs.astral.sh/uv/), which `make build` uses to regenerate the Python
-  models. `make init` creates both development clusters; `make build load deploy` builds,
+- **Local development:** Docker and [uv](https://docs.astral.sh/uv/), which
+  `make build` uses to regenerate the Python models. `make` builds the pinned
+  [kind](https://kind.sigs.k8s.io/) into `bin/`, and `make init` checks the host's inotify
+  limits first; see [Testing](docs/testing.md#e2e-setup-and-lifecycle). `make init` creates both development clusters; `make build load deploy` builds,
   loads and installs into them.
 
 ## Releases

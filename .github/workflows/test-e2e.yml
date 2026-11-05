@@ -39,26 +39,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Pinned, with its checksum, rather than dl/latest, which serves unreleased alpha
-      # builds that change under the suite between runs. A kind release also pins its
-      # default node image by digest. ubuntu-latest is amd64.
-      - name: Install kind
-        env:
-          KIND_VERSION: v0.33.0
-          KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
-        run: |
-          curl -fsSLo ./kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          echo "${KIND_SHA256}  ./kind" | sha256sum --check --strict
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-      - name: Verify kind installation
-        run: kind version
-
+      # kind and its node image are pinned in the Makefile, which builds kind into bin/,
+      # so this run and a local `make test-e2e` use the same ones.
+      #
       # Every kind node shares the runner's per-user inotify limits. The runner's default
       # instance limit runs out once both clusters carry the full tier's workloads, and
       # istio-cni-node then crash-loops with "watcher create: too many open files". These
       # are the values kind's known-issues page recommends; a higher limit is kept.
+      # make check-kind-host, which test-e2e runs first, fails on a host still below them.
       - name: Raise inotify limits for kind
         run: |
           for setting in fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288; do

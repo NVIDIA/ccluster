@@ -50,18 +50,24 @@ to select these tests without invoking the Ginkgo envtest suite.
 
 ## E2e setup and lifecycle
 
-Docker and kind must be available. E2e creates two clusters, a control plane
+Docker must be available; `make` builds the pinned kind into `bin/`. E2e creates two clusters, a control plane
 `KIND_CLUSTER_E2E_CP` (default `ccluster-test-e2e-cp`) and a separate infra plane
 `KIND_CLUSTER_E2E_IP` (default `ccluster-test-e2e-ip`), the same shape as the development
 pair `make init` creates, and deletes both when done. Never use a working cluster for
 either name: the suite uninstalls operators and CRDs. Use `make cleanup-test-e2e` if an
 interrupted run leaves the test clusters behind.
 
-The kind nodes share the host's per-user inotify limits, and the full tier exhausts a
-stock Linux default such as 128 instances: `istio-cni-node` then crash-loops with `watcher create: too many
-open files` and the istio spec times out. Raise them as kind's known issues recommend,
-as the e2e workflow does:
-`sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288`.
+Local runs and CI share one environment definition. The Makefile pins kind
+(`KIND_VERSION`) and the node image every cluster is created from (`KIND_NODE_IMAGE`),
+and `make check-kind-host`, which `make init` and `make test-e2e` run first, prints the
+kind version, node image, Docker version, CPU count and inotify limits, so two runs'
+first lines show any difference. CPU and memory still differ, and timing with them.
+
+The check fails when the host's per-user inotify limits, which every kind node shares, are
+below kind's recommended values. The full tier exhausts a stock Linux default such as
+128 instances: `istio-cni-node` then crash-loops with `watcher create: too many open
+files` and the istio spec times out. Raise them as the check prints, as the e2e workflow
+does: `sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288`.
 
 ### Two clusters and the infra-plane targets
 
