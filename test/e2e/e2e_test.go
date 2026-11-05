@@ -82,7 +82,7 @@ var _ = Describe("Manager", Ordered, func() {
 		// Makefile's -ginkgo.label-filter decides whether that container runs at all
 		// - see the E2E_FULL comment there.
 		By("deploying the controller-manager without Argo CD")
-		cmd = exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage), "ARGOCD=false")
+		cmd = exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain, fmt.Sprintf("IMG_CP=%s", managerImage), "ARGOCD=false")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
@@ -624,6 +624,14 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(owner).To(Equal(planeName))
 				}, crossClusterTimeout).Should(Succeed())
 
+				By("reporting the verified domain on the plane's cluster and on the CCLInfraPlane")
+				Eventually(func(g Gomega) {
+					domain, err := clusterConfigOn(t.cluster, ".status.domain")
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(domain).To(Equal(infraPlaneDomain(planeName)))
+					g.Expect(clusterConfigField(planeName, ".domain")).To(Equal(infraPlaneDomain(planeName)))
+				}, crossClusterTimeout).Should(Succeed())
+
 				By("copying the infra-plane operator's verdict onto the CCLInfraPlane")
 				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("False"))
@@ -650,7 +658,7 @@ var _ = Describe("Manager", Ordered, func() {
 				By("following the ingress LoadBalancer's IP onto the CCLInfraPlane")
 				createIngressLoadBalancer(t.cluster, "e2e-ingress", ingressLoadBalancerIP)
 				Eventually(func(g Gomega) {
-					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="ingress")].ip`)).
+					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="nginx")].ip`)).
 						To(Equal(ingressLoadBalancerIP))
 				}, crossClusterTimeout).Should(Succeed())
 
@@ -691,7 +699,7 @@ var _ = Describe("Manager", Ordered, func() {
 			// afterwards, and nothing here has a finalizer that needs the operator.
 			DeferCleanup(func() {
 				By("removing external-dns and its CRD, and restarting the controller-manager without the watch")
-				_, err := utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
+				_, err := utils.Run(exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain, fmt.Sprintf("IMG_CP=%s", managerImage),
 					"ARGOCD=false"))
 				Expect(err).NotTo(HaveOccurred())
 				_, err = utils.Run(exec.Command("kubectl", "delete", "crd", "--ignore-not-found",
@@ -719,10 +727,10 @@ var _ = Describe("Manager", Ordered, func() {
   provider:
     name: inmemory
   extraArgs:
-    - --inmemory-zone=e2e.example.com
+    - --inmemory-zone=` + e2eBaseDomain + `
   interval: 10s
 `), 0o600)).To(Succeed())
-			_, err = utils.Run(exec.Command("make", "deploy-cp", fmt.Sprintf("IMG_CP=%s", managerImage),
+			_, err = utils.Run(exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain, fmt.Sprintf("IMG_CP=%s", managerImage),
 				"ARGOCD=false", "DNS=true", "HELM_ARGS=-f "+values))
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable external-dns")
 
@@ -738,7 +746,7 @@ var _ = Describe("Manager", Ordered, func() {
 				out, err := utils.Run(exec.Command("kubectl", "get", "dnsendpoint", dnsEndpointName,
 					"-n", namespace, "-o", "jsonpath={.spec.endpoints[*].dnsName} {.spec.endpoints[*].targets[*]}"))
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(out).To(Equal("*.ingress." + infraPlaneDomain(planeName) + " " + ingressLoadBalancerIP))
+				g.Expect(out).To(Equal("*.nginx." + infraPlaneDomain(planeName) + " " + ingressLoadBalancerIP))
 			}, crossClusterTimeout).Should(Succeed())
 
 			By("reporting Published once external-dns has read it")
@@ -1210,7 +1218,7 @@ type: kubernetes.io/service-account-token
 				// `helm --wait` gets a longer timeout to pull and start every Argo CD
 				// component's images.
 				By("upgrading the release to add Argo CD")
-				cmd := exec.Command("make", "deploy-cp",
+				cmd := exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain,
 					fmt.Sprintf("IMG_CP=%s", managerImage), "HELM_TIMEOUT=10m")
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy Argo CD alongside the controller-manager")
@@ -2196,13 +2204,17 @@ func applyCCLInfraPlaneIn(ns, name, credentialsName string) {
 	GinkgoHelper()
 	applyManifest("cclinfraplane.yaml", map[string]string{
 		"Name": name, "Namespace": ns, "CredentialsName": credentialsName,
-		"Domain": infraPlaneDomain(name),
 	})
 }
 
-// infraPlaneDomain is the spec.domain applyCCLInfraPlane gives the CCLInfraPlane name.
+// e2eBaseDomain is the cp operator's --base-domain, which every deploy-cp passes as
+// BASE_DOMAIN. The DNS spec's in-memory external-dns zone is the same.
+const e2eBaseDomain = "e2e.example.com"
+
+// infraPlaneDomain is the domain the cp operator derives for the CCLInfraPlane name in
+// crNamespace.
 func infraPlaneDomain(name string) string {
-	return name + ".e2e.example.com"
+	return name + "." + crNamespace + "." + e2eBaseDomain
 }
 
 // applyCCLComponentSet creates a single-component CCLComponentSet targeting planeName.

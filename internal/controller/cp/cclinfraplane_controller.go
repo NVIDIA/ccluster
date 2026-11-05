@@ -70,14 +70,17 @@ type CCLInfraPlaneReconciler struct {
 	ArgoCDNamespace string
 
 	// DNSEndpointNamespace is the namespace the DNSEndpoint of each CCLInfraPlane is
-	// written to, from which external-dns publishes "*.<name>.<domain>" pointing at each
+	// written to, from which external-dns publishes "*.<lb>.<domain>" pointing at each
 	// of the plane's labelled LoadBalancers: by default the operator's own, where the cp
 	// chart installs external-dns. CCLInfraPlanes live elsewhere, so this namespace keeps
-	// DNSEndpoints away from tenants: a tenant cannot publish an arbitrary name, only the
-	// records the operator writes under its CCLInfraPlane's spec.domain. Whoever can write
-	// a CCLInfraPlane is trusted with that domain, and nothing yet stops it from
-	// overlapping another plane's: https://github.com/NVIDIA/ccluster/issues/159.
+	// DNSEndpoints away from tenants.
 	DNSEndpointNamespace string
+
+	// BaseDomain is the DNS domain every CCLInfraPlane's domain is derived under:
+	// "<name>.<namespace>.<BaseDomain>". The name and namespace are unique together and
+	// both DNS labels, so no plane's domain equals, or falls under, another's. Changing it
+	// moves every plane's domain, and with it its records and SPIFFE trust domain.
+	BaseDomain string
 
 	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one
 	// source repository each AppProject permits, so that nothing an Application in a
@@ -96,6 +99,13 @@ type CCLInfraPlaneReconciler struct {
 	// ResyncPeriod is how often a CCLInfraPlane whose CCLClusterConfig was written is
 	// reconciled again anyway, a safety net behind RemoteWatches. Zero disables it.
 	ResyncPeriod time.Duration
+}
+
+// domainOf is infraPlane's DNS domain, "<name>.<namespace>.<BaseDomain>": the domain its
+// CCLClusterConfig is written with and its records are published under. The API server
+// keeps the name a DNS label, and a namespace is always one.
+func (r *CCLInfraPlaneReconciler) domainOf(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) string {
+	return infraPlane.Name + "." + infraPlane.Namespace + "." + r.BaseDomain
 }
 
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclinfraplanes,verbs=get;list;watch;create;update;patch;delete
@@ -124,10 +134,12 @@ type CCLInfraPlaneReconciler struct {
 //
 // Once the cluster is registered, the operator connects to it with the same credentials,
 // watches the CCLClusterConfig singleton the infra-plane operator verifies the cluster
-// against, and writes it with spec.domain. That is reported as the ClusterConfigApplied
-// condition, and the singleton's status is copied into status.clusterConfig.
+// against, and writes it with the plane's domain, "<name>.<namespace>.<BaseDomain>". That
+// is reported as the ClusterConfigApplied condition, and the singleton's status is copied
+// into status.clusterConfig. Every status write also records the domain in status.domain,
+// so it shows even while the cluster cannot be reached.
 //
-// The operator then writes a DNSEndpoint pointing "*.<name>.<domain>" at each labelled
+// The operator then writes a DNSEndpoint pointing "*.<lb>.<domain>" at each labelled
 // LoadBalancer in that copy, for external-dns to publish. That is reported as the
 // DNSReady condition. A pass that gets this far writes every condition, and the copy
 // when it took one, in one status patch. A plane that is not Available stops before
@@ -399,7 +411,7 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 }
 
 // patchStatus sets conditions, each stamped with the current generation, the observed
-// generation and, unless it is nil, the copy of the infra-plane cluster's
+// generation, the plane's domain and, unless it is nil, the copy of the infra-plane cluster's
 // CCLClusterConfig status, then writes the status subresource in one patch.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
@@ -424,6 +436,7 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, condition)
 	}
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
+	infraPlane.Status.Domain = r.domainOf(infraPlane)
 
 	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))
 }

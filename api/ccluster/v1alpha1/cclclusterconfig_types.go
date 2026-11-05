@@ -24,7 +24,9 @@ const CCLClusterConfigName = "cluster"
 type CCLClusterConfigSpec struct {
 	// domain is the cluster's DNS domain, and its SPIFFE trust domain. Components such
 	// as spire, external-dns and final_stack must be configured with it; the infra-plane
-	// operator verifies that they are. It must be a lowercase DNS name of at least two
+	// operator verifies that they are. For a cluster registered with a CCLInfraPlane, the
+	// control-plane operator writes the plane's domain here:
+	// "<name>.<namespace>.<base domain>". It must be a lowercase DNS name of at least two
 	// labels, each at most 63 characters.
 	// +required
 	// +kubebuilder:validation:MinLength=1
@@ -56,6 +58,14 @@ type CCLClusterConfigStatus struct {
 	// were computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// domain is the spec.domain the infra-plane operator last verified the cluster
+	// against, in the same pass as observedGeneration. The control-plane operator copies
+	// it, with the rest of this status, into the CCLInfraPlane that registers the cluster.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
+	Domain string `json:"domain,omitempty"`
 
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator

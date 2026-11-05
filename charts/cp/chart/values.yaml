@@ -33,6 +33,22 @@ manager:
 
   ## Arguments
   ##
+  ## --base-domain is required, and has no default: the operator does not start
+  ## without it. Every CCLInfraPlane's domain is derived under it as
+  ## "<name>.<namespace>.<base-domain>", which the operator writes to the plane's
+  ## CCLClusterConfig, where it is also the SPIFFE trust domain, and publishes the plane's
+  ## records under. Add it to the list below, for example:
+  ##   - --base-domain=planes.example.com
+  ## Set it once: changing it moves every plane's domain, records and trust domain. Two
+  ## control planes must not share one, or same-named planes in same-named namespaces
+  ## claim the same records.
+  ##
+  ## Setting args with --set, --set-json or a values file replaces this whole list, not
+  ## just one entry, so start from it and keep every entry. A released chart's list pins
+  ## --catalog-revision to the release's vX.Y.Z tag, which `helm show values` prints;
+  ## leave it out and the operator deploys the catalog from main. Change it with the chart
+  ## version on every upgrade: --reuse-values keeps the old one.
+  ##
   ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
   ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
   ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
@@ -63,17 +79,17 @@ manager:
   ## safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
-  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<name>.<domain>"
-  ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <name>,
-  ## such as "*.ingress.<domain>" at its ingress. Nothing is published unless the `external-dns`
-  ## dependency below is enabled. --dns-endpoint-namespace (default: the operator's own
-  ## namespace, where that external-dns runs) is where the DNSEndpoints go; set it only
-  ## for an external-dns installed elsewhere. The operator watches DNSEndpoints only if
-  ## their CRD exists when it starts. Enabling external-dns on an installed release
-  ## neither installs that CRD, which Helm does only with the release, nor restarts the
-  ## operator: apply the CRD first and restart the operator afterwards. Until then a
-  ## plane's DNSReady moves on only with the resync, and never with
-  ## --infraplane-resync-period=0.
+  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<lb>.<domain>"
+  ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>,
+  ## such as "*.nginx.<domain>" at its ingress, <domain> being the plane's derived one.
+  ## Nothing is published unless the `external-dns` dependency below is enabled.
+  ## --dns-endpoint-namespace (default: the operator's own namespace, where that
+  ## external-dns runs) is where the DNSEndpoints go; set it only for an external-dns
+  ## installed elsewhere. The operator watches DNSEndpoints only if their CRD exists when
+  ## it starts. Enabling external-dns on an installed release neither installs that CRD,
+  ## which Helm does only with the release, nor restarts the operator: apply the CRD first
+  ## and restart the operator afterwards. Until then a plane's DNSReady moves on only with
+  ## the resync, and never with --infraplane-resync-period=0.
   args:
     - --leader-elect
     - --catalog-repo-url=https://github.com/NVIDIA/ccluster
@@ -312,11 +328,12 @@ argo-cd:
 ## external-dns — a dependency of this chart, off by default. See the rationale in
 ## Chart.yaml. Values here are passed to the upstream external-dns chart.
 ##
-## It publishes the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<name>.<domain>"
-## pointing at each of the plane's labelled LoadBalancers - into the most specific DNS zone it manages that the
-## domain falls under. Creating the zones, and delegating them, is the user's: one zone per
-## plane, or one zone shared by several. A record that falls under none of its zones is
-## dropped without an error (https://github.com/NVIDIA/ccluster/issues/174).
+## It publishes the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<lb>.<domain>"
+## pointing at each of the plane's labelled LoadBalancers - into the most specific DNS zone
+## it manages that the domain falls under. Every plane's domain is under --base-domain, so
+## one zone for the base domain covers them all. Creating it, and delegating it, is the
+## user's. A record that falls under none of its zones is dropped without an error
+## (https://github.com/NVIDIA/ccluster/issues/174).
 ##
 ## The presets below confine it to those DNSEndpoints, so it does not touch anything else,
 ## another external-dns in the cluster included:
@@ -352,7 +369,7 @@ external-dns:
 
   extraArgs:
     ## A TXT ownership record is named after the record it owns plus its type, which for
-    ## a wildcard is "a-*.ingress.<domain>": a "*" that is not a whole label is not a
+    ## a wildcard is "a-*.nginx.<domain>": a "*" that is not a whole label is not a
     ## wildcard, and most DNS providers reject it. This names it
-    ## "a-wildcard.ingress.<domain>" instead.
+    ## "a-wildcard.nginx.<domain>" instead.
     txt-wildcard-replacement: wildcard

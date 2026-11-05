@@ -112,13 +112,17 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 				chartA + " (not ready); " + chartB + " (not ready)"))
 	})
 
-	It("hands every Verifier the spec it verifies against", func() {
+	It("hands every Verifier the spec it verifies against, and reports its domain", func() {
 		_, err := reconciler.Reconcile(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(a.lastCfg.Load()).NotTo(BeNil())
 		Expect(a.lastCfg.Load().Domain).To(Equal(domain))
 		Expect(b.lastCfg.Load().Domain).To(Equal(domain))
+
+		var config cclusternvidiacomv1alpha1.CCLClusterConfig
+		Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
+		Expect(config.Status.Domain).To(Equal(domain))
 	})
 
 	It("drops a chart from the message once it verifies, and reports True when all do", func() {
@@ -157,7 +161,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		Expect(verified().Message).To(ContainSubstring(chartB))
 	})
 
-	It("re-verifies against a changed spec and records the new generation", func() {
+	It("re-verifies against a changed spec and records the new generation and domain", func() {
 		_, err := reconciler.Reconcile(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -172,6 +176,7 @@ var _ = Describe("CCLClusterConfig Controller", func() {
 		Expect(a.lastCfg.Load().Domain).To(Equal("gpu-b.infra.example.com"))
 		Expect(k8sClient.Get(ctx, request.NamespacedName, &config)).To(Succeed())
 		Expect(config.Status.ObservedGeneration).To(Equal(config.Generation))
+		Expect(config.Status.Domain).To(Equal("gpu-b.infra.example.com"))
 		Expect(verified().ObservedGeneration).To(Equal(config.Generation))
 	})
 

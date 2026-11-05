@@ -18,7 +18,16 @@ import (
 // CCLInfraPlaneApplyConfiguration represents a declarative configuration of the CCLInfraPlane type for use
 // with apply.
 //
-// CCLInfraPlane is the Schema for the cclinfraplanes API
+// CCLInfraPlane is the Schema for the cclinfraplanes API.
+//
+// It registers an infra-plane cluster with the control plane. The cluster's DNS domain is
+// "<name>.<namespace>.<base domain>", the base domain being the control-plane operator's
+// --base-domain, so the name must be a DNS label. The operator writes that domain to the
+// cluster's CCLClusterConfig and points "*.<lb>.<domain>" at each of the cluster's
+// LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>, such as
+// "*.nginx.<domain>" at its ingress. status.domain shows the domain as soon as the
+// operator has reconciled the plane, and status.clusterConfig.domain once the
+// infra-plane operator has verified the cluster against it.
 type CCLInfraPlaneApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration `json:""`
 	// metadata is a standard object metadata

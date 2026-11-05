@@ -41,8 +41,8 @@ func dnsEndpointName(namespace, name string) string {
 	return namespace + "-" + name
 }
 
-// reconcileDNS writes the DNSEndpoint that has external-dns point "*.<name>.<domain>" at
-// each LoadBalancer reported in clusterConfig, <name> being its
+// reconcileDNS writes the DNSEndpoint that has external-dns point "*.<lb>.<domain>" at
+// each LoadBalancer reported in clusterConfig, <lb> being its
 // ccluster.nvidia.com/loadbalancer label value, or deletes it while none has an address
 // to point a record at. It returns the DNSReady condition. Only unexpected Kubernetes API errors
 // are returned; everything else is reported in the condition, and none of it needs a
@@ -74,7 +74,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		return condition(metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointError, err.Error()), err
 	}
 
-	endpoints, invalid := wildcardEndpoints(infraPlane.Spec.Domain, clusterConfig)
+	endpoints, invalid := wildcardEndpoints(r.domainOf(infraPlane), clusterConfig)
 	invalidMessage := "no record for LoadBalancers whose name cannot be a DNS label or whose " +
 		"address is not valid: " + strings.Join(invalid, "; ")
 	if len(endpoints) == 0 {
@@ -140,7 +140,7 @@ func (r *CCLInfraPlaneReconciler) reconcileDNS(
 		dnsEndpoint.Name, dnsEndpoint.Namespace, records)), nil
 }
 
-// wildcardEndpoints returns a "*.<name>.<domain>" record for each LoadBalancer in
+// wildcardEndpoints returns a "*.<lb>.<domain>" record for each LoadBalancer in
 // clusterConfig that has an address, in its order. A LoadBalancer whose name is not a
 // DNS label, makes the record's name too long, or whose address is not valid
 // (LoadBalancerStatus.Canonical) gets none and is described in invalid instead: its

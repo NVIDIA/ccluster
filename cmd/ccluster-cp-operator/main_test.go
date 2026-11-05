@@ -60,3 +60,32 @@ func TestResolveNamespaces(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateBaseDomain(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "two labels", value: "example.com"},
+		{name: "one label", value: "test"},
+		{name: "longest", value: strings.Repeat("a.", maxBaseDomainLength/2) + "a"},
+		{name: "label too long", value: strings.Repeat("a", 64) + ".com", wantErr: true},
+		{name: "empty label", value: "example..com", wantErr: true},
+		{name: "empty", value: "", wantErr: true},
+		{name: "uppercase", value: "Example.com", wantErr: true},
+		{name: "underscore", value: "bad_domain.com", wantErr: true},
+		{name: "trailing dot", value: "example.com.", wantErr: true},
+		{name: "too long", value: strings.Repeat("a.", maxBaseDomainLength/2) + "ab", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBaseDomain(tc.value)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want error: %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "--base-domain") {
+				t.Errorf("error %q does not name --base-domain", err)
+			}
+		})
+	}
+}

@@ -42,7 +42,6 @@ var (
 const (
 	token  = "infra-token"
 	server = "https://10.0.0.1:6443"
-	domain = "gpu-a.example.com"
 )
 
 var caCert = []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
@@ -105,7 +104,7 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 	client := newClient(t)
 
 	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
-		Name: "gpu-a", Domain: domain, Server: server, BearerToken: token, CACert: caCert,
+		Name: "gpu-a", Server: server, BearerToken: token, CACert: caCert,
 	})
 	if err != nil {
 		t.Fatalf("ApplyInfraPlane() error = %v", err)
@@ -114,8 +113,8 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 		t.Errorf("ApplyInfraPlane() returned %s/%s (uid %q), want the stored %s/gpu-a",
 			plane.Namespace, plane.Name, plane.UID, client.Namespace())
 	}
-	if plane.Spec.Domain != domain || plane.Spec.ClusterCredentialsRef.Name != "gpu-a-credentials" {
-		t.Errorf("spec = %+v, want domain %s and clusterCredentialsRef gpu-a-credentials", plane.Spec, domain)
+	if plane.Spec.ClusterCredentialsRef.Name != "gpu-a-credentials" {
+		t.Errorf("spec = %+v, want clusterCredentialsRef gpu-a-credentials", plane.Spec)
 	}
 
 	got, err := client.GetInfraPlane(ctx, "gpu-a")
@@ -151,7 +150,7 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 func TestApplyInfraPlaneAgainUpdatesTheCredentials(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
-	opts := cclclient.InfraPlaneOptions{Name: "gpu-a", Domain: domain, Server: server, BearerToken: token}
+	opts := cclclient.InfraPlaneOptions{Name: "gpu-a", Server: server, BearerToken: token}
 
 	if _, err := client.ApplyInfraPlane(ctx, opts); err != nil {
 		t.Fatal(err)
@@ -171,7 +170,7 @@ func TestApplyInfraPlaneDefaultsToTheInClusterServer(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
 
-	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "local", Domain: domain}); err != nil {
+	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "local"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,32 +184,26 @@ func TestApplyInfraPlaneDefaultsToTheInClusterServer(t *testing.T) {
 	}
 }
 
-// The plane is applied first, so a domain the API server rejects leaves the credentials
-// as they were: new credentials under the old domain would retarget the existing plane.
-func TestApplyInfraPlaneWithRejectedDomainKeepsTheCredentials(t *testing.T) {
+// The plane is applied first, so a name the API server rejects writes no credentials.
+func TestApplyInfraPlaneWithRejectedNameWritesNoCredentials(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
-	opts := cclclient.InfraPlaneOptions{Name: "gpu-a", Domain: domain, Server: server, BearerToken: token}
-	if _, err := client.ApplyInfraPlane(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
 
-	for _, rejected := range []string{"gpu-b.example.com", "Not_A_Domain"} {
-		opts.Domain, opts.BearerToken = rejected, "rotated"
-		if _, err := client.ApplyInfraPlane(ctx, opts); !apierrors.IsInvalid(err) {
-			t.Errorf("ApplyInfraPlane(domain %q) error = %v, want Invalid", rejected, err)
-		}
+	// A valid object name, but not the DNS label the plane's domain needs.
+	_, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu.a", Server: server, BearerToken: token})
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("ApplyInfraPlane() error = %v, want Invalid", err)
 	}
-
-	if got := clusterConfig(t, credentialsSecret(t, client, "gpu-a"))["bearerToken"]; got != token {
-		t.Errorf("bearerToken = %v, want the original %s", got, token)
+	if _, err := kubeClient.CoreV1().Secrets(client.Namespace()).Get(ctx,
+		cclclient.CredentialsSecretName("gpu.a"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("credentials Secret: error = %v, want NotFound", err)
 	}
 }
 
 func TestDeleteInfraPlaneRemovesPlaneAndSecret(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
-	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu-a", Domain: domain}); err != nil {
+	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu-a"}); err != nil {
 		t.Fatal(err)
 	}
 

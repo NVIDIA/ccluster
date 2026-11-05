@@ -48,9 +48,7 @@ def test_api_version_and_kind_are_fixed():
     obj = CCLInfraPlane(
         metadata=ObjectMeta(name="edge-1", namespace="tenant"),
         # Each generated module carries its own LocalObjectReference class.
-        spec=CCLInfraPlaneSpec(
-            cluster_credentials_ref=InfraPlaneRef(name="creds"), domain="edge-1.example.com"
-        ),
+        spec=CCLInfraPlaneSpec(cluster_credentials_ref=InfraPlaneRef(name="creds")),
     )
     out = dump(obj)
     assert out["apiVersion"] == "ccluster.nvidia.com/v1alpha1"
@@ -80,7 +78,7 @@ def test_objects_read_back_from_the_server_validate():
             "apiVersion": "ccluster.nvidia.com/v1alpha1",
             "kind": Kind.CCL_INFRA_PLANE,
             "metadata": {"name": "edge-1", "namespace": "tenant", "uid": "u-1", "resourceVersion": "7"},
-            "spec": {"clusterCredentialsRef": {"name": "creds"}, "domain": "edge-1.example.com"},
+            "spec": {"clusterCredentialsRef": {"name": "creds"}},
             "status": {"conditions": [{"type": "Available", "status": "True", "reason": "R", "message": "", "lastTransitionTime": "2026-09-16T00:00:00Z"}]},
         }
     )
@@ -119,10 +117,15 @@ def test_infra_plane_status_carries_the_cluster_config_status():
     status = CCLInfraPlaneStatus.model_validate(
         {
             "conditions": [{**condition, "type": "Available", "status": "True", "reason": "R"}],
-            "clusterConfig": {"observedGeneration": 3, "conditions": [condition]},
+            "clusterConfig": {
+                "observedGeneration": 3,
+                "domain": "edge-1.tenant.example.com",
+                "conditions": [condition],
+            },
         }
     )
     assert status.cluster_config.observed_generation == 3
+    assert status.cluster_config.domain == "edge-1.tenant.example.com"
     assert status.cluster_config.conditions[0].type == "Verified"
     assert status.conditions[0].type == "Available"
 

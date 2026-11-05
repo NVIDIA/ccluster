@@ -9,7 +9,8 @@ package v1alpha1
 const (
 	// LabelLoadBalancer marks a Service of type LoadBalancer for the infra-plane operator
 	// to report in CCLClusterConfig's status.loadBalancers, under the label's value, and
-	// for the control-plane operator to point "*.<value>.<domain>" at. A chart opts a
+	// for the control-plane operator to point "*.<value>.<domain>" at, <domain> being
+	// the CCLInfraPlane's "<name>.<namespace>.<base domain>". A chart opts a
 	// LoadBalancer in by labelling its Service. The value is the chart's to choose and
 	// means nothing else to the operators; it must be unique in the cluster, and a DNS
 	// label for the record to be published.

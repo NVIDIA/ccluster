@@ -30,6 +30,10 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	// observedGeneration is the CCLClusterConfig's .metadata.generation the conditions
 	// were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// domain is the spec.domain the infra-plane operator last verified the cluster
+	// against, in the same pass as observedGeneration. The control-plane operator copies
+	// it, with the rest of this status, into the CCLInfraPlane that registers the cluster.
+	Domain *string `json:"domain,omitempty"`
 	// loadBalancers are the cluster's LoadBalancer Services labelled
 	// ccluster.nvidia.com/loadbalancer, one per label value, as the infra-plane operator
 	// last observed them. A value carried by more than one Service is left out and
@@ -61,6 +65,14 @@ func (b *CCLClusterConfigStatusApplyConfiguration) WithConditions(values ...*v1.
 // If called multiple times, the ObservedGeneration field is set to the value of the last call.
 func (b *CCLClusterConfigStatusApplyConfiguration) WithObservedGeneration(value int64) *CCLClusterConfigStatusApplyConfiguration {
 	b.ObservedGeneration = &value
+	return b
+}
+
+// WithDomain sets the Domain field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Domain field is set to the value of the last call.
+func (b *CCLClusterConfigStatusApplyConfiguration) WithDomain(value string) *CCLClusterConfigStatusApplyConfiguration {
+	b.Domain = &value
 	return b
 }
 

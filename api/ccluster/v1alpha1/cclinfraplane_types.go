@@ -29,21 +29,6 @@ type CCLInfraPlaneSpec struct {
 	// https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
 	// +required
 	ClusterCredentialsRef LocalObjectReference `json:"clusterCredentialsRef"`
-
-	// domain is the infra-plane cluster's DNS domain. The control-plane operator writes it
-	// to the CCLClusterConfig singleton on that cluster, which the infra-plane operator
-	// verifies the cluster against. When the operator publishes DNS, "*.<name>.<domain>"
-	// points at each of the cluster's LoadBalancers labelled
-	// ccluster.nvidia.com/loadbalancer: <name>, such as "*.ingress.<domain>" at its
-	// ingress, in whichever DNS zone the domain falls under. It must be a lowercase DNS
-	// name of at least two labels, each at most 63 characters, and it cannot be changed
-	// once set.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable"
-	Domain string `json:"domain"`
 }
 
 // CCLInfraPlaneStatus defines the observed state of CCLInfraPlane.
@@ -57,10 +42,11 @@ type CCLInfraPlaneStatus struct {
 	//   - "ClusterConfigApplied": the CCLClusterConfig singleton on the infra-plane
 	//     cluster carries this CCLInfraPlane's domain.
 	//   - "DNSReady": external-dns has read the current records pointing
-	//     "*.<name>.<domain>" at each of the cluster's labelled LoadBalancers, and every
-	//     label value is a DNS label. external-dns marks the records read before it
-	//     writes them, so True does not mean they were published: the provider may
-	//     reject them, or external-dns may skip them.
+	//     "*.<lb>.<domain>" at each of the cluster's LoadBalancers labelled
+	//     ccluster.nvidia.com/loadbalancer: <lb>, and every label value is a DNS label.
+	//     external-dns marks the records read before it writes them, so True does not
+	//     mean they were published: the provider may reject them, or external-dns may
+	//     skip them.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -72,11 +58,22 @@ type CCLInfraPlaneStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
+	// the control-plane operator from its --base-domain and written on every status
+	// update, whether or not the cluster is reachable. It is the domain the operator
+	// writes to the cluster's CCLClusterConfig and publishes "*.<lb>.<domain>" records
+	// under. clusterConfig.domain is the domain the infra-plane operator last verified
+	// the cluster against; the two differ until it has verified the current one.
+	// +optional
+	Domain string `json:"domain,omitempty"`
+
 	// clusterConfig is the status of the CCLClusterConfig singleton on the infra-plane
 	// cluster, copied verbatim whenever it changes there. It is what the infra-plane
 	// operator reports about the cluster; ClusterConfigApplied says whether the copy is
 	// current. Its conditions and observedGeneration are the infra-plane operator's, and
-	// refer to the CCLClusterConfig, not to this CCLInfraPlane.
+	// refer to the CCLClusterConfig, not to this CCLInfraPlane. Its domain is the
+	// plane's domain once the infra-plane operator has verified the cluster against it;
+	// see domain.
 	// +optional
 	ClusterConfig *CCLClusterConfigStatus `json:"clusterConfig,omitempty"`
 }
@@ -125,14 +122,24 @@ const (
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
+// +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.status.domain`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
 // +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
 // +kubebuilder:printcolumn:name="DNS",type=string,JSONPath=`.status.conditions[?(@.type=="DNSReady")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63 && self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')",message="name must be a DNS label: at most 63 lowercase letters, digits and '-', starting and ending with a letter or digit"
 
-// CCLInfraPlane is the Schema for the cclinfraplanes API
+// CCLInfraPlane is the Schema for the cclinfraplanes API.
+//
+// It registers an infra-plane cluster with the control plane. The cluster's DNS domain is
+// "<name>.<namespace>.<base domain>", the base domain being the control-plane operator's
+// --base-domain, so the name must be a DNS label. The operator writes that domain to the
+// cluster's CCLClusterConfig and points "*.<lb>.<domain>" at each of the cluster's
+// LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>, such as
+// "*.nginx.<domain>" at its ingress. status.domain shows the domain as soon as the
+// operator has reconciled the plane, and status.clusterConfig.domain once the
+// infra-plane operator has verified the cluster against it.
 type CCLInfraPlane struct {
 	metav1.TypeMeta `json:",inline"`
 

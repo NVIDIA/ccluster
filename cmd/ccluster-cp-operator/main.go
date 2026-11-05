@@ -64,6 +64,15 @@ var (
 // with the operator's own namespace.
 var dnsEndpointNamespace string
 
+// baseDomain is the DNS domain every CCLInfraPlane's domain is derived under:
+// "<name>.<namespace>.<baseDomain>". Set by a required flag, for the same reason as
+// argoCDNamespace; validateBaseDomain rejects an invalid value before the manager starts.
+var baseDomain string
+
+// maxBaseDomainLength leaves room in a 253-character domain for the "<name>.<namespace>."
+// in front of the base domain, each of them a DNS label of at most 63 characters.
+const maxBaseDomainLength = validation.DNS1123SubdomainMaxLength - 2*(validation.DNS1123LabelMaxLength+1)
+
 // infraPlaneResyncPeriod is how often a CCLInfraPlane is reconciled again to restore its
 // infra-plane cluster's CCLClusterConfig. Set by a flag, for the same reason as
 // argoCDNamespace.
@@ -110,13 +119,19 @@ func main() {
 			"of the Argo CD account the operator reads argocd-server's API as.")
 	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
 		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
-			"*.<name>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
+			"*.<lb>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
 			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
+	flag.StringVar(&baseDomain, "base-domain", "",
+		"Required. The DNS domain every CCLInfraPlane's domain is derived under: "+
+			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
+			"CCLClusterConfig, where it is also the SPIFFE trust domain, and publishes the plane's "+
+			"records under it. Set it once: changing it moves every plane's domain.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
 		LeaderElectionID: "cp.ccluster.nvidia.com",
 		Scheme:           scheme,
+		ValidateFlags:    func() error { return validateBaseDomain(baseDomain) },
 		SetupControllers: setupControllers,
 	})
 	if err != nil {
@@ -163,6 +178,7 @@ func setupControllers(mgr ctrl.Manager) error {
 		RemoteWatches:        remoteWatches,
 		ResyncPeriod:         infraPlaneResyncPeriod,
 		DNSEndpointNamespace: dnsEndpointNamespace,
+		BaseDomain:           baseDomain,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
@@ -177,6 +193,26 @@ func setupControllers(mgr ctrl.Manager) error {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
+	return nil
+}
+
+// validateBaseDomain checks the --base-domain value: a lowercase DNS name, with or without
+// dots, short enough that "<name>.<namespace>.<value>" always is one too.
+func validateBaseDomain(value string) error {
+	if value == "" {
+		return fmt.Errorf("--base-domain is required: every CCLInfraPlane's domain is derived " +
+			"under it, as <name>.<namespace>.<base-domain>")
+	}
+	for label := range strings.SplitSeq(value, ".") {
+		if errs := validation.IsDNS1123Label(label); len(errs) > 0 {
+			return fmt.Errorf("--base-domain %q is not a lowercase DNS name: label %q: %s",
+				value, label, strings.Join(errs, ", "))
+		}
+	}
+	if len(value) > maxBaseDomainLength {
+		return fmt.Errorf("--base-domain %q is longer than %d characters, which leaves no room "+
+			"for <name>.<namespace>. in front of it", value, maxBaseDomainLength)
+	}
 	return nil
 }
 

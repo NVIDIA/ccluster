@@ -61,17 +61,18 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 	// what gets reported.
 	r.RemoteWatches.Ensure(client.ObjectKeyFromObject(infraPlane), source)
 
-	config, op, err := r.applyClusterConfig(ctx, infraPlane, source)
+	domain := r.domainOf(infraPlane)
+	config, op, err := r.applyClusterConfig(ctx, infraPlane, domain, source)
 	switch {
 	case err == nil:
 		if op != controllerutil.OperationResultNone {
 			log.Info("Applied CCLClusterConfig on infra-plane cluster",
 				"name", cclusternvidiacomv1alpha1.CCLClusterConfigName,
-				"domain", infraPlane.Spec.Domain, "operation", op)
+				"domain", domain, "operation", op)
 		}
 		return condition(metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied, fmt.Sprintf(
 				"CCLClusterConfig %q on the infra-plane cluster has domain %q",
-				cclusternvidiacomv1alpha1.CCLClusterConfigName, infraPlane.Spec.Domain)),
+				cclusternvidiacomv1alpha1.CCLClusterConfigName, domain)),
 			config.Status.DeepCopy(), ctrl.Result{RequeueAfter: r.ResyncPeriod}
 
 	case errors.Is(err, remote.ErrUnsupportedCredentials):
@@ -118,14 +119,15 @@ func (r *CCLInfraPlaneReconciler) reconcileClusterConfig(
 	}
 }
 
-// applyClusterConfig creates the infra-plane cluster's CCLClusterConfig with infraPlane's
-// domain, stamped with infraPlaneOwner, or patches the one infraPlane created back to that
-// domain. Unlike the mirrored Secret, an unclaimed CCLClusterConfig is not adopted: any
+// applyClusterConfig creates the infra-plane cluster's CCLClusterConfig with domain,
+// infraPlane's, stamped with infraPlaneOwner, or patches the one infraPlane created back to
+// that domain. Unlike the mirrored Secret, an unclaimed CCLClusterConfig is not adopted: any
 // CCLClusterConfig infraPlane did not create is a conflict and left alone, so a
 // CCLInfraPlane only ever writes, and its finalizer only ever deletes, its own.
 func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	domain string,
 	source *corev1.Secret,
 ) (*cclusternvidiacomv1alpha1.CCLClusterConfig, controllerutil.OperationResult, error) {
 	remoteClient, err := r.RemoteClients.ClientFor(source)
@@ -133,12 +135,12 @@ func (r *CCLInfraPlaneReconciler) applyClusterConfig(
 		return nil, controllerutil.OperationResultNone, err
 	}
 
-	config, op, err := createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+	config, op, err := createOrPatchClusterConfig(ctx, remoteClient, infraPlane, domain)
 	if apierrors.IsAlreadyExists(err) {
 		// Someone else created it between our read and our create, such as another
 		// CCLInfraPlane registering the same cluster. Read it again: it is a conflict unless
 		// it is ours.
-		config, op, err = createOrPatchClusterConfig(ctx, remoteClient, infraPlane)
+		config, op, err = createOrPatchClusterConfig(ctx, remoteClient, infraPlane, domain)
 	}
 	return config, op, err
 }
@@ -151,6 +153,7 @@ func createOrPatchClusterConfig(
 	ctx context.Context,
 	remoteClient client.Client,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	domain string,
 ) (*cclusternvidiacomv1alpha1.CCLClusterConfig, controllerutil.OperationResult, error) {
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
@@ -166,7 +169,7 @@ func createOrPatchClusterConfig(
 			return clusterConfigConflict(config)
 		}
 		infraPlaneOwner.stamp(config, infraPlane)
-		config.Spec.Domain = infraPlane.Spec.Domain
+		config.Spec.Domain = domain
 		return nil
 	})
 	return config, op, err

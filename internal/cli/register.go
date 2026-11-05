@@ -44,14 +44,13 @@ var (
 type registerOptions struct {
 	namespace         string
 	infraPlaneContext string
-	domain            string
 	server            string
 }
 
 func newRegisterCommand() *cobra.Command {
 	var opts registerOptions
 	cmd := &cobra.Command{
-		Use:   "register NAME --namespace NAMESPACE --infra-plane CONTEXT --domain DOMAIN",
+		Use:   "register NAME --namespace NAMESPACE --infra-plane CONTEXT",
 		Short: "Register a cluster with the control plane.",
 		Long: `Register a cluster with the control plane.
 
@@ -59,8 +58,9 @@ The control plane is the one saved by ccluster init. On the infra plane, named b
 --infra-plane, creates the ServiceAccount kube-system/ccluster-manager, binds it to
 cluster-admin, and reads its long-lived token. On the control plane, applies the Secret
 NAME-credentials carrying that token and the cluster CA, and the CCLInfraPlane NAME
-pointing at it with the given domain. The control-plane operator then writes the domain
-to the infra plane's CCLClusterConfig. Re-running reuses the same token.
+pointing at it. The control-plane operator derives the cluster's domain,
+NAME.NAMESPACE.<base domain>, and writes it to the infra plane's CCLClusterConfig.
+Re-running reuses the same token.
 
 Pass --server when the kubeconfig's address is not reachable from the control plane, for
 example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
@@ -75,12 +75,10 @@ example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 		"Control-plane namespace for the CCLInfraPlane and its credentials Secret; created if it does not exist.")
 	flags.StringVar(&opts.infraPlaneContext, "infra-plane", "",
 		"Kubeconfig context of the infra-plane cluster to register.")
-	flags.StringVar(&opts.domain, "domain", "",
-		"The infra-plane cluster's DNS domain, written to its CCLClusterConfig. Cannot be changed once registered.")
 	flags.StringVar(&opts.server, "server", "",
 		"Infra-plane API server URL that Argo CD in the control plane connects to. "+
 			"Defaults to the infra-plane context's server in the kubeconfig.")
-	for _, name := range []string{"namespace", "infra-plane", "domain"} {
+	for _, name := range []string{"namespace", "infra-plane"} {
 		_ = cmd.MarkFlagRequired(name)
 	}
 	return cmd
@@ -122,7 +120,6 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 	}
 	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
 		Name:        name,
-		Domain:      opts.domain,
 		Server:      server,
 		BearerToken: token,
 		CACert:      caCert,

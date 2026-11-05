@@ -45,7 +45,11 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			argoCDNamespace = "argocd"
 			serverURL       = "https://infra.example.com:6443"
 			repoURL         = "https://github.com/NVIDIA/ccluster"
-			domain          = "gpu-a.example.com"
+			baseDomain      = "example.com"
+
+			// domain is the plane's domain, derived from its name, namespace and the
+			// operator's base domain.
+			domain = resourceName + "." + namespace + "." + baseDomain
 
 			// resyncPeriod differs from clusterConfigRetryInterval, so a spec can tell
 			// which one a reconcile asked for.
@@ -159,7 +163,6 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: key.Name + "-credentials",
 					},
-					Domain: domain,
 				},
 			})).To(Succeed())
 		}
@@ -235,6 +238,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				ResyncPeriod:  resyncPeriod,
 				// The operator's own namespace in production. Specs about DNS move it.
 				DNSEndpointNamespace: argoCDNamespace,
+				BaseDomain:           baseDomain,
 			}
 
 			By("creating the Argo CD namespace")
@@ -255,7 +259,6 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{
 						Name: secretName,
 					},
-					Domain: domain,
 				},
 			})).To(Succeed())
 		})
@@ -306,6 +309,10 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			Expect(apierrors.IsNotFound(
 				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+
+			By("reporting the derived domain without reaching the cluster")
+			Expect(infraPlane.Status.Domain).To(Equal(domain))
+			Expect(infraPlane.Status.ClusterConfig).To(BeNil())
 		})
 
 		// The project comes before the Secret: it exists for as long as any CCLInfraPlane
@@ -654,39 +661,21 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			})).To(Succeed())
 		}
 
-		It("should reject a CCLInfraPlane without a domain", func() {
-			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
-				ObjectMeta: metav1.ObjectMeta{Name: "no-domain", Namespace: namespace},
-				Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
-					ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: secretName},
-				},
-			})
-			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "got %v", err)
-		})
-
-		It("should reject a domain that is not a DNS name of two labels", func() {
-			for _, invalid := range []string{"localhost", "Upper.example.com", "a..b", "-a.example.com"} {
+		It("should reject a name that is not a DNS label, since the domain is derived from it", func() {
+			// Both are valid object names, but neither makes one label of the domain.
+			for _, invalid := range []string{"gpu.a", strings.Repeat("a", 64)} {
 				err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
-					ObjectMeta: metav1.ObjectMeta{Name: "bad-domain", Namespace: namespace},
+					ObjectMeta: metav1.ObjectMeta{Name: invalid, Namespace: namespace},
 					Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
 						ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: secretName},
-						Domain:                invalid,
 					},
 				})
-				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "domain %q: got %v", invalid, err)
+				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "name %q: got %v", invalid, err)
+				Expect(err.Error()).To(ContainSubstring("name must be a DNS label"))
 			}
 		})
 
-		It("should reject a change to the domain", func() {
-			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
-			infraPlane.Spec.Domain = "gpu-b.example.com"
-			err := k8sClient.Update(ctx, infraPlane)
-			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "got %v", err)
-			Expect(err.Error()).To(ContainSubstring("domain is immutable"))
-		})
-
-		It("should write the CCLClusterConfig with the domain on the infra-plane cluster", func() {
+		It("should write the CCLClusterConfig with the derived domain on the infra-plane cluster", func() {
 			createSecret(credentials)
 
 			infraPlane := settle()
@@ -698,6 +687,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			config := getClusterConfig()
 			Expect(config.Spec.Domain).To(Equal(domain))
+			Expect(infraPlane.Status.Domain).To(Equal(domain))
 			Expect(config.Labels).To(HaveKeyWithValue(labelManagedBy, labelManagedByValue))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(config.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
@@ -1057,6 +1047,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{
 				{Name: "ingress", IP: "192.0.2.10"},
 			}
+			config.Status.Domain = config.Spec.Domain
 			Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
 
 			// The watch's event is what triggers this reconcile in the operator.
@@ -1065,6 +1056,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			copied := infraPlane.Status.ClusterConfig
 			Expect(copied).NotTo(BeNil())
 			Expect(copied.ObservedGeneration).To(Equal(config.Generation))
+			Expect(copied.Domain).To(Equal(domain))
 			verified := apimeta.FindStatusCondition(copied.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
 			Expect(verified).NotTo(BeNil())
 			Expect(verified.Status).To(Equal(metav1.ConditionFalse))

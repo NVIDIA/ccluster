@@ -60,7 +60,8 @@ metadata:
 spec:
   clusterCredentialsRef:
     name: ccluster-local-credentials
-  # Written to the cluster's CCLClusterConfig, which the infra-plane operator verifies the
-  # cluster against. Cannot be changed later. Until the ccluster-ip chart is installed in
-  # this cluster, ClusterConfigApplied reports CRDMissing.
-  domain: ccluster-local.example.com
+# The operator derives the cluster's domain from the name and namespace, under its
+# --base-domain: ccluster-local.ccluster-quickstart.<base domain>, which `make deploy-cp`
+# sets to example.com. It writes it to the cluster's CCLClusterConfig, which the
+# infra-plane operator verifies the cluster against. Until the ccluster-ip chart is
+# installed in this cluster, ClusterConfigApplied reports CRDMissing.

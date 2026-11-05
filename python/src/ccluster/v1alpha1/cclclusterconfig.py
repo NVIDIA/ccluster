@@ -30,7 +30,9 @@ class CCLClusterConfigSpec(BaseModel):
     """
     domain is the cluster's DNS domain, and its SPIFFE trust domain. Components such
     as spire, external-dns and final_stack must be configured with it; the infra-plane
-    operator verifies that they are. It must be a lowercase DNS name of at least two
+    operator verifies that they are. For a cluster registered with a CCLInfraPlane, the
+    control-plane operator writes the plane's domain here:
+    "<name>.<namespace>.<base domain>". It must be a lowercase DNS name of at least two
     labels, each at most 63 characters.
     """
 
@@ -149,6 +151,18 @@ class CCLClusterConfigStatus(BaseModel):
         that failed verification.
 
     The status of each condition is one of True, False, or Unknown.
+    """
+    domain: Annotated[
+        str | None,
+        Field(
+            max_length=253,
+            pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$",
+        ),
+    ] = None
+    """
+    domain is the spec.domain the infra-plane operator last verified the cluster
+    against, in the same pass as observedGeneration. The control-plane operator copies
+    it, with the rest of this status, into the CCLInfraPlane that registers the cluster.
     """
     load_balancers: Annotated[
         list[LoadBalancer] | None, Field(alias="loadBalancers")
