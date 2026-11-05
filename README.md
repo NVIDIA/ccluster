@@ -266,9 +266,14 @@ generation, [Testing](docs/testing.md) for test selection, and
   GPU Operator / drivers on the cluster.
 - **Local development:** Docker and [uv](https://docs.astral.sh/uv/), which
   `make build` uses to regenerate the Python models. `make` builds the pinned
-  [kind](https://kind.sigs.k8s.io/) into `bin/`, and `make init` checks the host's inotify
-  limits first; see [Testing](docs/testing.md#e2e-setup-and-lifecycle). `make init` creates both development clusters; `make build load deploy` builds,
-  loads and installs into them.
+  [kind](https://kind.sigs.k8s.io/) into `bin/`. `make init` creates both development
+  clusters; `make build load deploy` builds, loads and installs into them.
+- **Linux inotify limits:** kind nodes share the host's per-user inotify limits. The full
+  e2e tier, and a development cluster running catalog components such as istio, need
+  kind's recommended `fs.inotify.max_user_instances=512` and
+  `fs.inotify.max_user_watches=524288`. `make init` and the quick e2e tier warn below
+  them; `make test-e2e-full` fails. See
+  [Testing](docs/testing.md#e2e-setup-and-lifecycle) for raising them.
 
 ## Releases
 

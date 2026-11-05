@@ -405,14 +405,16 @@ init-ip: check-kind-host ## Create the infra-plane development Kind cluster if i
 
 # Every kind node shares the host kernel's per-user inotify limits. Below these, kind's
 # recommended values, the full e2e tier exhausts them and istio-cni-node crash-loops with
-# "watcher create: too many open files". This prints the environment that local and CI
-# runs must agree on, then fails on a host that is short. It never changes the host: the
-# e2e workflow raises the limits with sudo first. macOS keeps the limits inside Docker's VM.
+# "watcher create: too many open files". The quick tier installs no catalog charts and
+# fits under a stock Linux default. This prints the environment that local and CI runs
+# must agree on, then warns on a host that is short, failing only with E2E_FULL=true.
+# It never changes the host: the e2e workflow raises the limits with sudo first. macOS
+# keeps the limits inside Docker's VM.
 INOTIFY_MIN_INSTANCES ?= 512
 INOTIFY_MIN_WATCHES ?= 524288
 
 .PHONY: check-kind-host
-check-kind-host: kind ## Print the kind environment and fail if the host's inotify limits are too low.
+check-kind-host: kind ## Print the kind environment and check the host's inotify limits, failing only with E2E_FULL=true.
 	@echo "kind:       $$("$(KIND)" version)"
 	@echo "node image: $(KIND_NODE_IMAGE)"
 	@echo "docker:     $$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable)"
@@ -422,9 +424,10 @@ check-kind-host: kind ## Print the kind environment and fail if the host's inoti
 		watches=$$(cat /proc/sys/fs/inotify/max_user_watches); \
 		echo "inotify:    max_user_instances=$$instances max_user_watches=$$watches"; \
 		if [ "$$instances" -lt $(INOTIFY_MIN_INSTANCES) ] || [ "$$watches" -lt $(INOTIFY_MIN_WATCHES) ]; then \
-			echo "The inotify limits are below what kind needs. Raise them with:" >&2; \
+			echo "The inotify limits are below kind's recommended values, which the full e2e tier" >&2; \
+			echo "and a cluster running catalog components such as istio need. Raise them with:" >&2; \
 			echo "  sudo sysctl -w fs.inotify.max_user_instances=$(INOTIFY_MIN_INSTANCES) fs.inotify.max_user_watches=$(INOTIFY_MIN_WATCHES)" >&2; \
-			exit 1; \
+			$(if $(filter true,$(E2E_FULL)),exit 1,echo "Continuing: only the full e2e tier (E2E_FULL=true) fails on this." >&2); \
 		fi; \
 	else \
 		echo "inotify:    not readable on this host; skipped"; \
