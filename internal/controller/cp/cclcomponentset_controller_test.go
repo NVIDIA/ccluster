@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1472,6 +1473,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeA, true)
 			createComponentSet(components()[:1])
 			settle()
+			// Something new to report, so the pass below has a status to write.
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+				argocdv1alpha1.SyncStatusSynced)
 
 			// The CCLComponentSet moves on between the rollout's read and its status
 			// write, as it does when the cache lags the operator's previous write or
@@ -1488,6 +1492,35 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(racing.moved).To(BeTrue(), "the race was not staged")
 			Expect(err).NotTo(HaveOccurred(), "an expected conflict was returned as a reconcile error")
 			Expect(result.RequeueAfter).To(Equal(statusConflictRetryInterval))
+		})
+
+		It("should not write a status that has not changed", func() {
+			createInfraPlane(planeA, true)
+			createComponentSet(components()[:1])
+			settle()
+
+			// An Application status write enqueues its CCLComponentSet, including Argo
+			// CD's periodic refresh, which changes nothing the status reports. The
+			// requests are counted because the resource version cannot tell: the API
+			// server drops a patch that changes nothing without moving it.
+			counting := &countingStatusWrites{Client: k8sClient}
+			idle := *reconciler
+			idle.Client = counting
+
+			_, err := idle.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(counting.writes).To(BeZero(), "an unchanged status was written")
+
+			By("writing it once the Application reports something new")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+				argocdv1alpha1.SyncStatusSynced)
+			_, err = idle.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(counting.writes).To(Equal(1))
+			after := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, after)).To(Succeed())
+			Expect(conditionOf(after, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 		})
 
 		It("should enqueue the CCLComponentSets that reference a CCLInfraPlane", func() {
@@ -1624,6 +1657,100 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			reconcileOnly()
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
 		})
+
+		It("should report ApplicationConflict on exactly one of two CCLComponentSets racing for an Application name", func() {
+			createInfraPlane(planeA, true)
+
+			// The name joins with "-", so set "x" with component "cart-api" and set
+			// "x-cart" with component "api" want the same Application.
+			otherKey := types.NamespacedName{Name: componentSetName + "-cart", Namespace: namespace}
+			shared := applicationName(componentSetName, "cart-api")
+			Expect(applicationName(otherKey.Name, "api")).To(Equal(shared))
+
+			component := components()[0]
+			component.Name = "cart-api"
+			createComponentSet([]cclusternvidiacomv1alpha1.ComponentSpec{component})
+			component.Name = "api"
+			Expect(k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+				ObjectMeta: metav1.ObjectMeta{Name: otherKey.Name, Namespace: namespace},
+				Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
+					Components: []cclusternvidiacomv1alpha1.ComponentSpec{component},
+				},
+			})).To(Succeed())
+			DeferCleanup(func() {
+				// AfterEach tears down only componentSetKey's set.
+				other := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				if err := k8sClient.Get(ctx, otherKey, other); apierrors.IsNotFound(err) {
+					return
+				}
+				controllerutil.RemoveFinalizer(other, componentSetFinalizerName)
+				Expect(client.IgnoreNotFound(k8sClient.Update(ctx, other))).To(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed())
+			})
+
+			keys := []types.NamespacedName{componentSetKey, otherKey}
+			for _, key := range keys {
+				// The first pass only writes the finalizer.
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("reconciling both at once, each seeing the Application missing")
+			var arrived sync.WaitGroup
+			arrived.Add(len(keys))
+			racers := make([]*meetAtApplicationGet, len(keys))
+			errs := make(chan error, len(keys))
+			for i, key := range keys {
+				racers[i] = &meetAtApplicationGet{Client: k8sClient, arrived: &arrived}
+				racer := *reconciler
+				racer.Client = racers[i]
+				go func() {
+					defer GinkgoRecover()
+					_, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+					errs <- err
+				}()
+			}
+			for range keys {
+				var err error
+				Eventually(errs, "10s").Should(Receive(&err))
+				Expect(err).NotTo(HaveOccurred())
+			}
+			for _, racer := range racers {
+				Expect(racer.staged).To(BeTrue(), "the race to create was not staged")
+			}
+
+			// What each set's ComponentsApplied reports, by set name.
+			reasons := func() map[string]string {
+				GinkgoHelper()
+
+				byName := map[string]string{}
+				for _, key := range keys {
+					componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+					Expect(k8sClient.Get(ctx, key, componentSet)).To(Succeed())
+					byName[key.Name] = conditionOf(componentSet,
+						cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason
+				}
+				return byName
+			}
+			raced := reasons()
+			Expect(raced).To(ConsistOf(
+				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated,
+				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
+
+			application := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: shared, Namespace: namespace},
+				application)).To(Succeed())
+			Expect(raced).To(HaveKeyWithValue(application.Annotations[annotationComponentSetName],
+				cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated),
+				"the Application belongs to the CCLComponentSet reporting the conflict")
+
+			By("keeping the outcome when both are reconciled again, one after the other")
+			for _, key := range keys {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(reasons()).To(Equal(raced))
+		})
 	})
 })
 
@@ -1704,6 +1831,78 @@ func (w *movedStatusWriter) Patch(
 		}
 	}
 	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
+}
+
+// countingStatusWrites counts the status writes made through it.
+type countingStatusWrites struct {
+	client.Client
+	writes int
+}
+
+func (c *countingStatusWrites) Status() client.SubResourceWriter {
+	return &countedStatusWriter{SubResourceWriter: c.Client.Status(), counting: c}
+}
+
+type countedStatusWriter struct {
+	client.SubResourceWriter
+	counting *countingStatusWrites
+}
+
+func (w *countedStatusWriter) Patch(
+	ctx context.Context,
+	obj client.Object,
+	patch client.Patch,
+	opts ...client.SubResourcePatchOption,
+) error {
+	w.counting.writes++
+	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
+}
+
+func (w *countedStatusWriter) Update(
+	ctx context.Context,
+	obj client.Object,
+	opts ...client.SubResourceUpdateOption,
+) error {
+	w.counting.writes++
+	return w.SubResourceWriter.Update(ctx, obj, opts...)
+}
+
+// meetAtApplicationGet holds the first Application read made through it until every client
+// sharing arrived has made its own, so all of them act on the same read. staged records
+// whether they all met and that read found nothing.
+//
+// The wait is bounded, so a client that never reads an Application fails the spec on
+// staged rather than holding the others forever.
+type meetAtApplicationGet struct {
+	client.Client
+	arrived *sync.WaitGroup
+	once    sync.Once
+	staged  bool
+}
+
+func (c *meetAtApplicationGet) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	obj client.Object,
+	opts ...client.GetOption,
+) error {
+	err := c.Client.Get(ctx, key, obj, opts...)
+	if _, ok := obj.(*argocdv1alpha1.Application); ok {
+		c.once.Do(func() {
+			c.arrived.Done()
+			met := make(chan struct{})
+			go func() {
+				c.arrived.Wait()
+				close(met)
+			}()
+			select {
+			case <-met:
+				c.staged = apierrors.IsNotFound(err)
+			case <-time.After(5 * time.Second): // Inside the spec's 10s wait for the racers.
+			}
+		})
+	}
+	return err
 }
 
 // staleApplicationList serves the rollout an Application list from before the last write,

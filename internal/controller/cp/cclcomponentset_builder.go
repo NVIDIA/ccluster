@@ -30,10 +30,15 @@ import (
 )
 
 // errApplicationConflict reports that an Argo CD Application of the wanted name exists
-// but back-references a different CCLComponentSet. Applications live in their
-// CCLComponentSet's namespace, so the operator's own naming cannot produce this; it means
-// an Application manifest was copied from another namespace, and it is refused rather
-// than overwritten.
+// but back-references a different CCLComponentSet. It is refused rather than overwritten.
+//
+// The operator's own naming can produce it: applicationName joins with "-", so set "a"
+// with component "b-c" and set "a-b" with component "c" both want "a-b-c" in one
+// namespace. The first to write it keeps it. Reconciled in parallel, both can see it
+// missing and create it. The loser's AlreadyExists is a staleRead: its retried reads
+// usually find the winner's back-reference in the cache, and if they do not, the pass
+// fails and its retry reports the conflict. A manifest copied from another namespace
+// produces it too.
 var errApplicationConflict = errors.New("application belongs to another CCLComponentSet")
 
 // applicationName is the name Argo CD gives the Application for a component.
@@ -208,8 +213,9 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		Namespace: componentSet.Namespace,
 	}
 
-	// DefaultBackoff, not DefaultRetry: the interval grows (10ms, 50ms, 250ms, 1250ms),
-	// which gives the informer time to catch up. DefaultRetry stays at 10ms.
+	// DefaultBackoff, not DefaultRetry: four reads with growing waits (10ms, 50ms, 250ms,
+	// about 310ms in all), which gives the informer time to catch up. DefaultRetry stays
+	// at 10ms.
 	err := retry.OnError(retry.DefaultBackoff, staleRead, func() error {
 		// A fresh object every call: Get decodes into whatever it is given, so reusing
 		// one would leave its stamp behind for before to copy.

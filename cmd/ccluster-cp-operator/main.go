@@ -78,6 +78,12 @@ const maxBaseDomainLength = validation.DNS1123SubdomainMaxLength - 2*(validation
 // argoCDNamespace.
 var infraPlaneResyncPeriod time.Duration
 
+// componentSetMaxConcurrentReconciles is how many CCLComponentSets are reconciled at once.
+// The CCLInfraPlane controller has no such flag: it always runs one worker. Set by a flag,
+// for the same reason as argoCDNamespace; validateFlags rejects a value below one before
+// the manager starts.
+var componentSetMaxConcurrentReconciles int
+
 // argoCDTokenKey is the key of the token Secret.
 const argoCDTokenKey = "token"
 
@@ -126,12 +132,15 @@ func main() {
 			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
 			"CCLClusterConfig, where it is also the SPIFFE trust domain, and publishes the plane's "+
 			"records under it. Set it once: changing it moves every plane's domain.")
+	flag.IntVar(&componentSetMaxConcurrentReconciles, "componentset-max-concurrent-reconciles", 4,
+		"How many CCLComponentSets are reconciled at once. CCLInfraPlanes are always "+
+			"reconciled one at a time.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
 		LeaderElectionID: "cp.ccluster.nvidia.com",
 		Scheme:           scheme,
-		ValidateFlags:    func() error { return validateBaseDomain(baseDomain) },
+		ValidateFlags:    validateFlags,
 		SetupControllers: setupControllers,
 	})
 	if err != nil {
@@ -189,10 +198,26 @@ func setupControllers(mgr ctrl.Manager) error {
 		CatalogRevision: catalogRevision,
 		Drift:           driftregistry.Get(),
 		ArgoCDServer:    argoCDServer,
+
+		MaxConcurrentReconciles: componentSetMaxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
+	return nil
+}
+
+// validateFlags checks the operator's own flags before the manager starts.
+func validateFlags() error {
+	if err := validateBaseDomain(baseDomain); err != nil {
+		return err
+	}
+	// controller-runtime treats anything below one as its default of one, so a typo
+	// would quietly mean one worker.
+	if componentSetMaxConcurrentReconciles < 1 {
+		return fmt.Errorf("--componentset-max-concurrent-reconciles must be at least 1, got %d",
+			componentSetMaxConcurrentReconciles)
+	}
 	return nil
 }
 
