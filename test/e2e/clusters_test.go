@@ -29,6 +29,9 @@ const ipNamespace = "ccluster-ip-system"
 // created by BeforeSuite so a run never touches the user's own.
 var cclusterConfigPath string
 
+// cclusterBinary is the ccluster CLI, built from cmd/ccluster by BeforeSuite.
+var cclusterBinary string
+
 // target is a cluster the infra-plane specs register as a CCLInfraPlane, and how.
 type target struct {
 	// name labels the specs generated for the target.
@@ -97,7 +100,7 @@ func createInClusterCredentials(ns, name string) {
 }
 
 // registerWithCLI registers the separate infra-plane cluster as planeName with
-// `ccluster register`, exactly as the Python README documents: a cluster-admin token
+// `ccluster register`, exactly as the README documents: a cluster-admin token
 // created on that cluster, and its address on Kind's Docker network, where the
 // control-plane cluster's Pods reach it.
 func registerWithCLI(planeName string) {
@@ -116,14 +119,10 @@ func registerWithCLI(planeName string) {
 	})
 }
 
-// cclusterCLI returns the ccluster CLI from python/, run with uv against the suite's
+// cclusterCLI returns the ccluster CLI built by BeforeSuite, run against the suite's
 // config file.
 func cclusterCLI(args ...string) *exec.Cmd {
-	uv := os.Getenv("UV")
-	if uv == "" {
-		uv = "uv"
-	}
-	cmd := exec.Command(uv, append([]string{"run", "--project", "python", "ccluster"}, args...)...)
+	cmd := exec.Command(cclusterBinary, args...)
 	cmd.Env = append(os.Environ(), "CCLUSTER_CONFIG="+cclusterConfigPath)
 	return cmd
 }

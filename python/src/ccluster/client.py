@@ -39,7 +39,9 @@ __all__ = [
 # Server-side apply records, per field, which manager last set it. Applying under one
 # fixed name is what lets a later apply_infraplane update the Secret this client wrote
 # without conflicting with itself, and what marks the objects as ours in managedFields.
-_FIELD_MANAGER = "ccluster-py"
+# The Go client (pkg/cclclient) and the `ccluster` command apply under the same name, so
+# each can update or shrink what the other applied.
+_FIELD_MANAGER = "ccluster"
 
 # Argo CD special-cases this exact server URL: it connects with its own ServiceAccount
 # rather than anything in the Secret's "config", so no token or CA is needed to register

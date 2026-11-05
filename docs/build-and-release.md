@@ -74,6 +74,7 @@ default. Reloading the same tag requires a Deployment restart.
 | Images | `ghcr.io/nvidia/ccluster-{cp,ip}-operator`, `ghcr.io/nvidia/ccluster-compute-ssh` |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-{cp,ip}` |
 | Python | PyPI `ccluster-py`, imported as `ccluster` |
+| CLI | `ccluster_<version>_<os>_<arch>.tar.gz` on the GitHub Release (`make cli-package`, linux and darwin on amd64 and arm64); `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` |
 | Catalog | This repository, selected by catalog revision |
 
 The root `VERSION` file is the committed release version. A release PR changes it together
@@ -95,7 +96,8 @@ from git, so the release PR writes the launcher tag into its `values.yaml` next 
 - Publishing a GitHub Release `vX.Y.Z` runs `release.yml`. It retags the images already
   built for the release's merge commit, packages charts as `X.Y.Z` pointing at those
   images and catalog tag `vX.Y.Z`, publishes Python through the `pypi` trusted-publishing
-  environment, and attaches chart and Python archives to the release. PyPI trusts both
+  environment, and attaches chart, CLI and Python archives to the release. The CLI is
+  built only for releases; `main.yml` publishes no dev binaries. PyPI trusts both
   `main.yml` and `release.yml` in that environment. In both workflows one job builds the
   Python dists and a second job, the only one with `id-token: write`, uploads them: every
   step of a job can fetch its OIDC token, so build and repository code never runs there.
@@ -103,7 +105,7 @@ from git, so the release PR writes the launcher tag into its `values.yaml` next 
   tag does not publish a release. A commit without published hash-tagged images cannot
   be released through the retag workflow.
 
-Without an explicit Make variable `VERSION`, packaging uses the development chart and
+Without an explicit Make variable `VERSION`, packaging uses the development chart, CLI and
 Python versions, image hash and catalog commit. With `VERSION=X.Y.Z`, it stamps release versions and the
 catalog tag. `docker-retag-*` requires an explicit version. Fork workflows pass their own
 lowercase `REGISTRY`, as GHCR namespaces must be lowercase.
@@ -121,9 +123,10 @@ Every published artifact carries its license; keep it that way when changing a r
 | Images | `/licenses/LICENSE`, `/licenses/THIRD_PARTY_NOTICES.md`, and the license and NOTICE files of every linked Go module and the Go standard library under `/licenses/go` | `Dockerfile` (`go-licenses` in the builder stage) |
 | Helm charts | `LICENSE` and `THIRD_PARTY_NOTICES.md` at the chart root | `helm-package-cp` / `helm-package-ip` |
 | Python | `LICENSE` in the sdist and in the wheel's `dist-info/licenses` | `python/LICENSE`, `license-files` in `pyproject.toml` |
+| CLI tarballs | `LICENSE`, `THIRD_PARTY_NOTICES.md`, and under `licenses/go` the license and NOTICE files of every linked Go module and the Go standard library | `cli-package` (`go-licenses`, at the Dockerfile's `GO_LICENSES_VERSION`) |
 
-`go-licenses` fails the image build when a newly linked module's license cannot be
-classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to
+`go-licenses` fails the image build and `cli-package` when a newly linked module's
+license cannot be classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to
 the root `LICENSE` because the package builds from `python/`; the build stores the
 file's contents, not the link. Update `THIRD_PARTY_NOTICES.md`
 when a bundled chart (the cp chart's `argo-cd`) or a catalog chart dependency changes.
@@ -137,9 +140,9 @@ with each job's inputs when changing build or generation dependencies.
   `test` and `test-e2e` cover Go, build, deployment and test inputs. `test-e2e` builds
   every image: the suite builds the operators and a workflow step builds the compute-ssh
   launcher, so a broken Dockerfile stage fails the PR rather than `main.yml`. It also
-  covers `python/`, because the suite registers its infra-plane cluster with the
-  `ccluster` CLI, and `catalogs/cluster_base/spire_crds/`, because the suite installs
-  that chart and asserts the CRDs it ships.
+  covers `catalogs/cluster_base/spire_crds/`, because the suite installs that chart and
+  asserts the CRDs it ships. The suite registers its infra-plane cluster with the
+  `ccluster` CLI it builds from `cmd/ccluster`, which the Go paths already cover.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
   templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
   `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes

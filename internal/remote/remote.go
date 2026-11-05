@@ -21,18 +21,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-)
 
-// Keys of an Argo CD cluster Secret that describe how to reach the cluster.
-const (
-	serverKey = "server"
-	configKey = "config"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
-
-// InClusterServer is the address Argo CD treats as its own cluster. A Secret naming it,
-// or naming no server at all, with no credentials of its own registers the cluster the
-// control-plane operator runs in.
-const InClusterServer = "https://kubernetes.default.svc"
 
 // RequestTimeout bounds every request to an infra-plane cluster, so an unreachable
 // cluster fails a reconcile instead of holding a worker until the TCP timeout.
@@ -74,15 +65,16 @@ func (c clusterConfig) hasCredentials() bool {
 }
 
 // RESTConfig returns the rest.Config for the cluster secret describes. A Secret for the
-// operator's own cluster - no "server", or InClusterServer with no credentials - returns
-// a copy of local. The result carries RequestTimeout.
+// operator's own cluster - no "server", or argocdv1alpha1.InClusterServer with no
+// credentials - returns a copy of local. The result carries RequestTimeout.
 func RESTConfig(secret *corev1.Secret, local *rest.Config) (*rest.Config, error) {
 	var cfg clusterConfig
-	if raw := secret.Data[configKey]; len(raw) > 0 {
+	if raw := secret.Data[argocdv1alpha1.ClusterSecretConfigKey]; len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			// The JSON error is not wrapped: it can quote the Secret's content.
 			return nil, fmt.Errorf("%w: %q of Secret %s/%s is not valid JSON",
-				ErrInvalidCredentials, configKey, secret.Namespace, secret.Name)
+				ErrInvalidCredentials, argocdv1alpha1.ClusterSecretConfigKey,
+				secret.Namespace, secret.Name)
 		}
 	}
 	if len(cfg.ExecProviderConfig) > 0 {
@@ -92,8 +84,8 @@ func RESTConfig(secret *corev1.Secret, local *rest.Config) (*rest.Config, error)
 		return nil, fmt.Errorf("%w: awsAuthConfig", ErrUnsupportedCredentials)
 	}
 
-	server := string(secret.Data[serverKey])
-	if server == "" || (server == InClusterServer && !cfg.hasCredentials()) {
+	server := string(secret.Data[argocdv1alpha1.ClusterSecretServerKey])
+	if server == "" || (server == argocdv1alpha1.InClusterServer && !cfg.hasCredentials()) {
 		restConfig := rest.CopyConfig(local)
 		restConfig.Timeout = RequestTimeout
 		return restConfig, nil

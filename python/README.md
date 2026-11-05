@@ -65,8 +65,9 @@ CCLInfraPlane exists;
 the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace.
 `ensure_namespace` creates the namespace, and is the only method that does: keeping it
 separate means a mistyped namespace fails against the API server rather than quietly
-gaining a working plane. Everything is server-side applied under the `ccluster-py` field
-manager, so re-registering a cluster rotates its token in place. Both `apply_infraplane`
+gaining a working plane. Everything is server-side applied under the `ccluster` field
+manager, the one the Go client in `pkg/cclclient` uses too, so re-registering a cluster
+rotates its token in place, whichever client registered it. Both `apply_infraplane`
 and `apply_component_set` return the applied object, a `CCLInfraPlane` or
 `CCLComponentSet`, with the metadata the server filled in and the status the operator has
 written so far.
@@ -117,7 +118,7 @@ from a list of components built with `catalogs.component`, each with a chart's t
 `Values` where the defaults are not wanted. Each component's `infraPlaneRef`
 names the registered cluster it deploys to, so one set may span several planes; those
 planes must be in the client's namespace and already `Available`. List order is rollout
-order. Because the set is applied under the same `ccluster-py` field manager, calling
+order. Because the set is applied under the same `ccluster` field manager, calling
 `apply_component_set` again with a different list updates it in place. The client's
 namespace is the set's own, on the control plane; a component's own namespace is on its
 infra plane, created there by Argo CD from the `CreateNamespace=true` sync option the
@@ -190,7 +191,11 @@ one has disappeared.
 ## Command line
 
 The package installs a `ccluster` command, built on click. Run without a subcommand, it
-prints its usage.
+prints its usage. A Go build of the same command, taking the same long flags but not
+`-cp` and `-ip`, is also released; see
+[the main README](https://github.com/NVIDIA/ccluster#command-line). Both read the same
+config file, but install only one of them: the two are both called `ccluster`, and the
+first on your `PATH` wins.
 
 Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
 that it serves the ccluster API, and saves the context name to

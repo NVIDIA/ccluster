@@ -65,11 +65,104 @@ helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
 
 Each released chart references `ghcr.io/nvidia/ccluster-{cp,ip}-operator:X.Y.Z` and pins
 `--catalog-revision` to the matching `vX.Y.Z` tag. The Pydantic models for the API and the
-catalog ship as `pip install ccluster-py` (imported as `ccluster`).
+catalog ship as `pip install ccluster-py` (imported as `ccluster`), and the Go client as
+the module's `pkg/cclclient` package.
 
 The charts themselves live in `charts/cp/chart` and `charts/ip/chart`; they are generated
 from the kustomize overlays in `config/`, so regenerate them with `make helm-generate`
 after changing the API or any RBAC marker.
+
+## Command line
+
+The `ccluster` command registers infra-plane clusters with a control plane. Install it
+with Go, or download `ccluster_X.Y.Z_<os>_<arch>.tar.gz` for Linux or macOS on amd64 or
+arm64 from the GitHub Release and put the `ccluster` binary on your `PATH`:
+
+```bash
+go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z
+```
+
+The macOS binaries are not yet signed with an Apple Developer ID or notarized, so macOS
+refuses to run one downloaded with a browser, saying Apple cannot check it for
+malicious software. Download the tarball with `curl`, which does not quarantine it, or
+clear the quarantine from a browser download before the first run:
+
+```bash
+curl -fsSL https://github.com/NVIDIA/ccluster/releases/download/vX.Y.Z/ccluster_X.Y.Z_darwin_arm64.tar.gz | tar -xz
+# or, after unpacking a browser download:
+xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
+```
+
+Use `darwin_amd64` on an Intel Mac.
+
+`pip install ccluster-py` also installs a `ccluster` command with the same subcommands,
+flags and config file, which also accepts the short forms `-cp` and `-ip`; see the
+[Python README](python/README.md#command-line). Install only one of them: both are called
+`ccluster`, and the first on your `PATH` wins.
+
+Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
+that it serves the ccluster API, and saves the context name to
+`~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
+named by `$CCLUSTER_CONFIG`). Only the context name is saved; credentials stay in the
+kubeconfig, found through `$KUBECONFIG` or `~/.kube/config` as `kubectl` finds it. Run it
+again to switch control planes.
+
+```bash
+ccluster init --control-plane kind-ccluster-cp
+```
+
+`ccluster register` then registers an infra-plane cluster, also named by its kubeconfig
+context, with that control plane:
+
+```bash
+ccluster register edge-1 -n tenant-a --infra-plane kind-ccluster-ip --domain edge-1.example.com \
+    --server https://ccluster-ip-control-plane:6443
+```
+
+On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`, binds it
+to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
+the same rights `argocd cluster add` grants), and reads the long-lived token the token
+controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
+it creates the namespace if needed, then applies the Secret `<name>-credentials` carrying
+that token and the cluster CA and the `CCLInfraPlane` pointing at it with `--domain`. The
+control-plane operator uses the same token to write the domain to the infra plane's
+`CCLClusterConfig`. Anyone who can read `<name>-credentials` there is cluster-admin on the
+infra plane, so keep read access to that namespace's Secrets tight. Running it again reuses
+the same token.
+
+`--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
+the kubeconfig. Set it when that address is only reachable from your workstation, as with
+kind, whose kubeconfig points at `127.0.0.1`.
+
+`ccluster unregister` reverses `register` on the control plane: it deletes the
+CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. The infra
+plane is not touched; its ServiceAccount and token stay, so registering the cluster again
+reuses them.
+
+```bash
+ccluster unregister edge-1 -n tenant-a
+```
+
+`ccluster completion <shell>` prints a tab-completion script for commands and flags. To load
+it in every new shell:
+
+```bash
+# bash (needs the bash-completion package)
+echo 'eval "$(ccluster completion bash)"' >> ~/.bashrc
+
+# zsh (the first line only if completion is not enabled yet; ccluster's line goes after it)
+echo 'autoload -U compinit; compinit' >> ~/.zshrc
+echo 'eval "$(ccluster completion zsh)"' >> ~/.zshrc
+
+# fish
+ccluster completion fish > ~/.config/fish/completions/ccluster.fish
+```
+
+Start a new shell for the change to take effect.
+
+The command is built on `pkg/cclclient`, a Go client that registers clusters and applies,
+polls and deletes component sets in one namespace. It is the Go counterpart of the Python
+package's `CCLClient`; both write under the server-side apply field manager `ccluster`.
 
 ## Trying it out
 
@@ -115,7 +208,7 @@ stay isolated the same way they are in production. Docker must be running first.
 
 ```bash
 make init    # create both kind clusters (idempotent)
-make build   # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
+make build   # manifests, CRDs, deepcopy, Go client, operator binaries and CLI, both images, both charts, Python models
 make load    # build each operator image and load it into its own cluster
 make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
 ```
@@ -193,8 +286,8 @@ installs a `0.0.9.dev<N>` when 0.0.8 is the latest release.
 A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or
 `gh release create vX.Y.Z --generate-notes`) and `.github/workflows/release.yml` retags
 the images already built for that commit as `X.Y.Z`, re-packages both charts as `X.Y.Z`
-pointing at them, publishes `ccluster-py==X.Y.Z` to PyPI, and attaches the tarballs and
-dists to the release. Nothing in the tree is bumped.
+pointing at them, publishes `ccluster-py==X.Y.Z` to PyPI, and attaches the chart and CLI
+tarballs and the Python dists to the release. Nothing in the tree is bumped.
 
 | Artifact | Location |
 | --- | --- |
@@ -202,6 +295,7 @@ dists to the release. Nothing in the tree is bumped.
 | compute-ssh launcher image | `ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z` (also tagged with the commit hash); `compute_deployment` defaults to it |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
 | Python package | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/), imported as `ccluster` |
+| Command line | `ccluster_X.Y.Z_{linux,darwin}_{amd64,arm64}.tar.gz` on the GitHub Release, or `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` |
 | Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
 
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
@@ -218,7 +312,7 @@ CCluster is early and evolving quickly — contributions, ideas, and feedback on
 - Development quickstart:
 
 ```bash
-make build          # manifests, CRDs, deepcopy, Go client, both binaries, both images, both charts, Python models
+make build          # manifests, CRDs, deepcopy, Go client, operator binaries and CLI, both images, both charts, Python models
 make test           # envtest suites for both control-plane controllers
 make helm-generate  # regenerate the charts from config/; CI fails on any drift
 ```

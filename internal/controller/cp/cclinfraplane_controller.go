@@ -32,11 +32,6 @@ import (
 
 // Metadata written onto the mirrored Secret in the Argo CD namespace.
 const (
-	// argoCDSecretTypeLabel is how Argo CD discovers the Secrets it should treat as
-	// cluster registrations.
-	argoCDSecretTypeLabel   = "argocd.argoproj.io/secret-type"
-	argoCDSecretTypeCluster = "cluster"
-
 	// argoCDClusterNameKey is the data key Argo CD shows as the cluster's name. The
 	// operator sets it from the CCLInfraPlane, so one cluster cannot be registered
 	// under two different names depending on who wrote the credentials Secret.
@@ -291,7 +286,7 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 
 		// The one label stamp does not set: it is what makes Argo CD treat this
 		// Secret as a cluster registration rather than an ordinary Secret.
-		mirror.Labels[argoCDSecretTypeLabel] = argoCDSecretTypeCluster
+		mirror.Labels[argocdv1alpha1.SecretTypeLabel] = argocdv1alpha1.SecretTypeCluster
 
 		mirror.Type = source.Type
 		mirror.Data = make(map[string][]byte, len(source.Data)+2)

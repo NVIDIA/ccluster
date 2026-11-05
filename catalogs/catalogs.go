@@ -124,3 +124,17 @@ func Entry(
 
 	return out, nil
 }
+
+// Component places an entry, built by a chart package's New, in a CCLComponentSet
+// under the given name and onto the given infra plane. Neither is a fact about the
+// chart, so New leaves them to the caller.
+func Component(
+	name, infraPlane string,
+	entry cclusternvidiacomv1alpha1.ComponentEntry,
+) cclusternvidiacomv1alpha1.ComponentSpec {
+	return cclusternvidiacomv1alpha1.ComponentSpec{
+		Name:           name,
+		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane},
+		ComponentEntry: entry,
+	}
+}

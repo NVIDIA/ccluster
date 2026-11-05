@@ -32,7 +32,7 @@ var (
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind, uv and CertManager, and two Kind clusters - a
+// The default setup requires Kind and CertManager, and two Kind clusters - a
 // control plane ($KIND_CLUSTER) and a separate infra plane ($KIND_CLUSTER_IP) - which
 // `make test-e2e` creates and deletes. The control-plane cluster is the current
 // kubeconfig context, so a plain `kubectl` reaches it; utils.IP().Kubectl reaches the
@@ -81,6 +81,10 @@ var _ = BeforeSuite(func() {
 		deployIPOperator(c)
 	}
 
+	By("building the ccluster CLI")
+	cclusterBinary = filepath.Join(GinkgoT().TempDir(), "ccluster")
+	_, err = utils.Run(exec.Command("go", "build", "-o", cclusterBinary, "./cmd/ccluster"))
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the ccluster CLI")
 	cclusterConfigPath = filepath.Join(GinkgoT().TempDir(), "ccluster", "config.yaml")
 })
 

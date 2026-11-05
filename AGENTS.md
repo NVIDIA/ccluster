@@ -9,10 +9,12 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | Path | Purpose |
 | --- | --- |
 | `cmd/ccluster-{cp,ip}-operator/` | Separate binaries for separate clusters; cp drives Argo CD, ip verifies `catalogs/cluster_base` against `CCLClusterConfig`. |
+| `cmd/ccluster/`, `internal/cli/` | The `ccluster` command line (cobra): `init`, `register`, `unregister`. Released as per-platform tarballs and through `go install`. |
 | `internal/controller/{cp,ip}/` | Per-operator controllers; shared bootstrap is in `internal/manager/`. |
 | `internal/registry/` | Generic per-chart registry (chart path → function) and the `*_registry` packages built on it, such as the ip operator's `verifier_registry`, the cp operator's `drift_registry`, and the `validator_registry` that checks component values. |
 | `api/ccluster/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
 | `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository and for the cp operator's infra-plane watch in `internal/remote/`; `test/client/` tests them. |
+| `pkg/cclclient/` | Hand-written high-level client on `pkg/client`, the Go counterpart of Python's `CCLClient`: registers infra planes and applies component sets in one namespace. |
 | `internal/argocd/v1alpha1/`, `internal/externaldns/v1alpha1/` | Hand-written partial Argo CD and external-dns API mirrors; extend them rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (each registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |

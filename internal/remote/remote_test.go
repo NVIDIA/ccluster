@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 )
 
 func secretWith(data map[string]string) *corev1.Secret {
@@ -74,13 +76,13 @@ func TestRESTConfig(t *testing.T) {
 		},
 		{
 			name: "in-cluster address without credentials is the local cluster",
-			data: map[string]string{"server": InClusterServer, "config": `{"tlsClientConfig":{"insecure":false}}`},
+			data: map[string]string{"server": argocdv1alpha1.InClusterServer, "config": `{"tlsClientConfig":{"insecure":false}}`},
 			want: &rest.Config{Host: local.Host, BearerToken: local.BearerToken, Timeout: RequestTimeout},
 		},
 		{
 			name: "in-cluster address with a token uses the token",
-			data: map[string]string{"server": InClusterServer, "config": `{"bearerToken":"t"}`},
-			want: &rest.Config{Host: InClusterServer, BearerToken: "t", Timeout: RequestTimeout},
+			data: map[string]string{"server": argocdv1alpha1.InClusterServer, "config": `{"bearerToken":"t"}`},
+			want: &rest.Config{Host: argocdv1alpha1.InClusterServer, BearerToken: "t", Timeout: RequestTimeout},
 		},
 		{
 			name: "exec plugin is unsupported",

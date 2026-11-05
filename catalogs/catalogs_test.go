@@ -10,6 +10,10 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 )
 
 // stubValues mirrors the shape every per-chart Values type has: one key named for the
@@ -138,5 +142,24 @@ func TestEntryRejectsInvalidValues(t *testing.T) {
 func TestEntrySkipsValuesWithoutValidator(t *testing.T) {
 	if _, err := Entry(chart, namespace, stubValues{}); err != nil {
 		t.Fatalf("Entry() error = %v, want nil", err)
+	}
+}
+
+// TestComponent checks that the caller's name and infra plane reach the component beside
+// the entry, unchanged.
+func TestComponent(t *testing.T) {
+	entry := cclusternvidiacomv1alpha1.ComponentEntry{
+		Chart:     chart,
+		Namespace: namespace,
+		Values:    &apiextensionsv1.JSON{Raw: []byte(`{"stub-chart":{"enabled":true}}`)},
+	}
+	got := Component("stub", "gpu-a", entry)
+	want := cclusternvidiacomv1alpha1.ComponentSpec{
+		Name:           "stub",
+		InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a"},
+		ComponentEntry: entry,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Component() = %+v, want %+v", got, want)
 	}
 }

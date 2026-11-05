@@ -449,7 +449,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			}
 			Expect(mirror.Data).To(HaveLen(len(source.Data) + 1))
 
-			Expect(mirror.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
+			Expect(mirror.Labels).To(HaveKeyWithValue(argocdv1alpha1.SecretTypeLabel, argocdv1alpha1.SecretTypeCluster))
 			Expect(mirror.Annotations).To(HaveKeyWithValue(annotationInfraPlaneName, resourceName))
 			Expect(mirror.Annotations).To(HaveKeyWithValue(annotationInfraPlaneNamespace, namespace))
 		})
@@ -461,7 +461,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			By("corrupting the mirrored Secret")
 			mirror := getMirror()
 			mirror.Data["config"] = []byte("tampered")
-			delete(mirror.Labels, argoCDSecretTypeLabel)
+			delete(mirror.Labels, argocdv1alpha1.SecretTypeLabel)
 			Expect(k8sClient.Update(ctx, mirror)).To(Succeed())
 
 			reconcileAndGet()
@@ -472,7 +472,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			restored := getMirror()
 			Expect(restored.Data).To(HaveKeyWithValue("config", source.Data["config"]))
 			Expect(restored.Data).To(HaveKeyWithValue("name", []byte(mirrorName)))
-			Expect(restored.Labels).To(HaveKeyWithValue(argoCDSecretTypeLabel, argoCDSecretTypeCluster))
+			Expect(restored.Labels).To(HaveKeyWithValue(argocdv1alpha1.SecretTypeLabel, argocdv1alpha1.SecretTypeCluster))
 		})
 
 		It("should refuse to overwrite a Secret owned by another CCLInfraPlane", func() {
