@@ -17,8 +17,9 @@ all of it except the approval:
    proven against real Argo CD.
 3. **Phase 2, publish.** Create the GitHub Release `vX.Y.Z` on the merge commit with
    `gh`. That creates the tag and fires `.github/workflows/release.yml`, which checks the
-   tag against `VERSION`, retags the `:<sha>` images, re-packages the charts, publishes
-   `ccluster-py==X.Y.Z` to PyPI and attaches the assets. Verify the artifacts.
+   tag against `VERSION`, retags the `:<sha>` images, re-packages the charts, builds the
+   `ccluster` CLI tarballs, publishes `ccluster-py==X.Y.Z` to PyPI and attaches the
+   assets. Verify the artifacts.
 
 Nobody has to touch the GitHub UI. Nothing is ever rebuilt for a release: the images a
 release ships are the ones `main.yml` pushed for the merge commit, and the workflow
@@ -223,7 +224,16 @@ docker buildx imagetools inspect ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z
 helm show chart oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z
 helm show chart oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
 pip index versions ccluster-py
-gh release view vX.Y.Z   # two chart .tgz plus the wheel and sdist attached
+gh release view vX.Y.Z   # two chart .tgz, four CLI .tar.gz, the wheel and sdist attached
+```
+
+The four CLI tarballs are `ccluster_X.Y.Z_{linux,darwin}_{amd64,arm64}.tar.gz`. To check
+one, download it and confirm the binary reports the release:
+
+```bash
+gh release download vX.Y.Z --pattern 'ccluster_X.Y.Z_linux_amd64.tar.gz' --dir <tmp>
+tar -xzf <tmp>/ccluster_X.Y.Z_linux_amd64.tar.gz -C <tmp>
+<tmp>/ccluster_X.Y.Z_linux_amd64/ccluster --version   # ccluster version vX.Y.Z
 ```
 
 Report each artifact as published or not. For a failed job give its name and first error

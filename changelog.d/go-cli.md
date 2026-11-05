@@ -6,7 +6,7 @@
   taking `--context` in place of `-cp`/`--control-plane` and `-ip`/`--infra-plane`. The
   Python command stays in `ccluster-py`; install one or the other, since both are called
   `ccluster`.
-- `ccluster completion bash|zsh|fish|powershell` in the Go command prints a shell
+- `ccluster completion bash|zsh|fish` in the Go command prints a shell
   completion script; the README shows how to load it.
 - `github.com/NVIDIA/ccluster/pkg/cclclient`, a Go client designed like the Python
   `CCLClient`: it registers and unregisters infra planes and applies, polls and deletes

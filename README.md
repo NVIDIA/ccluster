@@ -158,8 +158,7 @@ echo 'eval "$(ccluster completion zsh)"' >> ~/.zshrc
 ccluster completion fish > ~/.config/fish/completions/ccluster.fish
 ```
 
-On Windows, add `ccluster completion powershell | Out-String | Invoke-Expression` to your
-PowerShell profile. Start a new shell for the change to take effect.
+Start a new shell for the change to take effect.
 
 The command is built on `pkg/cclclient`, a Go client that registers clusters and applies,
 polls and deletes component sets in one namespace. It is the Go counterpart of the Python

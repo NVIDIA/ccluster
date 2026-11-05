@@ -255,12 +255,6 @@ func (c *Client) ApplyComponentSet(
 // It reads once. It returns false during deletion or unless validation, Application
 // writes and rollout completion are confirmed for this generation. The caller controls
 // polling and timeouts. A missing set is an error for which apierrors.IsNotFound is true.
-//
-// True means every Application matches current desired input and, for tracked requests,
-// its sync succeeded before a later Healthy/Synced comparison. The timestamp check is a
-// freshness barrier, not an atomic configuration-version acknowledgement. Existing
-// Applications enter request tracking on a spec change; updates across already released
-// components are not yet serialized by wave.
 func (c *Client) IsComponentSetFinished(ctx context.Context, name string) (bool, error) {
 	componentSet, err := c.GetComponentSet(ctx, name)
 	if err != nil {
