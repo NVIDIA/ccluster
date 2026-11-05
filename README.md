@@ -95,6 +95,11 @@ xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
 
 Use `darwin_amd64` on an Intel Mac.
 
+`pip install ccluster-py` also installs a `ccluster` command with the same subcommands and
+config file, taking `-cp`/`-ip` in place of `--context`; see the
+[Python README](python/README.md#command-line). Install only one of them: both are called
+`ccluster`, and the first on your `PATH` wins.
+
 Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
 that it serves the ccluster API, and saves the context name to
 `~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
