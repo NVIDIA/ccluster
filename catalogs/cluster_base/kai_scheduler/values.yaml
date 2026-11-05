@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Chart defaults for catalogs/cluster_base/kai_scheduler. See component.go for the schema.
+#
+# The operator deploys the scheduler, binder, pod grouper and the rest from the kai-config
+# Config CR, which the upstream chart applies from a post-install/post-upgrade hook Job.
+# Argo CD runs that Job as a PostSync hook, so Config is not an Application resource:
+# changes to the values below reach it on the next sync, not through a diff.
+kai-scheduler:
+  scheduler:
+    # Fill a node's GPUs before spilling onto another.
+    placementStrategy: binpack
+    # klog verbosity of the scheduler; 0 logs warnings and errors only.
+    args:
+      v: "0"
+    # The upstream chart sets no resources. Sized from large production clusters
+    # (170+ nodes, 4k+ pods), with limits above requests for burst headroom: request ==
+    # limit was OOMKilled on transient spikes, and a pending-pod backlog drives the
+    # scheduling cycle past 1.5 cores, where a lower CPU limit throttles scheduling
+    # until the backlog drains.
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1.5Gi
+      limits:
+        cpu: 3000m
+        memory: 3Gi
+  binder:
+    # Raised after repeated OOMKills on large clusters.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 768Mi
+      limits:
+        cpu: 200m
+        memory: 1.5Gi
+  operator:
+    # controller-runtime zap level: debug, info, error or panic.
+    logLevel: error
+    # Observed at about 450Mi on large clusters.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+  admission:
+    # The admission webhook rejects GPU pods that do not run under this RuntimeClass.
+    # gpu-operator before v25.10.0, including the one in this catalog, creates no
+    # "nvidia" RuntimeClass, so the check is off. Must be "", not null: null falls back
+    # to the upstream default "nvidia".
+    gpuPodRuntimeClassName: ""
+  # A parent and child queue for pods without a kai.scheduler/queue label, unlimited so
+  # that such pods always schedule. catalogs/resources/kai_gpu_queues builds its own
+  # quota tree beside it, under its own root. The pod grouper puts unlabelled pods in
+  # default-queue, so the child keeps that name.
+  defaultQueue:
+    createDefaultQueue: true
+    childName: default-queue
+    parentResources:
+      cpu:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+      gpu:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+      memory:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+    childResources:
+      cpu:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+      gpu:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+      memory:
+        quota: -1
+        limit: -1
+        overQuotaWeight: 1
+
+# Default preemptibility per workload kind, read by the pod grouper. Rendered as the
+# ConfigMap kai-default-priorities in the release namespace. KAI treats a PriorityClass
+# value of 100 or more as non-preemptible unless the PodGroup says otherwise, which
+# leaves priority-based preemption inert for most workloads; this marks Jobs and
+# ReplicaSets preemptible.
+#
+# Not wired yet: the pod grouper reads the ConfigMap only once the kai-config Config CR
+# names it in spec.podGrouper.args.defaultPrioritiesConfigMapName{,Namespace}, and the
+# upstream chart has no values for those fields through v0.20.1.
+defaultPriorities:
+  enabled: true
+  types:
+    - typeName: Job
+      group: batch
+      priorityName: build
+      preemptibility: preemptible
+    - typeName: ReplicaSet
+      group: apps
+      priorityName: build
+      preemptibility: preemptible

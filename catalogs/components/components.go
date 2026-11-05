@@ -34,6 +34,7 @@ import (
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
+	kaischeduler "github.com/NVIDIA/ccluster/catalogs/cluster_base/kai_scheduler"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
 	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
@@ -77,6 +78,7 @@ var ClusterBase = []Component{
 	{gpuoperator.Chart, gpuoperator.Values{}},
 	{ingressnginx.Chart, ingressnginx.Values{}},
 	{istio.Chart, istio.Values{}},
+	{kaischeduler.Chart, kaischeduler.Values{}},
 	{keda.Chart, keda.Values{}},
 	{kubeprometheusstack.Chart, kubeprometheusstack.Values{}},
 	{longhorn.Chart, longhorn.Values{}},

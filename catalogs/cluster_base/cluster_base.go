@@ -19,6 +19,7 @@ import (
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
+	kaischeduler "github.com/NVIDIA/ccluster/catalogs/cluster_base/kai_scheduler"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
 	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
@@ -36,7 +37,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as seventeen error checks. None
+	// the catalog reads as the list it is rather than as eighteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -125,6 +126,13 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(gpuoperator.New("gpu-operator", gpuoperator.Values{})),
 		}, // wave  45
+		{
+			// Not in the legacy catalog. Before kai_gpu_queues and any workload that
+			// names kai-scheduler, which is every deployments chart by default.
+			Name:           kaischeduler.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(kaischeduler.New("kai-scheduler", kaischeduler.Values{})),
+		},
 		{
 			Name:           "longhorn",
 			InfraPlaneRef:  ref,

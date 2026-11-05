@@ -18,6 +18,7 @@ import (
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
+	kaischeduler "github.com/NVIDIA/ccluster/catalogs/cluster_base/kai_scheduler"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
 	kubeprometheusstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/kube_prometheus_stack"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
@@ -75,6 +76,7 @@ func Get() *Registry {
 	r.Register(gpuoperator.Chart, noDrift)
 	r.Register(ingressnginx.Chart, noDrift)
 	r.Register(istio.Chart, istio.Drift)
+	r.Register(kaischeduler.Chart, noDrift)
 	r.Register(keda.Chart, noDrift)
 	r.Register(kubeprometheusstack.Chart, noDrift)
 	r.Register(longhorn.Chart, noDrift)
