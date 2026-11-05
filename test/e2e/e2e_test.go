@@ -1415,7 +1415,7 @@ type: kubernetes.io/service-account-token
 						if kedaErr == nil {
 							Expect(converged).To(BeTrue(), "keda Application created before argo-rollouts converged")
 						}
-						g.Expect(converged).To(BeTrue(), "argo-rollouts has not converged yet")
+						g.Expect(converged).To(BeTrue(), applicationStatus(rolloutsApp, "argo-rollouts has not converged yet"))
 					}, 8*time.Minute, 2*time.Second).Should(Succeed())
 
 					By("waiting for keda's Application to appear now that argo-rollouts has converged")
@@ -1627,7 +1627,7 @@ type: kubernetes.io/service-account-token
 				By("deploying keda with one operator replica")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
 				Eventually(func(g Gomega) {
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), applicationStatus(applicationName))
 				}, 8*time.Minute).Should(Succeed())
 
 				// The Deployment's name is the chart's business, so it is taken from the
@@ -1669,7 +1669,8 @@ type: kubernetes.io/service-account-token
 						"-n", "keda", "-o", "jsonpath={.spec.replicas}"))
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(strings.TrimSpace(out)).To(Equal("2"))
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), "Application not back to Healthy/Synced")
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(),
+						applicationStatus(applicationName, "Application not back to Healthy/Synced"))
 				}, 8*time.Minute).Should(Succeed())
 
 				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
@@ -1739,7 +1740,7 @@ type: kubernetes.io/service-account-token
 					g.Expect(compared).To(Equal(spec),
 						"Argo CD did not record the source it compared verbatim")
 					g.Expect(spec).To(ContainSubstring("replicaCount: 1"))
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), applicationStatus(applicationName))
 				}, 8*time.Minute).Should(Succeed())
 
 				By("finding the managed operator Deployment")
@@ -1933,7 +1934,7 @@ type: kubernetes.io/service-account-token
 				By("deploying keda and letting Argo CD record the first sync")
 				applyKedaCCLComponentSet(componentSetName, planeName, 1)
 				Eventually(func(g Gomega) {
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), applicationStatus(applicationName))
 					g.Expect(historyIDs(g)).To(HaveLen(1))
 				}, 8*time.Minute).Should(Succeed())
 
@@ -1965,7 +1966,7 @@ type: kubernetes.io/service-account-token
 
 				By("confirming Argo CD's record of the earlier sync survived the rewrite")
 				Eventually(func(g Gomega) {
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), applicationStatus(applicationName))
 					// A history that restarts at one entry means the rewrite took Argo
 					// CD's records with it and Argo CD started over.
 					g.Expect(len(historyIDs(g))).To(BeNumerically(">=", 2))
@@ -2075,6 +2076,15 @@ type: kubernetes.io/service-account-token
 				const credentialsName = "e2e-istio-plane-credentials"
 				applicationName := componentSetName + "-istio"
 
+				// Argo CD's view of the Application says which resource is not Healthy;
+				// the pods and events say why. Registered first, so it runs last, after
+				// the spec's own cleanup has had its chance to fail.
+				DeferCleanup(func() {
+					if CurrentSpecReport().Failed() {
+						dumpNamespace("istio-system")
+					}
+				})
+
 				By("registering the control-plane cluster with itself as an infra plane")
 				createInClusterCredentials(crNamespace, credentialsName)
 				var err error
@@ -2127,7 +2137,7 @@ type: kubernetes.io/service-account-token
 
 				By("waiting for Argo CD to report the Application Healthy and Synced")
 				Eventually(func(g Gomega) {
-					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue())
+					g.Expect(applicationHealthyAndSynced(applicationName)).To(BeTrue(), applicationStatus(applicationName))
 					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
 						To(Equal("RolloutComplete"))
 				}, 8*time.Minute, 5*time.Second).Should(Succeed())
@@ -2255,6 +2265,67 @@ func applicationHealthyAndSynced(name string) bool {
 		return false
 	}
 	return strings.TrimSpace(out) == "Healthy Synced"
+}
+
+// applicationStatusTemplate renders the parts of an Application's status that explain why
+// it is not Healthy and Synced: the overall verdicts, the last sync operation, any
+// conditions, and each resource that is itself not Synced or not Healthy. Argo CD 3 keeps
+// resource health in its resource tree instead (resourceHealthSource appTree), so an
+// unhealthy workload shows only in the overall health; dumpNamespace shows which one.
+const applicationStatusTemplate = `health={{ .status.health.status }} sync={{ .status.sync.status }}
+{{- with .status.operationState }}
+operation: {{ .phase }}: {{ .message }}
+{{- end }}
+{{- range .status.conditions }}
+condition {{ .type }}: {{ .message }}
+{{- end }}
+{{- range .status.resources }}
+{{- if or (ne .status "Synced") (and .health (ne .health.status "Healthy")) }}
+resource {{ .kind }} {{ with .namespace }}{{ . }}/{{ end }}{{ .name }}: sync={{ .status }}
+{{- with .health }} health={{ .status }}{{ with .message }} ({{ . }}){{ end }}{{ end }}
+{{- end }}
+{{- end }}`
+
+// applicationStatus returns a lazily evaluated Gomega failure description: the message,
+// if any, followed by the Application's status as applicationStatusTemplate renders it.
+// Gomega calls it only when the assertion fails, so a passing poll costs nothing extra.
+func applicationStatus(name string, message ...string) func() string {
+	return func() string {
+		out, err := utils.Run(exec.Command("kubectl", "get", "application", name,
+			"-n", crNamespace, "-o", "go-template="+applicationStatusTemplate))
+		if err != nil {
+			out = fmt.Sprintf("failed to read Application %s: %v", name, err)
+		}
+		return strings.TrimSpace(strings.Join(append(message, "Application "+name+" status:\n"+out), "\n"))
+	}
+}
+
+// dumpNamespace writes a namespace's pods, events and container logs to the GinkgoWriter,
+// for specs whose failure lies in what Argo CD deployed rather than in the operator. The
+// previous instance's logs are what explain a crash-looping container.
+func dumpNamespace(namespace string) {
+	out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", namespace,
+		"-o", "jsonpath={.items[*].metadata.name}"))
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list pods in %s: %s\n", namespace, err)
+	}
+	pods := strings.Fields(out)
+	commands := make([][]string, 0, 2+2*len(pods))
+	commands = append(commands,
+		[]string{"get", "pods", "-n", namespace, "-o", "wide"},
+		[]string{"get", "events", "-n", namespace, "--sort-by=.lastTimestamp"})
+	for _, pod := range pods {
+		commands = append(commands,
+			[]string{"logs", pod, "-n", namespace, "--all-containers", "--prefix", "--tail=200"},
+			[]string{"logs", pod, "-n", namespace, "--all-containers", "--prefix", "--tail=200", "--previous"})
+	}
+	for _, args := range commands {
+		out, err := utils.Run(exec.Command("kubectl", args...))
+		if err != nil {
+			out = err.Error()
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "kubectl %s:\n%s\n", strings.Join(args, " "), out)
+	}
 }
 
 // markConverged simulates Argo CD in the quick tier by reporting Healthy/Synced,

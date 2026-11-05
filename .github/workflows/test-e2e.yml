@@ -39,14 +39,23 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      # kind and its node image are pinned in the Makefile, which builds kind into bin/,
+      # so this run and a local `make test-e2e` use the same ones.
+      #
+      # Every kind node shares the runner's per-user inotify limits. The runner's default
+      # instance limit runs out once both clusters carry the full tier's workloads, and
+      # istio-cni-node then crash-loops with "watcher create: too many open files". These
+      # are the values kind's known-issues page recommends; a higher limit is kept.
+      # make check-kind-host, which test-e2e runs first, fails the full tier on a host still
+      # below them and warns on the quick tier, which fits under the runner's defaults.
+      - name: Raise inotify limits for kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-      - name: Verify kind installation
-        run: kind version
+          for setting in fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288; do
+            key="${setting%=*}" want="${setting#*=}"
+            have="$(sysctl -n "$key")"
+            echo "$key: $have"
+            if [ "$have" -lt "$want" ]; then sudo sysctl -w "$key=$want"; fi
+          done
 
       # The suite builds both operator images; nothing else builds the launcher image
       # before main.yml does after merge, so a broken Dockerfile stage would land on main.

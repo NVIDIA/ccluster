@@ -50,12 +50,34 @@ to select these tests without invoking the Ginkgo envtest suite.
 
 ## E2e setup and lifecycle
 
-Docker and kind must be available. E2e creates two clusters, a control plane
-`KIND_CLUSTER_E2E_CP` (default `ccluster-test-e2e-cp`) and a separate infra plane
-`KIND_CLUSTER_E2E_IP` (default `ccluster-test-e2e-ip`), the same shape as the development
-pair `make init` creates, and deletes both when done. Never use a working cluster for
-either name: the suite uninstalls operators and CRDs. Use `make cleanup-test-e2e` if an
-interrupted run leaves the test clusters behind.
+Docker must be available; `make` builds the pinned kind into `bin/`. E2e creates two
+clusters, a control plane `KIND_CLUSTER_E2E_CP` (default `ccluster-test-e2e-cp`) and a
+separate infra plane `KIND_CLUSTER_E2E_IP` (default `ccluster-test-e2e-ip`), the same
+shape as the development pair `make init` creates, and deletes both when done. Never use
+a working cluster for either name: the suite uninstalls operators and CRDs. Use
+`make cleanup-test-e2e` if an interrupted run leaves the test clusters behind.
+
+Local runs and CI share one environment definition. The Makefile pins kind
+(`KIND_VERSION`) and the node image every cluster is created from (`KIND_NODE_IMAGE`),
+and `make check-kind-host`, which `make init` and `make test-e2e` run first, prints the
+kind version, node image, Docker version, CPU count and inotify limits, so two runs'
+first lines show any difference. CPU and memory still differ, and timing with them.
+
+Every kind node shares the host's per-user inotify limits, and the full tier needs kind's
+recommended values. It exhausts a stock Linux default such as 128 instances:
+`istio-cni-node` then crash-loops with `watcher create: too many open files` and the istio
+spec times out. The quick tier installs no catalog charts and fits under the defaults. So
+the check fails `make test-e2e-full` (or `E2E_FULL=true`) on a host below kind's values,
+and only warns for the quick tier and `make init`; a development cluster running catalog
+components such as istio can hit the same limit. Raise them as the check prints, as the
+e2e workflow does:
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288
+```
+
+`sysctl -w` lasts until the next reboot; to keep the values, set the same two keys in a
+file under `/etc/sysctl.d/`.
 
 ### Two clusters and the infra-plane targets
 

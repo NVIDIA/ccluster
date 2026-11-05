@@ -143,6 +143,10 @@ with each job's inputs when changing build or generation dependencies.
   covers `catalogs/cluster_base/spire_crds/`, because the suite installs that chart and
   asserts the CRDs it ships. The suite registers its infra-plane cluster with the
   `ccluster` CLI it builds from `cmd/ccluster`, which the Go paths already cover.
+- `test-e2e` uses the kind and node image the Makefile pins, `KIND_VERSION` and
+  `KIND_NODE_IMAGE`, as local runs do; the workflow only raises the runner's inotify
+  limits first. Dependabot updates neither: bump both together, taking the image and its
+  digest from the kind release's notes.
 - `test` also covers `catalogs/**`, because catalog tests read `Chart.yaml`, values and
   templates. Before the suite it fails when `go.mod` and `go.sum` are not tidy, when
   `make client-generate` changes `pkg/client/`, or when `make manifests generate` changes
