@@ -2269,7 +2269,9 @@ func applicationHealthyAndSynced(name string) bool {
 
 // applicationStatusTemplate renders the parts of an Application's status that explain why
 // it is not Healthy and Synced: the overall verdicts, the last sync operation, any
-// conditions, and each resource that is itself not Synced or not Healthy.
+// conditions, and each resource that is itself not Synced or not Healthy. Argo CD 3 keeps
+// resource health in its resource tree instead (resourceHealthSource appTree), so an
+// unhealthy workload shows only in the overall health; dumpNamespace shows which one.
 const applicationStatusTemplate = `health={{ .status.health.status }} sync={{ .status.sync.status }}
 {{- with .status.operationState }}
 operation: {{ .phase }}: {{ .message }}
@@ -2298,13 +2300,26 @@ func applicationStatus(name string, message ...string) func() string {
 	}
 }
 
-// dumpNamespace writes a namespace's pods and events to the GinkgoWriter, for specs whose
-// failure lies in what Argo CD deployed rather than in the operator.
+// dumpNamespace writes a namespace's pods, events and container logs to the GinkgoWriter,
+// for specs whose failure lies in what Argo CD deployed rather than in the operator. The
+// previous instance's logs are what explain a crash-looping container.
 func dumpNamespace(namespace string) {
-	for _, args := range [][]string{
-		{"get", "pods", "-n", namespace, "-o", "wide"},
-		{"get", "events", "-n", namespace, "--sort-by=.lastTimestamp"},
-	} {
+	out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", namespace,
+		"-o", "jsonpath={.items[*].metadata.name}"))
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to list pods in %s: %s\n", namespace, err)
+	}
+	pods := strings.Fields(out)
+	commands := make([][]string, 0, 2+2*len(pods))
+	commands = append(commands,
+		[]string{"get", "pods", "-n", namespace, "-o", "wide"},
+		[]string{"get", "events", "-n", namespace, "--sort-by=.lastTimestamp"})
+	for _, pod := range pods {
+		commands = append(commands,
+			[]string{"logs", pod, "-n", namespace, "--all-containers", "--prefix", "--tail=200"},
+			[]string{"logs", pod, "-n", namespace, "--all-containers", "--prefix", "--tail=200", "--previous"})
+	}
+	for _, args := range commands {
 		out, err := utils.Run(exec.Command("kubectl", args...))
 		if err != nil {
 			out = err.Error()
