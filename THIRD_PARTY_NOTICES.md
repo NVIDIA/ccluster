@@ -55,6 +55,7 @@ bundles none.
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
 | ingress-nginx | 4.11.5 | https://kubernetes.github.io/ingress-nginx | Apache-2.0 |
+| kai-scheduler | v0.15.3 | oci://ghcr.io/kai-scheduler/kai-scheduler | Apache-2.0 |
 | keda | 2.19.0 | https://kedacore.github.io/charts | Apache-2.0 |
 | kube-prometheus-stack | 73.1.0 | https://prometheus-community.github.io/helm-charts | Apache-2.0 |
 | longhorn | 1.7.2 | https://charts.longhorn.io | Apache-2.0 |

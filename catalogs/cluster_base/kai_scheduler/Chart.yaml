@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: cluster_base_kai_scheduler
+description: KAI Scheduler - GPU-aware pod scheduler with hierarchical queues, the scheduler the deployments charts address by default
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/kai_scheduler
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+dependencies:
+  - name: kai-scheduler
+    version: v0.15.3
+    repository: oci://ghcr.io/kai-scheduler/kai-scheduler
