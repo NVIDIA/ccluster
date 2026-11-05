@@ -148,8 +148,10 @@ spec:
           volumes:
             {{- include "dynamo.pvcVolumes" .Values | trim | nindent 12 }}
           {{- end }}
+          {{- with include "dynamo.imagePullSecrets" .Values | trim }}
           imagePullSecrets:
-            {{- include "dynamo.imagePullSecrets" .Values | trim | nindent 12 }}
+            {{- . | nindent 12 }}
+          {{- end }}
           # The Frontend is CPU-only, so it carries no GPU-type nodeAffinity
           # (that is only for the workers). It keeps the dedicated_compute
           # toleration so it can still schedule on an all-GPU-node cluster.

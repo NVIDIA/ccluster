@@ -8,8 +8,6 @@ metadata:
   labels:
     # Enable istio sidecar injection
     istio-injection: enabled
-    # Enable ECR image pull secret for namespace
-    ecr-anywhere.centml.ai/namespace: enabled
     # Enforce Pod Security Standard "baseline" for all pods in namespace.
     # Baseline allows root containers and default Docker capabilities (chown, setuid, etc.)
     # while blocking dangerous operations (privileged containers, hostPath, host namespaces).
