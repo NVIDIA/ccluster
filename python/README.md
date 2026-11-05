@@ -191,8 +191,8 @@ one has disappeared.
 ## Command line
 
 The package installs a `ccluster` command, built on click. Run without a subcommand, it
-prints its usage. A Go build of the same command, with `--context` in place of `-cp` and
-`-ip`, is also released; see
+prints its usage. A Go build of the same command, taking the same long flags but not
+`-cp` and `-ip`, is also released; see
 [the main README](https://github.com/NVIDIA/ccluster#command-line). Both read the same
 config file, but install only one of them: the two are both called `ccluster`, and the
 first on your `PATH` wins.

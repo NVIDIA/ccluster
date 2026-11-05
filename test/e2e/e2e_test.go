@@ -89,7 +89,7 @@ var _ = Describe("Manager", Ordered, func() {
 		// Only now: init checks that the cluster serves CCLInfraPlane, whose CRD the cp
 		// chart just installed.
 		By("pointing the ccluster CLI at the control-plane cluster")
-		_, err = utils.Run(cclusterCLI("init", "--context", utils.CP().Context()))
+		_, err = utils.Run(cclusterCLI("init", "--control-plane", utils.CP().Context()))
 		Expect(err).NotTo(HaveOccurred(), "ccluster init failed")
 	})
 

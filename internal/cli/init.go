@@ -21,7 +21,7 @@ const kindCCLInfraPlane = "CCLInfraPlane"
 func newInitCommand() *cobra.Command {
 	var kubeContext string
 	cmd := &cobra.Command{
-		Use:   "init --context CONTEXT",
+		Use:   "init --control-plane CONTEXT",
 		Short: "Set the control plane the other commands work with.",
 		Long: `Set the control plane the other commands work with.
 
@@ -56,8 +56,8 @@ or ~/.config.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubeconfig context of the control-plane cluster.")
-	_ = cmd.MarkFlagRequired("context")
+	cmd.Flags().StringVar(&kubeContext, "control-plane", "", "Kubeconfig context of the control-plane cluster.")
+	_ = cmd.MarkFlagRequired("control-plane")
 	return cmd
 }
 

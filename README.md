@@ -95,8 +95,8 @@ xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
 
 Use `darwin_amd64` on an Intel Mac.
 
-`pip install ccluster-py` also installs a `ccluster` command with the same subcommands and
-config file, taking `-cp`/`-ip` in place of `--context`; see the
+`pip install ccluster-py` also installs a `ccluster` command with the same subcommands,
+flags and config file, which also accepts the short forms `-cp` and `-ip`; see the
 [Python README](python/README.md#command-line). Install only one of them: both are called
 `ccluster`, and the first on your `PATH` wins.
 
@@ -108,14 +108,14 @@ kubeconfig, found through `$KUBECONFIG` or `~/.kube/config` as `kubectl` finds i
 again to switch control planes.
 
 ```bash
-ccluster init --context kind-ccluster-cp
+ccluster init --control-plane kind-ccluster-cp
 ```
 
 `ccluster register` then registers an infra-plane cluster, also named by its kubeconfig
 context, with that control plane:
 
 ```bash
-ccluster register edge-1 -n tenant-a --context kind-ccluster-ip --domain edge-1.example.com \
+ccluster register edge-1 -n tenant-a --infra-plane kind-ccluster-ip --domain edge-1.example.com \
     --server https://ccluster-ip-control-plane:6443
 ```
 
