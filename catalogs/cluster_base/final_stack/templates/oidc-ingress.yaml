@@ -11,7 +11,7 @@ metadata:
   name: spire-oidc-discovery-provider
   namespace: spire-system
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: acme-ca
 spec:
   ingressClassName: nginx
   tls:

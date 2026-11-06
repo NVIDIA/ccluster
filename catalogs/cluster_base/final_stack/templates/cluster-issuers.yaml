@@ -3,15 +3,24 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */ -}}
 ---
+# acme-ca is the issuer the OIDC discovery Ingress and the deployment charts' Ingresses
+# (catalogs/deployments/inference_deployment and dynamo_deployment) request.
+#
+# The name is shared with platform-managed clusters, where acme-ca is a DNS-01 issuer
+# for a different CA. Here it is Let's Encrypt over HTTP-01 through the nginx ingress
+# class: issuance needs a publicly resolvable domain and port 80 on the ingress
+# LoadBalancer reachable from the internet. Each failed validation counts against
+# Let's Encrypt's limit of 5 per host per hour.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: acme-ca
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
+    email: ccluster-dev@nvidia.com
     privateKeySecretRef:
-      name: letsencrypt-prod-account-key
+      name: acme-ca-account-key
     solvers:
       - http01:
           ingress:
