@@ -29,8 +29,10 @@ const (
 	PlacementSpread = "spread"
 )
 
-// GPUPodRuntimeClassNVIDIA is the RuntimeClass that gpu-operator v25.10.0 and later
-// create. Set Admission.GPUPodRuntimeClassName to it on such clusters.
+// GPUPodRuntimeClassNVIDIA is the RuntimeClass gpu-operator creates. Set
+// Admission.GPUPodRuntimeClassName to it on clusters where every GPU node's containerd
+// has an "nvidia" runtime handler, as gpu-operator's container toolkit configures when
+// it is enabled.
 const GPUPodRuntimeClassNVIDIA = "nvidia"
 
 // Values is the top-level values document for catalogs/cluster_base/kai_scheduler.
@@ -44,9 +46,15 @@ type Values struct {
 	DefaultPriorities *DefaultPriorities `json:"defaultPriorities,omitempty"`
 }
 
-// ChartValues are the upstream kai-scheduler values worth setting per cluster. The
-// operator reads them from the kai-config Config CR, which the upstream chart applies
-// from a hook Job after each sync rather than as an Application resource.
+// ChartValues are the upstream kai-scheduler values worth setting per cluster.
+//
+// Scheduler.Resources, Binder and Admission reach the KAI components through the
+// kai-config Config CR, which the upstream chart applies from a hook Job rather than as
+// an Application resource. Argo CD does not diff hooks, so the chart also renders a
+// ConfigMap holding a checksum of these values: changing them marks the Application
+// OutOfSync, and the sync reruns the hook. Scheduler.PlacementStrategy goes to the
+// SchedulingShard, Operator to the KAI operator Deployment and DefaultQueue to the
+// default Queues, all ordinary Application resources.
 type ChartValues struct {
 	Scheduler *Scheduler `json:"scheduler,omitempty"`
 	Binder    *Workload  `json:"binder,omitempty"`
@@ -86,10 +94,12 @@ type Operator struct {
 
 // Admission configures KAI's admission webhook.
 type Admission struct {
-	// GPUPodRuntimeClassName is the RuntimeClass the webhook requires of GPU pods; ""
-	// turns the check off. The chart ships "", because gpu-operator before v25.10.0,
-	// including the version in this catalog, creates no such class. Set
-	// GPUPodRuntimeClassNVIDIA with a later gpu-operator.
+	// GPUPodRuntimeClassName is the RuntimeClass the webhook sets on GPU pods that
+	// name none; "" turns that off. The chart ships "": gpu-operator creates the
+	// class, but this catalog runs it with its container toolkit off, so a node's
+	// containerd may have no "nvidia" runtime handler, and a GPU pod given the class
+	// there would not start. Set GPUPodRuntimeClassNVIDIA where every GPU node has
+	// one.
 	GPUPodRuntimeClassName *string `json:"gpuPodRuntimeClassName,omitempty"`
 }
 
@@ -97,6 +107,8 @@ type Admission struct {
 type DefaultQueue struct {
 	// CreateDefaultQueue creates the queue and its parent, both with unlimited quota.
 	// The chart ships it on, so that pods without a kai.scheduler/queue label schedule.
+	// Their fair share is then the whole cluster, so KAI does not reclaim what they
+	// hold for other queues.
 	CreateDefaultQueue *bool `json:"createDefaultQueue,omitempty"`
 }
 
