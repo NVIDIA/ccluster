@@ -2,10 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Chart defaults for catalogs/cluster_base/kai_scheduler. See component.go for the schema.
 #
-# The operator deploys the scheduler, binder, pod grouper and the rest from the kai-config
-# Config CR, which the upstream chart applies from a post-install/post-upgrade hook Job.
-# Argo CD runs that Job as a PostSync hook, so Config is not an Application resource:
-# changes to the values below reach it on the next sync, not through a diff.
+# Where the values below end up:
+#   - scheduler.resources, binder.resources and admission: the kai-config Config CR, from
+#     which the KAI operator deploys the scheduler, binder, admission webhook and the rest.
+#   - scheduler.placementStrategy and scheduler.args: the SchedulingShard "default".
+#   - operator: the KAI operator Deployment.
+#   - defaultQueue: the default Queues.
+# All but kai-config are ordinary Application resources and diff as usual. The upstream
+# chart applies kai-config from a post-install/post-upgrade hook Job, which Argo CD runs
+# as a PostSync hook and leaves out of its diff, so a change that reaches only kai-config
+# would leave the Application Synced and the Config CR stale. templates/
+# kai-config-checksum.yaml exposes every change to the diff, so the sync it triggers runs
+# the hook again.
 kai-scheduler:
   scheduler:
     # Fill a node's GPUs before spilling onto another.
@@ -46,15 +54,18 @@ kai-scheduler:
         cpu: 500m
         memory: 1Gi
   admission:
-    # The admission webhook rejects GPU pods that do not run under this RuntimeClass.
-    # gpu-operator before v25.10.0, including the one in this catalog, creates no
-    # "nvidia" RuntimeClass, so the check is off. Must be "", not null: null falls back
-    # to the upstream default "nvidia".
+    # The RuntimeClass the admission webhook sets on GPU pods that name none; "" turns
+    # that off. gpu-operator creates the "nvidia" RuntimeClass, but this catalog runs it
+    # with its container toolkit off, so whether a node's containerd has an "nvidia"
+    # runtime handler is up to the host. A pod given the class on a node without one
+    # fails to start. Must be "", not null: null falls back to the upstream default
+    # "nvidia".
     gpuPodRuntimeClassName: ""
   # A parent and child queue for pods without a kai.scheduler/queue label, unlimited so
-  # that such pods always schedule. catalogs/resources/kai_gpu_queues builds its own
-  # quota tree beside it, under its own root. The pod grouper puts unlabelled pods in
-  # default-queue, so the child keeps that name.
+  # that such pods always schedule. Unlimited quota makes their fair share the whole
+  # cluster, so KAI does not reclaim what they hold for other queues, such as those
+  # catalogs/resources/kai_gpu_queues builds beside it under its own root. The pod
+  # grouper puts unlabelled pods in default-queue, so the child keeps that name.
   defaultQueue:
     createDefaultQueue: true
     childName: default-queue

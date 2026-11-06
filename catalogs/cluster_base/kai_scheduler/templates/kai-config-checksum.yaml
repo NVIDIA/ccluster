@@ -1,0 +1,24 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+{{- /*
+Nothing reads this ConfigMap. The upstream chart applies the kai-config Config CR from a
+post-install/post-upgrade hook Job, which Argo CD runs as a PostSync hook and leaves out
+of its diff: a change to scheduler.resources, binder.resources or admission alters only
+the hook's own ConfigMap, so the Application would stay Synced, automated sync would not
+run, and kai-config would keep its old values. This is an ordinary resource whose data
+changes with the values, so any change marks the Application OutOfSync and the sync that
+follows runs the hook again. Hashing all of the upstream values and globals, not only the
+fields kai-config reads, can rerun the hook needlessly, which is harmless: it reapplies
+the same CR.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kai-config-checksum
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cluster_base.labels" . | nindent 4 }}
+data:
+  checksum: {{ dict "kai-scheduler" (index .Values "kai-scheduler") "global" .Values.global | toJson | sha256sum | quote }}
