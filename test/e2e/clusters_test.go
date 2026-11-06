@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -155,50 +154,6 @@ func undeployIPOperator(c utils.Cluster) {
 	_, _ = utils.Run(c.Kubectl("delete", "ns", ipNamespace, "--ignore-not-found"))
 }
 
-// spireCRDs are the CRDs the spire_crds chart installs, which its chart keeps on
-// uninstall.
-var spireCRDs = []string{
-	"clusterfederatedtrustdomains.spire.spiffe.io",
-	"clusterspiffeids.spire.spiffe.io",
-	"clusterstaticentries.spire.spiffe.io",
-}
-
-// installSpireCRDs installs catalogs/cluster_base/spire_crds on c. It is the one
-// cluster_base component with a Verifier of its own, so installing it is what turns the
-// infra-plane operator's Verified condition True.
-func installSpireCRDs(c utils.Cluster) {
-	GinkgoHelper()
-
-	By("installing the spire_crds chart on " + c.Name)
-	// From a copy, so fetching the upstream dependency leaves no Chart.lock or tarball
-	// in the working tree.
-	chartDir := filepath.Join(GinkgoT().TempDir(), "spire_crds")
-	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "spire_crds"), chartDir))
-	Expect(err).NotTo(HaveOccurred())
-	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "spire-crds", chartDir,
-		"--kube-context", c.Context(), "--dependency-update",
-		"--namespace", "spire-system", "--create-namespace", "--wait"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install the spire_crds chart on %s", c.Name)
-}
-
-// uninstallSpireCRDs removes what installSpireCRDs installed from c.
-func uninstallSpireCRDs(c utils.Cluster) {
-	By("removing the spire_crds chart and its CRDs from " + c.Name)
-	_, _ = utils.Run(exec.Command("helm", "uninstall", "spire-crds", "--kube-context", c.Context(),
-		"--namespace", "spire-system", "--ignore-not-found"))
-	_, _ = utils.Run(c.Kubectl(append([]string{"delete", "crd", "--ignore-not-found"}, spireCRDs...)...))
-	_, _ = utils.Run(c.Kubectl("delete", "ns", "spire-system", "--ignore-not-found"))
-}
-
-// expectOnlySpireCRDsFailing asserts that a Verified message names spire_crds as the
-// only failing cluster_base component, for want of its CRDs - "not found" rather than a
-// read error, which proves the ip chart's ClusterRole lets the manager read CRDs.
-func expectOnlySpireCRDsFailing(g Gomega, message string) {
-	g.Expect(message).To(ContainSubstring(
-		"failing: catalogs/cluster_base/spire_crds (CRD " + spireCRDs[0] + " not found"))
-	g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
-}
-
 // clusterConfigField reads a field of a CCLInfraPlane's copy of its infra plane's
 // CCLClusterConfig status, by JSONPath relative to .status.clusterConfig.
 func clusterConfigField(planeName, path string) string {
@@ -221,8 +176,7 @@ func clusterConfigOn(c utils.Cluster, path string) (string, error) {
 const crossClusterTimeout = 3 * time.Minute
 
 // watchTimeout is the patience for a status change on an infra-plane cluster to reach the
-// CCLInfraPlane, which only the remote watch brings over in time. It covers the
-// infra-plane operator's one-minute recheck of a failing component and stays well inside
+// CCLInfraPlane, which only the remote watch brings over in time. It stays well inside
 // the cp operator's default --infraplane-resync-period of 5m, so a resync cannot stand in
 // for a broken watch.
 const watchTimeout = 2 * time.Minute

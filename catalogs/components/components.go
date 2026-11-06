@@ -41,8 +41,6 @@ import (
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
 	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
@@ -84,8 +82,6 @@ var ClusterBase = []Component{
 	{networkoperator.Chart, networkoperator.Values{}},
 	{otelcollector.Chart, otelcollector.Values{}},
 	{prometheusadapter.Chart, prometheusadapter.Values{}},
-	{spire.Chart, spire.Values{}},
-	{spirecrds.Chart, spirecrds.Values{}},
 }
 
 // Deployments is the tenant workload charts, sorted by chart.

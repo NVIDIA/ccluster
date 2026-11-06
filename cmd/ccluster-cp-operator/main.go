@@ -131,7 +131,7 @@ func main() {
 	flag.StringVar(&baseDomain, "base-domain", "",
 		"Required. The DNS domain every CCLInfraPlane's domain is derived under: "+
 			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
-			"CCLClusterConfig, where it is also the SPIFFE trust domain, and publishes the plane's "+
+			"CCLClusterConfig and publishes the plane's "+
 			"records under it. Set it once: changing it moves every plane's domain.")
 	flag.IntVar(&componentSetMaxConcurrentReconciles, "componentset-max-concurrent-reconciles", 4,
 		"How many CCLComponentSets are reconciled at once. CCLInfraPlanes are always "+

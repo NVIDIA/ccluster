@@ -22,8 +22,6 @@ on:
       - 'config/**'
       - 'charts/**'
       - 'test/**'
-      # The suite installs this chart and asserts the CRD names it ships.
-      - 'catalogs/cluster_base/spire_crds/**'
       - '.github/workflows/test-e2e.yml'
 
 jobs:

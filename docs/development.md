@@ -132,7 +132,7 @@ When adding or changing a component:
   `verifierregistry.Get()` in `internal/registry/verifier_registry`, which must cover exactly
   `components.ClusterBase`, in its order (`TestGet` fails otherwise). Start with `alwaysVerified`.
   A check of the chart's own is an exported `Verify` function beside `New` in the chart's
-  `component.go` with the `verifierregistry.VerifyFunc` signature (see `spire_crds`; the chart package
+  `component.go` with the `verifierregistry.VerifyFunc` signature (the chart package
   never imports controller code), reads live objects only (never Argo CD or Helm state),
   and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`, the
   kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`.

@@ -33,8 +33,6 @@ import (
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
 	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
@@ -113,8 +111,6 @@ func Get() *Registry {
 	r.Register(networkoperator.Chart, Values[networkoperator.Values]())
 	r.Register(otelcollector.Chart, Values[otelcollector.Values]())
 	r.Register(prometheusadapter.Chart, Values[prometheusadapter.Values]())
-	r.Register(spire.Chart, Values[spire.Values]())
-	r.Register(spirecrds.Chart, Values[spirecrds.Values]())
 	r.Register(computedeployment.Chart, Values[computedeployment.Values]())
 	r.Register(dynamodeployment.Chart, Values[dynamodeployment.Values]())
 	r.Register(inferencedeployment.Chart, Values[inferencedeployment.Values]())

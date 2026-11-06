@@ -80,7 +80,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | external-dns | Control-plane cluster only, optional. Publishes the `DNSEndpoint`s the operator writes into the DNS zones the user created (§3). Infra planes run no external-dns: Ingress hosts resolve through each plane's wildcard records, and a `compute_deployment`'s SSH Service gets no DNS name until #221. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 15 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -108,7 +108,7 @@ The cluster's DNS domain is not in the spec: the operator derives it as
 flag, so `ccluster-local` above, with `--base-domain=example.com`, is
 `ccluster-local.default.example.com`. A CEL rule keeps the name a DNS label, as a
 namespace already is. The domain is written to the cluster's `CCLClusterConfig` (below),
-where it is also the SPIFFE trust domain, and with DNS published `*.<lb>.<domain>` resolves
+and with DNS published `*.<lb>.<domain>` resolves
 to each LoadBalancer the plane reports (below). The control-plane operator records the
 domain in the plane's `status.domain`, which its `Domain` column shows, on every status
 write, so it shows even while the cluster is unreachable. The infra-plane operator reports
@@ -307,8 +307,8 @@ therefore retried every minute, and a written one is reconciled again every
 `ccluster.nvidia.com/loadbalancer` label value (§3a) and `<domain>` the plane's
 `<name>.<namespace>.<base domain>`, which the operator copies without
 treating any value specially (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
-chose `nginx`, so `*.nginx.<domain>` is the cluster's ingress and an Ingress host such
-as `oidc-discovery.nginx.<domain>` resolves to it. The `inference_deployment` and
+chose `nginx`, so `*.nginx.<domain>` is the cluster's ingress and every Ingress host
+under it resolves to it. The `inference_deployment` and
 `dynamo_deployment` charts, given the plane's domain, put their Ingress at
 `<name>.nginx.<domain>`. The host leaves out the namespace, so deployments on one plane
 need distinct names; nothing yet enforces it. Naming the record after the label, rather
@@ -418,15 +418,14 @@ spec:
 
 The control plane knows what it *asked* Argo CD to deploy onto a cluster, and Argo CD's
 health tells it whether the sync landed. Neither says whether the platform stack on that
-cluster actually works and is configured for it — whether SPIRE issues identities in the
-cluster's own trust domain, whether external-dns is filtered to the cluster's zone,
-whether the ACME issuer ever became Ready. That is what the infra-plane operator answers,
+cluster actually works and is configured for it — whether the scheduler and GPU operator
+are running, whether the ACME issuer ever became Ready. That is what the infra-plane operator answers,
 and it answers it the same way whichever installer put the charts there: a
 `CCLComponentSet` from the control plane, or a user running `helm install` themselves.
 
 `CCLClusterConfig` is the operator's one input, a cluster-scoped singleton (the CRD's CEL
 rule admits only the name `cluster`). Its spec carries just what the checks consume today:
-the cluster's domain, which is also its SPIFFE trust domain. For a registered cluster the
+the cluster's domain. For a registered cluster the
 control-plane operator creates it with the `CCLInfraPlane`'s derived domain (§3); a cluster
 run without a control plane gets one by hand. The operator is idle until it exists. Each
 pass reports the `spec.domain` it verified against in `status.domain`, with the
@@ -454,7 +453,7 @@ or order, so no cluster_base chart goes unverified.
 
 Every cluster_base chart starts registered with `alwaysVerified`, which passes without
 looking; a chart replaces it with a check of its own when it has something to
-look at, as spire_crds does with `common.CRDsEstablished` from `catalogs/common`. Those checks read **live objects
+look at. Those checks read **live objects
 only** — never Argo CD's Application status, never Helm release Secrets. Argo CD renders
 and applies without creating Helm releases, so a release-based check would fail in
 auto-mode; an Argo CD-based check would fail in self-mode. A check returns `nil` when
@@ -1053,23 +1052,19 @@ runs one worker (§3).
 
 - **`dependsOn`.** Ordering is a straight line; there is no dependency graph and no
   parallelism between independent components. This has a concrete cost now that
-  `catalogs/cluster_base` ships a full 17-component order: the legacy Python catalog it was
+  `catalogs/cluster_base` ships a full 15-component order: the legacy Python catalog it was
   taken from gave four components one sync wave and two others another, and those six could
-  have installed concurrently. Here they serialise, so installing the catalog is seventeen
+  have installed concurrently. Here they serialise, so installing the catalog is fifteen
   sequential convergence waits.
 - **Global values.** The legacy catalog threaded a `Shared` object into every component and
-  deep-merged computed per-cluster defaults under the user's values — SPIFFE helper sidecars,
-  AWS IRSA environment, Istio CNI paths chosen by cloud provider. None of that is ported.
-  `catalogs/cluster_base/final_stack` is the visible casualty: it has no chart-level values
-  and its five templates read `.Values.global.cluster.domain`, so it renders against the
-  chart's placeholder domain until globals land.
+  deep-merged computed per-cluster defaults under the user's values — AWS IRSA
+  environment, Istio CNI paths chosen by cloud provider. None of that is ported.
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Only spire_crds has a check of its own (its CRDs are Established);
-  every other cluster_base chart is still registered with `alwaysVerified`, so the
-  remaining checks (SPIRE's trust domain against `spec.domain`, workload readiness,
-  issuer readiness) are not written yet.
+- **Real Verifiers.** Every cluster_base chart is still registered with `alwaysVerified`,
+  so `Verified` is True on any cluster with a `CCLClusterConfig`. The checks (workload
+  readiness, issuer readiness, CRDs Established) are not written yet.
 - **Per-component verification results.** The `CCLClusterConfig` status reaches the
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.

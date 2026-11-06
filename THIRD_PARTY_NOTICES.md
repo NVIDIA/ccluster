@@ -62,8 +62,6 @@ bundles none.
 | network-operator | v24.4.0 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
 | opentelemetry-collector | 0.130.2 | https://open-telemetry.github.io/opentelemetry-helm-charts | Apache-2.0 |
 | prometheus-adapter | 4.14.1 | https://prometheus-community.github.io/helm-charts | Apache-2.0 |
-| spire | 0.20.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
-| spire-crds | 0.4.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
 
 ## Notes
 

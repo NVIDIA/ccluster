@@ -26,8 +26,6 @@ import (
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
 	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 )
 
 func Components(
@@ -36,7 +34,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as seventeen error checks. None
+	// the catalog reads as the list it is rather than as fifteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -50,16 +48,6 @@ func Components(
 	}
 
 	components := []cclusternvidiacomv1alpha1.ComponentSpec{
-		{
-			Name:           "spire-crds",
-			InfraPlaneRef:  ref,
-			ComponentEntry: entry(spirecrds.New("spire-system", spirecrds.Values{})),
-		}, // wave -70
-		{
-			Name:           "spire",
-			InfraPlaneRef:  ref,
-			ComponentEntry: entry(spire.New("spire-system", spire.Values{})),
-		}, // wave -65
 		{
 			Name:           "kube-prometheus-stack",
 			InfraPlaneRef:  ref,

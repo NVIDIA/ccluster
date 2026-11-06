@@ -1042,7 +1042,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			config.Status.ObservedGeneration = config.Generation
 			apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 				Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: metav1.ConditionFalse, Reason: cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified,
-				Message: "spire: trust domain mismatch",
+				Message: "keda: operator not ready",
 			})
 			config.Status.LoadBalancers = []cclusternvidiacomv1alpha1.LoadBalancerStatus{
 				{Name: "ingress", IP: "192.0.2.10"},
@@ -1061,7 +1061,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(verified).NotTo(BeNil())
 			Expect(verified.Status).To(Equal(metav1.ConditionFalse))
 			Expect(verified.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified))
-			Expect(verified.Message).To(Equal("spire: trust domain mismatch"))
+			Expect(verified.Message).To(Equal("keda: operator not ready"))
 			Expect(copied.LoadBalancer("ingress")).To(Equal(
 				&cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"}))
 

@@ -111,7 +111,7 @@ def test_infra_plane_status_carries_the_cluster_config_status():
         "type": "Verified",
         "status": "False",
         "reason": "ComponentsNotVerified",
-        "message": "spire",
+        "message": "keda",
         "lastTransitionTime": "2026-09-16T00:00:00Z",
     }
     status = CCLInfraPlaneStatus.model_validate(
