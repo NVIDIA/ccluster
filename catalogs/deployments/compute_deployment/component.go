@@ -26,14 +26,6 @@ const Chart = "catalogs/deployments/compute_deployment"
 type Values struct {
 	deployments.Workload
 
-	// Domain is the DNS zone the deployment's hostname is created in, by external-dns
-	// from the Service. The host is <name>.<namespace>.<domain> unless DeploymentURL
-	// overrides it. Required.
-	Domain string `json:"domain"`
-
-	// DeploymentURL replaces the derived hostname with a full one.
-	DeploymentURL *string `json:"deploymentUrl,omitempty"`
-
 	// ContainerPort is the port the SSH launcher listens on inside the pod. Required.
 	ContainerPort int32 `json:"containerPort"`
 
@@ -68,8 +60,7 @@ type Values struct {
 }
 
 // New returns the compute_deployment chart entry, installed into namespace with
-// values. The chart's objects are all created in that namespace, and its hostname is
-// derived from it.
+// values. The chart's objects are all created in that namespace.
 func New(
 	namespace string,
 	values Values,
@@ -92,7 +83,6 @@ func (v Values) Validate() error {
 		v.Workload.Validate(),
 		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
 		deployments.MissingError(deployments.Missing(
-			deployments.Field{Name: "domain", Value: v.Domain},
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},
 			deployments.Field{Name: "sshPublicKey", Value: v.SSHPublicKey},
 		)),

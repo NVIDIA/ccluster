@@ -28,7 +28,6 @@ import (
 
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -72,7 +71,6 @@ var NamespaceBase = []Component{
 var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}},
 	{certmanager.Chart, certmanager.Values{}},
-	{externaldns.Chart, externaldns.Values{}},
 	{finalstack.Chart, finalstack.Values{}},
 	{fluentbit.Chart, fluentbit.Values{}},
 	{gpuoperator.Chart, gpuoperator.Values{}},

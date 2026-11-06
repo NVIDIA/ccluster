@@ -20,7 +20,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -101,7 +100,6 @@ func Get() *Registry {
 	r.Register(namespacebase.Chart, Values[namespacebase.Values]())
 	r.Register(argorollouts.Chart, Values[argorollouts.Values]())
 	r.Register(certmanager.Chart, Values[certmanager.Values]())
-	r.Register(externaldns.Chart, Values[externaldns.Values]())
 	r.Register(finalstack.Chart, Values[finalstack.Values]())
 	r.Register(fluentbit.Chart, Values[fluentbit.Values]())
 	r.Register(gpuoperator.Chart, Values[gpuoperator.Values]())

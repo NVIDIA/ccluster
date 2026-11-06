@@ -9,7 +9,6 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
     service.beta.kubernetes.io/aws-load-balancer-type: external
-    external-dns.alpha.kubernetes.io/hostname: {{ default (printf "%s.%s.%s" .Values.name .Release.Namespace .Values.domain) .Values.deploymentUrl }}
   labels:
     platform.centml.ai/deployment_id: "{{ .Values.deploymentId }}"
   name: "{{ .Values.name }}"

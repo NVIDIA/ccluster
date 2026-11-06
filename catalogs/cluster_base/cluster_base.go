@@ -13,7 +13,6 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -37,7 +36,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as eighteen error checks. None
+	// the catalog reads as the list it is rather than as seventeen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -81,11 +80,6 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(ingressnginx.New("ingress-nginx", ingressnginx.Values{})),
 		}, // wave -40
-		{
-			Name:           "external-dns",
-			InfraPlaneRef:  ref,
-			ComponentEntry: entry(externaldns.New("external-dns", externaldns.Values{})),
-		}, // wave  10
 		{
 			Name:           "final-stack",
 			InfraPlaneRef:  ref,
