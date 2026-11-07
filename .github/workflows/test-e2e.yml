@@ -22,8 +22,9 @@ on:
       - 'config/**'
       - 'charts/**'
       - 'test/**'
-      # The suite installs this chart to turn the ip operator's verdict True.
-      - 'catalogs/cluster_base/metrics_server/**'
+      # The suite installs catalog charts, such as metrics_server to turn the ip
+      # operator's verdict True.
+      - 'catalogs/**'
       - '.github/workflows/test-e2e.yml'
 
 jobs:
