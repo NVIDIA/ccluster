@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -154,6 +155,43 @@ func undeployIPOperator(c utils.Cluster) {
 	_, _ = utils.Run(c.Kubectl("delete", "ns", ipNamespace, "--ignore-not-found"))
 }
 
+// installMetricsServer installs catalogs/cluster_base/metrics_server on c. kind ships no
+// metrics server, and the chart's Verifier checks the resource metrics API, so installing
+// it is what turns the infra-plane operator's Verified condition True.
+func installMetricsServer(c utils.Cluster) {
+	GinkgoHelper()
+
+	By("installing the metrics_server chart on " + c.Name)
+	// From a copy, so fetching the upstream dependency leaves no Chart.lock or tarball
+	// in the working tree.
+	chartDir := filepath.Join(GinkgoT().TempDir(), "metrics_server")
+	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "metrics_server"), chartDir))
+	Expect(err).NotTo(HaveOccurred())
+	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "metrics-server", chartDir,
+		"--kube-context", c.Context(), "--dependency-update",
+		"--values", filepath.Join("test", "e2e", "testdata", "metrics-server-kind-values.yaml"),
+		"--namespace", "kube-system", "--wait"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the metrics_server chart on %s", c.Name)
+}
+
+// uninstallMetricsServer removes what installMetricsServer installed from c, the
+// APIService with it.
+func uninstallMetricsServer(c utils.Cluster) {
+	By("removing the metrics_server chart from " + c.Name)
+	_, _ = utils.Run(exec.Command("helm", "uninstall", "metrics-server", "--kube-context", c.Context(),
+		"--namespace", "kube-system", "--ignore-not-found", "--wait"))
+}
+
+// expectOnlyMetricsServerFailing asserts that a Verified message names metrics_server
+// as the only failing cluster_base component, for want of its APIService - "not found"
+// rather than a read error, which proves the ip chart's ClusterRole lets the manager
+// read APIServices.
+func expectOnlyMetricsServerFailing(g Gomega, message string) {
+	g.Expect(message).To(ContainSubstring(
+		"failing: catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
+	g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
+}
+
 // clusterConfigField reads a field of a CCLInfraPlane's copy of its infra plane's
 // CCLClusterConfig status, by JSONPath relative to .status.clusterConfig.
 func clusterConfigField(planeName, path string) string {
@@ -176,7 +214,8 @@ func clusterConfigOn(c utils.Cluster, path string) (string, error) {
 const crossClusterTimeout = 3 * time.Minute
 
 // watchTimeout is the patience for a status change on an infra-plane cluster to reach the
-// CCLInfraPlane, which only the remote watch brings over in time. It stays well inside
+// CCLInfraPlane, which only the remote watch brings over in time. It covers the
+// infra-plane operator's one-minute recheck of a failing component and stays well inside
 // the cp operator's default --infraplane-resync-period of 5m, so a resync cannot stand in
 // for a broken watch.
 const watchTimeout = 2 * time.Minute

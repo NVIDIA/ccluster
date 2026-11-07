@@ -461,6 +461,13 @@ the component passes, and otherwise an error whose text says why, which the cond
 shows next to the chart; the CCLClusterConfig spec is what it compares the cluster
 against.
 
+A check verifies what the component provides, not necessarily its own objects, where the
+cluster may already provide it. `metrics_server` is the example: managed clusters such as
+GKE and AKS run their own metrics-server, which the chart cannot be installed over since
+only one server can back the `v1beta1.metrics.k8s.io` APIService. Its check passes when
+that APIService is `Available`, whichever server backs it, so a plane that leaves the
+chart out of its `cluster_base` set verifies the same.
+
 ### The controller
 
 `CCLClusterConfigReconciler` (`internal/controller/ip/cclclusterconfig_controller.go`)
@@ -1062,9 +1069,9 @@ runs one worker (§3).
 - **No rollout timeout.** A component that never converges blocks the rest indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Every cluster_base chart is still registered with `alwaysVerified`,
-  so `Verified` is True on any cluster with a `CCLClusterConfig`. The checks (workload
-  readiness, issuer readiness, CRDs Established) are not written yet.
+- **Real Verifiers.** Only `metrics_server` has a check of its own; every other
+  cluster_base chart is still registered with `alwaysVerified`. The remaining checks
+  (workload readiness, issuer readiness, CRDs Established) are not written yet.
 - **Per-component verification results.** The `CCLClusterConfig` status reaches the
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.

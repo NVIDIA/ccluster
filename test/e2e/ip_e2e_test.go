@@ -32,6 +32,7 @@ var _ = Describe("IP operator", Ordered, func() {
 	AfterAll(func() {
 		By("removing the CCLClusterConfig")
 		_, _ = utils.Run(ip.Kubectl("delete", "cclclusterconfig", "cluster", "--ignore-not-found"))
+		uninstallMetricsServer(ip)
 	})
 
 	AfterEach(func() {
@@ -78,9 +79,10 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// No cluster_base component has a check of its own yet, so every one is verified on
-	// an empty cluster. The condition coming up True proves the chart's CRD and RBAC let
-	// a real manager reconcile the singleton and write its status.
+	// metrics_server is the one cluster_base component with a check of its own, and kind
+	// ships no metrics server, so the condition starts False naming it alone, and comes
+	// up True once its chart is installed - which proves the chart's CRD and RBAC let a
+	// real manager reconcile the singleton, read APIServices and write its status.
 	It("should report the cluster_base components verified", func() {
 		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
@@ -96,11 +98,21 @@ var _ = Describe("IP operator", Ordered, func() {
 			return parts[0], parts[1]
 		}
 
+		By("reporting metrics_server as the only failing component")
+		Eventually(func(g Gomega) {
+			status, message := verified(g)
+			g.Expect(status).To(Equal("False"))
+			expectOnlyMetricsServerFailing(g, message)
+		}).Should(Succeed())
+
+		installMetricsServer(ip)
+
+		// The operator rechecks failing components every minute.
 		By("reporting every component verified")
 		Eventually(func(g Gomega) {
 			status, message := verified(g)
 			g.Expect(status).To(Equal("True"), message)
 			g.Expect(message).To(HavePrefix("All "))
-		}).Should(Succeed())
+		}).WithTimeout(3 * time.Minute).Should(Succeed())
 	})
 })
