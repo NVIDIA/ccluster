@@ -23,7 +23,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
@@ -78,7 +77,6 @@ func Get() *Registry {
 	r.Register(longhorn.Chart, noDrift)
 	r.Register(metricsserver.Chart, noDrift)
 	r.Register(networkoperator.Chart, noDrift)
-	r.Register(otelcollector.Chart, noDrift)
 	r.Register(prometheusadapter.Chart, noDrift)
 	r.Register(computedeployment.Chart, noDrift)
 	r.Register(dynamodeployment.Chart, noDrift)

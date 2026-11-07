@@ -26,7 +26,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
@@ -88,7 +87,6 @@ func Get() *Registry {
 	r.Register(longhorn.Chart, alwaysVerified)
 	r.Register(metricsserver.Chart, alwaysVerified)
 	r.Register(networkoperator.Chart, alwaysVerified)
-	r.Register(otelcollector.Chart, alwaysVerified)
 	r.Register(prometheusadapter.Chart, alwaysVerified)
 	return r
 }

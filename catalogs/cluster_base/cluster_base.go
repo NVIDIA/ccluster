@@ -24,7 +24,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 )
 
@@ -34,7 +33,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as fifteen error checks. None
+	// the catalog reads as the list it is rather than as fourteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -97,11 +96,6 @@ func Components(
 			Name:           "network-operator",
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(networkoperator.New("network-operator", networkoperator.Values{})),
-		}, // wave  40
-		{
-			Name:           "opentelemetry-collector",
-			InfraPlaneRef:  ref,
-			ComponentEntry: entry(otelcollector.New("opentelemetry", otelcollector.Values{})),
 		}, // wave  40
 		{
 			Name:           "gpu-operator",

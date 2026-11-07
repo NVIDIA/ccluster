@@ -39,7 +39,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
@@ -80,7 +79,6 @@ var ClusterBase = []Component{
 	{longhorn.Chart, longhorn.Values{}},
 	{metricsserver.Chart, metricsserver.Values{}},
 	{networkoperator.Chart, networkoperator.Values{}},
-	{otelcollector.Chart, otelcollector.Values{}},
 	{prometheusadapter.Chart, prometheusadapter.Values{}},
 }
 

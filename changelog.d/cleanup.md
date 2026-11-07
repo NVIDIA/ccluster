@@ -11,6 +11,10 @@
   ConfigMaps in `cert_manager`, `fluent_bit` and `kube_prometheus_stack`. `final_stack`
   now holds only the ClusterIssuer and no longer reads `global.cluster.domain`. An
   existing plane keeps SPIRE until its `cluster_base` CCLComponentSet is reapplied.
+- **Breaking:** `cluster_base` no longer installs the OpenTelemetry Collector. The
+  `opentelemetry_collector` component and its Go and Python values packages are removed;
+  nothing in the catalog sent telemetry to it. An existing plane keeps it until its
+  `cluster_base` CCLComponentSet is reapplied.
 - **Breaking:** `compute_deployment` drops `domain` and `deploymentUrl`, and its SSH
   Service loses its `external-dns.alpha.kubernetes.io/hostname` annotation. A compute
   deployment is reached by its LoadBalancer address until #221 gives it a DNS name.

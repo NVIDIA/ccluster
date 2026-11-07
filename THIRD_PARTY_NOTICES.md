@@ -60,7 +60,6 @@ bundles none.
 | longhorn | 1.7.2 | https://charts.longhorn.io | Apache-2.0 |
 | metrics-server | 3.12.2 | https://kubernetes-sigs.github.io/metrics-server/ | Apache-2.0 |
 | network-operator | v24.4.0 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
-| opentelemetry-collector | 0.130.2 | https://open-telemetry.github.io/opentelemetry-helm-charts | Apache-2.0 |
 | prometheus-adapter | 4.14.1 | https://prometheus-community.github.io/helm-charts | Apache-2.0 |
 
 ## Notes
