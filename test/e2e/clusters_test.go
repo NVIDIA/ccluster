@@ -155,50 +155,73 @@ func undeployIPOperator(c utils.Cluster) {
 	_, _ = utils.Run(c.Kubectl("delete", "ns", ipNamespace, "--ignore-not-found"))
 }
 
-// installMetricsServer installs catalogs/cluster_base/metrics_server on c. kind ships no
-// metrics server, and the chart's Verifier checks the resource metrics API, so installing
-// it is what turns the infra-plane operator's Verified condition True.
-func installMetricsServer(c utils.Cluster) {
+// installClusterBaseChart installs the catalogs/cluster_base chart dir on c as a Helm
+// release, with the values file from test/e2e/testdata. kind ships none of the platform,
+// and a chart's Verifier looks at live objects, so installing it is what stops the
+// infra-plane operator's Verified condition naming that component.
+func installClusterBaseChart(c utils.Cluster, dir, release, namespace, valuesFile string, timeout time.Duration) {
 	GinkgoHelper()
 
-	By("installing the metrics_server chart on " + c.Name)
+	By(fmt.Sprintf("installing the %s chart on %s", dir, c.Name))
 	// From a copy, so fetching the upstream dependency leaves no Chart.lock or tarball
 	// in the working tree.
-	chartDir := filepath.Join(GinkgoT().TempDir(), "metrics_server")
-	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", "metrics_server"), chartDir))
+	chartDir := filepath.Join(GinkgoT().TempDir(), dir)
+	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", dir), chartDir))
 	Expect(err).NotTo(HaveOccurred())
-	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", "metrics-server", chartDir,
+	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, chartDir,
 		"--kube-context", c.Context(), "--dependency-update",
-		"--values", filepath.Join("test", "e2e", "testdata", "metrics-server-kind-values.yaml"),
-		"--namespace", "kube-system", "--wait"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install the metrics_server chart on %s", c.Name)
+		"--values", filepath.Join("test", "e2e", "testdata", valuesFile),
+		"--namespace", namespace, "--create-namespace", "--wait", "--timeout", timeout.String()))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the %s chart on %s", dir, c.Name)
 }
 
-// uninstallMetricsServer removes what installMetricsServer installed from c, the
-// APIService with it.
-func uninstallMetricsServer(c utils.Cluster) {
-	By("removing the metrics_server chart from " + c.Name)
-	_, _ = utils.Run(exec.Command("helm", "uninstall", "metrics-server", "--kube-context", c.Context(),
-		"--namespace", "kube-system", "--ignore-not-found", "--wait"))
+// uninstallClusterBaseChart removes the Helm release installClusterBaseChart installed.
+func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
+	By(fmt.Sprintf("removing the %s release from %s", release, c.Name))
+	_, _ = utils.Run(exec.Command("helm", "uninstall", release, "--kube-context", c.Context(),
+		"--namespace", namespace, "--ignore-not-found", "--wait"))
 }
 
-// expectMetricsServerFailing asserts that a Verified message names metrics_server among
-// the failing cluster_base components, for want of its APIService - "not found" rather
-// than a read error, which proves the ip chart's ClusterRole lets the manager read
-// APIServices. Other failing components are not asserted on, so a cluster_base chart
-// gaining a check of its own does not break the suite.
-func expectMetricsServerFailing(g Gomega, message string) {
+// installClusterBase installs the cluster_base charts that have a Verifier of their own,
+// which fail on a bare kind cluster: metrics_server, for the resource metrics API, and
+// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address.
+func installClusterBase(c utils.Cluster) {
+	GinkgoHelper()
+
+	installClusterBaseChart(c, "metrics_server", "metrics-server", "kube-system",
+		"metrics-server-kind-values.yaml", 3*time.Minute)
+	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus",
+		"kube-prometheus-stack-kind-values.yaml", 5*time.Minute)
+}
+
+// uninstallClusterBase removes what installClusterBase installed from c. The CRDs the
+// Prometheus chart installed stay, as Helm leaves them, and go with the cluster.
+func uninstallClusterBase(c utils.Cluster) {
+	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
+	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
+}
+
+// expectBaseComponentsFailing asserts that a Verified message names metrics_server and
+// kube_prometheus_stack among the failing cluster_base components, for want of what they
+// provide on a bare kind cluster: the APIService and the Prometheus Service. "Not found"
+// rather than a read error proves the ip chart's ClusterRole lets the manager read
+// APIServices, Services and EndpointSlices. Other failing components are not asserted
+// on, so a cluster_base chart gaining a check of its own does not break the suite.
+func expectBaseComponentsFailing(g Gomega, message string) {
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
+	g.Expect(message).To(ContainSubstring(
+		"catalogs/cluster_base/kube_prometheus_stack (no Service prometheus/prometheus-op-kube-prometh-prometheus found"))
 }
 
-// expectMetricsServerVerified asserts that a Verified message no longer names
-// metrics_server as failing, once installMetricsServer has installed it. It says nothing
-// about the other components, but an empty message, such as a copy that lost its
-// conditions, fails.
-func expectMetricsServerVerified(g Gomega, message string) {
+// expectBaseComponentsVerified asserts that a Verified message no longer names
+// metrics_server or kube_prometheus_stack as failing, once installClusterBase has
+// installed them. It says nothing about the other components, but an empty message,
+// such as a copy that lost its conditions, fails.
+func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(BeEmpty())
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/kube_prometheus_stack"))
 }
 
 // clusterConfigField reads a field of a CCLInfraPlane's copy of its infra plane's
