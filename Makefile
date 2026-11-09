@@ -830,8 +830,8 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 	@find "$(PYSCHEMA_DIR)" -name '*.json' | sort | while read -r schema; do \
 		rel="$${schema#$(PYSCHEMA_DIR)/}"; pkg="$${rel%.json}"; \
 		case "$$pkg" in \
-			catalogs/*) out="$(PYTHON_PKG)/$$pkg/__init__.py";; \
-			*) out="$(PYTHON_PKG)/$$pkg.py";; \
+			catalogs/*) out="$(PYTHON_PKG)/$$pkg/__init__.py"; extra="--extra-fields allow";; \
+			*) out="$(PYTHON_PKG)/$$pkg.py"; extra=;; \
 		esac; \
 		echo "$$schema -> $$out"; \
 		"$(UV)" tool run --from "datamodel-code-generator==$(DATAMODEL_CODEGEN_VERSION)" \
@@ -842,6 +842,7 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 			--allow-population-by-field-name --use-title-as-name \
 			--use-schema-description --use-field-description --use-default \
 			--collapse-root-models --reuse-model --use-double-quotes --disable-timestamp \
+			$$extra \
 			--formatters black isort --custom-file-header-path hack/boilerplate.py.txt \
 			|| exit 1; \
 		case "$$pkg" in catalogs/*) printf '\n\n# CHART is the chart directory, relative to the root of the catalog repository.\nCHART = "%s"\n' "$$pkg" >> "$$out";; esac; \

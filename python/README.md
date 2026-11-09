@@ -256,7 +256,11 @@ ccluster unregister edge-1 -n tenant-a
 
 The CRD models carry controller-gen's constraints (name patterns, length and item bounds)
 and docstrings, so a bad spec fails in Pydantic before it reaches the API server. Chart
-values add nothing on the way from Go: optional scalars become `None` defaults.
+values add nothing on the way from Go: optional scalars become `None` defaults. A chart
+accepts more values than its Go type models, so its models keep keys they do not model,
+at any depth, and `catalogs.entry` passes them to Helm as given, as the operator does:
+`ingress_nginx.Values(**{"ingress-nginx": {"controller": {"podLabels": {...}}}})` works.
+Modelled keys are still type-checked; a misspelled key is not caught.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
 command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.

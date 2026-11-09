@@ -26,9 +26,11 @@ def entry(chart: str, namespace: str, values: BaseModel | None) -> dict[str, Any
     its string and a Values with one still serializes. That is the shape Helm
     expects and the shape the Go catalog produces. An empty result is dropped rather
     than stored: the operator omits the Application's helm block when values is unset,
-    and an empty object would defeat that. A chart's required values are checked when
-    its Values is constructed; the finer rules the Go Validate methods apply (port
-    ranges, mount paths, replica bounds) are not mirrored here.
+    and an empty object would defeat that. Keys the Values does not model are kept and
+    dumped as given, since a chart accepts more than its Go type describes. A chart's
+    required values are checked when its Values is constructed; the finer rules the Go
+    Validate methods apply (port ranges, mount paths, replica bounds) are not mirrored
+    here.
     """
     out: dict[str, Any] = {"chart": chart, "namespace": namespace}
     if values is not None:

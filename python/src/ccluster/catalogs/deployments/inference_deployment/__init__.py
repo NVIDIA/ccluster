@@ -28,7 +28,7 @@ class ConfigFile(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     filename: str
@@ -53,7 +53,7 @@ class HPA(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     min_replicas: Annotated[int | None, Field(alias="minReplicas")] = None
@@ -87,7 +87,7 @@ class ImagePullSecret(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     server: str
@@ -111,7 +111,7 @@ class Metrics(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     port: int
@@ -131,7 +131,7 @@ class Resources(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     cpu: str
@@ -160,7 +160,7 @@ class RolloutStrategy(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     max_unavailable: Annotated[int | None, Field(alias="maxUnavailable")] = None
@@ -182,7 +182,7 @@ class SecretKeyRef(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     secret_name: Annotated[str, Field(alias="secretName")]
@@ -202,7 +202,7 @@ class VolumeMount(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     name: str
@@ -225,7 +225,7 @@ class ResourceRequirements(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     limits: Resources
@@ -238,7 +238,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     name: str

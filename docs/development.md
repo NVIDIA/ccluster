@@ -228,7 +228,9 @@ What pyschema writes:
   are kept on read) and the generic `CustomResource` with the fixed `apiVersion`. The
   envelope is the same for every Kubernetes object, so it is written once.
 - **Charts.** For every chart in `catalogs/components.All`, one schema reflected from the
-  chart's Go `Values` with `invopop/jsonschema`, Go doc comments included.
+  chart's Go `Values` with `invopop/jsonschema`, Go doc comments included. Objects leave
+  `additionalProperties` open and the Makefile generates them with `--extra-fields allow`,
+  so the models keep values they do not model, as the operator's lenient decoding does.
 
 `datamodel-code-generator` then writes `<version>/<kind>.py` for a CRD and
 `<chart path>/__init__.py` for a chart; the Makefile appends the `CHART` constant to the

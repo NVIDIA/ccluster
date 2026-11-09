@@ -218,6 +218,10 @@ func writeCharts(repo, out, python string) error {
 		// Put Values itself at the root rather than behind a $ref, so the generator
 		// makes it a class named by the title instead of a RootModel.
 		ExpandedStruct: true,
+		// Leave additionalProperties open: a chart accepts more values than its Go type
+		// models, and the operator's validator lets unmodelled keys through, so the
+		// Python models keep them too.
+		AllowAdditionalProperties: true,
 	}
 	// Go doc comments become descriptions, which the generator turns into docstrings.
 	// WithFullComment keeps the whole comment rather than its first sentence.

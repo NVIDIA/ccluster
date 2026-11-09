@@ -45,7 +45,7 @@ class EFA(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     device_class_name: Annotated[str | None, Field(alias="deviceClassName")] = None
@@ -66,7 +66,7 @@ class HPA(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     min_replicas: Annotated[int | None, Field(alias="minReplicas")] = None
@@ -100,7 +100,7 @@ class ImagePullSecret(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     server: str
@@ -132,7 +132,7 @@ class KVTransfer(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     backend: Annotated[KVTransferBackend, Field(title="KVTransferBackend")]
@@ -153,7 +153,7 @@ class Resources(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     cpu: str
@@ -182,7 +182,7 @@ class RolloutStrategy(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     max_unavailable: Annotated[int | None, Field(alias="maxUnavailable")] = None
@@ -204,7 +204,7 @@ class SecretKeyRef(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     secret_name: Annotated[str, Field(alias="secretName")]
@@ -224,7 +224,7 @@ class VolumeMount(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     name: str
@@ -247,7 +247,7 @@ class ResourceRequirements(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     limits: Resources
@@ -261,7 +261,7 @@ class StaticWorkerPool(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     resources: ResourceRequirements
@@ -298,7 +298,7 @@ class WorkerPool(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     resources: ResourceRequirements
@@ -326,7 +326,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     name: str

@@ -16,7 +16,7 @@ class Queue(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     name: str
@@ -36,7 +36,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     root_queue: Annotated[str | None, Field(alias="rootQueue")] = None
