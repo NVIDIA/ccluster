@@ -7,6 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package kubeprometheusstack
 
 import (
+	"context"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
@@ -72,4 +76,28 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// PrometheusNamespace and PrometheusService are where the rest of the catalog reaches
+// Prometheus: the ScaledObjects in catalogs/deployments and prometheus-adapter's default
+// url hardcode http://prometheus-op-kube-prometh-prometheus.prometheus.svc:9090. The
+// chart's fullnameOverride fixes the name (the subchart truncates the fullname to 26
+// characters, hence "kube-prometh"); the namespace is the one the chart must be
+// installed into.
+const (
+	PrometheusNamespace = "prometheus"
+	PrometheusService   = "prometheus-op-kube-prometh-prometheus"
+)
+
+// Verify checks that Prometheus is where the catalog's consumers expect it: the Service
+// PrometheusNamespace/PrometheusService exists and has a ready endpoint. A Prometheus
+// installed under another name or namespace fails, because KEDA's ScaledObjects and
+// prometheus-adapter would not find it. A ready endpoint means the operator has created
+// the Prometheus StatefulSet and a pod passed its readiness probe, which also means the
+// monitoring.coreos.com CRDs are installed.
+//
+// Nothing in the chart depends on the cluster's domain, so the CCLClusterConfig spec is
+// not consulted.
+func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	return catalogs.VerifyServiceReady(ctx, r, PrometheusNamespace, PrometheusService)
 }
