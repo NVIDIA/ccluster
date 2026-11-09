@@ -29,12 +29,15 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	"github.com/NVIDIA/ccluster/catalogs"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
 	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
+	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 )
 
 var _ = Describe("CCLComponentSet Controller", func() {
@@ -702,15 +705,14 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			By("reporting only the components that have an Application")
 			componentSet := reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
-			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1))
+			Expect(componentSet.Status.ComponentSyncStatuses[0].Name).To(Equal(firstComponent))
 
 			release(firstComponent)
 			componentSet = reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(2))
-			first := componentSet.Status.ComponentSyncs[0]
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(2))
+			first := componentSet.Status.ComponentSyncStatuses[0]
 			Expect(first.ComparedToMatchesSpec).To(BeTrue())
-			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
 			Expect(first.Sync).To(Equal(argocdv1alpha1.SyncStatusSynced))
 
 			By("marking a Healthy and Synced that Argo CD reached for an older spec")
@@ -720,31 +722,31 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			reportStaleComparison(firstComponent, "Healthy", "Synced")
 
 			componentSet = reconcileAndGet()
-			first = componentSet.Status.ComponentSyncs[0]
+			first = componentSet.Status.ComponentSyncStatuses[0]
 			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
 				"a verdict about the previous spec was reported as one about this one")
-			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
+			Expect(first.Sync).To(Equal(argocdv1alpha1.SyncStatusSynced))
 
 			By("dropping the entry of a component removed from the spec")
 			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
 			componentSet.Spec.Components = componentSet.Spec.Components[:1]
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
 			componentSet = reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
-			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1))
+			Expect(componentSet.Status.ComponentSyncStatuses[0].Name).To(Equal(firstComponent))
 		})
 
-		// status.observedGeneration vouches for componentSyncs, and Progressing is read from
+		// status.observedGeneration vouches for componentSyncStatuses, and Progressing is read from
 		// the same Applications, so a pass that moves it on must rebuild both for that spec,
 		// even when the pass stops short.
-		It("should rebuild componentSyncs and Progressing on a pass that fails validation", func() {
+		It("should rebuild componentSyncStatuses and Progressing on a pass that fails validation", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent, secondComponent)
 			componentSet := reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+			Expect(componentSet.Status.ComponentSyncStatuses[0].ComparedToMatchesSpec).To(BeTrue())
 			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
 				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
 
@@ -756,11 +758,11 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Reason).
 				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound))
 			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
-			first := componentSet.Status.ComponentSyncs[0]
+			first := componentSet.Status.ComponentSyncStatuses[0]
 			Expect(first.Name).To(Equal(firstComponent))
 			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
 				"a comparison against the previous destination was reported for this generation")
-			Expect(first.Health).To(Equal(argocdv1alpha1.HealthStatusHealthy))
+			Expect(first.Sync).To(Equal(argocdv1alpha1.SyncStatusSynced))
 
 			// The first component now waits for a write the operator will not make
 			// until the reference is fixed, so Progressing names that, not the
@@ -773,14 +775,14 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(progressing.Message).To(ContainSubstring("missing-plane"))
 		})
 
-		It("should rebuild componentSyncs and Progressing on a pass that fails to apply", func() {
+		It("should rebuild componentSyncStatuses and Progressing on a pass that fails to apply", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
 			release(firstComponent)
 			componentSet := reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncs[0].ComparedToMatchesSpec).To(BeTrue())
+			Expect(componentSet.Status.ComponentSyncStatuses[0].ComparedToMatchesSpec).To(BeTrue())
 
 			By("changing the first component while the second's Application belongs elsewhere")
 			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
@@ -793,9 +795,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
 				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
 			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
-			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1),
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1),
 				"the Application claimed by another CCLComponentSet was reported")
-			first := componentSet.Status.ComponentSyncs[0]
+			first := componentSet.Status.ComponentSyncStatuses[0]
 			Expect(first.Name).To(Equal(firstComponent))
 			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
 				"a comparison against the previous values was reported for this generation")
@@ -823,8 +825,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			componentSet := reconcileAndGet()
 			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
 				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict))
-			Expect(componentSet.Status.ComponentSyncs).To(HaveLen(1))
-			Expect(componentSet.Status.ComponentSyncs[0].Name).To(Equal(firstComponent))
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1))
+			Expect(componentSet.Status.ComponentSyncStatuses[0].Name).To(Equal(firstComponent))
 
 			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
 			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing),
@@ -1542,7 +1544,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		})
 
 		It("should map an Application back to its CCLComponentSet", func() {
-			requests := reconciler.componentSetForApplication(ctx, &argocdv1alpha1.Application{
+			requests := componentSetForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      applicationName(componentSetName, firstComponent),
 					Namespace: namespace,
@@ -1552,9 +1554,170 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: componentSetKey}))
 
 			By("ignoring an Application the operator did not create")
-			Expect(reconciler.componentSetForApplication(ctx, &argocdv1alpha1.Application{
+			Expect(componentSetForApplication(ctx, &argocdv1alpha1.Application{
 				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: namespace},
 			})).To(BeEmpty())
+		})
+
+		Context("judging component health", func() {
+			judgedAt := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+			// firstHealth is what the first component's chart reports; specs change it
+			// between passes.
+			var firstHealth catalogs.Health
+
+			// judgeWith makes both controllers judge health through argoCD: the first
+			// component as firstHealth says and the second as Healthy.
+			judgeWith := func(argoCD ArgoCDServer) {
+				healthFuncs := &healthregistry.Registry{}
+				healthFuncs.Register("catalogs/cluster_base/argo_rollouts",
+					func(context.Context, cclusternvidiacomv1alpha1.ComponentEntry, catalogs.Observation) catalogs.Health {
+						return firstHealth
+					})
+				healthFuncs.Register("catalogs/cluster_base/keda",
+					func(context.Context, cclusternvidiacomv1alpha1.ComponentEntry, catalogs.Observation) catalogs.Health {
+						return catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+					})
+				reconciler.ArgoCD, reconciler.Health = argoCD, healthFuncs
+			}
+
+			healthReconciler := func(now *time.Time) *ComponentHealthReconciler {
+				return &ComponentHealthReconciler{
+					Client: k8sClient,
+					ArgoCD: reconciler.ArgoCD,
+					Health: reconciler.Health,
+					now:    func() time.Time { return *now },
+				}
+			}
+
+			// reconcileHealth runs one health pass and returns the requeue interval and the
+			// CCLComponentSet it left.
+			reconcileHealth := func(r *ComponentHealthReconciler) (time.Duration, *cclusternvidiacomv1alpha1.CCLComponentSet) {
+				GinkgoHelper()
+
+				result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).NotTo(HaveOccurred())
+				refreshed := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				Expect(k8sClient.Get(ctx, componentSetKey, refreshed)).To(Succeed())
+				return result.RequeueAfter, refreshed
+			}
+
+			BeforeEach(func() {
+				firstHealth = catalogs.Health{
+					Status:  cclusternvidiacomv1alpha1.ComponentHealthProgressing,
+					Reason:  "Unschedulable",
+					Message: "Pod web-0: 0/3 nodes are available",
+				}
+				createInfraPlane(planeA, true)
+				createInfraPlane(planeB, true)
+				createComponentSet(components())
+				settle()
+			})
+
+			It("should report released components only, writing when their health changes", func() {
+				now := judgedAt
+				argoCD := &fakeArgoCD{}
+				judgeWith(argoCD)
+				r := healthReconciler(&now)
+
+				requeue, componentSet := reconcileHealth(r)
+				Expect(componentSet.Status.ComponentHealthStatuses).To(HaveLen(1),
+					"the second component has no Application, so nothing of it runs")
+				first := componentSet.Status.ComponentHealthStatuses[0]
+				Expect(first.Name).To(Equal(firstComponent))
+				Expect(first.Health).To(Equal(cclusternvidiacomv1alpha1.ComponentHealthProgressing))
+				Expect(first.Reason).To(Equal("Unschedulable"))
+				Expect(first.Message).To(Equal("Pod web-0: 0/3 nodes are available"))
+				Expect(first.LastTransitionTime.Time).To(BeTemporally("==", judgedAt))
+				Expect(requeue).To(Equal(healthPollSettling))
+				Expect(argoCD.treesRead()).To(ConsistOf(apiclient.ApplicationRef{
+					Namespace: namespace,
+					Name:      applicationName(componentSetName, firstComponent),
+					Project:   projectName(namespace),
+				}))
+
+				By("writing nothing when a later pass judges the same")
+				now = judgedAt.Add(time.Minute)
+				_, again := reconcileHealth(r)
+				Expect(again.ResourceVersion).To(Equal(componentSet.ResourceVersion))
+
+				By("keeping lastTransitionTime when only the message changes")
+				firstHealth.Message = "Pod web-0: 0/4 nodes are available"
+				_, componentSet = reconcileHealth(r)
+				first = componentSet.Status.ComponentHealthStatuses[0]
+				Expect(first.Message).To(Equal("Pod web-0: 0/4 nodes are available"))
+				Expect(first.LastTransitionTime.Time).To(BeTemporally("==", judgedAt))
+
+				By("moving lastTransitionTime when health changes")
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+				_, componentSet = reconcileHealth(r)
+				first = componentSet.Status.ComponentHealthStatuses[0]
+				Expect(first.Health).To(Equal(cclusternvidiacomv1alpha1.ComponentHealthHealthy))
+				Expect(first.LastTransitionTime.Time).To(BeTemporally("==", now))
+
+				By("leaving the rollout's own status alone")
+				Expect(componentSet.Status.Conditions).To(Equal(again.Status.Conditions))
+				Expect(componentSet.Status.ComponentSyncStatuses).To(Equal(again.Status.ComponentSyncStatuses))
+
+				By("keeping componentHealthStatuses through a rollout pass, before health runs again")
+				healthWritten := componentSet.Status.ComponentHealthStatuses
+				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+				afterRollout := reconcileAndGet()
+				Expect(afterRollout.ResourceVersion).NotTo(Equal(componentSet.ResourceVersion),
+					"the rollout pass wrote nothing, so it proves nothing")
+				Expect(afterRollout.Status.ComponentHealthStatuses).To(Equal(healthWritten))
+
+				By("polling less often once every component has settled")
+				requeue, componentSet = reconcileHealth(r)
+				Expect(componentSet.Status.ComponentHealthStatuses).To(HaveLen(2))
+				Expect(requeue).To(Equal(healthPollSettled))
+			})
+
+			It("should report Argo CD's aggregate health when the resource tree cannot be read", func() {
+				now := judgedAt
+				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded,
+					argocdv1alpha1.SyncStatusSynced)
+				judgeWith(&fakeArgoCD{treeErr: errors.New("resource tree not cached yet")})
+				r := healthReconciler(&now)
+
+				_, componentSet := reconcileHealth(r)
+				first := componentSet.Status.ComponentHealthStatuses[0]
+				Expect(first.Health).To(Equal(cclusternvidiacomv1alpha1.ComponentHealthDegraded))
+				Expect(first.Reason).To(Equal(cclusternvidiacomv1alpha1.ComponentHealthReasonResourceTreeUnavailable))
+				Expect(first.Message).To(ContainSubstring("resource tree not cached yet"))
+			})
+
+			It("should release the next component only once the chart judges the previous one healthy", func() {
+				judgeWith(&fakeArgoCD{})
+				secondApplication := func() error {
+					return k8sClient.Get(ctx, appKey(secondComponent), &argocdv1alpha1.Application{})
+				}
+
+				By("holding it while Argo CD reports Healthy but the chart does not")
+				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+				componentSet := reconcileAndGet()
+				Expect(apierrors.IsNotFound(secondApplication())).To(BeTrue())
+				progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+				Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
+				Expect(progressing.Message).To(ContainSubstring(`has health "Progressing"`))
+				Expect(progressing.Message).To(ContainSubstring("0/3 nodes are available"))
+
+				By("releasing it once the chart judges a component healthy that Argo CD calls Progressing")
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy, Reason: "Running"}
+				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusProgressing,
+					argocdv1alpha1.SyncStatusSynced)
+				reconcileAndGet()
+				Expect(secondApplication()).To(Succeed())
+			})
+
+			It("should judge by Argo CD's aggregate health when the resource tree cannot be read", func() {
+				judgeWith(&fakeArgoCD{treeErr: errors.New("argocd-server unavailable")})
+				release(firstComponent)
+				Expect(k8sClient.Get(ctx, appKey(secondComponent), &argocdv1alpha1.Application{})).To(Succeed(),
+					"a component Argo CD reports Healthy was held although its chart could not judge it")
+			})
 		})
 
 		It("should tear the components down in reverse order", func() {

@@ -27,6 +27,7 @@ import (
 	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 	"github.com/NVIDIA/ccluster/internal/remote"
 	// +kubebuilder:scaffold:imports
 )
@@ -191,17 +192,26 @@ func setupControllers(mgr ctrl.Manager) error {
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)
 	}
+	healthFuncs := healthregistry.Get()
 	if err := (&cp.CCLComponentSetReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		CatalogRepoURL:  catalogRepoURL,
 		CatalogRevision: catalogRevision,
 		Drift:           driftregistry.Get(),
-		ArgoCDServer:    argoCDServer,
+		ArgoCD:          argoCDServer,
+		Health:          healthFuncs,
 
 		MaxConcurrentReconciles: componentSetMaxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLComponentSet: %w", err)
+	}
+	if err := (&cp.ComponentHealthReconciler{
+		Client: mgr.GetClient(),
+		ArgoCD: argoCDServer,
+		Health: healthFuncs,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("unable to create controller ComponentHealth: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
 	return nil

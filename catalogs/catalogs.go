@@ -44,6 +44,13 @@ SPDX-License-Identifier: Apache-2.0
 // however they were written, not only to those built through Entry; until the
 // control-plane operator calls it, hand-written CCLComponentSets still bypass them.
 //
+// A chart package may also export a Health function, which judges the component's
+// health from an Observation: Argo CD's aggregate health and the Application's resource
+// tree, with the few live objects it asks for. A chart without one is judged by
+// DefaultHealth. Its signature and contract are healthregistry.HealthFunc's; the
+// control-plane operator registers it in its health registry
+// (internal/registry/health_registry).
+//
 // Optional scalars must be pointers (*bool, *int32, *string) with omitempty. A plain
 // bool with omitempty cannot express "explicitly false", because encoding/json drops
 // the zero value — and several charts here need to set a flag to false against a chart

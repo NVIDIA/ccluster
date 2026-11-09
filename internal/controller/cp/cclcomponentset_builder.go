@@ -169,10 +169,24 @@ func comparedToMatchesSpec(
 		equality.Semantic.DeepEqual(comparedTo.IgnoreDifferences, desired.IgnoreDifferences)
 }
 
-// finished reports that a released component has converged on the current spec.
-// Hooks do not contribute to aggregate health and sync, so operation state must also
-// permit completion.
+// finished reports whether a released component is done: Argo CD has synced the
+// current spec, and the component is healthy. The health is judged in this pass.
 func (r *CCLComponentSetReconciler) finished(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	component cclusternvidiacomv1alpha1.ComponentSpec,
+	application *argocdv1alpha1.Application,
+	healths componentHealths,
+) bool {
+	return r.syncedCurrentSpec(componentSet, component, application) &&
+		healthy(healths.of(component.Name, application).Status)
+}
+
+// syncedCurrentSpec reports whether Argo CD has synced the current spec, not only
+// whether sync status is Synced. That means four things: the Application has the spec
+// the operator writes, Argo CD compared that spec, no operation runs, and the last sync
+// of that spec did not fail. Argo CD leaves hooks out of sync status, so a running
+// operation, such as a PostSync hook, also means not yet.
+func (r *CCLComponentSetReconciler) syncedCurrentSpec(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 	application *argocdv1alpha1.Application,
@@ -184,8 +198,7 @@ func (r *CCLComponentSetReconciler) finished(
 	return equality.Semantic.DeepEqual(application.Spec, desired) &&
 		comparedToMatchesSpec(application, desired) &&
 		!currentSyncFailed(application, desired) &&
-		application.SyncStatus() == argocdv1alpha1.SyncStatusSynced &&
-		application.HealthStatus() == argocdv1alpha1.HealthStatusHealthy
+		application.SyncStatus() == argocdv1alpha1.SyncStatusSynced
 }
 
 // createOrPatchApplication brings one component's Application in line with the spec.
@@ -327,7 +340,7 @@ func (r *CCLComponentSetReconciler) teardownNext(
 ) (remaining int, err error) {
 	log := logf.FromContext(ctx)
 
-	all, err := r.listApplications(ctx, componentSet)
+	all, err := listApplications(ctx, r.Client, componentSet)
 	if err != nil {
 		return 0, err
 	}
@@ -397,12 +410,13 @@ func sortedNames(applications map[string]*argocdv1alpha1.Application) []string {
 //
 // A missing CRD is reported as an empty set rather than an error: Argo CD may not be
 // installed, and reconcileApplications raises that properly a moment later.
-func (r *CCLComponentSetReconciler) listApplications(
+func listApplications(
 	ctx context.Context,
+	c client.Reader,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 ) (map[string]*argocdv1alpha1.Application, error) {
 	var list argocdv1alpha1.ApplicationList
-	err := r.List(ctx, &list,
+	err := c.List(ctx, &list,
 		client.InNamespace(componentSet.Namespace),
 		client.MatchingLabels{labelComponentSetName: componentSet.Name})
 	switch {
@@ -457,14 +471,15 @@ func ownedApplications(
 // releaseCount decides how many of componentSet's components may be deployed right now.
 //
 // This is the ordering mechanism: a component's Application is not created until every
-// component before it is Healthy and Synced. Releasing is monotonic and derived entirely
-// from which Applications exist, so it needs no state of its own and survives an operator
-// restart. A component that has been released is never withdrawn just because it became
-// unhealthy - that would delete a running Application and, through the cascade finalizer,
-// uninstall its chart.
+// component before it has synced and is Healthy or Succeeded. Releasing is monotonic and
+// derived entirely from which Applications exist, so it needs no state of its own and
+// survives an operator restart. A component that has been released is never withdrawn
+// just because it became unhealthy - that would delete a running Application and,
+// through the cascade finalizer, uninstall its chart.
 func (r *CCLComponentSetReconciler) releaseCount(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	healths componentHealths,
 ) int {
 	components := componentSet.Spec.Components
 
@@ -489,7 +504,8 @@ func (r *CCLComponentSetReconciler) releaseCount(
 	// just the most recent means a component that degrades later stops the rollout,
 	// which is what a sequential dependency implies.
 	for i := 0; i < released; i++ {
-		if !r.finished(componentSet, components[i], applications[applicationName(componentSet.Name, components[i].Name)]) {
+		application := applications[applicationName(componentSet.Name, components[i].Name)]
+		if !r.finished(componentSet, components[i], application, healths) {
 			return released
 		}
 	}
@@ -528,7 +544,7 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 	}
 }
 
-// componentSyncStatuses builds status.componentSyncs from observed Applications, one
+// componentSyncStatuses builds status.componentSyncStatuses from observed Applications, one
 // entry per component that has one, in spec order. Callers replace the field with the
 // result, which drops removed components and stale observations.
 func (r *CCLComponentSetReconciler) componentSyncStatuses(
@@ -545,7 +561,6 @@ func (r *CCLComponentSetReconciler) componentSyncStatuses(
 		statuses = append(statuses, cclusternvidiacomv1alpha1.ComponentSyncStatus{
 			Name:                  component.Name,
 			ComparedToMatchesSpec: comparedToMatchesSpec(application, r.applicationSpec(componentSet, component)),
-			Health:                application.HealthStatus(),
 			Sync:                  application.SyncStatus(),
 			Message:               application.OperationMessage(),
 		})
@@ -587,6 +602,7 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
 	invalidReason, invalidMessage string,
+	healths componentHealths,
 ) (status metav1.ConditionStatus, reason, message string) {
 	for i, component := range componentSet.Spec.Components {
 		wave := i + 1
@@ -602,7 +618,7 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
 				"Waiting to deploy wave %d (component %q)", wave, component.Name)
 		}
-		if r.finished(componentSet, component, application) {
+		if r.finished(componentSet, component, application, healths) {
 			continue
 		}
 
@@ -646,11 +662,15 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 				wave, component.Name, application.OperationMessage(), name)
 
 		default:
-			// Argo CD compared this spec and is unhappy with what it found. Which
-			// resource is unhappy is in status.resources, which this type does not model.
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
-				"Wave %d (component %q) has health %q, sync %q", wave, component.Name,
-				application.HealthStatus(), application.SyncStatus())
+			// Argo CD compared this spec, and either has not synced it or the component
+			// is not healthy. The health message says which object holds it up.
+			health := healths.of(component.Name, application)
+			message := fmt.Sprintf("Wave %d (component %q) has health %q, sync %q", wave, component.Name,
+				health.Status, application.SyncStatus())
+			if health.Message != "" {
+				message += ": " + health.Message
+			}
+			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, message
 		}
 	}
 

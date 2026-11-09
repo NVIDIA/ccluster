@@ -98,6 +98,52 @@ class CCLComponentSetSpec(BaseModel):
     """
 
 
+class Health(Enum):
+    """
+    health is the component's health.
+    """
+
+    healthy = "Healthy"
+    progressing = "Progressing"
+    degraded = "Degraded"
+    suspended = "Suspended"
+    missing = "Missing"
+    unknown = "Unknown"
+    succeeded = "Succeeded"
+    failed = "Failed"
+
+
+class ComponentHealthStatus(BaseModel):
+    """
+    ComponentHealthStatus is one released component's health.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    health: Health
+    """
+    health is the component's health.
+    """
+    last_transition_time: Annotated[AwareDatetime, Field(alias="lastTransitionTime")]
+    """
+    lastTransitionTime is when health last changed.
+    """
+    message: str | None = None
+    """
+    message is a human-readable explanation of health.
+    """
+    name: str
+    """
+    name identifies the component in spec.components.
+    """
+    reason: str | None = None
+    """
+    reason is a CamelCase, machine-readable refinement of health, such as
+    CrashLoopBackOff or Unschedulable.
+    """
+
+
 class ComponentSyncStatus(BaseModel):
     """
     ComponentSyncStatus reports the latest observed Application state.
@@ -110,12 +156,8 @@ class ComponentSyncStatus(BaseModel):
     compared_to_matches_spec: Annotated[bool, Field(alias="comparedToMatchesSpec")]
     """
     comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-    desired source, destination and ignoreDifferences. While false, health and sync do
-    not establish convergence on the desired configuration.
-    """
-    health: str | None = None
-    """
-    health is Argo CD's observed Application health, empty before its first comparison.
+    desired source, destination and ignoreDifferences. While false, sync does not
+    establish convergence on the desired configuration.
     """
     message: str | None = None
     """
@@ -206,12 +248,26 @@ class CCLComponentSetStatus(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    component_syncs: Annotated[
-        list[ComponentSyncStatus] | None, Field(alias="componentSyncs")
+    component_health_statuses: Annotated[
+        list[ComponentHealthStatus] | None, Field(alias="componentHealthStatuses")
     ] = None
     """
-    componentSyncs reports the latest observed Application state for each released
-    component, judged against the spec at status.observedGeneration.
+    componentHealthStatuses reports the health of each released component's live
+    objects, as its chart judges it from what Argo CD reports, such as a Job that
+    succeeded or a Pod in CrashLoopBackOff.
+
+    It describes the objects running now, whichever spec they were rendered from.
+    Whether they are the current spec's is the same component's entry in
+    componentSyncStatuses; whether the rollout has finished is the Progressing
+    condition. It is observed periodically as well as on Application changes, so it
+    can lag the objects by up to a minute.
+    """
+    component_sync_statuses: Annotated[
+        list[ComponentSyncStatus] | None, Field(alias="componentSyncStatuses")
+    ] = None
+    """
+    componentSyncStatuses reports the latest observed Application state for each
+    released component, judged against the spec at status.observedGeneration.
     """
     conditions: list[Condition] | None = None
     """
@@ -230,7 +286,8 @@ class CCLComponentSetStatus(BaseModel):
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
     observedGeneration is the .metadata.generation of the spec the operator last
-    reconciled. componentSyncs always describes this generation. A condition can be
-    older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
-    pass that fails validation.
+    reconciled. componentSyncStatuses always describes this generation;
+    componentHealthStatuses does not, because health is not a property of a spec. A
+    condition can be older, as its own observedGeneration says: ComponentsApplied is
+    not rewritten on a pass that fails validation.
     """

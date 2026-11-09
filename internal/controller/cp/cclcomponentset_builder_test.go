@@ -334,7 +334,7 @@ func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
 }
 
 func testReleaseCount(set *cclusternvidiacomv1alpha1.CCLComponentSet, apps map[string]*argocdv1alpha1.Application) int {
-	return (&CCLComponentSetReconciler{}).releaseCount(set, apps)
+	return (&CCLComponentSetReconciler{}).releaseCount(set, apps, nil)
 }
 
 func TestApplicationsCondition(t *testing.T) {
@@ -599,7 +599,7 @@ func TestRolloutStatus(t *testing.T) {
 			if test.invalid != "" {
 				validation = invalidMessage
 			}
-			status, reason, message := reconciler.rolloutStatus(set, test.existing, test.invalid, validation)
+			status, reason, message := reconciler.rolloutStatus(set, test.existing, test.invalid, validation, nil)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)

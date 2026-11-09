@@ -49,6 +49,16 @@ type ResourceNode struct {
 	// Health is Argo CD's assessment of the object. Nil for a kind Argo CD has no health
 	// check for.
 	Health *HealthStatus `json:"health,omitempty"`
+
+	// Info is what Argo CD summarises about the object beyond its health, such as a Pod's
+	// "Status Reason" and "Restart Count".
+	Info []InfoItem `json:"info,omitempty"`
+}
+
+// InfoItem is one named fact in a ResourceNode's Info.
+type InfoItem struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // HealthStatus is Argo CD's assessment of one object's health.

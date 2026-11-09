@@ -15,11 +15,9 @@ type ComponentSyncStatusApplyConfiguration struct {
 	// name identifies the component in spec.components.
 	Name *string `json:"name,omitempty"`
 	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-	// desired source, destination and ignoreDifferences. While false, health and sync do
-	// not establish convergence on the desired configuration.
+	// desired source, destination and ignoreDifferences. While false, sync does not
+	// establish convergence on the desired configuration.
 	ComparedToMatchesSpec *bool `json:"comparedToMatchesSpec,omitempty"`
-	// health is Argo CD's observed Application health, empty before its first comparison.
-	Health *string `json:"health,omitempty"`
 	// sync is Argo CD's observed Application sync status.
 	Sync *string `json:"sync,omitempty"`
 	// message is Argo CD's latest operation message, including progress, retries and failures.
@@ -45,14 +43,6 @@ func (b *ComponentSyncStatusApplyConfiguration) WithName(value string) *Componen
 // If called multiple times, the ComparedToMatchesSpec field is set to the value of the last call.
 func (b *ComponentSyncStatusApplyConfiguration) WithComparedToMatchesSpec(value bool) *ComponentSyncStatusApplyConfiguration {
 	b.ComparedToMatchesSpec = &value
-	return b
-}
-
-// WithHealth sets the Health field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Health field is set to the value of the last call.
-func (b *ComponentSyncStatusApplyConfiguration) WithHealth(value string) *ComponentSyncStatusApplyConfiguration {
-	b.Health = &value
 	return b
 }
 

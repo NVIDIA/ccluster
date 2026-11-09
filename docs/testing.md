@@ -35,6 +35,10 @@ The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of 
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
 outcome) is proven without the seventeen real charts.
 
+A test seam is an interface declared in the package that uses it, such as
+`remote.ClientFactory` and cp's `ArgoCDServer`. A small seam like these gets a
+hand-written fake beside the tests.
+
 The envtest specs call `Reconcile` directly; they do not start controllers in the test
 manager. Watch map functions are exercised as ordinary functions, which cannot prove that
 a running manager registered the right watches or responds to events. Envtest also runs no

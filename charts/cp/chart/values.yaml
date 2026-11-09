@@ -64,8 +64,10 @@ manager:
   ## to be pushed — point --catalog-revision at a branch to try a catalog change before
   ## it merges.
   ##
-  ## The operator reads Application trees through argocd-server's API, as the Argo CD
-  ## account declared under `argo-cd.configs` below. Argo CD must run in this cluster:
+  ## The operator reads components' resource trees, and a few live objects, through
+  ## argocd-server's API to judge their health for status.componentHealthStatuses and
+  ## before releasing the next component, as the Argo CD account declared under
+  ## `argo-cd.configs` below. Argo CD must run in this cluster:
   ## - --argocd-server-service (default argocd-server, a stock install's) is
   ##   argocd-server's Service in --argocd-namespace. The default below is the
   ##   `argo-cd` subchart's, fixed by its fullnameOverride; drop it for an existing

@@ -109,19 +109,91 @@ type CCLComponentSetStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// observedGeneration is the .metadata.generation of the spec the operator last
-	// reconciled. componentSyncs always describes this generation. A condition can be
-	// older, as its own observedGeneration says: ComponentsApplied is not rewritten on a
-	// pass that fails validation.
+	// reconciled. componentSyncStatuses always describes this generation;
+	// componentHealthStatuses does not, because health is not a property of a spec. A
+	// condition can be older, as its own observedGeneration says: ComponentsApplied is
+	// not rewritten on a pass that fails validation.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// componentSyncs reports the latest observed Application state for each released
-	// component, judged against the spec at status.observedGeneration.
+	// componentSyncStatuses reports the latest observed Application state for each
+	// released component, judged against the spec at status.observedGeneration.
 	// +listType=map
 	// +listMapKey=name
 	// +optional
-	ComponentSyncs []ComponentSyncStatus `json:"componentSyncs,omitempty"`
+	ComponentSyncStatuses []ComponentSyncStatus `json:"componentSyncStatuses,omitempty"`
+
+	// componentHealthStatuses reports the health of each released component's live
+	// objects, as its chart judges it from what Argo CD reports, such as a Job that
+	// succeeded or a Pod in CrashLoopBackOff.
+	//
+	// It describes the objects running now, whichever spec they were rendered from.
+	// Whether they are the current spec's is the same component's entry in
+	// componentSyncStatuses; whether the rollout has finished is the Progressing
+	// condition. It is observed periodically as well as on Application changes, so it
+	// can lag the objects by up to a minute.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	ComponentHealthStatuses []ComponentHealthStatus `json:"componentHealthStatuses,omitempty"`
 }
+
+// ComponentHealth is a component's health. The first six are Argo CD's health statuses;
+// Succeeded and Failed are for a component that runs to completion, such as a Job.
+// +kubebuilder:validation:Enum=Healthy;Progressing;Degraded;Suspended;Missing;Unknown;Succeeded;Failed
+type ComponentHealth string
+
+const (
+	// ComponentHealthHealthy: running as intended.
+	ComponentHealthHealthy ComponentHealth = "Healthy"
+	// ComponentHealthProgressing: not yet healthy but making progress, such as Pods
+	// starting or waiting to be scheduled.
+	ComponentHealthProgressing ComponentHealth = "Progressing"
+	// ComponentHealthDegraded: failing, such as a container in CrashLoopBackOff. It
+	// may recover.
+	ComponentHealthDegraded ComponentHealth = "Degraded"
+	// ComponentHealthSuspended: paused on purpose, such as a canary waiting at a step.
+	ComponentHealthSuspended ComponentHealth = "Suspended"
+	// ComponentHealthMissing: its objects do not exist.
+	ComponentHealthMissing ComponentHealth = "Missing"
+	// ComponentHealthUnknown: its health could not be determined.
+	ComponentHealthUnknown ComponentHealth = "Unknown"
+	// ComponentHealthSucceeded: a run-to-completion component finished successfully.
+	ComponentHealthSucceeded ComponentHealth = "Succeeded"
+	// ComponentHealthFailed: a run-to-completion component finished unsuccessfully.
+	ComponentHealthFailed ComponentHealth = "Failed"
+)
+
+// ComponentHealthStatus is one released component's health.
+// +kubebuilder:title=ComponentHealthStatus
+type ComponentHealthStatus struct {
+	// name identifies the component in spec.components.
+	Name string `json:"name"`
+	// health is the component's health.
+	Health ComponentHealth `json:"health"`
+	// reason is a CamelCase, machine-readable refinement of health, such as
+	// CrashLoopBackOff or Unschedulable.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// message is a human-readable explanation of health.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// lastTransitionTime is when health last changed.
+	LastTransitionTime metav1.Time `json:"lastTransitionTime"`
+}
+
+// The reasons the control-plane operator sets in status.componentHealthStatuses when it
+// reports Argo CD's aggregate health instead of the chart's judgement. Every other reason
+// comes from the chart's health function: one its chart package exports, or one from
+// Kubernetes, such as CrashLoopBackOff.
+const (
+	// argocd-server's resource tree could not be read.
+	ComponentHealthReasonResourceTreeUnavailable = "ResourceTreeUnavailable"
+	// The chart's health function panicked.
+	ComponentHealthReasonHealthFuncPanicked = "HealthFuncPanicked"
+	// The chart's health function returned a health that is not a ComponentHealth.
+	ComponentHealthReasonInvalidHealth = "InvalidHealth"
+)
 
 // The condition types the control-plane operator reports in CCLComponentSet.status.
 const (
@@ -164,13 +236,9 @@ type ComponentSyncStatus struct {
 	Name string `json:"name"`
 
 	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
-	// desired source, destination and ignoreDifferences. While false, health and sync do
-	// not establish convergence on the desired configuration.
+	// desired source, destination and ignoreDifferences. While false, sync does not
+	// establish convergence on the desired configuration.
 	ComparedToMatchesSpec bool `json:"comparedToMatchesSpec"`
-
-	// health is Argo CD's observed Application health, empty before its first comparison.
-	// +optional
-	Health string `json:"health,omitempty"`
 
 	// sync is Argo CD's observed Application sync status.
 	// +optional

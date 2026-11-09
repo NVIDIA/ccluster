@@ -27,9 +27,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
+	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 )
 
 // Metadata written onto the generated Applications.
@@ -85,9 +85,13 @@ type CCLComponentSetReconciler struct {
 	// normally driftregistry.Get(). Nil diffs every chart in full.
 	Drift *driftregistry.Registry
 
-	// ArgoCDServer reads what an Application deployed through argocd-server. Nothing
-	// reads through it yet.
-	ArgoCDServer *apiclient.Client
+	// ArgoCD reads what the charts' health functions judge health from. Nil judges every
+	// component by Argo CD's health of its Application.
+	ArgoCD ArgoCDServer
+
+	// Health is the registry of charts' health functions, normally healthregistry.Get().
+	// Nil, or a chart missing from it, gets catalogs.DefaultHealth.
+	Health *healthregistry.Registry
 
 	// MaxConcurrentReconciles is how many CCLComponentSets are reconciled at once. Zero
 	// falls back to the manager's controller default, which is one unless set. Different
@@ -113,9 +117,10 @@ type CCLComponentSetReconciler struct {
 //     CCLComponentSet's own namespace under that project. Reported as the
 //     ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
-//     released and to report where the rollout has got to. Reported as the Progressing
-//     condition and status.componentSyncs, on every pass, including one that stopped at
-//     step 1 or 2.
+//     released and to report where the rollout has got to. A component Argo CD has
+//     synced is judged healthy or not by its chart's health function, afresh on each
+//     pass. Reported as the Progressing condition and status.componentSyncStatuses, on
+//     every pass, including one that stopped at step 1 or 2.
 //
 // Ordering is enforced by withholding a component's Application until everything before
 // it has finished - see releaseCount - rather than by an Argo CD sync strategy, which would
@@ -155,11 +160,12 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// The Applications already generated are both the record of what has been
 	// released and the evidence for whether the next component may follow. They are
 	// read before validation is acted on, because the status reports them either way.
-	all, err := r.listApplications(ctx, &componentSet)
+	all, err := listApplications(ctx, r.Client, &componentSet)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	applications := liveApplications(all)
+	healths := r.judgeSynced(ctx, &componentSet, applications)
 	statusBase := componentSet.DeepCopy()
 
 	var conditions []metav1.Condition
@@ -177,25 +183,25 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				len(componentSet.Spec.Components))))
 
 		var applied metav1.Condition
-		applied, retryErr = r.applyComponents(ctx, &componentSet, applications)
+		applied, retryErr = r.applyComponents(ctx, &componentSet, applications, healths)
 		conditions = append(conditions, applied)
 
 		// Re-listed because applyComponents may have written some, even on a pass that
 		// then failed on a later component.
-		if all, err = r.listApplications(ctx, &componentSet); err != nil {
+		if all, err = listApplications(ctx, r.Client, &componentSet); err != nil {
 			return ctrl.Result{}, err
 		}
 		applications = liveApplications(all)
 	}
 
 	// Rebuilt on every pass, validated or not, from one list of Applications.
-	// componentSyncs has no generation of its own and status.observedGeneration vouches
+	// componentSyncStatuses has no generation of its own and status.observedGeneration vouches
 	// for it, so neither it nor Progressing may outlive the generation this write records.
 	// An Application claimed by another CCLComponentSet is left out of both.
 	reported := ownedApplications(&componentSet, applications)
-	componentSet.Status.ComponentSyncs = r.componentSyncStatuses(&componentSet, reported)
+	componentSet.Status.ComponentSyncStatuses = r.componentSyncStatuses(&componentSet, reported)
 	progressStatus, progressReason, progressMessage :=
-		r.rolloutStatus(&componentSet, reported, reason, message)
+		r.rolloutStatus(&componentSet, reported, reason, message, healths)
 
 	conditions = append(conditions,
 		condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing, progressStatus, progressReason, progressMessage))
@@ -223,10 +229,11 @@ func (r *CCLComponentSetReconciler) applyComponents(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	healths componentHealths,
 ) (metav1.Condition, error) {
 	log := logf.FromContext(ctx)
 
-	released := r.releaseCount(componentSet, applications)
+	released := r.releaseCount(componentSet, applications, healths)
 	changed, applyErr := r.reconcileApplications(ctx, componentSet, released, applications)
 	status, reason, message, retryErr := r.applicationsCondition(componentSet, released, applyErr)
 
@@ -239,6 +246,24 @@ func (r *CCLComponentSetReconciler) applyComponents(
 			"reason", reason, "message", message)
 	}
 	return condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied, status, reason, message), retryErr
+}
+
+// judgeSynced judges the released components that Argo CD has synced to the current
+// spec. It never reads status.componentHealthStatuses, which may predate this pass's
+// Applications. See DESIGN.md §7, "Component health".
+func (r *CCLComponentSetReconciler) judgeSynced(
+	ctx context.Context,
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) componentHealths {
+	synced := make(map[string]*argocdv1alpha1.Application)
+	for _, component := range componentSet.Spec.Components {
+		name := applicationName(componentSet.Name, component.Name)
+		if r.syncedCurrentSpec(componentSet, component, applications[name]) {
+			synced[name] = applications[name]
+		}
+	}
+	return judgeAll(ctx, r.ArgoCD, r.Health, componentSet, synced)
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
@@ -397,7 +422,7 @@ func (r *CCLComponentSetReconciler) componentSetsForInfraPlane(ctx context.Conte
 // for: the one named by its label, in the Application's own namespace. This is what lets
 // the next component be released the moment the previous one finishes, rather than on
 // a poll.
-func (r *CCLComponentSetReconciler) componentSetForApplication(_ context.Context, obj client.Object) []reconcile.Request {
+func componentSetForApplication(_ context.Context, obj client.Object) []reconcile.Request {
 	name, hasName := obj.GetLabels()[labelComponentSetName]
 	if !hasName {
 		// Not one of ours - Argo CD Applications created by anything else.
@@ -410,6 +435,10 @@ func (r *CCLComponentSetReconciler) componentSetForApplication(_ context.Context
 }
 
 // SetupWithManager sets up the controller with the Manager.
+//
+// Every CCLComponentSet update triggers it, status updates included. Keep it without a
+// predicate: ComponentHealthReconciler's status write is what wakes the rollout when
+// health changes but no Application field does.
 func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{}).
@@ -434,7 +463,7 @@ func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// restart the chart performs when it installs both together.
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclcomponentset"), "Application") {
 		builder = builder.Watches(&argocdv1alpha1.Application{},
-			handler.EnqueueRequestsFromMapFunc(r.componentSetForApplication))
+			handler.EnqueueRequestsFromMapFunc(componentSetForApplication))
 	}
 
 	return builder.Named("cclcomponentset").Complete(r)
