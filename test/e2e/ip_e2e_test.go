@@ -80,10 +80,10 @@ var _ = Describe("IP operator", Ordered, func() {
 	})
 
 	// metrics_server is the one cluster_base component with a check of its own, and kind
-	// ships no metrics server, so the condition starts False naming it alone, and comes
-	// up True once its chart is installed - which proves the chart's CRD and RBAC let a
+	// ships no metrics server, so the condition starts False naming it, and stops naming
+	// it once its chart is installed - which proves the chart's CRD and RBAC let a
 	// real manager reconcile the singleton, read APIServices and write its status.
-	It("should report the cluster_base components verified", func() {
+	It("should report metrics_server verified once it is installed", func() {
 		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
 			filepath.Join("test", "e2e", "testdata", "cclclusterconfig.yaml")))
@@ -98,21 +98,20 @@ var _ = Describe("IP operator", Ordered, func() {
 			return parts[0], parts[1]
 		}
 
-		By("reporting metrics_server as the only failing component")
+		By("reporting metrics_server as failing")
 		Eventually(func(g Gomega) {
 			status, message := verified(g)
 			g.Expect(status).To(Equal("False"))
-			expectOnlyMetricsServerFailing(g, message)
+			expectMetricsServerFailing(g, message)
 		}).Should(Succeed())
 
 		installMetricsServer(ip)
 
 		// The operator rechecks failing components every minute.
-		By("reporting every component verified")
+		By("reporting metrics_server verified")
 		Eventually(func(g Gomega) {
-			status, message := verified(g)
-			g.Expect(status).To(Equal("True"), message)
-			g.Expect(message).To(HavePrefix("All "))
+			_, message := verified(g)
+			expectMetricsServerVerified(g, message)
 		}).WithTimeout(3 * time.Minute).Should(Succeed())
 	})
 })

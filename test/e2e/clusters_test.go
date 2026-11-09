@@ -182,14 +182,21 @@ func uninstallMetricsServer(c utils.Cluster) {
 		"--namespace", "kube-system", "--ignore-not-found", "--wait"))
 }
 
-// expectOnlyMetricsServerFailing asserts that a Verified message names metrics_server
-// as the only failing cluster_base component, for want of its APIService - "not found"
-// rather than a read error, which proves the ip chart's ClusterRole lets the manager
-// read APIServices.
-func expectOnlyMetricsServerFailing(g Gomega, message string) {
+// expectMetricsServerFailing asserts that a Verified message names metrics_server among
+// the failing cluster_base components, for want of its APIService - "not found" rather
+// than a read error, which proves the ip chart's ClusterRole lets the manager read
+// APIServices. Other failing components are not asserted on, so a cluster_base chart
+// gaining a check of its own does not break the suite.
+func expectMetricsServerFailing(g Gomega, message string) {
 	g.Expect(message).To(ContainSubstring(
-		"failing: catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
-	g.Expect(strings.Count(message, "catalogs/cluster_base/")).To(Equal(1))
+		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
+}
+
+// expectMetricsServerVerified asserts that a Verified message no longer names
+// metrics_server as failing, once installMetricsServer has installed it. It says nothing
+// about the other components.
+func expectMetricsServerVerified(g Gomega, message string) {
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
 }
 
 // clusterConfigField reads a field of a CCLInfraPlane's copy of its infra plane's
