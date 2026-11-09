@@ -34,13 +34,15 @@ branch that has not been pushed yet; an open PR takes new commits as in step 7.
 
 ## 2. Pre-commit checks
 
-Run what applies to the files being committed. Skip a group only if none of its inputs
-changed.
+Run `make pre-commit`. It runs every row below except `test-e2e` and `check-go-version`,
+then lists what it changed: commit the regenerated files. `check-headers` reads tracked
+files only, so `git add` new files first. To run only what applies, use the table and skip
+a group only if none of its inputs changed.
 
 | Changed | Run |
 | --- | --- |
-| any `.go`, `go.mod`, `go.sum` | `make fmt vet lint-fix` then `make test` |
-| `api/`, any `+kubebuilder:` marker or doc comment on an API type | `make manifests generate` |
+| any `.go`, `go.mod`, `go.sum` | `go mod tidy`, `make fmt vet lint-fix`, then `make test` |
+| `api/`, any `+kubebuilder:` marker or doc comment on an API type | `make client-generate`, then `make manifests generate` |
 | `config/`, `api/`, RBAC markers | `make helm-generate && git status --short charts/` (must be clean) and `make helm-lint` |
 | `api/`, `config/crd/`, `catalogs/**/*.go`, `hack/pyschema/`, `python/` | `make python-generate && git status --short python/` (must be clean) and `make python-test` |
 | `test/e2e/` | `make test-e2e` when feasible; say so in the PR if not run |

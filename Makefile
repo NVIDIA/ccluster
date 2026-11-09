@@ -153,6 +153,9 @@ vet: ## Run go vet against code.
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	@grep -v -e zz_generated -e /pkg/client/ cover.out > cover.handwritten.out
+	@printf 'Coverage of hand-written code: '
+	@go tool cover -func=cover.handwritten.out | tail -n 1 | awk '{print $$NF}'
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
@@ -226,6 +229,17 @@ check-go-version: ## Fail unless the Dockerfile's golang image matches the toolc
 	@[ -n "$(GOTOOLCHAIN)" ] || { echo "go.mod has no toolchain line, e.g. 'toolchain go1.27.2'" >&2; exit 1; }
 	@image="$$(sed -n 's/^FROM .*golang:\([^ @]*\).*/\1/p' Dockerfile)"; \
 	[ "go$$image" = "$(GOTOOLCHAIN)" ] || { echo "Dockerfile builds with golang:$$image but go.mod has 'toolchain $(GOTOOLCHAIN)': change both together" >&2; exit 1; }
+
+# Runs in CI's order: the client first, because generate loads every package and a stale
+# client may not compile. Each $(MAKE) call finishes before the next, even under -j.
+.PHONY: pre-commit
+pre-commit: ## Run every local check before a commit: tidy, generators, lint fixes and tests. Commit what it regenerates.
+	go mod tidy
+	$(MAKE) client-generate
+	$(MAKE) helm-generate python-generate
+	$(MAKE) lint-fix check-headers
+	$(MAKE) test helm-lint python-test
+	@git status --short
 
 ##@ Build
 

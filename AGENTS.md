@@ -90,8 +90,8 @@ to regenerate files.
 - Keep reconciliation idempotent and watch-driven; preserve the explicit teardown retry.
 - Log messages are capitalized, past tense, without a trailing period, with the object
   type named and balanced key-value pairs.
-- For Go changes run `make fmt vet lint-fix` and `make test`. Validate changed charts with
-  `make helm-lint` and changed Python models with `make python-test`.
+- Before a commit run `make pre-commit`: it tidies, regenerates, fixes lint and runs the
+  Go, chart and Python tests. During iteration `make test` is enough.
 - New controller behaviour belongs in envtest. Use selective table tests for states
   envtest cannot cheaply reach. Test contracts, not implementation details.
 - Envtest does not prove RBAC or running watch wiring; use `make test-e2e` for those.

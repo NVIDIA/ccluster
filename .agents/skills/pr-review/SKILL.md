@@ -66,6 +66,21 @@ findings: they will be overwritten.
 need is only proven by `make test-e2e`. Table tests are for states envtest cannot reach,
 not for coverage. Check that assertions test the contract, not the implementation.
 
+**Code shape.** A reader follows the call chain without detours. Check each new type,
+interface, name, guard and comment against the shape the repository already uses:
+
+- Dependencies are reconciler fields where nil means the default, as `Drift` is. A struct
+  that only bundles dependencies, or an interface for a concept the code invents, is a
+  finding.
+- A function that does I/O, blocks, starts goroutines or logs takes a `context.Context`
+  as its first parameter. A context stored in a struct is a finding.
+- Names read plainly at the call site and follow the package's pattern. An external API's
+  terms stay inside its client, such as Argo CD's "manifest" inside `internal/argocd`.
+- Every branch runs on some real path. A guard the callers already rule out, or a
+  constant that copies the API package's, is a finding.
+- Comments are brief and plain: a sentence or two on why, beside the code they explain.
+  A rule DESIGN.md already states gets a pointer there, not a retelling.
+
 **Docs and metadata.** A user-visible change adds a fragment `changelog.d/<short-topic>.md`
 in the format of `changelog.d/README.md`. Outside a release PR, any edit to
 `CHANGELOG.md` is a finding: only the `release` skill moves fragments into the changelog.
