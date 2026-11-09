@@ -9,7 +9,7 @@ require (
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-logr/logr v1.4.4
 	github.com/invopop/jsonschema v0.14.0
-	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	github.com/pkg/sftp v1.13.12
 	github.com/prometheus/client_golang v1.25.0
