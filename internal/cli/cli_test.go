@@ -100,7 +100,7 @@ func TestPrintsUsage(t *testing.T) {
 			!strings.Contains(out, "Usage:\n  ccluster") {
 			t.Errorf("ccluster %v printed %q, want the usage", args, out)
 		}
-		for _, command := range []string{"init", "register", "unregister", "list", "get"} {
+		for _, command := range []string{"init", "register", "unregister", "list", "get", "server"} {
 			if !strings.Contains(out, command) {
 				t.Errorf("ccluster %v does not list %s", args, command)
 			}

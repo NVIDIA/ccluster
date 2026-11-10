@@ -102,3 +102,11 @@ vendor/
 # ctags
 tags
 .claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# UI (ui/, embedded by internal/server/ui)
+# ---------------------------------------------------------------------------
+ui/node_modules/
+# The UI's build is committed so go install embeds it without Node; the Python dist/
+# rule above would otherwise hide it.
+!internal/server/ui/dist/

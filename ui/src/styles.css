@@ -1,0 +1,496 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #dde1e6;
+  --text: #1a1d21;
+  --text-muted: #5b636e;
+  --accent: #1f6f43;
+  --focus: #2563eb;
+
+  --ok-fg: #12602f;
+  --ok-bg: #e3f4e8;
+  --bad-fg: #a51d24;
+  --bad-bg: #fde7e8;
+  --warn-fg: #7a4a00;
+  --warn-bg: #fdf1d8;
+  --progress-fg: #1d4ed8;
+  --progress-bg: #e3ebfd;
+  --neutral-fg: #4b5563;
+  --neutral-bg: #eceef1;
+
+  --radius: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --surface-2: #1e232b;
+    --border: #2c333d;
+    --text: #e7eaee;
+    --text-muted: #9aa3ae;
+    --accent: #4cc98a;
+    --focus: #7aa7ff;
+
+    --ok-fg: #7ee2a8;
+    --ok-bg: #133524;
+    --bad-fg: #ff9a9f;
+    --bad-bg: #42181b;
+    --warn-fg: #f5c870;
+    --warn-bg: #3a2c0e;
+    --progress-fg: #9dbbff;
+    --progress-bg: #1a2a4d;
+    --neutral-fg: #b3bac4;
+    --neutral-bg: #262c35;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--progress-fg);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 100vh;
+}
+
+/* Header */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.header-brand h1 {
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+}
+
+.header-context {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.header-updated {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.namespace-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.namespace-picker select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 12rem;
+}
+
+/* Panels and cards */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+}
+
+.panel,
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+}
+
+.panel h2,
+.card h2 {
+  font-size: 1rem;
+  margin-bottom: var(--space-3);
+}
+
+.count {
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-left: var(--space-1);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-4);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 1.7rem;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.stat-ok .stat-value {
+  color: var(--ok-fg);
+}
+
+.stat-bad .stat-value {
+  color: var(--bad-fg);
+}
+
+.stat-warn .stat-value {
+  color: var(--warn-fg);
+}
+
+.stat-progress .stat-value {
+  color: var(--progress-fg);
+}
+
+.health-counts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.health-counts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.health-count {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-icon {
+  font-size: 0.75rem;
+}
+
+.badge-ok {
+  color: var(--ok-fg);
+  background: var(--ok-bg);
+}
+
+.badge-bad {
+  color: var(--bad-fg);
+  background: var(--bad-bg);
+}
+
+.badge-warn {
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+}
+
+.badge-progress {
+  color: var(--progress-fg);
+  background: var(--progress-bg);
+}
+
+.badge-neutral {
+  color: var(--neutral-fg);
+  background: var(--neutral-bg);
+}
+
+/* Needs attention */
+
+.all-clear {
+  margin: 0;
+  color: var(--ok-fg);
+}
+
+.attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.attention li {
+  border-left: 3px solid var(--bad-fg);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.attention-kind {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.attention-reason {
+  margin-left: var(--space-2);
+  color: var(--bad-fg);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.attention-message {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+/* Tables */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+tbody th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+tbody tr:last-child th,
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+td.message {
+  color: var(--text-muted);
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.component-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.component-bar {
+  display: flex;
+  gap: 2px;
+  width: 96px;
+  height: 8px;
+}
+
+.segment {
+  flex: 1;
+  border-radius: 2px;
+}
+
+.segment-ok {
+  background: var(--ok-fg);
+}
+
+.segment-bad {
+  background: var(--bad-fg);
+}
+
+.segment-warn {
+  background: var(--warn-fg);
+}
+
+.segment-progress {
+  background: var(--progress-fg);
+}
+
+.segment-neutral {
+  background: var(--neutral-bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.component-count {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Notices and errors */
+
+.refresh-failed {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  font-size: 0.9rem;
+}
+
+.error-panel {
+  border-color: var(--bad-fg);
+}
+
+.error-panel h2 {
+  color: var(--bad-fg);
+}
+
+.error-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.loading {
+  color: var(--text-muted);
+}
+
+button.link {
+  font: inherit;
+  color: var(--progress-fg);
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.footer {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
