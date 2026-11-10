@@ -16,7 +16,7 @@ class Admission(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     gpu_pod_runtime_class_name: Annotated[
@@ -38,7 +38,7 @@ class DefaultPriorities(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -53,7 +53,7 @@ class DefaultQueue(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     create_default_queue: Annotated[bool | None, Field(alias="createDefaultQueue")] = (
@@ -73,7 +73,7 @@ class ResourceList(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     cpu: str | None = None
@@ -86,7 +86,7 @@ class ResourceRequirements(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     requests: ResourceList | None = None
@@ -99,7 +99,7 @@ class Scheduler(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     placement_strategy: Annotated[str | None, Field(alias="placementStrategy")] = None
@@ -120,7 +120,7 @@ class Workload(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     resources: ResourceRequirements | None = None
@@ -135,7 +135,7 @@ class Operator(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     log_level: Annotated[str | None, Field(alias="logLevel")] = None
@@ -163,7 +163,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     scheduler: Scheduler | None = None
@@ -182,7 +182,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     kai_scheduler: Annotated[ChartValues | None, Field(alias="kai-scheduler")] = None
