@@ -2,14 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// <reference types="vitest/config" />
-import { defineConfig } from "vite";
+import { appendFile, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+
+const licensesFile = "THIRD_PARTY_LICENSES.md";
+
+// Vite's license file lists the JavaScript packages in the bundle. Roboto arrives through
+// CSS, so its license, which must travel with the font files, is appended here.
+function fontLicenses(): Plugin {
+  let outDir = "";
+  return {
+    name: "ccluster-font-licenses",
+    apply: "build",
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
+    async writeBundle() {
+      const pkg = JSON.parse(await readFile("node_modules/@fontsource/roboto/package.json", "utf8")) as { version: string };
+      const license = await readFile("node_modules/@fontsource/roboto/LICENSE", "utf8");
+      await appendFile(join(outDir, licensesFile), `\n## @fontsource/roboto - ${pkg.version} (OFL-1.1)\n\n${license.trim()}\n`);
+    },
+  };
+}
 
 // The build goes straight into the Go package that embeds it, and is committed: see
 // internal/server/ui/embed.go. `npm run dev` serves the UI with hot reload and passes /api
 // to a ccluster server started with --no-browser on its default address.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), fontLicenses()],
   base: "/",
   build: {
     outDir: "../internal/server/ui/dist",
@@ -19,7 +41,7 @@ export default defineConfig({
     assetsInlineLimit: 0,
     modulePreload: { polyfill: false },
     // The licenses of the bundled packages, served beside the UI.
-    license: { fileName: "THIRD_PARTY_LICENSES.md" },
+    license: { fileName: licensesFile },
     sourcemap: false,
   },
   server: {

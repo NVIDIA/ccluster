@@ -110,3 +110,6 @@ ui/node_modules/
 # The UI's build is committed so go install embeds it without Node; the Python dist/
 # rule above would otherwise hide it.
 !internal/server/ui/dist/
+
+# Kaizen UI stylesheets, fetched by ui/scripts/fetch-kui-styles.js at build time.
+ui/src/generated/

@@ -298,19 +298,39 @@ plane. `internal/server` is one `net/http` handler for both halves:
 - Every other `GET` serves the UI embedded by `internal/server/ui`: files under their own
   paths (`assets/` with immutable caching, since Vite hashes their names) and
   `index.html` for anything else.
-- Every response carries a `default-src 'self'` Content-Security-Policy, and requests
-  whose `Host` is not a loopback name are refused against DNS rebinding.
+- Every response carries a `default-src 'self'` Content-Security-Policy that also allows
+  `data:` images, which is how Kaizen UI draws its icons, and requests whose `Host` is
+  not a loopback name are refused against DNS rebinding.
 
 The overview's rules, such as a component set's status and the summary's counts, are
 pure functions in `internal/server/overview.go`; the TypeScript types in `ui/src/api.ts`
 mirror its JSON, so change both together.
 
-The UI is a Vite, React and TypeScript app in `ui/`, using TanStack Query to poll the
-overview every five seconds. It has no inline script or style, which the
-Content-Security-Policy forbids. `make ui-build` builds it into
-`internal/server/ui/dist/`, which is committed so `go build` and `go install` never need
-Node; CI rebuilds it and fails on drift. Node's version is in `ui/.nvmrc`. `ui/go.mod`
-only fences `ui/` off from the Go module, because some npm packages ship `.go` files.
+The UI is a Vite, React and TypeScript app in `ui/`, built from
+[Kaizen UI](https://www.npmjs.com/package/@nvidia/foundations-react-core), NVIDIA's design
+system (`@nvidia/foundations-react-core`), and using TanStack Query to poll the overview
+every five seconds. Its layout follows NVIDIA's platform UI: one page under a Kaizen
+`AppBar` holding the control plane's context, the namespace picker and the theme toggle,
+a sunken page background, bordered tables with a gray header row,
+Roboto (bundled from `@fontsource/roboto`), lucide icons, and a light/dark toggle that
+starts from the system setting and is remembered in the browser. Use Kaizen components
+and its semantic token CSS variables (such as `--text-color-secondary`), which follow the
+theme, before writing styles of your own; the package's `skills/` directory documents
+both. It has no inline script or style, which the Content-Security-Policy forbids.
+
+Kaizen publishes its stylesheets only to NVIDIA's CDN, so `ui/scripts/fetch-kui-styles.js`
+runs before every build and dev server. It downloads `base-external.css` and
+`components.css` for the installed Kaizen version into `ui/src/generated/` (not
+committed), dropping the `@font-face` rules that load fonts from the CDN, and the build
+bundles them. `make ui-build` therefore needs network access. The page uses
+`base-external.css`, Kaizen's base for open-source projects: `base.css` adds NVIDIA Sans
+and proprietary icons that only NVIDIA-licensed projects may ship. Kaizen's themes
+follow `prefers-color-scheme`.
+
+`make ui-build` builds the UI into `internal/server/ui/dist/`, which is committed so
+`go build` and `go install` never need Node; CI rebuilds it and fails on drift. Node's
+version is in `ui/.nvmrc`. `ui/go.mod` only fences `ui/` off from the Go module, because
+some npm packages ship `.go` files.
 
 | Target | Does |
 | --- | --- |

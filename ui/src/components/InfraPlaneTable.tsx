@@ -3,58 +3,33 @@
 
 import type { Condition, InfraPlaneRow } from "../api";
 import { age, conditionDetail, conditionLook } from "../format";
-import { Badge } from "./Badge";
+import { DataTable, EmptyTable, Section, type Column } from "./DataTable";
+import { StatusBadge } from "./StatusBadge";
 
-function ConditionCell({ condition }: { condition: Condition | null }) {
-  return (
-    <td>
-      <Badge look={conditionLook(condition)} title={conditionDetail(condition)} />
-    </td>
-  );
+function condition(value: Condition | null) {
+  return <StatusBadge look={conditionLook(value)} title={conditionDetail(value)} />;
 }
 
 export function InfraPlaneTable({ rows, showNamespace }: { rows: InfraPlaneRow[]; showNamespace: boolean }) {
+  const columns: Column<InfraPlaneRow>[] = [
+    ...(showNamespace ? [{ header: "Namespace", cell: (row: InfraPlaneRow) => row.namespace }] : []),
+    { header: "Name", cell: (row) => row.name, rowHeader: true },
+    { header: "Domain", cell: (row) => <span className="mono">{row.domain || "—"}</span> },
+    { header: "Available", cell: (row) => condition(row.available) },
+    { header: "Cluster config", cell: (row) => condition(row.clusterConfigApplied) },
+    { header: "Verified", cell: (row) => condition(row.verified) },
+    { header: "DNS", cell: (row) => condition(row.dnsReady) },
+    { header: "Age", cell: (row) => <span className="muted">{age(row.created)}</span> },
+  ];
   return (
-    <section className="panel" aria-labelledby="planes-heading">
-      <h2 id="planes-heading">
-        Infra planes <span className="count">{rows.length}</span>
-      </h2>
+    <Section id="infra-planes" title="Infra planes" description="Clusters registered with the control plane, and whether they are ready for component sets.">
       {rows.length === 0 ? (
-        <p className="empty">
-          No infra planes here. Register a cluster with <code>ccluster register</code>.
-        </p>
+        <EmptyTable>
+          No infra planes yet. Register a cluster with <code>ccluster register</code>.
+        </EmptyTable>
       ) : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                {showNamespace && <th scope="col">Namespace</th>}
-                <th scope="col">Name</th>
-                <th scope="col">Domain</th>
-                <th scope="col">Available</th>
-                <th scope="col">Cluster config</th>
-                <th scope="col">Verified</th>
-                <th scope="col">DNS</th>
-                <th scope="col">Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.namespace}/${row.name}`}>
-                  {showNamespace && <td>{row.namespace}</td>}
-                  <th scope="row">{row.name}</th>
-                  <td className="mono">{row.domain || "—"}</td>
-                  <ConditionCell condition={row.available} />
-                  <ConditionCell condition={row.clusterConfigApplied} />
-                  <ConditionCell condition={row.verified} />
-                  <ConditionCell condition={row.dnsReady} />
-                  <td className="muted">{age(row.created)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} rows={rows} rowKey={(row) => `${row.namespace}/${row.name}`} />
       )}
-    </section>
+    </Section>
   );
 }

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useQuery } from "@tanstack/react-query";
+import { Banner, Flex, Spinner } from "@nvidia/foundations-react-core";
 import { fetchConfig, fetchOverview } from "./api";
+import { AppShell } from "./components/AppShell";
 import { ComponentSetTable } from "./components/ComponentSetTable";
 import { ErrorPanel } from "./components/ErrorPanel";
-import { Header } from "./components/Header";
 import { InfraPlaneTable } from "./components/InfraPlaneTable";
 import { SummaryCards } from "./components/SummaryCards";
+import { NamespaceSelect } from "./components/NamespaceSelect";
 import { clock } from "./format";
 import { useNamespace } from "./useNamespace";
 
@@ -46,10 +48,12 @@ export function App() {
     body = (
       <>
         {overview.isError && (
-          <p className="refresh-failed" role="status">
-            Couldn&apos;t refresh at {clock(overview.errorUpdatedAt)}: {overview.error.message} Showing data from{" "}
-            {clock(overview.dataUpdatedAt)}.
-          </p>
+          <div role="status">
+            <Banner kind="inline" status="warning">
+              Couldn&apos;t refresh at {clock(overview.errorUpdatedAt)}: {overview.error.message} Showing data from{" "}
+              {clock(overview.dataUpdatedAt)}.
+            </Banner>
+          </div>
         )}
         <SummaryCards summary={data.summary} />
         <InfraPlaneTable rows={data.infraPlanes} showNamespace={showNamespace} />
@@ -66,23 +70,37 @@ export function App() {
       />
     );
   } else {
-    body = <p className="loading">Loading…</p>;
+    body = (
+      <Flex justify="center" paddingY="12">
+        <Spinner aria-label="Loading" />
+      </Flex>
+    );
   }
 
   return (
-    <div className="page">
-      <Header
-        config={config.data}
-        namespaces={data?.namespaces ?? (namespace ? [namespace] : [])}
-        namespace={namespace}
-        onNamespace={setNamespace}
-        updatedAt={data ? overview.dataUpdatedAt : undefined}
-      />
-      <main className="content">{body}</main>
-      <footer className="footer">
-        ccluster {config.data?.version} · read-only · refreshes every {refreshSeconds}s ·{" "}
-        <a href="/THIRD_PARTY_LICENSES.md">licenses</a>
-      </footer>
-    </div>
+    <AppShell
+      config={config.data}
+      controls={
+        <NamespaceSelect
+          lockedNamespace={config.data?.namespace || undefined}
+          namespaces={data?.namespaces ?? (namespace ? [namespace] : [])}
+          namespace={namespace}
+          onNamespace={setNamespace}
+        />
+      }
+    >
+      <div className="page">
+        <div className="page-heading">
+          <div>
+            <h1 className="page-title">Overview</h1>
+            <p className="section-description">
+              Infra planes and component sets on the control plane, read with your kubeconfig credentials.
+            </p>
+          </div>
+          {data ? <p className="section-description">Updated {clock(overview.dataUpdatedAt)}</p> : null}
+        </div>
+        {body}
+      </div>
+    </AppShell>
   );
 }

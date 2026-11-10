@@ -3,69 +3,49 @@
 
 import type { ComponentRow, ComponentSetRow } from "../api";
 import { age, healthLabel, healthLook, setStatusLook } from "../format";
-import { Badge } from "./Badge";
+import { DataTable, EmptyTable, Section, type Column } from "./DataTable";
+import { StatusBadge } from "./StatusBadge";
 
-/** One segment per component, in rollout order, coloured and titled by its health. */
+/** One segment per component, in rollout order, colored and titled by its health. */
 function ComponentBar({ components }: { components: ComponentRow[] }) {
   const done = components.filter((c) => c.health === "Healthy" || c.health === "Succeeded").length;
   return (
-    <div className="component-cell">
-      <div className="component-bar" aria-hidden="true">
+    <span className="component-cell">
+      <span className="component-bar" aria-hidden="true">
         {components.map((component) => (
           <span
             key={component.name}
-            className={`segment segment-${healthLook(component.health).tone}`}
+            className={`segment segment-${healthLook(component.health).color}`}
             title={`${component.name}: ${healthLabel(component.health)}`}
           />
         ))}
-      </div>
-      <span className="component-count">
+      </span>
+      <span className="muted tabular">
         {done} of {components.length} healthy
       </span>
-    </div>
+    </span>
   );
 }
 
 export function ComponentSetTable({ rows, showNamespace }: { rows: ComponentSetRow[]; showNamespace: boolean }) {
+  const columns: Column<ComponentSetRow>[] = [
+    ...(showNamespace ? [{ header: "Namespace", cell: (row: ComponentSetRow) => row.namespace }] : []),
+    { header: "Name", cell: (row) => row.name, rowHeader: true },
+    {
+      header: "Status",
+      cell: (row) => <StatusBadge kind="solid" look={setStatusLook(row.status)} title={row.progressing?.reason} />,
+    },
+    { header: "Components", cell: (row) => <ComponentBar components={row.components} /> },
+    { header: "Message", cell: (row) => <span className="muted message">{row.message || "—"}</span> },
+    { header: "Age", cell: (row) => <span className="muted">{age(row.created)}</span> },
+  ];
   return (
-    <section className="panel" aria-labelledby="sets-heading">
-      <h2 id="sets-heading">
-        Component sets <span className="count">{rows.length}</span>
-      </h2>
+    <Section id="component-sets" title="Component sets" description="Ordered bundles of catalog charts and how far each has rolled out.">
       {rows.length === 0 ? (
-        <p className="empty">No component sets here.</p>
+        <EmptyTable>No component sets yet.</EmptyTable>
       ) : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                {showNamespace && <th scope="col">Namespace</th>}
-                <th scope="col">Name</th>
-                <th scope="col">Status</th>
-                <th scope="col">Components</th>
-                <th scope="col">Message</th>
-                <th scope="col">Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.namespace}/${row.name}`}>
-                  {showNamespace && <td>{row.namespace}</td>}
-                  <th scope="row">{row.name}</th>
-                  <td>
-                    <Badge look={setStatusLook(row.status)} title={row.progressing?.reason} />
-                  </td>
-                  <td>
-                    <ComponentBar components={row.components} />
-                  </td>
-                  <td className="message">{row.message || "—"}</td>
-                  <td className="muted">{age(row.created)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} rows={rows} rowKey={(row) => `${row.namespace}/${row.name}`} />
       )}
-    </section>
+    </Section>
   );
 }

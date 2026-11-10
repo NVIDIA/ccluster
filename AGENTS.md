@@ -10,7 +10,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | --- | --- |
 | `cmd/ccluster-{cp,ip}-operator/` | Separate binaries for separate clusters; cp drives Argo CD, ip verifies `catalogs/cluster_base` against `CCLClusterConfig`. |
 | `cmd/ccluster/`, `internal/cli/` | The `ccluster` command line (cobra): `init`, `register`, `unregister`, `server`. Released as per-platform tarballs and through `go install`. |
-| `internal/server/`, `ui/` → `internal/server/ui/dist/` | `ccluster server`: a read-only dashboard. A `net/http` JSON API under `/api/v1/` plus the React (Vite, TypeScript) app from `ui/`, whose build is embedded with `go:embed`. |
+| `internal/server/`, `ui/` → `internal/server/ui/dist/` | `ccluster server`: a read-only dashboard. A `net/http` JSON API under `/api/v1/` plus the React (Vite, TypeScript, Kaizen UI) app from `ui/`, whose build is embedded with `go:embed`. |
 | `internal/controller/{cp,ip}/` | Per-operator controllers; shared bootstrap is in `internal/manager/`. |
 | `internal/registry/` | Generic per-chart registry (chart path → function) and the `*_registry` packages built on it, such as the ip operator's `verifier_registry`, the cp operator's `drift_registry`, and the `validator_registry` that checks component values. |
 | `api/ccluster/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |

@@ -13,8 +13,9 @@ import (
 
 // contentSecurityPolicy allows only the server's own scripts, styles, images and API:
 // the UI has no inline script or style and loads nothing from elsewhere, and no other
-// site may frame it.
-const contentSecurityPolicy = "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+// site may frame it. Images may also be data: URIs, which is how Kaizen UI's stylesheet
+// draws its icons.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // secureHeaders sets the headers every response carries.
 func secureHeaders(next http.Handler) http.Handler {

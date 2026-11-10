@@ -127,7 +127,8 @@ Every published artifact carries its license; keep it that way when changing a r
 
 The CLI also embeds the UI's build, which carries the licenses of the npm packages it
 bundles: Vite writes them to `internal/server/ui/dist/THIRD_PARTY_LICENSES.md`, and
-`ccluster server` serves that file beside the UI.
+`ccluster server` serves that file beside the UI. The bundled Kaizen UI stylesheets come
+from the same Apache-2.0 release as `@nvidia/foundations-react-core`, listed there.
 
 `go-licenses` fails the image build and `cli-package` when a newly linked module's
 license cannot be classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to

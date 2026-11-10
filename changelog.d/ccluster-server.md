@@ -8,5 +8,7 @@
   offers every namespace holding either kind; without cluster-wide read access it says
   so and suggests `-n`. With `-n` it reads only that namespace. It reads with the
   kubeconfig context's credentials, listens only on a loopback address, and answers only
-  requests addressed to a loopback host name. The React UI is embedded in the binary, so
-  the release tarballs and `go install` include it.
+  requests addressed to a loopback host name. The UI is built with React and NVIDIA's
+  Kaizen UI design system in the style of NVIDIA's platform UI, with a light/dark toggle
+  that starts from the system setting, and is embedded in the binary, so the release
+  tarballs and `go install` include it.

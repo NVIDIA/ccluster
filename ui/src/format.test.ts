@@ -5,28 +5,28 @@ import { describe, expect, it } from "vitest";
 import { age, conditionDetail, conditionLook, healthLook, setStatusLook } from "./format";
 
 describe("badge looks", () => {
-  it("maps condition statuses to a tone and a text label", () => {
-    expect(conditionLook({ status: "True" })).toEqual({ tone: "ok", label: "True" });
-    expect(conditionLook({ status: "False" })).toEqual({ tone: "bad", label: "False" });
-    expect(conditionLook({ status: "Unknown" })).toEqual({ tone: "warn", label: "Unknown" });
-    expect(conditionLook(null)).toEqual({ tone: "neutral", label: "Pending" });
+  it("maps condition statuses to a Kaizen badge color and a text label", () => {
+    expect(conditionLook({ status: "True" })).toEqual({ color: "green", label: "True" });
+    expect(conditionLook({ status: "False" })).toEqual({ color: "red", label: "False" });
+    expect(conditionLook({ status: "Unknown" })).toEqual({ color: "yellow", label: "Unknown" });
+    expect(conditionLook(null)).toEqual({ color: "gray", label: "Pending" });
   });
 
   it("maps component set statuses", () => {
-    expect(setStatusLook("Finished").tone).toBe("ok");
-    expect(setStatusLook("RollingOut")).toEqual({ tone: "progress", label: "Rolling out" });
-    expect(setStatusLook("Failed").tone).toBe("bad");
-    expect(setStatusLook("Terminating").tone).toBe("warn");
+    expect(setStatusLook("Finished").color).toBe("green");
+    expect(setStatusLook("RollingOut")).toEqual({ color: "blue", label: "Rolling out" });
+    expect(setStatusLook("Failed").color).toBe("red");
+    expect(setStatusLook("Terminating").color).toBe("yellow");
   });
 
   it("maps component healths", () => {
-    expect(healthLook("Healthy").tone).toBe("ok");
-    expect(healthLook("Succeeded").tone).toBe("ok");
-    expect(healthLook("Degraded").tone).toBe("bad");
-    expect(healthLook("Missing").tone).toBe("bad");
-    expect(healthLook("Progressing").tone).toBe("progress");
-    expect(healthLook("NotReleased")).toEqual({ tone: "neutral", label: "Not released" });
-    expect(healthLook("SomethingNew").tone).toBe("neutral");
+    expect(healthLook("Healthy").color).toBe("green");
+    expect(healthLook("Succeeded").color).toBe("green");
+    expect(healthLook("Degraded").color).toBe("red");
+    expect(healthLook("Missing").color).toBe("red");
+    expect(healthLook("Progressing").color).toBe("blue");
+    expect(healthLook("NotReleased")).toEqual({ color: "gray", label: "Not released" });
+    expect(healthLook("SomethingNew").color).toBe("gray");
   });
 });
 

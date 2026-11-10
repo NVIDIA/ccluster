@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, Overview } from "./api";
 import { App } from "./App";
+import { allNamespaces, namespaceOf } from "./components/NamespaceSelect";
 
 const config: Config = { context: "kind-cp", version: "v0.9.0", namespace: "", refreshSeconds: 5 };
 
@@ -127,17 +128,42 @@ describe("App", () => {
     expect(alert).toHaveTextContent('User "dev" cannot list resource "cclinfraplanes"');
   });
 
-  it("opens the namespace picked in the dropdown", async () => {
+  it("shows the namespace in the URL and follows the browser's history", async () => {
+    window.history.replaceState(null, "", "/?namespace=team-b");
     const fetchMock = mockFetch((url) => json(overview(url.searchParams.get("namespace") ?? "")));
     renderApp();
-    await screen.findByText("gpu.team-a.example.com");
 
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Namespace" }), "team-b");
-
-    expect(window.location.search).toBe("?namespace=team-b");
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/overview?namespace=team-b", expect.anything()),
-    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/overview?namespace=team-b", expect.anything()));
+    expect(await screen.findByRole("combobox", { name: "Namespace" })).toHaveTextContent("team-b");
+    // One namespace: no Namespace column.
     await waitFor(() => expect(screen.queryByRole("columnheader", { name: "Namespace" })).not.toBeInTheDocument());
+
+    window.history.pushState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Namespace" })).toHaveTextContent("All namespaces"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/overview", expect.anything()));
+  });
+});
+
+describe("theme toggle", () => {
+  it("switches between light and dark and remembers the choice", async () => {
+    window.localStorage.removeItem("ccluster-theme");
+    mockFetch(() => json(overview()));
+    renderApp();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Switch to dark mode" }));
+    expect(window.localStorage.getItem("ccluster-theme")).toBe("dark");
+    expect(await screen.findByRole("button", { name: "Switch to light mode" })).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.className).toMatch(/dark/));
+
+    await userEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    expect(window.localStorage.getItem("ccluster-theme")).toBe("light");
+  });
+});
+
+describe("namespaceOf", () => {
+  it("maps the picker's values to namespaces", () => {
+    expect(namespaceOf(allNamespaces)).toBe("");
+    expect(namespaceOf("team-b")).toBe("team-b");
   });
 });
