@@ -16,7 +16,7 @@ class Filesystem(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     size_gb: Annotated[int, Field(alias="sizeGb")]
@@ -37,7 +37,7 @@ class Object(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     bucket: str
@@ -64,7 +64,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     volume_id: Annotated[str, Field(alias="volumeId")]

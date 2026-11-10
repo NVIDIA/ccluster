@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from ccluster import catalogs
 from ccluster.catalogs import namespace_base
-from ccluster.catalogs.cluster_base import gpu_operator
+from ccluster.catalogs.cluster_base import gpu_operator, ingress_nginx
 from ccluster.catalogs.deployments import inference_deployment
 from ccluster.catalogs.resources import kai_gpu_queues
 
@@ -51,8 +51,37 @@ def test_wire_names_are_aliases():
         {"gpu-operator": {"toolkit": {"enabled": True}}}
     )
     assert values.gpu_operator.toolkit.enabled is True
+
+
+def test_unmodelled_values_pass_through():
+    # A chart accepts more values than its Go type models, and the operator lets the rest
+    # through, so the Python models keep them as given while still checking modelled ones.
+    raw = {"ingress-nginx": {"controller": {"podLabels": {"a": "b"}, "autoscaling": {"enabled": True}}}}
+    values = ingress_nginx.Values(**raw)
+    assert values.ingress_nginx.controller.autoscaling.enabled is True
+    assert catalogs.entry(ingress_nginx.CHART, "ingress-nginx", values)["values"] == raw
     with pytest.raises(ValidationError):
-        gpu_operator.Values.model_validate({"gpu-operator": {"unknown": 1}})
+        ingress_nginx.Values(**{"ingress-nginx": {"controller": {"autoscaling": {"enabled": "maybe"}}}})
+
+
+def test_unmodelled_none_values():
+    # None on a model is left out; None inside a plain dict stays null, which Helm reads
+    # as removing the chart's default.
+    values = ingress_nginx.Values(
+        **{
+            "ingress-nginx": {
+                "controller": {
+                    "nodeSelector": None,
+                    "podLabels": {"a": None},
+                    "tolerations": [None],
+                }
+            },
+            "extra": None,
+        }
+    )
+    assert catalogs.entry(ingress_nginx.CHART, "ingress-nginx", values)["values"] == {
+        "ingress-nginx": {"controller": {"podLabels": {"a": None}, "tolerations": [None]}}
+    }
 
 
 def test_kai_gpu_queues_required_values():

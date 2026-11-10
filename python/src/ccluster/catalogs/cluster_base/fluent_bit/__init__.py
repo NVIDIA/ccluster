@@ -17,7 +17,7 @@ class Config(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     service: str | None = None
@@ -36,7 +36,7 @@ class ServiceAccount(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     create: bool | None = None
@@ -53,7 +53,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     service_account: Annotated[ServiceAccount | None, Field(alias="serviceAccount")] = (
@@ -68,7 +68,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     fluent_bit: Annotated[ChartValues | None, Field(alias="fluent-bit")] = None

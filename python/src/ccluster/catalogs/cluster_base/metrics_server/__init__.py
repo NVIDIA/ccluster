@@ -16,7 +16,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     args: list[str] | None = None
@@ -33,7 +33,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     metrics_server: Annotated[ChartValues | None, Field(alias="metrics-server")] = None

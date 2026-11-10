@@ -16,7 +16,7 @@ class PrometheusSpec(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     external_labels: Annotated[dict[str, str] | None, Field(alias="externalLabels")] = (
@@ -42,7 +42,7 @@ class Toggle(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -57,7 +57,7 @@ class Prometheus(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     prometheus_spec: Annotated[PrometheusSpec | None, Field(alias="prometheusSpec")] = (
@@ -71,7 +71,7 @@ class PrometheusRules(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     pod_alerts: Annotated[Toggle | None, Field(alias="podAlerts")] = None
@@ -84,7 +84,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     grafana: Toggle | None = None
@@ -97,7 +97,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     kube_prometheus_stack: Annotated[

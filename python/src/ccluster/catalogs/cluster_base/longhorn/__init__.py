@@ -18,7 +18,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
 
@@ -29,7 +29,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     longhorn: ChartValues | None = None

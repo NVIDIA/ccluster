@@ -18,7 +18,7 @@ class Prometheus(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     url: str | None = None
@@ -31,7 +31,7 @@ class Rules(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     custom: list[dict[str, Any]] | None = None
@@ -43,7 +43,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     prometheus: Prometheus | None = None
@@ -56,7 +56,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     prometheus_adapter: Annotated[

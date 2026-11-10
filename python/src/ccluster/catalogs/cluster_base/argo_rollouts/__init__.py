@@ -16,7 +16,7 @@ class Controller(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     replicas: int | None = None
@@ -31,7 +31,7 @@ class Dashboard(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -47,7 +47,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     controller: Controller | None = None
@@ -60,7 +60,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     argo_rollouts: Annotated[ChartValues | None, Field(alias="argo-rollouts")] = None

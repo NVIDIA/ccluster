@@ -16,7 +16,7 @@ class Replicas(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     replica_count: Annotated[int | None, Field(alias="replicaCount")] = None
@@ -28,7 +28,7 @@ class Toggle(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -43,7 +43,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     operator: Replicas | None = None
@@ -57,7 +57,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     keda: ChartValues | None = None

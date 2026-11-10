@@ -18,7 +18,7 @@ class CNI(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     cni_conf_dir: Annotated[str | None, Field(alias="cniConfDir")] = None
@@ -39,7 +39,7 @@ class CiliumIstioPatch(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -54,7 +54,7 @@ class IstioBase(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     default_revision: Annotated[str | None, Field(alias="defaultRevision")] = None
@@ -70,7 +70,7 @@ class IstioCNI(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     cni: CNI | None = None
@@ -82,7 +82,7 @@ class IstioGateway(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     enabled: bool | None = None
@@ -99,7 +99,7 @@ class Pilot(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     autoscale_min: Annotated[int | None, Field(alias="autoscaleMin")] = None
@@ -114,7 +114,7 @@ class Istiod(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     pilot: Pilot | None = None
@@ -126,7 +126,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     istio_base: Annotated[IstioBase | None, Field(alias="istio-base")] = None

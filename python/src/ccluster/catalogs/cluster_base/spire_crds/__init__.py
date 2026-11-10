@@ -16,7 +16,7 @@ class ChartValues(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     annotations: dict[str, str] | None = None
@@ -33,7 +33,7 @@ class Values(BaseModel):
     """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         populate_by_name=True,
     )
     spire_crds: Annotated[ChartValues | None, Field(alias="spire-crds")] = None
