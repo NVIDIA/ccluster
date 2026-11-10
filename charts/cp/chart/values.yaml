@@ -36,10 +36,9 @@ manager:
   ## --base-domain is required, and has no default: the operator does not start
   ## without it. Every CCLInfraPlane's domain is derived under it as
   ## "<name>.<namespace>.<base-domain>", which the operator writes to the plane's
-  ## CCLClusterConfig, where it is also the SPIFFE trust domain, and publishes the plane's
-  ## records under. Add it to the list below, for example:
+  ## CCLClusterConfig and publishes the plane's records under. Add it to the list below, for example:
   ##   - --base-domain=planes.example.com
-  ## Set it once: changing it moves every plane's domain, records and trust domain. Two
+  ## Set it once: changing it moves every plane's domain and records. Two
   ## control planes must not share one, or same-named planes in same-named namespaces
   ## claim the same records.
   ##

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */ -}}
 ---
-# acme-ca is the issuer the OIDC discovery Ingress and the deployment charts' Ingresses
+# acme-ca is the issuer the deployment charts' Ingresses
 # (catalogs/deployments/inference_deployment and dynamo_deployment) request.
 #
 # The name is shared with platform-managed clusters, where acme-ca is a DNS-01 issuer

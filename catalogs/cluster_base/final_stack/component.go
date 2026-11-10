@@ -20,16 +20,8 @@ const (
 
 // Values is the top-level values document for catalogs/cluster_base/final_stack.
 //
-// It is empty, and that is a known gap rather than a chart with nothing to configure.
-// This chart wraps no upstream dependency and has no chart-level values: its templates
-// consume only .Values.global.cluster.domain, which every one of its five resources
-// interpolates — the cluster issuers, the OIDC discovery Ingress, and the four
-// ClusterSPIFFEIDs.
-//
-// Global values are not modelled by this catalog yet. Until they are, this component
-// renders against the chart's own defaults and the resources it produces will carry
-// the placeholder domain, so a caller that needs a real one has to set
-// global.cluster.domain on the CCLComponentSet component's values by hand.
+// It is empty: this chart wraps no upstream dependency, and its one template, the
+// cluster's cert-manager ClusterIssuer, reads no values.
 type Values struct{}
 
 // New returns the final-stack chart entry, installed into namespace with values.

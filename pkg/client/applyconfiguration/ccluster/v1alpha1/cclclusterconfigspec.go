@@ -11,9 +11,8 @@ package v1alpha1
 //
 // CCLClusterConfigSpec defines the desired state of CCLClusterConfig
 type CCLClusterConfigSpecApplyConfiguration struct {
-	// domain is the cluster's DNS domain, and its SPIFFE trust domain. Components such
-	// as spire, external-dns and final_stack must be configured with it; the infra-plane
-	// operator verifies that they are. For a cluster registered with a CCLInfraPlane, the
+	// domain is the cluster's DNS domain, which the infra-plane operator verifies the
+	// cluster_base components against. For a cluster registered with a CCLInfraPlane, the
 	// control-plane operator writes the plane's domain here:
 	// "<name>.<namespace>.<base domain>". It must be a lowercase DNS name of at least two
 	// labels, each at most 63 characters.

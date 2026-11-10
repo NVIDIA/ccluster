@@ -12,7 +12,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -24,10 +23,7 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
@@ -70,7 +66,6 @@ func Get() *Registry {
 	r.Register(namespacebase.Chart, noDrift)
 	r.Register(argorollouts.Chart, noDrift)
 	r.Register(certmanager.Chart, noDrift)
-	r.Register(externaldns.Chart, noDrift)
 	r.Register(finalstack.Chart, noDrift)
 	r.Register(fluentbit.Chart, noDrift)
 	r.Register(gpuoperator.Chart, noDrift)
@@ -82,10 +77,7 @@ func Get() *Registry {
 	r.Register(longhorn.Chart, noDrift)
 	r.Register(metricsserver.Chart, noDrift)
 	r.Register(networkoperator.Chart, noDrift)
-	r.Register(otelcollector.Chart, noDrift)
 	r.Register(prometheusadapter.Chart, noDrift)
-	r.Register(spire.Chart, noDrift)
-	r.Register(spirecrds.Chart, noDrift)
 	r.Register(computedeployment.Chart, noDrift)
 	r.Register(dynamodeployment.Chart, noDrift)
 	r.Register(inferencedeployment.Chart, noDrift)

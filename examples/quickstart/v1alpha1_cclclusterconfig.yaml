@@ -26,5 +26,5 @@ metadata:
     app.kubernetes.io/name: ccluster
   name: cluster
 spec:
-  # The cluster's DNS domain and SPIFFE trust domain.
+  # The cluster's DNS domain.
   domain: ccluster-local.example.com

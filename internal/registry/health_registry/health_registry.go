@@ -14,7 +14,6 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -26,10 +25,7 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	computedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/compute_deployment"
 	dynamodeployment "github.com/NVIDIA/ccluster/catalogs/deployments/dynamo_deployment"
 	inferencedeployment "github.com/NVIDIA/ccluster/catalogs/deployments/inference_deployment"
@@ -64,7 +60,6 @@ func Get() *Registry {
 	r.Register(namespacebase.Chart, catalogs.DefaultHealth)
 	r.Register(argorollouts.Chart, catalogs.DefaultHealth)
 	r.Register(certmanager.Chart, catalogs.DefaultHealth)
-	r.Register(externaldns.Chart, catalogs.DefaultHealth)
 	r.Register(finalstack.Chart, catalogs.DefaultHealth)
 	r.Register(fluentbit.Chart, catalogs.DefaultHealth)
 	r.Register(gpuoperator.Chart, catalogs.DefaultHealth)
@@ -76,10 +71,7 @@ func Get() *Registry {
 	r.Register(longhorn.Chart, catalogs.DefaultHealth)
 	r.Register(metricsserver.Chart, catalogs.DefaultHealth)
 	r.Register(networkoperator.Chart, catalogs.DefaultHealth)
-	r.Register(otelcollector.Chart, catalogs.DefaultHealth)
 	r.Register(prometheusadapter.Chart, catalogs.DefaultHealth)
-	r.Register(spire.Chart, catalogs.DefaultHealth)
-	r.Register(spirecrds.Chart, catalogs.DefaultHealth)
 	r.Register(computedeployment.Chart, computedeployment.Health)
 	r.Register(dynamodeployment.Chart, dynamodeployment.Health)
 	r.Register(inferencedeployment.Chart, catalogs.DefaultHealth)

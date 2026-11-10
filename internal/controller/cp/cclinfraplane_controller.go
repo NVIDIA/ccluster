@@ -80,7 +80,7 @@ type CCLInfraPlaneReconciler struct {
 	// BaseDomain is the DNS domain every CCLInfraPlane's domain is derived under:
 	// "<name>.<namespace>.<BaseDomain>". The name and namespace are unique together and
 	// both DNS labels, so no plane's domain equals, or falls under, another's. Changing it
-	// moves every plane's domain, and with it its records and SPIFFE trust domain.
+	// moves every plane's domain, and with it its records.
 	BaseDomain string
 
 	// CatalogRepoURL is the Git repository the chart catalog lives in. It is the one

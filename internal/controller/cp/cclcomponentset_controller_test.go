@@ -30,9 +30,9 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
@@ -503,10 +503,10 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// x-kubernetes-preserve-unknown-fields. A table test cannot cover that; it
 		// needs an API server.
 		It("should accept components built by the catalog packages", func() {
-			crds, err := spirecrds.New("spire-system", spirecrds.Values{})
+			issuer, err := certmanager.New("cert-manager", certmanager.Values{})
 			Expect(err).NotTo(HaveOccurred())
 
-			server, err := spire.New("spire-system", spire.Values{})
+			ingress, err := ingressnginx.New("ingress-nginx", ingressnginx.Values{})
 			Expect(err).NotTo(HaveOccurred())
 
 			// kai_gpu_queues has required values, so it also proves New reports
@@ -523,8 +523,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA}
 			specs := []cclusternvidiacomv1alpha1.ComponentSpec{
-				{Name: "spire-crds", InfraPlaneRef: ref, ComponentEntry: crds},
-				{Name: "spire", InfraPlaneRef: ref, ComponentEntry: server},
+				{Name: "cert-manager", InfraPlaneRef: ref, ComponentEntry: issuer},
+				{Name: "ingress-nginx", InfraPlaneRef: ref, ComponentEntry: ingress},
 				{Name: "kai-gpu-queues", InfraPlaneRef: ref, ComponentEntry: queues},
 			}
 
@@ -534,10 +534,10 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			By("releasing the first component, and only that one")
 			settle()
 
-			application := getApplication("spire-crds")
-			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/spire_crds"))
-			Expect(application.Spec.Destination.Namespace).To(Equal("spire-system"))
-			Expect(applicationExists("spire")).To(BeFalse())
+			application := getApplication("cert-manager")
+			Expect(application.Spec.Source.Path).To(Equal("catalogs/cluster_base/cert_manager"))
+			Expect(application.Spec.Destination.Namespace).To(Equal("cert-manager"))
+			Expect(applicationExists("ingress-nginx")).To(BeFalse())
 		})
 
 		// istiod patches its validating webhooks' failurePolicy from the rendered Ignore to

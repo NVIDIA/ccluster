@@ -51,7 +51,6 @@ bundles none.
 | istio (cni) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
 | istio (gateway) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
 | cert-manager | v1.14.5 | https://charts.jetstack.io | Apache-2.0 |
-| external-dns | 1.19.0 | https://kubernetes-sigs.github.io/external-dns/ | Apache-2.0 |
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
 | ingress-nginx | 4.11.5 | https://kubernetes.github.io/ingress-nginx | Apache-2.0 |
@@ -61,10 +60,7 @@ bundles none.
 | longhorn | 1.7.2 | https://charts.longhorn.io | Apache-2.0 |
 | metrics-server | 3.12.2 | https://kubernetes-sigs.github.io/metrics-server/ | Apache-2.0 |
 | network-operator | v24.4.0 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
-| opentelemetry-collector | 0.130.2 | https://open-telemetry.github.io/opentelemetry-helm-charts | Apache-2.0 |
 | prometheus-adapter | 4.14.1 | https://prometheus-community.github.io/helm-charts | Apache-2.0 |
-| spire | 0.20.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
-| spire-crds | 0.4.0 | https://spiffe.github.io/helm-charts-hardened/ | Apache-2.0 |
 
 ## Notes
 

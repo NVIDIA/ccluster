@@ -574,8 +574,8 @@ var _ = Describe("Manager", Ordered, func() {
 		// CCLInfraPlane. Both targets run the same spec:
 		// in-cluster proves the cp operator's own RBAC covers CCLClusterConfig, ex-cluster
 		// that a `ccluster register` token reaches another cluster over the network. The
-		// verdict flipping only after spire_crds is installed there, well inside
-		// --infraplane-resync-period, proves the remote watch is wired to the controller.
+		// ingress LoadBalancer's address arriving well inside --infraplane-resync-period
+		// proves the remote watch is wired to the controller.
 		//
 		// ex-cluster is also registered before the ip chart is installed on it, the order
 		// a user who runs `ccluster register` first meets. Only a real API server proves
@@ -634,20 +634,9 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("copying the infra-plane operator's verdict onto the CCLInfraPlane")
 				Eventually(func(g Gomega) {
-					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("False"))
-					expectOnlySpireCRDsFailing(g,
-						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
-				}, watchTimeout).Should(Succeed())
-
-				installSpireCRDs(t.cluster)
-				DeferCleanup(uninstallSpireCRDs, t.cluster)
-
-				// The infra-plane operator rechecks a failing component every minute.
-				By("following the verdict as it changes on the plane's cluster")
-				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("True"),
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
-				}, watchTimeout).Should(Succeed())
+				}, crossClusterTimeout).Should(Succeed())
 
 				By("reporting no ingress LoadBalancer while the plane has none")
 				Expect(clusterConfigField(planeName, ".loadBalancers")).To(BeEmpty())
@@ -660,7 +649,7 @@ var _ = Describe("Manager", Ordered, func() {
 				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.loadBalancers[?(@.name=="nginx")].ip`)).
 						To(Equal(ingressLoadBalancerIP))
-				}, crossClusterTimeout).Should(Succeed())
+				}, watchTimeout).Should(Succeed())
 
 				// The suite deploys the cp chart as the quickstart does, without
 				// external-dns, so there is no DNSEndpoint CRD to write the record to.

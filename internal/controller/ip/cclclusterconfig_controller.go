@@ -69,7 +69,6 @@ type CCLClusterConfigReconciler struct {
 // CCLClusterConfig status.
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclclusterconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 
 // Reconcile runs every cluster_base component's Verifier against the CCLClusterConfig and

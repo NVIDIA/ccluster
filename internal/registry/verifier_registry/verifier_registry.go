@@ -15,7 +15,6 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
-	externaldns "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_dns"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -27,10 +26,7 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/longhorn"
 	metricsserver "github.com/NVIDIA/ccluster/catalogs/cluster_base/metrics_server"
 	networkoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/network_operator"
-	otelcollector "github.com/NVIDIA/ccluster/catalogs/cluster_base/opentelemetry_collector"
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
-	"github.com/NVIDIA/ccluster/catalogs/cluster_base/spire"
-	spirecrds "github.com/NVIDIA/ccluster/catalogs/cluster_base/spire_crds"
 	"github.com/NVIDIA/ccluster/internal/registry"
 )
 
@@ -43,13 +39,13 @@ import (
 // Helm release state, so it holds whichever of the two installed the chart: the control
 // plane through a CCLComponentSet, or a user with helm. ctx is the reconcile context
 // every controller-runtime read needs; r is a cached, read-only client; cfg is the
-// cluster's declared configuration, for checks such as "spire's trust domain is this
-// cluster's domain".
+// cluster's declared configuration, for checks that compare a component against the
+// cluster's domain.
 //
 // A check returns nil when the component is installed and configured, and otherwise an
 // error saying why not. The error text is shown to users in the CCLClusterConfig's
 // Verified condition next to the chart, so it should be short and specific, e.g.
-// `trust domain is "a.example.com", want "b.example.com"`. A read that fails is
+// `domain is "a.example.com", want "b.example.com"`. A read that fails is
 // returned as it is: a component the operator cannot check is not verified.
 //
 // The controller runs all checks concurrently, so one must not rely on another having
@@ -80,7 +76,6 @@ func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, alwaysVerified)
 	r.Register(certmanager.Chart, alwaysVerified)
-	r.Register(externaldns.Chart, alwaysVerified)
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
@@ -92,9 +87,6 @@ func Get() *Registry {
 	r.Register(longhorn.Chart, alwaysVerified)
 	r.Register(metricsserver.Chart, alwaysVerified)
 	r.Register(networkoperator.Chart, alwaysVerified)
-	r.Register(otelcollector.Chart, alwaysVerified)
 	r.Register(prometheusadapter.Chart, alwaysVerified)
-	r.Register(spire.Chart, alwaysVerified)
-	r.Register(spirecrds.Chart, spirecrds.Verify)
 	return r
 }

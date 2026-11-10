@@ -233,16 +233,6 @@ class Values(BaseModel):
     PodAnnotations are added verbatim to the annotations of every pod the chart
     creates, on the same terms as PodLabels.
     """
-    domain: str
-    """
-    Domain is the DNS zone the deployment's hostname is created in, by external-dns
-    from the Service. The host is <name>.<namespace>.<domain> unless DeploymentURL
-    overrides it. Required.
-    """
-    deployment_url: Annotated[str | None, Field(alias="deploymentUrl")] = None
-    """
-    DeploymentURL replaces the derived hostname with a full one.
-    """
     container_port: Annotated[int, Field(alias="containerPort")]
     """
     ContainerPort is the port the SSH launcher listens on inside the pod. Required.
