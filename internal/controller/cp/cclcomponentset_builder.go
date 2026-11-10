@@ -273,8 +273,9 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 }
 
 // pruneNext deletes one of the prunable Applications, and reports whether it deleted
-// one. prunable is what prunableApplications returns, terminating ones included. The
-// caller calls it only once every component in the spec has finished.
+// one. prunable is what prunableApplications returns, terminating ones included.
+// applyComponents calls it only once every component in the spec has finished;
+// teardownNext calls it before it deletes any of them.
 //
 // Removal waits for that because a removed component can still serve one that remains:
 // an ExternalSecret producer replaced by a new one keeps the old Secret in place for pods
@@ -385,22 +386,25 @@ func (r *CCLComponentSetReconciler) teardownNext(
 	// A removal still waiting, or one from a spec edited during the delete, finishes first:
 	// a removed component depending on a remaining one is the more common case. DESIGN.md
 	// §5 gives the case this order gets wrong.
-	var name string
-	if prunable := prunableApplications(componentSet, owned); len(prunable) > 0 {
-		name = pruneOrder(prunable)[0]
-	} else {
-		for _, component := range slices.Backward(componentSet.Spec.Components) {
-			if candidate := applicationName(componentSet.Name, component.Name); owned[candidate] != nil {
-				name = candidate
-				break
-			}
-		}
-	}
-	if err := r.Delete(ctx, owned[name]); client.IgnoreNotFound(err) != nil {
+	pruned, err := r.pruneNext(ctx, componentSet, prunableApplications(componentSet, owned))
+	if err != nil || pruned {
 		return len(owned), err
 	}
-	log.Info("Deleted Argo CD Application", "application", name,
-		"namespace", componentSet.Namespace, "wave", owned[name].Labels[labelWave])
+
+	// Highest position first.
+	for i, component := range slices.Backward(componentSet.Spec.Components) {
+		name := applicationName(componentSet.Name, component.Name)
+		application, present := owned[name]
+		if !present {
+			continue
+		}
+		if err := r.Delete(ctx, application); client.IgnoreNotFound(err) != nil {
+			return len(owned), err
+		}
+		log.Info("Deleted Argo CD Application", "application", name,
+			"namespace", componentSet.Namespace, "wave", i+1)
+		break
+	}
 	return len(owned), nil
 }
 

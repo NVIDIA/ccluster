@@ -900,6 +900,12 @@ deletion brings the CCLComponentSet back.
 The costs:
 
 - A remaining component that never finishes keeps every removed component installed.
+- Removing a broken component waits on a remaining one that fails only because of it. In
+  `[a, b, c]` with `b` `Degraded` and `c` failing because of `b`, such as `b` being an
+  admission webhook that rejects `c`'s Pods, removing `b` alone never completes: `c` cannot
+  finish while `b` is installed. Removing `b` and `c` together completes. So does deleting
+  `b`'s Application by hand, which the operator does not recreate once `b` is out of the
+  spec.
 - A removed component waits even when nothing can depend on it, such as the last one in the
   list.
 - Wave labels compare correctly only when they were written from one spec. An update that

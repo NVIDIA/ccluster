@@ -1108,6 +1108,48 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(terminating(fourth)).To(BeTrue())
 		})
 
+		// The cost DESIGN.md §5 gives for waiting: a broken component, such as a webhook
+		// that rejects a later component's Pods, cannot be removed on its own while that
+		// later component fails because of it.
+		It("should not remove a broken component alone while a remaining one fails because of it", func() {
+			const third = "vault"
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(append(components(), onPlaneA(third)))
+			settle()
+			release(firstComponent, secondComponent, third)
+
+			By("removing only the second component while it and the third are degraded")
+			reportCurrentComparison(secondComponent, argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced)
+			reportCurrentComparison(third, argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced)
+			setComponents([]cclusternvidiacomv1alpha1.ComponentSpec{components()[0], onPlaneA(third)})
+			reconcileAndGet()
+			componentSet := reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeFalse(),
+				"removed while a remaining component had not finished")
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
+				To(ContainSubstring(third))
+			statuses := componentSet.Status.ComponentSyncStatuses
+			Expect(statuses[len(statuses)-1].Name).To(Equal(secondComponent))
+			Expect(statuses[len(statuses)-1].Removal).To(Equal(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending))
+
+			By("removing the third as well, which lets both go, one at a time")
+			setComponents(components()[:1])
+			for range 2 {
+				reconcileAndGet()
+				var deleting []string
+				for _, component := range []string{secondComponent, third} {
+					if applicationExists(component) && terminating(component) {
+						deleting = append(deleting, component)
+					}
+				}
+				Expect(deleting).To(HaveLen(1))
+				finishTeardown(deleting[0])
+			}
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
+		})
+
 		It("should report InfraPlaneNotFound and apply nothing when a plane is missing", func() {
 			createInfraPlane(planeA, true)
 			// planeB is deliberately absent.
