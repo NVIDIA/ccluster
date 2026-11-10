@@ -162,11 +162,6 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 		wantSummary := Summary{
 			InfraPlanes:   InfraPlaneCounts{Total: 2, Available: 1, Verified: 1},
 			ComponentSets: ComponentSetCounts{Total: 3, Finished: 1, RollingOut: 1, Failed: 1},
-			Components: []HealthCount{
-				{Health: "Degraded", Count: 1},
-				{Health: HealthNotReleased, Count: 3},
-				{Health: "Healthy", Count: 2},
-			},
 		}
 		if !reflect.DeepEqual(got.Summary, wantSummary) {
 			t.Errorf("Summary =\n%+v\nwant\n%+v", got.Summary, wantSummary)

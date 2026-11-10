@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Summary } from "../api";
-import { healthLook } from "../format";
-import { Badge } from "./Badge";
 
 function Stat({ value, label, tone }: { value: number; label: string; tone?: string }) {
   return (
@@ -35,21 +33,6 @@ export function SummaryCards({ summary }: { summary: Summary }) {
           <Stat value={sets.failed} label="failed" tone="bad" />
           <Stat value={sets.terminating} label="terminating" tone="warn" />
         </div>
-      </article>
-      <article className="card">
-        <h2>Components</h2>
-        {summary.components.length === 0 ? (
-          <p className="muted">None yet.</p>
-        ) : (
-          <ul className="health-counts">
-            {summary.components.map(({ health, count }) => (
-              <li key={health}>
-                <span className="health-count">{count}</span>
-                <Badge look={healthLook(health)} />
-              </li>
-            ))}
-          </ul>
-        )}
       </article>
     </section>
   );

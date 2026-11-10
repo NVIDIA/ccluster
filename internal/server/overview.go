@@ -34,9 +34,6 @@ type Overview struct {
 type Summary struct {
 	InfraPlanes   InfraPlaneCounts   `json:"infraPlanes"`
 	ComponentSets ComponentSetCounts `json:"componentSets"`
-	// Components counts every component of every listed set by health, in the order of
-	// componentHealthOrder, omitting healths no component has.
-	Components []HealthCount `json:"components"`
 }
 
 // InfraPlaneCounts counts infra planes by their Available and Verified conditions.
@@ -53,12 +50,6 @@ type ComponentSetCounts struct {
 	RollingOut  int `json:"rollingOut"`
 	Failed      int `json:"failed"`
 	Terminating int `json:"terminating"`
-}
-
-// HealthCount is how many components have one health.
-type HealthCount struct {
-	Health string `json:"health"`
-	Count  int    `json:"count"`
 }
 
 // Condition is the part of a metav1.Condition the page shows.
@@ -94,20 +85,6 @@ const (
 // HealthNotReleased is the health shown for a component whose Argo CD Application the
 // operator has not created yet, because an earlier component is not Healthy and Synced.
 const HealthNotReleased = "NotReleased"
-
-// componentHealthOrder is the order healths are counted and listed in: the trouble
-// first.
-var componentHealthOrder = []string{
-	string(cclusternvidiacomv1alpha1.ComponentHealthFailed),
-	string(cclusternvidiacomv1alpha1.ComponentHealthDegraded),
-	string(cclusternvidiacomv1alpha1.ComponentHealthMissing),
-	string(cclusternvidiacomv1alpha1.ComponentHealthUnknown),
-	string(cclusternvidiacomv1alpha1.ComponentHealthSuspended),
-	string(cclusternvidiacomv1alpha1.ComponentHealthProgressing),
-	HealthNotReleased,
-	string(cclusternvidiacomv1alpha1.ComponentHealthHealthy),
-	string(cclusternvidiacomv1alpha1.ComponentHealthSucceeded),
-}
 
 // ComponentSetRow is one row of the component sets table.
 type ComponentSetRow struct {
@@ -173,7 +150,6 @@ func buildOverview(
 		}
 	}
 
-	healthCounts := map[string]int{}
 	for i := range sets {
 		set := &sets[i]
 		if selected != "" && set.Namespace != selected {
@@ -192,16 +168,6 @@ func buildOverview(
 			counts.Failed++
 		default:
 			counts.RollingOut++
-		}
-		for _, component := range row.Components {
-			healthCounts[component.Health]++
-		}
-	}
-	overview.Summary.Components = []HealthCount{}
-	for _, health := range componentHealthOrder {
-		if count := healthCounts[health]; count > 0 {
-			overview.Summary.Components = append(overview.Summary.Components,
-				HealthCount{Health: health, Count: count})
 		}
 	}
 

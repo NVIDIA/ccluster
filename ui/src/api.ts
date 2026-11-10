@@ -34,15 +34,9 @@ export interface ComponentSetCounts {
   terminating: number;
 }
 
-export interface HealthCount {
-  health: string;
-  count: number;
-}
-
 export interface Summary {
   infraPlanes: InfraPlaneCounts;
   componentSets: ComponentSetCounts;
-  components: HealthCount[];
 }
 
 export interface InfraPlaneRow {

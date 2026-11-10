@@ -17,10 +17,6 @@ function overview(selected = ""): Overview {
     summary: {
       infraPlanes: { total: 1, available: 1, verified: 0 },
       componentSets: { total: 1, finished: 0, rollingOut: 0, failed: 1, terminating: 0 },
-      components: [
-        { health: "Degraded", count: 1 },
-        { health: "NotReleased", count: 1 },
-      ],
     },
     infraPlanes: [
       {
@@ -103,7 +99,6 @@ describe("App", () => {
     expect(within(sets).getByText("web failed to sync")).toBeInTheDocument();
 
 
-    expect(screen.getByText("Not released")).toBeInTheDocument();
     expect(screen.getByText("kind-cp")).toBeInTheDocument();
   });
 

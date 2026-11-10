@@ -247,26 +247,6 @@ h2 {
   color: var(--progress-fg);
 }
 
-.health-counts {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-}
-
-.health-counts li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.health-count {
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
 /* Badges */
 
 .badge {
