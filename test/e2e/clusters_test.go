@@ -192,6 +192,18 @@ func installClusterBase(c utils.Cluster) {
 		"metrics-server-kind-values.yaml", 3*time.Minute)
 	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus",
 		"kube-prometheus-stack-kind-values.yaml", 5*time.Minute)
+
+	// helm --wait covers only the operator: it creates the Prometheus StatefulSet after
+	// helm returns. Waiting here keeps a slow image pull out of the callers' verdict
+	// timeouts, where it would look like a broken watch. Eventually, because kubectl wait
+	// fails while no pod matches yet.
+	By("waiting for the Prometheus pod on " + c.Name)
+	Eventually(func(g Gomega) {
+		_, err := utils.Run(c.Kubectl("wait", "pod", "--namespace", "prometheus",
+			"--selector", "app.kubernetes.io/name=prometheus",
+			"--for", "condition=Ready", "--timeout", "30s"))
+		g.Expect(err).NotTo(HaveOccurred())
+	}, 5*time.Minute, 5*time.Second).Should(Succeed())
 }
 
 // uninstallClusterBase removes what installClusterBase installed from c. The CRDs the
@@ -205,8 +217,8 @@ func uninstallClusterBase(c utils.Cluster) {
 // kube_prometheus_stack among the failing cluster_base components, for want of what they
 // provide on a bare kind cluster: the APIService and the Prometheus Service. "Not found"
 // rather than a read error proves the ip chart's ClusterRole lets the manager read
-// APIServices, Services and EndpointSlices. Other failing components are not asserted
-// on, so a cluster_base chart gaining a check of its own does not break the suite.
+// APIServices and Services. Other failing components are not asserted on, so a
+// cluster_base chart gaining a check of its own does not break the suite.
 func expectBaseComponentsFailing(g Gomega, message string) {
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
@@ -218,6 +230,11 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 // metrics_server or kube_prometheus_stack as failing, once installClusterBase has
 // installed them. It says nothing about the other components, but an empty message,
 // such as a copy that lost its conditions, fails.
+//
+// This, not expectBaseComponentsFailing, proves the ip chart's ClusterRole lets the
+// manager read EndpointSlices: the Prometheus Verifier lists them only once the Service
+// exists. Without the permission the cached List times out and kube_prometheus_stack
+// stays in the message.
 func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(BeEmpty())
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
