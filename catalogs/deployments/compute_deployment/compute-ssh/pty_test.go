@@ -27,6 +27,13 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+// ptyWaitTimeout bounds every wait for something a test expects to happen: a shell
+// exiting, an exit status, output finishing, the handler or server stopping. It only
+// stops a hung test, so it is generous; on a loaded CI runner bash and the SSH server can
+// take seconds to get through a few MiB of output. Waits that assert something does not
+// happen stay short, since a slow runner can only make those pass.
+const ptyWaitTimeout = 30 * time.Second
+
 func TestShellExitAndOutput(t *testing.T) {
 	for _, shell := range []string{"/bin/bash", "/bin/sh"} {
 		t.Run(strings.TrimPrefix(shell, "/bin/"), func(t *testing.T) {
@@ -331,16 +338,17 @@ func newShellTestClient(t *testing.T, shell string) (*gossh.Client, <-chan struc
 			if !errors.Is(err, gliderssh.ErrServerClosed) {
 				t.Errorf("SSH server stopped with %v, want %v", err, gliderssh.ErrServerClosed)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(ptyWaitTimeout):
 			t.Error("SSH server did not stop")
 		}
 	})
-	conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), ptyWaitTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	// Covers the whole test, which may make several waits in turn.
+	if err := conn.SetDeadline(time.Now().Add(4 * ptyWaitTimeout)); err != nil {
 		t.Fatal(err)
 	}
 	sshConn, channels, requests, err := gossh.NewClientConn(conn, listener.Addr().String(), &gossh.ClientConfig{
@@ -412,7 +420,7 @@ func readPTYExitStatus(t *testing.T, requests <-chan *gossh.Request, want uint32
 			gossh.Unmarshal(request.Payload, &status) != nil || status.Status != want {
 			t.Fatalf("expected exit status %d, got request %#v", want, request)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(ptyWaitTimeout):
 		t.Fatal("exit status did not arrive while output was paused")
 	}
 }
@@ -431,7 +439,7 @@ func finishTestPTYChannel(t *testing.T, stdout io.Reader, requests <-chan *gossh
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(ptyWaitTimeout):
 		t.Fatal("terminal output did not finish")
 	}
 	select {
@@ -439,7 +447,7 @@ func finishTestPTYChannel(t *testing.T, stdout io.Reader, requests <-chan *gossh
 		if ok {
 			t.Fatalf("unexpected request after exit status: %#v", request)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(ptyWaitTimeout):
 		t.Fatal("SSH channel did not close after output finished")
 	}
 	return output
@@ -477,14 +485,14 @@ func waitForShellHandler(t *testing.T, finished <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-finished:
-	case <-time.After(2 * time.Second):
+	case <-time.After(ptyWaitTimeout):
 		t.Fatal("shell handler did not stop")
 	}
 }
 
 func waitForProcessExit(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(ptyWaitTimeout)
 	for {
 		err := syscall.Kill(pid, 0)
 		if errors.Is(err, syscall.ESRCH) {
