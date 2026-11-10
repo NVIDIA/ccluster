@@ -16,7 +16,7 @@ import (
 //
 // ComponentHealthStatus is one released component's health.
 type ComponentHealthStatusApplyConfiguration struct {
-	// name identifies the component in spec.components.
+	// name identifies the component in spec.components, or a component removed from it.
 	Name *string `json:"name,omitempty"`
 	// health is the component's health.
 	Health *cclusterv1alpha1.ComponentHealth `json:"health,omitempty"`

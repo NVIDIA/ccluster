@@ -6,11 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 package cp
 
 // Plain table-driven tests over the pure rollout logic. These deliberately do not use
-// Ginkgo or envtest: BeforeSuite only runs under RunSpecs, so `go test -run TestReleaseCount`
+// Ginkgo or envtest: BeforeSuite only runs under RunSpecs, so `go test -run TestFinished`
 // needs no KUBEBUILDER_ASSETS and no etcd. That matters because the interesting states of
-// releaseCount are combinatorial, and several of them - a gap in the middle of the wave
-// sequence, most of all - cannot be staged through a reconciler that never creates
-// Applications out of order.
+// finished and rolloutStatus are combinatorial.
 
 import (
 	"encoding/json"
@@ -171,170 +169,137 @@ func applications(byComponent map[string]*argocdv1alpha1.Application) map[string
 	return out
 }
 
-func TestReleaseCount(t *testing.T) {
+// prunableApp builds the Application of a component no longer in the spec, carrying the wave
+// label it was last written with.
+func prunableApp(component, wave string, terminating bool) *argocdv1alpha1.Application {
+	application := &argocdv1alpha1.Application{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   applicationName(testComponentSetName, component),
+			Labels: map[string]string{labelWave: wave},
+		},
+	}
+	if terminating {
+		now := metav1.Now()
+		application.DeletionTimestamp = &now
+	}
+	return application
+}
+
+// prunableApps keys prunable Applications by name.
+func prunableApps(prunable ...*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
+	out := make(map[string]*argocdv1alpha1.Application, len(prunable))
+	for _, application := range prunable {
+		out[application.Name] = application
+	}
+	return out
+}
+
+// TestFinished covers the states in which a released component has, or has not, converged
+// on the current spec. applyComponents writes the components after it only once it has.
+// Without a health judged in the pass, Argo CD's health of the Application decides.
+func TestFinished(t *testing.T) {
 	tests := []struct {
-		name       string
-		components []string
-		existing   map[string]*argocdv1alpha1.Application
-		want       int
+		name     string
+		existing map[string]*argocdv1alpha1.Application
+		healths  componentHealths
+		want     bool
 	}{
 		{
-			name:       "holds while Argo CD has not compared the spec the operator wrote",
-			components: []string{"a", "b"},
+			name: "finishes once Healthy and Synced on the current spec",
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			want: true,
+		},
+		{
+			name:     "has not finished without an Application",
+			existing: nil,
+			want:     false,
+		},
+		{
+			name: "has not finished while Argo CD has not compared the spec the operator wrote",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": uncompared(healthyApp()),
 			}),
-			want: 1,
+			want: false,
 		},
 		{
-			name:       "releases only the first component when nothing is deployed",
-			components: []string{"a", "b", "c"},
-			existing:   nil,
-			want:       1,
+			name: "has not finished on a spec other than the one the operator would write now",
+			existing: specBehind(applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}), "a"),
+			want: false,
 		},
 		{
-			name:       "holds while the leading component is still converging",
-			components: []string{"a", "b"},
+			name: "has not finished while still converging",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": app(argocdv1alpha1.HealthStatusProgressing, "OutOfSync"),
 			}),
-			want: 1,
+			want: false,
 		},
 		{
-			name:       "advances one component once the released ones are healthy and synced",
-			components: []string{"a", "b", "c"},
-			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": healthyApp(),
-			}),
-			want: 2,
-		},
-		{
-			// Regressing this deletes a running Application and, through the Argo CD
-			// cascade finalizer, uninstalls its chart.
-			name:       "never withdraws a released component that later degrades",
-			components: []string{"a", "b", "c"},
-			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": app(argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced),
-				"b": healthyApp(),
-				"c": healthyApp(),
-			}),
-			want: 3,
-		},
-		{
-			// An early degrade stops the rollout advancing, which is what a sequential
-			// dependency implies - but see the case above: it does not withdraw.
-			name:       "stops advancing when an early component degrades after later waves released",
-			components: []string{"a", "b", "c"},
-			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": app(argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced),
-				"b": healthyApp(),
-			}),
-			want: 2,
-		},
-		{
-			// Gap in the middle: the leading-run scan must stop at "b" and never count
-			// "c". Unreachable through the reconciler, which never creates out of order.
-			name:       "counts only the leading run, so a stray later Application does not advance the rollout",
-			components: []string{"a", "b", "c"},
-			existing: applications(map[string]*argocdv1alpha1.Application{
-				"a": healthyApp(),
-				"c": healthyApp(),
-			}),
-			want: 2,
-		},
-		{
-			name:       "requires Synced as well as Healthy",
-			components: []string{"a", "b"},
+			name: "requires Synced as well as Healthy",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": app(argocdv1alpha1.HealthStatusHealthy, "OutOfSync"),
 			}),
-			want: 1,
+			want: false,
 		},
 		{
-			name:       "requires Healthy as well as Synced",
-			components: []string{"a", "b"},
+			name: "requires Healthy as well as Synced",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": app(argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced),
 			}),
-			want: 1,
+			want: false,
 		},
 		{
-			name:       "treats an Application Argo CD has not written a status to as not healthy",
-			components: []string{"a", "b"},
+			name: "treats an Application Argo CD has not written a status to as not healthy",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": app("", ""),
 			}),
-			want: 1,
+			want: false,
 		},
 		{
-			name:       "stops at the last component",
-			components: []string{"a", "b"},
+			name: "has not finished while an Argo CD operation is in progress",
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": retrying(healthyApp()),
+			}),
+			want: false,
+		},
+		{
+			name: "has not finished after the current spec failed to sync",
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": failedSync(healthyApp()),
+			}),
+			want: false,
+		},
+		{
+			name: "uses the health judged in the pass over Argo CD's",
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
-				"b": healthyApp(),
 			}),
-			want: 2,
+			healths: componentHealths{"a": {Status: cclusternvidiacomv1alpha1.ComponentHealthDegraded}},
+			want:    false,
 		},
 		{
-			// Guarded in the API by MinItems=1. Before the clamp in releaseCount this
-			// returned 1, and reconcileApplications then sliced Components[:1] on an
-			// empty slice and panicked.
-			name:       "returns zero for a spec with no components",
-			components: nil,
-			existing:   nil,
-			want:       0,
+			name: "finishes once a run-to-completion component has Succeeded",
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": app(argocdv1alpha1.HealthStatusProgressing, argocdv1alpha1.SyncStatusSynced),
+			}),
+			healths: componentHealths{"a": {Status: cclusternvidiacomv1alpha1.ComponentHealthSucceeded}},
+			want:    true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := testReleaseCount(componentSetWith(test.components...), test.existing)
+			set := componentSetWith("a")
+			application := test.existing[applicationName(testComponentSetName, "a")]
+			got := (&CCLComponentSetReconciler{}).finished(set, set.Spec.Components[0], application, test.healths)
 			if got != test.want {
-				t.Errorf("testReleaseCount() = %d, want %d", got, test.want)
+				t.Errorf("finished() = %t, want %t", got, test.want)
 			}
 		})
 	}
-}
-
-// TestReleaseCountIgnoresTerminatingApplications composes releaseCount with
-// liveApplications, which is how Reconcile calls it. A component whose Application is
-// being deleted must not read as already released, or a re-added component is never
-// recreated.
-func TestReleaseCountIgnoresTerminatingApplications(t *testing.T) {
-	deleting := healthyApp()
-	now := metav1.Now()
-	deleting.DeletionTimestamp = &now
-	deleting.Finalizers = []string{argocdv1alpha1.ResourcesFinalizer}
-
-	existing := applications(map[string]*argocdv1alpha1.Application{
-		"a": healthyApp(),
-		"b": deleting,
-	})
-
-	if got := testReleaseCount(componentSetWith("a", "b", "c"), existing); got != 3 {
-		t.Errorf("testReleaseCount() over all Applications = %d, want 3", got)
-	}
-	if got := testReleaseCount(componentSetWith("a", "b", "c"), liveApplications(existing)); got != 2 {
-		t.Errorf("testReleaseCount() over live Applications = %d, want 2", got)
-	}
-}
-
-// TestReleaseCountEmptySpecDoesNotPanic pins the reason for the clamp: the value
-// releaseCount returns is used to slice the component list.
-func TestReleaseCountEmptySpecDoesNotPanic(t *testing.T) {
-	componentSet := componentSetWith()
-	released := testReleaseCount(componentSet, nil)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("slicing Components[:%d] panicked: %v", released, r)
-		}
-	}()
-	_ = componentSet.Spec.Components[:released]
-}
-
-func testReleaseCount(set *cclusternvidiacomv1alpha1.CCLComponentSet, apps map[string]*argocdv1alpha1.Application) int {
-	return (&CCLComponentSetReconciler{}).releaseCount(set, apps, nil)
 }
 
 func TestApplicationsCondition(t *testing.T) {
@@ -435,6 +400,8 @@ func TestRolloutStatus(t *testing.T) {
 		name       string
 		components []string
 		existing   map[string]*argocdv1alpha1.Application
+		// prunable holds the Applications of components no longer in the spec.
+		prunable map[string]*argocdv1alpha1.Application
 		// invalid is the reason validation failed with on this pass, empty if it passed.
 		invalid     string
 		wantStatus  metav1.ConditionStatus
@@ -578,6 +545,68 @@ func TestRolloutStatus(t *testing.T) {
 			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 		},
 		{
+			// The remaining component is what holds the removal back.
+			name:       "names a remaining component that has not finished before a removal",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": app(argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced),
+			}),
+			prunable:    prunableApps(prunableApp("x", "2", false)),
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
+			wantMessage: `Wave 1 (component "a") has health "Degraded"`,
+		},
+		{
+			name:       "names the next removal once every component has finished",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			prunable:    prunableApps(prunableApp("x", "2", false), prunableApp("y", "3", false)),
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
+			wantMessage: `Waiting to delete Application "test-componentset-y"`,
+		},
+		{
+			// Removals go one at a time, so the terminating one is what the rollout waits on.
+			name:       "names the terminating removal over the next one",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			prunable:    prunableApps(prunableApp("x", "2", true), prunableApp("y", "3", false)),
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
+			wantMessage: `Waiting for Argo CD to delete Application "test-componentset-x"`,
+		},
+		{
+			// The operator deletes nothing on a pass that failed validation.
+			name:       "names a failed validation for a removal the operator has not started",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			prunable:   prunableApps(prunableApp("x", "2", false)),
+			invalid:    cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
+			wantMessage: `Application "test-componentset-x", whose component is no longer in the spec, ` +
+				`cannot be deleted until validation passes: ` + invalidMessage,
+		},
+		{
+			// Argo CD keeps deleting what the operator already deleted.
+			name:       "keeps reporting a deletion Argo CD is running when validation failed",
+			components: []string{"a"},
+			existing: applications(map[string]*argocdv1alpha1.Application{
+				"a": healthyApp(),
+			}),
+			prunable:    prunableApps(prunableApp("x", "2", true)),
+			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
+			wantMessage: `Waiting for Argo CD to delete Application "test-componentset-x"`,
+		},
+		{
 			// Progressing flips False only when everything is done. A refactor that
 			// "corrects" this polarity inverts the whole condition.
 			name:       "reports complete when every component is healthy and synced",
@@ -599,7 +628,8 @@ func TestRolloutStatus(t *testing.T) {
 			if test.invalid != "" {
 				validation = invalidMessage
 			}
-			status, reason, message := reconciler.rolloutStatus(set, test.existing, test.invalid, validation, nil)
+			status, reason, message := reconciler.rolloutStatus(
+				set, test.existing, test.prunable, test.invalid, validation, nil)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)

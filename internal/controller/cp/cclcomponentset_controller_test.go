@@ -200,6 +200,37 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			return true
 		}
 
+		// terminating reports whether the operator has deleted component's Application.
+		// Nothing runs Argo CD here, so its cascade finalizer keeps the object.
+		terminating := func(component string) bool {
+			GinkgoHelper()
+
+			return !getApplication(component).DeletionTimestamp.IsZero()
+		}
+
+		// onPlaneA is a further component on planeA, for specs that need more than two.
+		// Its chart need not exist: nothing here runs Argo CD.
+		onPlaneA := func(name string) cclusternvidiacomv1alpha1.ComponentSpec {
+			return cclusternvidiacomv1alpha1.ComponentSpec{
+				Name:          name,
+				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
+				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+					Chart:     "catalogs/cluster_base/" + name,
+					Namespace: name,
+				},
+			}
+		}
+
+		// setComponents replaces the CCLComponentSet's components.
+		setComponents := func(specComponents []cclusternvidiacomv1alpha1.ComponentSpec) {
+			GinkgoHelper()
+
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			componentSet.Spec.Components = specComponents
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+		}
+
 		// reportComparison simulates Argo CD by reporting health, sync and comparedTo,
 		// and completing a pending sync request. A raw patch preserves unmodelled spec
 		// fields, which a whole-object update through the partial type would discard.
@@ -615,11 +646,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("at most 63 characters"))
 		})
 
-		// This rule is load-bearing, not cosmetic: releaseCount clamps to the component
-		// count precisely because an empty spec would otherwise slice Components[:1] and
-		// panic. See TestReleaseCountEmptySpecDoesNotPanic. Both guards are kept - the
-		// API rejects the object, and the controller survives it if the marker is ever
-		// relaxed.
+		// The controller survives an empty spec too, since it writes at most as many
+		// components as the spec has, but nothing about it is meaningful.
 		It("should reject a CCLComponentSet with no components", func() {
 			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
 				ObjectMeta: metav1.ObjectMeta{Name: componentSetName, Namespace: namespace},
@@ -727,10 +755,26 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				"a verdict about the previous spec was reported as one about this one")
 			Expect(first.Sync).To(Equal(argocdv1alpha1.SyncStatusSynced))
 
-			By("dropping the entry of a component removed from the spec")
+			By("keeping the entry of a removed component, marked, until its Application is gone")
 			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
 			componentSet.Spec.Components = componentSet.Spec.Components[:1]
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			componentSet = reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(2))
+			Expect(componentSet.Status.ComponentSyncStatuses[0].Name).To(Equal(firstComponent))
+			Expect(componentSet.Status.ComponentSyncStatuses[0].Removal).To(BeEmpty())
+			removed := componentSet.Status.ComponentSyncStatuses[1]
+			Expect(removed.Name).To(Equal(secondComponent))
+			Expect(removed.Removal).To(Equal(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
+				"deleted before the first component finished")
+			Expect(removed.ComparedToMatchesSpec).To(BeFalse())
+
+			release(firstComponent)
+			componentSet = reconcileAndGet()
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(2))
+			Expect(componentSet.Status.ComponentSyncStatuses[1].Removal).To(Equal(cclusternvidiacomv1alpha1.ComponentRemovalDeleting))
+
+			finishTeardown(secondComponent)
 			componentSet = reconcileAndGet()
 			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1))
 			Expect(componentSet.Status.ComponentSyncStatuses[0].Name).To(Equal(firstComponent))
@@ -780,14 +824,18 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
 			settle()
-			release(firstComponent)
+			release(firstComponent, secondComponent)
 			componentSet := reconcileAndGet()
-			Expect(componentSet.Status.ComponentSyncStatuses[0].ComparedToMatchesSpec).To(BeTrue())
+			Expect(componentSet.Status.ComponentSyncStatuses[1].ComparedToMatchesSpec).To(BeTrue())
 
-			By("changing the first component while the second's Application belongs elsewhere")
-			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			// The first component's write is the one that fails: components are written
+			// in order, so the second's would not be reached on this pass.
+			By("changing both components while the first's Application belongs elsewhere")
+			for i := range componentSet.Spec.Components {
+				componentSet.Spec.Components[i].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			}
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
-			application := getApplication(secondComponent)
+			application := getApplication(firstComponent)
 			application.Annotations[annotationComponentSetNamespace] = otherNamespace
 			Expect(k8sClient.Update(ctx, application)).To(Succeed())
 
@@ -797,9 +845,9 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(componentSet.Status.ObservedGeneration).To(Equal(componentSet.Generation))
 			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(1),
 				"the Application claimed by another CCLComponentSet was reported")
-			first := componentSet.Status.ComponentSyncStatuses[0]
-			Expect(first.Name).To(Equal(firstComponent))
-			Expect(first.ComparedToMatchesSpec).To(BeFalse(),
+			second := componentSet.Status.ComponentSyncStatuses[0]
+			Expect(second.Name).To(Equal(secondComponent))
+			Expect(second.ComparedToMatchesSpec).To(BeFalse(),
 				"a comparison against the previous values was reported for this generation")
 
 			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
@@ -853,13 +901,211 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			// Argo CD is not running here, so its cascade finalizer holds the object
 			// in the cluster while it would be uninstalling the chart. Deletion
 			// having been requested is what the operator is responsible for.
-			removed := &argocdv1alpha1.Application{}
-			Expect(k8sClient.Get(ctx, appKey(secondComponent), removed)).To(Succeed())
-			Expect(removed.DeletionTimestamp).NotTo(BeNil())
-			Expect(removed.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
+			pruned := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, appKey(secondComponent), pruned)).To(Succeed())
+			Expect(pruned.DeletionTimestamp).NotTo(BeNil())
+			Expect(pruned.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
 
 			By("leaving the surviving component alone")
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
+		})
+
+		It("should write a later component's changed spec only after the components before it finish", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
+
+			By("changing both components")
+			updated := components()
+			for i := range updated {
+				updated[i].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			}
+			setComponents(updated)
+			previous := getApplication(secondComponent)
+			componentSet := reconcileAndGet()
+
+			By("writing the first and holding the second")
+			Expect(getApplication(firstComponent).Spec.Source.Helm.Values).To(Equal("replicaCount: 3\n"))
+			Expect(getApplication(secondComponent).ResourceVersion).To(Equal(previous.ResourceVersion),
+				"the second component was written before the first finished")
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Message).
+				To(ContainSubstring("Applied 1 of 2 components"))
+
+			By("holding it while the first is degraded on its new spec")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced)
+			reconcileAndGet()
+			Expect(getApplication(secondComponent).ResourceVersion).To(Equal(previous.ResourceVersion))
+
+			By("writing it once the first has finished")
+			release(firstComponent)
+			Expect(getApplication(secondComponent).Spec.Source.Helm.Values).To(Equal("replicaCount: 3\n"))
+		})
+
+		// Whether a component has finished is judged on live Applications. One whose
+		// Application is terminating, or gone, has not, so the components after it wait.
+		It("should hold later components while an earlier one has no live Application", func() {
+			const third = "vault"
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(append(components(), onPlaneA(third)))
+			settle()
+			release(firstComponent, secondComponent, third)
+
+			By("changing the third component and deleting the second's Application by hand")
+			updated := append(components(), onPlaneA(third))
+			updated[2].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			setComponents(updated)
+			Expect(k8sClient.Delete(ctx, getApplication(secondComponent))).To(Succeed())
+			previous := getApplication(third)
+
+			By("holding the third while the second's Application terminates")
+			reconcileAndGet()
+			Expect(getApplication(third).ResourceVersion).To(Equal(previous.ResourceVersion),
+				"a terminating Application was taken as finished")
+
+			By("holding it after the second's Application is gone and has been recreated")
+			finishTeardown(secondComponent)
+			reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeFalse())
+			Expect(getApplication(third).ResourceVersion).To(Equal(previous.ResourceVersion))
+
+			By("writing it once the second has finished")
+			release(secondComponent)
+			Expect(getApplication(third).Spec.Source.Helm.Values).To(Equal("replicaCount: 3\n"))
+		})
+
+		// The case the removal order exists for: an ExternalSecret producer replaced by a
+		// renamed one. Pods of the component after it keep reading the old Secret until
+		// they restart on the new spec, so the old producer must outlive that rollout.
+		It("should delete a replaced component's Application only after every remaining component finishes", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent, secondComponent)
+
+			By("replacing the first component with a renamed one and changing the second")
+			const replacement = firstComponent + "-v2"
+			updated := components()
+			updated[0].Name = replacement
+			updated[1].Values = &apiextensionsv1.JSON{Raw: []byte(`{"keda":{"operator":{"replicaCount":3}}}`)}
+			setComponents(updated)
+			componentSet := reconcileAndGet()
+			Expect(applicationExists(replacement)).To(BeTrue())
+			Expect(terminating(firstComponent)).To(BeFalse(), "removed before its replacement finished")
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Message).
+				To(ContainSubstring(replacement))
+
+			By("keeping it while the second component rolls out its new spec")
+			release(replacement)
+			Expect(getApplication(secondComponent).Spec.Source.Helm.Values).To(ContainSubstring("replicaCount: 3"))
+			Expect(terminating(firstComponent)).To(BeFalse(),
+				"removed while the component after it was still converging")
+
+			By("deleting it once every remaining component has finished")
+			reportCurrentComparison(secondComponent, argocdv1alpha1.HealthStatusHealthy, argocdv1alpha1.SyncStatusSynced)
+			componentSet = reconcileAndGet()
+			Expect(terminating(firstComponent)).To(BeTrue())
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Status).To(Equal(metav1.ConditionTrue),
+				"the rollout was reported complete with a removal outstanding")
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving))
+			Expect(progressing.Message).To(ContainSubstring(appKey(firstComponent).Name))
+			Expect(componentSet.Status.ComponentSyncStatuses).To(HaveLen(3))
+			Expect(componentSet.Status.ComponentSyncStatuses[2].Name).To(Equal(firstComponent))
+			Expect(componentSet.Status.ComponentSyncStatuses[2].Removal).To(Equal(cclusternvidiacomv1alpha1.ComponentRemovalDeleting))
+
+			By("completing the rollout once it is gone")
+			finishTeardown(firstComponent)
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
+		})
+
+		It("should delete removed components highest wave first, one at a time", func() {
+			// Last in name order, so name order and wave order disagree.
+			const third = "vault"
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(append(components(), onPlaneA(third)))
+			settle()
+			release(firstComponent, secondComponent, third)
+
+			By("removing two components while the remaining one is degraded")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced)
+			setComponents(components()[:1])
+			componentSet := reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeFalse())
+			Expect(terminating(third)).To(BeFalse())
+			listed := make([]string, 0, len(componentSet.Status.ComponentSyncStatuses))
+			for _, entry := range componentSet.Status.ComponentSyncStatuses {
+				listed = append(listed, entry.Name)
+			}
+			Expect(listed).To(Equal([]string{firstComponent, third, secondComponent}),
+				"removed components are not listed in the order they are deleted")
+
+			By("deleting the highest wave once it recovers")
+			release(firstComponent)
+			Expect(terminating(third)).To(BeTrue())
+			Expect(terminating(secondComponent)).To(BeFalse())
+
+			By("waiting for it to be gone before deleting the next")
+			reconcileAndGet()
+			reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeFalse())
+
+			finishTeardown(third)
+			reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeTrue())
+
+			finishTeardown(secondComponent)
+			Expect(conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete))
+			Expect(terminating(firstComponent)).To(BeFalse())
+		})
+
+		It("should delete a removed component without a usable wave label after the labelled ones, in name order", func() {
+			// By position, vault would go first and cert-manager second; by name, the
+			// other way round.
+			const third, fourth = "cert-manager", "vault"
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(append(components(), onPlaneA(third), onPlaneA(fourth)))
+			settle()
+			release(firstComponent, secondComponent, third, fourth)
+
+			By("removing three components, two of them with an unusable wave label")
+			setComponents(components()[:1])
+			// An empty value stands for a missing label.
+			for component, label := range map[string]string{third: "", fourth: "not-a-wave"} {
+				application := getApplication(component)
+				base := application.DeepCopy()
+				if label == "" {
+					delete(application.Labels, labelWave)
+				} else {
+					application.Labels[labelWave] = label
+				}
+				Expect(k8sClient.Patch(ctx, application, client.MergeFrom(base))).To(Succeed())
+			}
+
+			By("deleting the labelled one first")
+			reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeTrue())
+			Expect(terminating(third)).To(BeFalse())
+			Expect(terminating(fourth)).To(BeFalse())
+
+			By("deleting the unlabelled ones in name order")
+			finishTeardown(secondComponent)
+			reconcileAndGet()
+			Expect(terminating(third)).To(BeTrue())
+			Expect(terminating(fourth)).To(BeFalse())
+
+			finishTeardown(third)
+			reconcileAndGet()
+			Expect(terminating(fourth)).To(BeTrue())
 		})
 
 		It("should report InfraPlaneNotFound and apply nothing when a plane is missing", func() {
@@ -1287,8 +1533,8 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 		// The operator writes no spec.operation, so an Argo CD operation in flight is
 		// nothing for it to collide with. Holding the write back is what used to lose a
-		// pending operation, and what let one busy component stall updates to every
-		// component after it.
+		// pending operation. What holds the next component's write back is the ordering:
+		// it waits for this component to finish, operation included.
 		It("should write a changed spec while Argo CD has an operation in flight", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
@@ -1309,19 +1555,19 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
 			updated := reconcileAndGet()
 
-			By("writing both components and leaving the operation where it was")
-			for _, component := range []string{firstComponent, secondComponent} {
-				application := getApplication(component)
-				Expect(application.Spec.Source.Helm.Values).To(ContainSubstring("replicaCount: 3"),
-					"%s was not updated", component)
-			}
+			By("writing the first component and leaving the operation where it was")
+			Expect(getApplication(firstComponent).Spec.Source.Helm.Values).To(ContainSubstring("replicaCount: 3"))
 			Expect(getApplication(firstComponent).Operation).To(Equal(first.Operation),
 				"the operator wrote over an operation Argo CD had not started")
-			Expect(getApplication(secondComponent).Operation).To(BeNil(),
-				"the operator asked Argo CD for a sync")
 			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Reason).
 				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated))
 			Expect(conditionOf(updated, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing).Status).To(Equal(metav1.ConditionTrue))
+
+			By("writing the second once the first has finished, without asking for a sync")
+			release(firstComponent)
+			Expect(getApplication(secondComponent).Spec.Source.Helm.Values).To(ContainSubstring("replicaCount: 3"))
+			Expect(getApplication(secondComponent).Operation).To(BeNil(),
+				"the operator asked Argo CD for a sync")
 		})
 
 		It("should rewrite the spec when operator configuration changes without a parent spec update", func() {
@@ -1688,6 +1934,43 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Expect(first.Message).To(ContainSubstring("resource tree not cached yet"))
 			})
 
+			It("should report a removed component by the default health function until its Application is gone", func() {
+				now := judgedAt
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+				judgeWith(&fakeArgoCD{})
+				r := healthReconciler(&now)
+				release(firstComponent)
+				// The second's chart function reports Healthy; Argo CD reports it Degraded.
+				reportCurrentComparison(secondComponent, argocdv1alpha1.HealthStatusDegraded,
+					argocdv1alpha1.SyncStatusSynced)
+
+				By("removing the second component from the spec")
+				componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+				Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+				componentSet.Spec.Components = componentSet.Spec.Components[:1]
+				Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+				_, componentSet = reconcileHealth(r)
+				Expect(componentSet.Status.ComponentHealthStatuses).To(HaveLen(2))
+				removed := componentSet.Status.ComponentHealthStatuses[1]
+				Expect(removed.Name).To(Equal(secondComponent))
+				Expect(removed.Health).To(Equal(cclusternvidiacomv1alpha1.ComponentHealthDegraded),
+					"the removed component was judged by its chart's function")
+
+				By("keeping it while its Application is terminating")
+				reconcileAndGet()
+				Expect(getApplication(secondComponent).DeletionTimestamp.IsZero()).To(BeFalse())
+				_, componentSet = reconcileHealth(r)
+				Expect(componentSet.Status.ComponentHealthStatuses).To(HaveLen(2))
+				Expect(componentSet.Status.ComponentHealthStatuses[1].Name).To(Equal(secondComponent))
+
+				By("dropping it once the Application is gone")
+				finishTeardown(secondComponent)
+				_, componentSet = reconcileHealth(r)
+				Expect(componentSet.Status.ComponentHealthStatuses).To(HaveLen(1))
+				Expect(componentSet.Status.ComponentHealthStatuses[0].Name).To(Equal(firstComponent))
+			})
+
 			It("should release the next component only once the chart judges the previous one healthy", func() {
 				judgeWith(&fakeArgoCD{})
 				secondApplication := func() error {
@@ -1759,6 +2042,45 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8sClient.Get(ctx, componentSetKey, componentSet))
 			}).Should(BeTrue())
+		})
+
+		// A removal waiting for the remaining components can still be waiting when the
+		// CCLComponentSet is deleted. Removed components go first, in the order removal
+		// uses: one may depend on a component that remains.
+		It("should tear down removed components first, highest wave first, then the rest", func() {
+			// Last in name order, so name order and wave order disagree.
+			const third = "vault"
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(append(components(), onPlaneA(third)))
+			settle()
+			release(firstComponent, secondComponent, third)
+
+			By("removing two components while the remaining one is degraded")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced)
+			setComponents(components()[:1])
+			reconcileAndGet()
+			Expect(terminating(third)).To(BeFalse())
+
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
+
+			By("removing the removed ones first, highest wave first")
+			reconcileOnly()
+			Expect(terminating(third)).To(BeTrue())
+			Expect(terminating(secondComponent)).To(BeFalse())
+			Expect(terminating(firstComponent)).To(BeFalse())
+
+			finishTeardown(third)
+			reconcileOnly()
+			Expect(terminating(secondComponent)).To(BeTrue())
+			Expect(terminating(firstComponent)).To(BeFalse())
+
+			By("then the component still in the spec")
+			finishTeardown(secondComponent)
+			reconcileOnly()
+			Expect(terminating(firstComponent)).To(BeTrue())
 		})
 
 		It("should requeue while a component is still terminating", func() {

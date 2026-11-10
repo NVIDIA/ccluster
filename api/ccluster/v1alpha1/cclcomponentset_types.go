@@ -117,7 +117,9 @@ type CCLComponentSetStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// componentSyncStatuses reports the latest observed Application state for each
-	// released component, judged against the spec at status.observedGeneration.
+	// released component, judged against the spec at status.observedGeneration. A
+	// component removed from that spec stays listed, with removal set, until its
+	// Application is gone.
 	// +listType=map
 	// +listMapKey=name
 	// +optional
@@ -125,7 +127,9 @@ type CCLComponentSetStatus struct {
 
 	// componentHealthStatuses reports the health of each released component's live
 	// objects, as its chart judges it from what Argo CD reports, such as a Job that
-	// succeeded or a Pod in CrashLoopBackOff.
+	// succeeded or a Pod in CrashLoopBackOff. A component removed from the spec stays
+	// listed until its Application is gone, judged by the default health function, as
+	// componentSyncStatuses lists it.
 	//
 	// It describes the objects running now, whichever spec they were rendered from.
 	// Whether they are the current spec's is the same component's entry in
@@ -167,7 +171,7 @@ const (
 // ComponentHealthStatus is one released component's health.
 // +kubebuilder:title=ComponentHealthStatus
 type ComponentHealthStatus struct {
-	// name identifies the component in spec.components.
+	// name identifies the component in spec.components, or a component removed from it.
 	Name string `json:"name"`
 	// health is the component's health.
 	Health ComponentHealth `json:"health"`
@@ -204,7 +208,8 @@ const (
 	// deploy the components onto their infra-plane clusters.
 	CCLComponentSetConditionComponentsApplied = "ComponentsApplied"
 	// CCLComponentSetConditionProgressing reports on the rollout: False once every
-	// component has synced the spec the operator wrote and is healthy.
+	// component has synced the spec the operator wrote and is healthy, and no Application
+	// of a component removed from the spec is left.
 	CCLComponentSetConditionProgressing = "Progressing"
 )
 
@@ -216,10 +221,13 @@ const (
 	CCLComponentSetReasonInfraPlaneNotReady = "InfraPlaneNotReady"
 
 	// Progressing. When validation failed and the component being waited on needs an
-	// Application written, Progressing carries the Validated reason instead.
+	// Application written or deleted, Progressing carries the Validated reason instead.
 	CCLComponentSetReasonWaveSyncing     = "WaveSyncing"
 	CCLComponentSetReasonWaveSyncFailed  = "WaveSyncFailed"
 	CCLComponentSetReasonRolloutComplete = "RolloutComplete"
+	// ComponentRemoving: every component has finished, and the Applications of
+	// components no longer in the spec are being deleted, one at a time.
+	CCLComponentSetReasonComponentRemoving = "ComponentRemoving"
 
 	// ComponentsApplied.
 	CCLComponentSetReasonApplicationsCreated   = "ApplicationsCreated"
@@ -228,16 +236,32 @@ const (
 	CCLComponentSetReasonApplicationFailed     = "ApplicationFailed"
 )
 
+// ComponentRemoval is how far the removal of a component no longer in the spec has got.
+// +kubebuilder:validation:Enum=DeletePending;Deleting
+type ComponentRemoval string
+
+const (
+	// ComponentRemovalDeletePending: the operator has not deleted the Application yet. It
+	// waits for every remaining component to finish, and for the removed component
+	// deleted before it to be gone.
+	ComponentRemovalDeletePending ComponentRemoval = "DeletePending"
+	// ComponentRemovalDeleting: the operator has deleted the Application, and Argo CD is
+	// uninstalling its chart.
+	ComponentRemovalDeleting ComponentRemoval = "Deleting"
+)
+
 // ComponentSyncStatus reports the latest observed Application state.
 // The controller derives rollout decisions from Applications, not this report.
 // +kubebuilder:title=ComponentSyncStatus
 type ComponentSyncStatus struct {
-	// name identifies the component in spec.components.
+	// name identifies the component in spec.components, or, with removal set, a
+	// component removed from it.
 	Name string `json:"name"`
 
 	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
 	// desired source, destination and ignoreDifferences. While false, sync does not
-	// establish convergence on the desired configuration.
+	// establish convergence on the desired configuration. Always false for a removed
+	// component, which has no desired configuration.
 	ComparedToMatchesSpec bool `json:"comparedToMatchesSpec"`
 
 	// sync is Argo CD's observed Application sync status.
@@ -247,6 +271,12 @@ type ComponentSyncStatus struct {
 	// message is Argo CD's latest operation message, including progress, retries and failures.
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// removal is set for a component no longer in spec.components whose Application is
+	// still there: DeletePending until the operator deletes the Application, Deleting
+	// while Argo CD uninstalls its chart.
+	// +optional
+	Removal ComponentRemoval `json:"removal,omitempty"`
 }
 
 // +genclient

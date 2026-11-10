@@ -299,11 +299,12 @@ class CCLClient:
         The caller controls polling and timeouts.
         Raises kubernetes.dynamic.exceptions.NotFoundError if the set does not exist.
 
-        True means every Application matches current desired input and, for tracked
-        requests, its sync succeeded before a later Healthy/Synced comparison.
-        The timestamp check is a freshness barrier, not an atomic configuration-version
-        acknowledgement. Existing Applications enter request tracking on a spec change;
-        updates across already released components are not yet serialized by wave.
+        True means every Application has the operator's current spec, Argo CD's latest
+        comparison was of that spec and reports Synced, no operation for it is pending,
+        running or failed, every component is Healthy or Succeeded, and no Application of
+        a component removed from the spec is left. Updates follow list order, so after an
+        edit this stays False until the last changed component has finished and the
+        removed components' Applications are gone.
         """
         component_set = self.get_component_set(name=name)
 

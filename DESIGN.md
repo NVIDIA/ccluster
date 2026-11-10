@@ -745,34 +745,44 @@ component health through it (§7).
 
 ## 5. Ordering: release by withholding
 
-The rollout order is enforced by **not creating** an Application until its predecessors are
-converged, rather than by creating them all and holding their syncs. `releaseCount`
-(`cclcomponentset_builder.go`):
+The rollout order is enforced by **not writing** a component's current spec until its
+predecessors are converged, rather than by writing them all and holding their syncs. This
+applies to a release, which creates the Application, and to an update, which rewrites it.
+`applyComponents` (`cclcomponentset_controller.go`) walks the components in list order, in
+one pass:
 
-1. Count the leading run of components that already have an Application — that is what has
-   been released. Zero released means release the first: it has nothing to wait on.
-2. If *any* released component is not yet `finished` — defined below — release no
-   more. Checking all of them, not just the newest, means a component that degrades later
+1. Write the component's current spec. For a component with no Application yet, that is its
+   release; the first component has nothing to wait on.
+2. Stop if the component is not `finished` — defined below — on the current spec. Checking
+   from the start of the list, not just the newest, means a component that degrades later
    also halts the rollout, which is what a sequential dependency implies.
-3. Otherwise release exactly one more.
+3. Components after the one it stopped at keep the Application, and the spec, they already
+   have.
+4. Only when no component stopped the pass, delete the Application of one component that is
+   no longer in the spec (see below).
+
+`finished` is judged on the live Applications as read before the pass, and on the health
+judged from them (§7), so the pass's own writes do not change where it stops. A terminating
+Application is not live: its component has not finished.
 
 Three properties follow:
 
-- **Stateless.** The rollout position is derived entirely from which Applications exist, so
+- **Stateless.** The rollout position is derived entirely from the Applications as read, so
   it needs no bookkeeping of its own and survives an operator restart.
 - **Monotonic.** A released component is never withdrawn because it became unhealthy.
   Deleting its Application would, through the cascade finalizer, *uninstall the chart* — a
-  transient health blip must not tear down a running component.
+  transient health blip must not tear down a running component. An Application is deleted
+  only when its component leaves the spec or the CCLComponentSet is deleted.
 - **Unbounded.** There is no timeout. A component that never becomes healthy stalls
-  everything after it; the `Progressing` condition names it, which is the only way a stuck
-  rollout is visible.
+  every release and update after it, and every removal; the `Progressing` condition names
+  it, which is the only way a stuck rollout is visible.
 
 `Healthy` and `Synced` are Argo CD's verdict on the Application **as Argo CD last compared
 it**, which is not the same as its verdict on the spec the operator has just written. On the
 first rollout the difference is invisible, because a wave's Application does not exist until
 the one before it converges. On every later update it decides the outcome: the operator
 rewrites wave 1 in place, re-lists, reads a `Healthy`/`Synced` standing from the *previous*
-spec, and releases wave 2 against it.
+spec, and writes wave 2 against it.
 
 The operator settles this by reading what Argo CD compared, not by tracking the syncs it
 asks for. `status.sync.status`, `status.sync.comparedTo` and `status.health.status` are
@@ -816,8 +826,8 @@ Comparison has the following rules:
 - Ask Argo CD for no sync at all. An Application whose `spec.source` differs from
   `status.sync.comparedTo.source` is queued for comparison at once, and automated sync runs
   the sync that follows, so a request of the operator's own would only duplicate it. The
-  spec write therefore never waits for an operation, and one busy component no longer holds
-  back the specs of the components after it.
+  spec write therefore never waits for an operation on its own Application. The components
+  after it wait for it to finish, operation included.
 - Wait for a pending or running operation before finishing a component. Hook resources are
   excluded from aggregate health and sync, so `Healthy`/`Synced` can precede the completion
   of a PostSync hook.
@@ -833,9 +843,10 @@ Comparison has the following rules:
 - Judge Applications the operator has never written the same way. There is no state to
   join and no first spec change to wait for.
 - Rebuild `status.componentSyncStatuses` and the `Progressing` condition on every pass, from
-  one list of released Applications, including a pass that fails validation or fails to
-  apply. `componentSyncStatuses` has no generation of its own: `status.observedGeneration`,
-  written in the same patch, says which spec it describes. A report left over from an earlier pass
+  one list of Applications - the released ones, and those of removed components until they
+  are gone - including a pass that fails validation or fails to apply.
+  `componentSyncStatuses` has no generation of its own: `status.observedGeneration`, written
+  in the same patch, says which spec it describes. A report left over from an earlier pass
   would describe a spec that is no longer desired. Leave out an Application whose
   back-reference names another CCLComponentSet: the operator refuses to write it, so its
   state says nothing about this spec. The `comparedToMatchesSpec` flag indicates whether the latest comparison used the desired
@@ -847,10 +858,16 @@ Comparison has the following rules:
   again in place: it belongs to the generation it was read at, so the next pass recomputes
   it from a fresh read. That version's watch event and the requeue merge into one pass.
 
-Every pass writes the spec of every released component, and no component's operation holds
-back another's write, so a CCLComponentSet update reaches all released waves in the same
-pass. Release follows list position; updates to released waves do not. Sequential update
-admission is a separate change.
+Updates follow list position the same way releases do. An edit that changes several
+components reaches them one at a time: each changed component's spec is written once every
+component before it has finished on its current spec. An edit to the last component alone
+is written at once when the components before it are finished. The costs:
+
+- A component stuck `Degraded`, or failing to sync, holds back updates to every component
+  after it, and every removal, with no timeout. A hand edit to a later Application's spec
+  is not reverted until then either: the revert is a spec write.
+- An edit to many components takes one convergence wait per changed component, even when
+  the changed components do not depend on each other.
 
 `comparedTo.source` records a revision string such as `main`, not its Git commit SHA.
 A catalog commit behind an unchanged revision leaves `applicationSpec()` unchanged, so the
@@ -860,8 +877,58 @@ Terminating Applications are excluded from this reasoning (`liveApplications`): 
 holds its cascade finalizer while Argo CD uninstalls the chart, and counting it would let a
 pruned component hold the rollout open, or make a re-added one look already deployed.
 
-Components removed from the spec are pruned *after* the writes, so a rename never leaves the
-cluster with neither the old nor the new Application.
+### Removed components go last, in reverse
+
+A component removed from the spec can still serve one that remains. The motivating case is
+an ExternalSecret producer replaced by a renamed one, `[secrets-v1, workload]` →
+`[secrets-v2, workload']`. Deleting `secrets-v1`'s Application at once would delete its
+ExternalSecret through the cascade finalizer, and the Secret with it, while `workload` pods
+still on the old spec need that Secret to restart (`CreateContainerConfigError`). So
+`pruneNext` deletes a removed component's Application only after every component in the
+spec is released and `finished`. This is Argo CD's `PruneLast` applied to whole
+Applications. It also means a rename never leaves the cluster with neither the old nor the
+new Application.
+
+Removed components then go one at a time, like teardown below: the highest
+`ccluster.nvidia.com/wave` label first, and the next only once no removed Application is
+still terminating. The label holds the position the Application was last written at, and is
+the only record of a removed component's position. An Application whose label is missing or
+not a positive integer goes after every labelled one. Equal waves, and unlabelled
+Applications, go in name order. Removal is watch-driven like release: the Application's
+deletion brings the CCLComponentSet back.
+
+The costs:
+
+- A remaining component that never finishes keeps every removed component installed.
+- A removed component waits even when nothing can depend on it, such as the last one in the
+  list.
+- Wave labels compare correctly only when they were written from one spec. An update that
+  stops partway mixes them: the components before the stop carry positions from the new
+  spec, the ones after it positions from an older one. Removed components can then be
+  deleted in the wrong order, whether they were removed in one edit or several. In
+  `[r1, r2, y]` → `[w1, w2, r1', r2, y]`, `r1'` is written at wave 3 and does not finish,
+  so `r2` keeps wave 2. Removing both then deletes `r1` first, although `r2` still runs its
+  old spec, which depends on it. Recording on each Application, at each write, the names
+  of the components before it would remove this; that belongs with `dependsOn` (§8).
+
+`Progressing` stays `True` until the last removed Application is gone. While a remaining
+component is not finished, it names that component as usual; then it reports
+`ComponentRemoving`, naming the Application being deleted or deleted next. `componentSyncStatuses`
+keeps an entry for each removed component until its Application is gone, after the components
+in the spec and in the order they are deleted. Its `removal` is `DeletePending` while it waits
+and `Deleting` once the operator has deleted the Application; `comparedToMatchesSpec` is false,
+as there is no desired spec to compare with. `componentHealthStatuses` lists it too, in the
+same order, until its Application is gone. It is judged by `catalogs.DefaultHealth`: a
+chart's own function is looked up by the component's spec entry, which a removed component
+no longer has. A pass that fails validation deletes nothing, as it writes
+nothing; `Progressing` then carries the `Validated` reason for a removal the operator has
+not started.
+
+A removed component added back before its Application is deleted is in the spec again:
+nothing is deleted, and its Application is written in order like any other. One added back
+while its Application is terminating is not released yet (`liveApplications` above), and
+has no entry in `componentSyncStatuses` or `componentHealthStatuses`; a new Application is
+created once the old one is gone.
 
 ### Teardown runs in reverse, one at a time
 
@@ -872,6 +939,38 @@ would uninstall them concurrently and the order would be lost. So `teardownNext`
 **exactly one** Application per reconcile, highest position first, and waits for it to be
 gone (requeuing every 15s) before starting the next. Only when none remain is the
 `ccluster.nvidia.com/argocd-applications` finalizer dropped.
+
+Applications of removed components that were still waiting go first, in the order removal
+uses; the components in the spec follow. Teardown finishes the removal before it starts on
+the rest. A removed component has no position to compare with the rest, so neither order is
+right in every case:
+
+- Removed first is right when a removed component depends on one that remains:
+  `[crds, app-old]` → `[crds, app-new]` with `app-new` not finished. `app-old` holds custom
+  resources of a CRD `crds` owns, and deleting it last would leave them without their CRD or
+  operator.
+- Removed first is wrong when a remaining component still depends on a removed one:
+  `[crds-v1, app]` → `[crds-v2, app']` with `crds-v2` not finished. `app` has not been
+  rewritten and still holds custom resources of a CRD `crds-v1` owns.
+
+The first case needs only a removed workload, the second a replaced CRD or operator
+component, so removed first is the order that goes wrong less often. A remaining component
+that only reads a removed one's Secret, the case removal waits for, is being torn down
+anyway.
+
+The components in the spec go by their current position, which is not always the order their
+Applications were written in. A component after the point an update stopped at still runs
+its old spec. After a reorder, `[x, y]` → `[z, y, x]` with `z` not finished, `x` is deleted
+first, although `y`'s old spec depends on it. Removed components are ordered by wave label,
+with the limit given above.
+
+Each of these cases deletes only Applications that are being deleted anyway, but in the wrong
+order. What can follow is a deletion that does not finish, such as a custom resource whose
+finalizer no running controller removes. Dependencies recorded on each Application (§8)
+would order them all correctly.
+
+Before removal waited for convergence, removed components were only left at teardown when
+the spec was edited during the delete, and those went last, in name order.
 
 ## 6. Why `ServerSideApply` is mandatory
 
@@ -895,8 +994,8 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
 | `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
-| `CCLComponentSet` | `ComponentsApplied` | The Applications for the released components have been written. Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
-| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy. |
+| `CCLComponentSet` | `ComponentsApplied` | The current spec has been written for the components the rollout has reached; the message counts them (§5). Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
+| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True/ComponentRemoving` once every component has finished and the Applications of removed components are being deleted, naming the one being waited on; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write or delete its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy, and no removed component's Application is left. |
 | `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it, and no two LoadBalancers share a name (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`, `LoadBalancerConflict`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not
@@ -908,14 +1007,15 @@ Printer columns: `Domain` and `Verified` (both from `status.clusterConfig`), `Av
 `CCLComponentSet`; `Verified` and `Domain` on `CCLClusterConfig`. No column shows the
 LoadBalancers: a printer column shows only the first JSONPath match, and naming one
 would give a label value a meaning.
-Each Application also carries `ccluster.nvidia.com/wave`, a 1-based label that is purely
-informational — nothing reads it — so that
+Each Application also carries `ccluster.nvidia.com/wave`, its 1-based position, so that
 
 ```bash
 kubectl get applications -n <deployment namespace> -L ccluster.nvidia.com/wave
 ```
 
-shows the order the operator is working through.
+shows the order the operator is working through. Rollout decisions read the spec, not the
+label, with one exception: once a component is removed from the spec, its label is the only
+record of its position, and removal goes highest label first (§5).
 
 ### Watches
 
@@ -955,7 +1055,8 @@ CD's `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing` and `Unknown`,
 `Succeeded` or `Failed` for a component that runs to completion. Each entry also carries a
 CamelCase `reason` such as `CrashLoopBackOff`, a `message`, and `lastTransitionTime`. A
 component without an Application has nothing running and is left out, as it is from
-`componentSyncStatuses`.
+`componentSyncStatuses`. A component removed from the spec stays until its Application is
+gone (§5).
 
 Health describes the objects running now, whichever spec rendered them, so it has no
 generation. Whether they are the current spec's is the component's sync entry; whether the
@@ -1055,11 +1156,14 @@ runs one worker (§3).
   `catalogs/cluster_base` ships a full 14-component order: the legacy Python catalog it was
   taken from gave four of them one sync wave, and those four could have installed
   concurrently. Here they serialise, so installing the catalog is fourteen sequential
-  convergence waits.
+  convergence waits. Dependencies recorded by name on each Application would also order
+  removal and teardown correctly after an update that stopped partway, which spec positions
+  and wave labels cannot (§5).
 - **Global values.** The legacy catalog threaded a `Shared` object into every component and
   deep-merged computed per-cluster defaults under the user's values — AWS IRSA
   environment, Istio CNI paths chosen by cloud provider. None of that is ported.
-- **No rollout timeout.** A component that never converges blocks the rest indefinitely.
+- **No rollout timeout.** A component that never converges blocks every release and update
+  after it, and every removal, indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
 - **Real Verifiers.** Every cluster_base chart is still registered with `alwaysVerified`,
@@ -1095,7 +1199,7 @@ runs one worker (§3).
   component reaching `Healthy`/`Synced` under genuine reconciliation (with an explicit check
   that the ~600KB `rollouts.argoproj.io` CRD itself reports `Synced`, not just the aggregate
   Application — the concrete case `ServerSideApply`/`controller.diff.server.side` exist for,
-  §6), a two-component deployment proving both `releaseCount` withholding and `teardownNext`'s
+  §6), a two-component deployment proving both `applyComponents` withholding and `teardownNext`'s
   reverse teardown against real convergence timing, and a spec confirming Argo CD's `selfHeal`
   actually reverts drift. `make test-e2e-argocd` never asserted any of this before it was
   retired — it only checked that the argoproj CRDs existed.

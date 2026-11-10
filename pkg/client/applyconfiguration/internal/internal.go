@@ -194,6 +194,9 @@ var schemaYAML = typed.YAMLObject(`types:
                     - name: name
                       type:
                         scalar: string
+                    - name: removal
+                      type:
+                        scalar: string
                     - name: sync
                       type:
                         scalar: string
