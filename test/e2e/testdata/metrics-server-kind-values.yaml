@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# catalogs/cluster_base/metrics_server's args, plus --kubelet-insecure-tls: kind's
-# kubelets serve self-signed certificates, so metrics-server never scrapes them, never
-# becomes ready, and its APIService never becomes Available without it.
+# kind's kubelets serve self-signed certificates, so without --kubelet-insecure-tls
+# metrics-server never scrapes them, never becomes ready, and its APIService never
+# becomes Available. The upstream chart appends args to its defaultArgs.
 metrics-server:
   args:
-    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
-    - --kubelet-use-node-status-port
-    - --metric-resolution=15s
     - --kubelet-insecure-tls

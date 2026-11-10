@@ -194,8 +194,10 @@ func expectMetricsServerFailing(g Gomega, message string) {
 
 // expectMetricsServerVerified asserts that a Verified message no longer names
 // metrics_server as failing, once installMetricsServer has installed it. It says nothing
-// about the other components.
+// about the other components, but an empty message, such as a copy that lost its
+// conditions, fails.
 func expectMetricsServerVerified(g Gomega, message string) {
+	g.Expect(message).NotTo(BeEmpty())
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
 }
 

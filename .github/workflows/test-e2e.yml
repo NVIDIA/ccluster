@@ -6,8 +6,8 @@ on:
   pull_request:
     # `labeled` so adding the release label to an open PR re-runs it as the full tier.
     types: [opened, synchronize, reopened, labeled]
-    # Only when something the suite depends on changes; docs, workflow-only and most
-    # catalog PRs skip it. Keep in sync with docs/build-and-release.md "CI checks".
+    # Only when something the suite depends on changes; docs and workflow-only PRs skip
+    # it. Keep in sync with docs/build-and-release.md "CI checks".
     # VERSION is here so a release PR, which changes little else, runs the full tier.
     paths:
       - 'VERSION'

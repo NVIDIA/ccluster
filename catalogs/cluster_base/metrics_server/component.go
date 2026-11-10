@@ -33,9 +33,9 @@ type Values struct {
 
 // ChartValues are the upstream metrics-server values worth setting per cluster.
 type ChartValues struct {
-	// Args are the server's command-line flags. The chart ships the kubelet
-	// address preferences and resolution that work on most distros; a cluster
-	// with unusual kubelet addressing needs its own.
+	// Args are command-line flags added after the upstream chart's defaultArgs,
+	// which already set the kubelet address preferences and resolution that work
+	// on most distros.
 	Args []string `json:"args,omitempty"`
 }
 

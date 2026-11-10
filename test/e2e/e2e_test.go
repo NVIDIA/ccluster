@@ -640,8 +640,9 @@ var _ = Describe("Manager", Ordered, func() {
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
 				}, crossClusterTimeout).Should(Succeed())
 
-				installMetricsServer(t.cluster)
+				// Registered first, so a failed install is removed too.
 				DeferCleanup(uninstallMetricsServer, t.cluster)
+				installMetricsServer(t.cluster)
 
 				// The infra-plane operator rechecks a failing component every minute.
 				By("following the verdict as it changes on the plane's cluster")
