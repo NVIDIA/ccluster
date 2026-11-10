@@ -40,12 +40,14 @@ retry() {
 }
 
 # `helm dependency build` resolves a locked dependency through the local repo list, so
-# every repository a catalog chart names is registered first. Matching is by URL.
+# every repository a catalog chart names is registered first. Matching is by URL. OCI
+# registries are not chart repositories: helm pulls from them directly, and repo add
+# refuses them.
 n=0
 while IFS= read -r url; do
   n=$((n + 1))
   retry "$HELM" repo add "catalog-$n" "$url"
-done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | sort -u)
+done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | grep -v '^oci://' | sort -u)
 
 failed=()
 while IFS= read -r chart; do

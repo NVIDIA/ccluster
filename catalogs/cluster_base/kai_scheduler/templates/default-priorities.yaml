@@ -1,0 +1,15 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+{{- if .Values.defaultPriorities.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kai-default-priorities
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cluster_base.labels" . | nindent 4 }}
+data:
+  types: {{ .Values.defaultPriorities.types | toJson | quote }}
+{{- end }}
