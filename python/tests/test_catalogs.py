@@ -64,6 +64,26 @@ def test_unmodelled_values_pass_through():
         ingress_nginx.Values(**{"ingress-nginx": {"controller": {"autoscaling": {"enabled": "maybe"}}}})
 
 
+def test_unmodelled_none_values():
+    # None on a model is left out; None inside a plain dict stays null, which Helm reads
+    # as removing the chart's default.
+    values = ingress_nginx.Values(
+        **{
+            "ingress-nginx": {
+                "controller": {
+                    "nodeSelector": None,
+                    "podLabels": {"a": None},
+                    "tolerations": [None],
+                }
+            },
+            "extra": None,
+        }
+    )
+    assert catalogs.entry(ingress_nginx.CHART, "ingress-nginx", values)["values"] == {
+        "ingress-nginx": {"controller": {"podLabels": {"a": None}, "tolerations": [None]}}
+    }
+
+
 def test_kai_gpu_queues_required_values():
     with pytest.raises(ValidationError):
         kai_gpu_queues.Queue(name="team-a")

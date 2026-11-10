@@ -260,7 +260,11 @@ values add nothing on the way from Go: optional scalars become `None` defaults. 
 accepts more values than its Go type models, so its models keep keys they do not model,
 at any depth, and `catalogs.entry` passes them to Helm as given, as the operator does:
 `ingress_nginx.Values(**{"ingress-nginx": {"controller": {"podLabels": {...}}}})` works.
-Modelled keys are still type-checked; a misspelled key is not caught.
+Modelled keys are still type-checked; a misspelled key is not caught. A key set to `None`
+directly on a model, modelled or not, is left out; a `None` inside a plain dict or list
+value stays `null`, which Helm reads as "remove this default":
+`{"nodeSelector": None}` is dropped, `{"nodeSelector": {"kubernetes.io/os": None}}` keeps
+its null.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
 command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.

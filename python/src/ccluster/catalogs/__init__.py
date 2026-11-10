@@ -27,7 +27,11 @@ def entry(chart: str, namespace: str, values: BaseModel | None) -> dict[str, Any
     expects and the shape the Go catalog produces. An empty result is dropped rather
     than stored: the operator omits the Application's helm block when values is unset,
     and an empty object would defeat that. Keys the Values does not model are kept and
-    dumped as given, since a chart accepts more than its Go type describes. A chart's
+    dumped as given, since a chart accepts more than its Go type describes, with one
+    exception: a key set to None directly on a model, modelled or not, is left out,
+    while a None inside a plain dict or list value stays null. Helm reads null as
+    "remove this default", so write it inside a dict value, as in
+    {"nodeSelector": {"kubernetes.io/os": None}}. A chart's
     required values are checked when its Values is constructed; the finer rules the Go
     Validate methods apply (port ranges, mount paths, replica bounds) are not mirrored
     here.

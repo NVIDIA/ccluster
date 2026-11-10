@@ -219,8 +219,9 @@ func writeCharts(repo, out, python string) error {
 		// makes it a class named by the title instead of a RootModel.
 		ExpandedStruct: true,
 		// Leave additionalProperties open: a chart accepts more values than its Go type
-		// models, and the operator's validator lets unmodelled keys through, so the
-		// Python models keep them too.
+		// models, and the operator's validator lets unmodelled keys through. The
+		// Makefile's --extra-fields allow is what makes the Python models keep them;
+		// this only keeps the schema consistent with those models.
 		AllowAdditionalProperties: true,
 	}
 	// Go doc comments become descriptions, which the generator turns into docstrings.
