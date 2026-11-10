@@ -18,7 +18,5 @@
 - **Breaking:** `compute_deployment` drops `domain` and `deploymentUrl`, and its SSH
   Service loses its `external-dns.alpha.kubernetes.io/hostname` annotation. A compute
   deployment is reached by its LoadBalancer address until #221 gives it a DNS name.
-- **Breaking:** `spirecrds.Verify` and `catalogs/common` are removed, so every
-  `cluster_base` component is verified without a check and a `CCLClusterConfig` reports
-  `Verified=True` as soon as it is reconciled. The ip operator's ClusterRole no longer
-  reads CustomResourceDefinitions.
+- **Breaking:** `spirecrds.Verify` and `catalogs/common` are removed. The ip operator's
+  ClusterRole no longer reads CustomResourceDefinitions.

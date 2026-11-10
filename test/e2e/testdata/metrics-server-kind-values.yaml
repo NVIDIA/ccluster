@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# kind's kubelets serve self-signed certificates, so without --kubelet-insecure-tls
+# metrics-server never scrapes them, never becomes ready, and its APIService never
+# becomes Available. The upstream chart appends args to its defaultArgs.
+metrics-server:
+  args:
+    - --kubelet-insecure-tls
