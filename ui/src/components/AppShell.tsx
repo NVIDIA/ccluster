@@ -5,21 +5,24 @@ import type { ReactNode } from "react";
 import { Anchor, AppBar, Button, Text, ThemeProvider } from "@nvidia/foundations-react-core";
 import { ChevronRight, Moon, Sun } from "lucide-react";
 import type { Config } from "../api";
+import { clock } from "../format";
 import { useThemePreference } from "../useThemePreference";
 
 interface AppShellProps {
   config?: Config;
-  /** Page-wide controls shown in the app bar, after the control plane's context. */
+  /** Page-wide controls shown in the app bar, before the theme toggle. */
   controls?: ReactNode;
+  /** When the shown data was read, for the footer. */
+  updatedAt?: number;
   children: ReactNode;
 }
 
 /**
  * The page frame, after the NVIDIA platform UI: a Kaizen AppBar with the product and
- * page on the left, and the control plane's context, the page's controls and a theme
- * toggle on the right; then the content.
+ * page on the left, and the page's controls and a theme toggle on the right; then the
+ * content, and a footer with the version and when the data was read.
  */
-export function AppShell({ config, controls, children }: AppShellProps) {
+export function AppShell({ config, controls, updatedAt, children }: AppShellProps) {
   const { theme, isDark, toggle } = useThemePreference();
 
   return (
@@ -38,11 +41,6 @@ export function AppShell({ config, controls, children }: AppShellProps) {
           }
           slotEnd={
             <>
-              {config && (
-                <Text kind="mono/sm" className="muted context" title="Kubeconfig context of the control plane">
-                  {config.context}
-                </Text>
-              )}
               {controls}
               <Button kind="tertiary" size="small" onClick={toggle} aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}>
                 {isDark ? <Sun className="icon" /> : <Moon className="icon" />}
@@ -55,8 +53,8 @@ export function AppShell({ config, controls, children }: AppShellProps) {
             {children}
             <footer className="shell-footer">
               <Text kind="body/regular/sm" className="muted">
-                ccluster {config?.version} · read-only · refreshes every {config?.refreshSeconds ?? 5}s ·{" "}
-                <Anchor href="/THIRD_PARTY_LICENSES.md">licenses</Anchor>
+                ccluster {config?.version}
+                {updatedAt ? ` · Updated ${clock(updatedAt)}` : ""} · <Anchor href="/THIRD_PARTY_LICENSES.md">licenses</Anchor>
               </Text>
             </footer>
           </div>

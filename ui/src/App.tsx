@@ -80,6 +80,7 @@ export function App() {
   return (
     <AppShell
       config={config.data}
+      updatedAt={data ? overview.dataUpdatedAt : undefined}
       controls={
         <NamespaceSelect
           lockedNamespace={config.data?.namespace || undefined}
@@ -90,14 +91,11 @@ export function App() {
       }
     >
       <div className="page">
-        <div className="page-heading">
-          <div>
-            <h1 className="page-title">Overview</h1>
-            <p className="section-description">
-              Infra planes and component sets on the control plane, read with your kubeconfig credentials.
-            </p>
-          </div>
-          {data ? <p className="section-description">Updated {clock(overview.dataUpdatedAt)}</p> : null}
+        <div>
+          <h1 className="page-title">Overview</h1>
+          <p className="section-description">
+            Infra planes and component sets on the control plane, read with your kubeconfig credentials.
+          </p>
         </div>
         {body}
       </div>

@@ -100,7 +100,10 @@ describe("App", () => {
     expect(within(sets).getByText("web failed to sync")).toBeInTheDocument();
 
 
-    expect(screen.getByText("kind-cp")).toBeInTheDocument();
+    const summary = screen.getByRole("region", { name: "Summary" });
+    expect(within(summary).getByRole("group", { name: "Infra planes" })).toHaveTextContent("Infra planes1 / 1");
+    expect(within(summary).getByRole("group", { name: "Component sets" })).toHaveTextContent("Component sets0 / 1");
+    expect(screen.getByText(/Updated/)).toBeInTheDocument();
   });
 
   it("keeps the last data with a notice when a refresh fails", async () => {

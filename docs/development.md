@@ -310,7 +310,7 @@ The UI is a Vite, React and TypeScript app in `ui/`, built from
 [Kaizen UI](https://www.npmjs.com/package/@nvidia/foundations-react-core), NVIDIA's design
 system (`@nvidia/foundations-react-core`), and using TanStack Query to poll the overview
 every five seconds. Its layout follows NVIDIA's platform UI: one page under a Kaizen
-`AppBar` holding the control plane's context, the namespace picker and the theme toggle,
+`AppBar` holding the namespace picker and the theme toggle,
 a sunken page background, bordered tables with a gray header row,
 Roboto (bundled from `@fontsource/roboto`), lucide icons, and a light/dark toggle that
 starts from the system setting and is remembered in the browser. Use Kaizen components

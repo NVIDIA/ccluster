@@ -14,13 +14,23 @@ SPDX-License-Identifier: Apache-2.0
 /* The page follows the NVIDIA platform UI's layout. Everything below uses Kaizen's
    semantic tokens, which switch with the light and dark themes. */
 
+/* Kaizen's fonts: Roboto for text, as the platform UI uses, instead of NVIDIA Sans, which
+   only NVIDIA-licensed projects may ship; and the system's monospace font instead of
+   JetBrains Mono, which Kaizen loads from its CDN. :root:root outranks Kaizen's
+   :where(:root) and theme-class rules. Spacing is calc(var(--spacing) * n), Kaizen's
+   4px base unit. */
+:root:root {
+  --font-sans: "Roboto", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 html,
 body,
 #root {
   box-sizing: border-box;
   height: 100%;
   overflow: hidden;
-  font-family: "Roboto", sans-serif;
+  font-family: var(--font-sans);
 }
 
 body {
@@ -73,7 +83,7 @@ code {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--spacing-4);
+  padding: calc(var(--spacing) * 4);
 }
 
 .shell-content {
@@ -87,24 +97,13 @@ code {
 
 .shell-footer {
   margin-top: auto;
-  padding-top: var(--spacing-6);
+  padding-top: calc(var(--spacing) * 6);
   text-align: center;
-}
-
-.context {
-  max-width: 24rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 767px) {
   .shell-main {
-    padding: var(--spacing-1);
-  }
-
-  .context {
-    display: none;
+    padding: calc(var(--spacing) * 1);
   }
 }
 
@@ -113,8 +112,8 @@ code {
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-6);
-  padding: var(--spacing-1);
+  gap: calc(var(--spacing) * 6);
+  padding: calc(var(--spacing) * 1);
 }
 
 .page-title,
@@ -126,7 +125,7 @@ code {
 }
 
 .section-description {
-  margin: var(--spacing-1) 0 0;
+  margin: calc(var(--spacing) * 1) 0 0;
   color: var(--text-color-secondary);
   font-size: 0.875rem;
 }
@@ -134,35 +133,28 @@ code {
 .section {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-3);
-  scroll-margin-top: var(--spacing-4);
-}
-
-.page-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--spacing-2) var(--spacing-4);
+  gap: calc(var(--spacing) * 3);
+  scroll-margin-top: calc(var(--spacing) * 4);
 }
 
 .namespace-select {
   min-width: 12rem;
 }
 
-/* Summary: strips of counts with dividers. */
+/* Summary: one box per kind, active out of total. */
 
 .stat-strips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--spacing-4);
+  gap: calc(var(--spacing) * 4);
 }
 
 .stat-strip {
   display: inline-flex;
   flex-direction: column;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3) var(--spacing-5);
+  gap: calc(var(--spacing) * 1);
+  min-width: 12rem;
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
   border: 1px solid var(--border-color-base);
   border-radius: var(--radius-md);
   background-color: var(--background-color-surface-base);
@@ -172,40 +164,19 @@ code {
   font-weight: 500;
 }
 
-.stat-list {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-6);
-  margin: 0;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-label {
-  color: var(--text-color-secondary);
-  font-size: 0.75rem;
-}
-
 .stat-value {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.75rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
-.stat-alert {
-  color: var(--text-color-feedback-danger);
+.stat-total {
+  color: var(--text-color-secondary);
+  font-size: 1.125rem;
+  font-weight: 400;
 }
 
-.stat-divider {
-  width: 1px;
-  height: 2rem;
-  background-color: var(--border-color-base);
-}
 
 /* Tables: bordered, with a gray header row. */
 
@@ -224,7 +195,7 @@ code {
 
 .data-table th,
 .data-table td {
-  padding: var(--spacing-2) var(--spacing-3);
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
   text-align: left;
   vertical-align: middle;
 }
@@ -255,7 +226,7 @@ code {
 
 .empty-table {
   margin: 0;
-  padding: var(--spacing-4);
+  padding: calc(var(--spacing) * 4);
   border: 1px dashed var(--border-color-base);
   border-radius: var(--radius-md);
   color: var(--text-color-secondary);
@@ -271,7 +242,7 @@ code {
 .component-cell {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-2);
+  gap: calc(var(--spacing) * 2);
   white-space: nowrap;
 }
 
