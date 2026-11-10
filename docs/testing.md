@@ -9,7 +9,7 @@ by changed path. See [Development](development.md) for generation and cluster se
 
 | Layer | Command | What it proves |
 | --- | --- | --- |
-| Selective unit | `go test -run TestReleaseCount ./internal/controller/cp/` | Pure rollout logic without envtest binaries. Select the relevant named test. |
+| Selective unit | `go test -run TestFinished ./internal/controller/cp/` | Pure rollout logic without envtest binaries. Select the relevant named test. |
 | Envtest | `make test` | Controller reconciliation against a real API server and etcd; no cluster needed. |
 | Quick e2e | `make test-e2e` | Helm deployment, operator ServiceAccount RBAC and running watch wiring for both operators, without Argo CD reconciliation. |
 | Full e2e | `make test-e2e-full` | Quick tier plus real Argo CD rollout, ordered release/teardown, drift repair, values updates, tenancy and istio's ignored webhook drift. |

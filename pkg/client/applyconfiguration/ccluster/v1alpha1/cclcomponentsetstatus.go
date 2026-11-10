@@ -34,11 +34,15 @@ type CCLComponentSetStatusApplyConfiguration struct {
 	// not rewritten on a pass that fails validation.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// componentSyncStatuses reports the latest observed Application state for each
-	// released component, judged against the spec at status.observedGeneration.
+	// released component, judged against the spec at status.observedGeneration. A
+	// component removed from that spec stays listed, with removal set, until its
+	// Application is gone.
 	ComponentSyncStatuses []ComponentSyncStatusApplyConfiguration `json:"componentSyncStatuses,omitempty"`
 	// componentHealthStatuses reports the health of each released component's live
 	// objects, as its chart judges it from what Argo CD reports, such as a Job that
-	// succeeded or a Pod in CrashLoopBackOff.
+	// succeeded or a Pod in CrashLoopBackOff. A component removed from the spec stays
+	// listed until its Application is gone, judged by the default health function, as
+	// componentSyncStatuses lists it.
 	//
 	// It describes the objects running now, whichever spec they were rendered from.
 	// Whether they are the current spec's is the same component's entry in

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -44,6 +45,12 @@ var errApplicationConflict = errors.New("application belongs to another CCLCompo
 // applicationName is the name Argo CD gives the Application for a component.
 func applicationName(componentSetName, componentName string) string {
 	return componentSetName + "-" + componentName
+}
+
+// componentName is the component an Application deploys, read back from its name. A
+// component removed from the spec has nothing else to name it by.
+func componentName(componentSetName, name string) string {
+	return strings.TrimPrefix(name, componentSetName+"-")
 }
 
 // applicationSpec builds the desired Application spec for one component.
@@ -248,7 +255,8 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		// listApplications uses this label to find the components already released.
 		application.Labels[labelComponentSetName] = componentSet.Name
 
-		// Informational only: kubectl can display the rollout position with -L.
+		// The rollout position, which kubectl shows with -L. Once the component leaves the
+		// spec, this is the only record of where it was, and pruneOrder orders by it.
 		application.Labels[labelWave] = strconv.Itoa(wave)
 
 		// Deleting the Application must also uninstall its chart.
@@ -264,67 +272,78 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	return result, err
 }
 
-// reconcileApplications writes an Application for each of the first `released`
-// components, and removes any Application left over from a component that is no longer in
-// the spec.
+// pruneNext deletes one of the prunable Applications, and reports whether it deleted
+// one. prunable is what prunableApplications returns, terminating ones included.
+// applyComponents calls it only once every component in the spec has finished;
+// teardownNext calls it before it deletes any of them.
 //
-// Pruning is the operator's job now that nothing generates these for it. It is done after
-// the writes so that a component being renamed does not briefly leave the cluster with
-// neither the old nor the new Application.
-func (r *CCLComponentSetReconciler) reconcileApplications(
+// Removal waits for that because a removed component can still serve one that remains:
+// an ExternalSecret producer replaced by a new one keeps the old Secret in place for pods
+// that have not restarted on the new one yet. Removed components then go in reverse, one at
+// a time, for the reason teardownNext gives. Their spec positions are gone, so the wave
+// label they were last written with orders them.
+func (r *CCLComponentSetReconciler) pruneNext(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
-	released int,
-	existing map[string]*argocdv1alpha1.Application,
-) (changed bool, err error) {
-	for i, component := range componentSet.Spec.Components[:released] {
-		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
-		if err != nil {
-			return changed, err
-		}
-		if op != controllerutil.OperationResultNone {
-			changed = true
-		}
-	}
-
-	pruned, err := r.pruneApplications(ctx, componentSet, existing)
-	return changed || pruned, err
-}
-
-// pruneApplications deletes Applications whose component has been removed from the spec.
-func (r *CCLComponentSetReconciler) pruneApplications(
-	ctx context.Context,
-	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
-	existing map[string]*argocdv1alpha1.Application,
+	prunable map[string]*argocdv1alpha1.Application,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
 
-	wanted := make(map[string]struct{}, len(componentSet.Spec.Components))
-	for _, component := range componentSet.Spec.Components {
-		wanted[applicationName(componentSet.Name, component.Name)] = struct{}{}
+	if len(prunable) == 0 {
+		return false, nil
+	}
+	if terminating := terminatingName(prunable); terminating != "" {
+		log.V(1).Info("Skipped deleting the next Application while one is terminating",
+			"application", terminating, "namespace", componentSet.Namespace)
+		return false, nil
 	}
 
-	pruned := false
-	// Sorted so the deletions, and the log lines they produce, are deterministic.
-	for _, name := range sortedNames(existing) {
-		if _, keep := wanted[name]; keep {
-			continue
-		}
-		if !componentSetOwner.ownedBy(existing[name], componentSet) {
-			continue
-		}
-		if err := r.Delete(ctx, existing[name]); client.IgnoreNotFound(err) != nil {
-			return pruned, err
-		}
-		pruned = true
-		log.Info("Deleted Argo CD Application for a removed component",
-			"application", name, "namespace", componentSet.Namespace)
+	name := pruneOrder(prunable)[0]
+	if err := r.Delete(ctx, prunable[name]); client.IgnoreNotFound(err) != nil {
+		return false, err
 	}
-	return pruned, nil
+	log.Info("Deleted Argo CD Application for a removed component", "application", name,
+		"namespace", componentSet.Namespace, "wave", prunable[name].Labels[labelWave])
+	return true, nil
 }
 
-// teardownNext removes one Application, highest wave first, and reports how many of
-// componentSet's Applications are still present.
+// prunableApplications returns componentSet's own Applications whose component is no longer
+// in the spec, terminating ones included.
+func prunableApplications(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+) map[string]*argocdv1alpha1.Application {
+	prunable := ownedApplications(componentSet, applications)
+	for _, component := range componentSet.Spec.Components {
+		delete(prunable, applicationName(componentSet.Name, component.Name))
+	}
+	return prunable
+}
+
+// pruneOrder lists the Applications of removed components in the order they are deleted:
+// the highest wave label first. One whose label is missing or not a position goes after
+// every labelled one. Equal waves, and unlabelled Applications, go in name order.
+func pruneOrder(prunable map[string]*argocdv1alpha1.Application) []string {
+	names := sortedNames(prunable)
+	sort.SliceStable(names, func(i, j int) bool {
+		return labelledWave(prunable[names[i]]) > labelledWave(prunable[names[j]])
+	})
+	return names
+}
+
+// labelledWave reads an Application's wave label. It returns 0, below every position the
+// operator writes, for a label that is missing or not a position.
+func labelledWave(application *argocdv1alpha1.Application) int {
+	wave, err := strconv.Atoi(application.Labels[labelWave])
+	if err != nil || wave < 1 {
+		return 0
+	}
+	return wave
+}
+
+// teardownNext removes one Application and reports how many of componentSet's
+// Applications are still present. Those of removed components go first, in the order
+// pruneNext uses; then the rest, highest position first.
 //
 // Components are deployed in order because a later one may depend on an earlier one, so
 // they have to come down the other way round: a component that owns CRDs must outlive
@@ -358,17 +377,22 @@ func (r *CCLComponentSetReconciler) teardownNext(
 
 	// Something is already on its way out. Wait for it: starting the next now would
 	// collapse the ordering back into a concurrent teardown.
-	for _, name := range sortedNames(owned) {
-		if !owned[name].DeletionTimestamp.IsZero() {
-			log.V(1).Info("Waiting for Application to finish terminating",
-				"application", name, "namespace", componentSet.Namespace)
-			return len(owned), nil
-		}
+	if terminating := terminatingName(owned); terminating != "" {
+		log.V(1).Info("Skipped deleting the next Application while one is terminating",
+			"application", terminating, "namespace", componentSet.Namespace)
+		return len(owned), nil
 	}
 
-	// Highest wave first.
-	components := componentSet.Spec.Components
-	for i, component := range slices.Backward(components) {
+	// A removal still waiting, or one from a spec edited during the delete, finishes first:
+	// a removed component depending on a remaining one is the more common case. DESIGN.md
+	// §5 gives the case this order gets wrong.
+	pruned, err := r.pruneNext(ctx, componentSet, prunableApplications(componentSet, owned))
+	if err != nil || pruned {
+		return len(owned), err
+	}
+
+	// Highest position first.
+	for i, component := range slices.Backward(componentSet.Spec.Components) {
 		name := applicationName(componentSet.Name, component.Name)
 		application, present := owned[name]
 		if !present {
@@ -379,19 +403,20 @@ func (r *CCLComponentSetReconciler) teardownNext(
 		}
 		log.Info("Deleted Argo CD Application", "application", name,
 			"namespace", componentSet.Namespace, "wave", i+1)
-		return len(owned), nil
+		break
 	}
-
-	// Owned, but no longer named by any component - the spec was edited while the
-	// CCLComponentSet was being deleted. There is no wave to order these by, so they go
-	// in a deterministic order instead.
-	name := sortedNames(owned)[0]
-	if err := r.Delete(ctx, owned[name]); client.IgnoreNotFound(err) != nil {
-		return len(owned), err
-	}
-	log.Info("Deleted Argo CD Application for a component no longer in the spec",
-		"application", name, "namespace", componentSet.Namespace)
 	return len(owned), nil
+}
+
+// terminatingName returns the name of an Application in applications that is being
+// deleted, the first in name order, or "" when none is.
+func terminatingName(applications map[string]*argocdv1alpha1.Application) string {
+	for _, name := range sortedNames(applications) {
+		if !applications[name].DeletionTimestamp.IsZero() {
+			return name
+		}
+	}
+	return ""
 }
 
 // sortedNames returns the keys of an Application map in a deterministic order.
@@ -406,10 +431,10 @@ func sortedNames(applications map[string]*argocdv1alpha1.Application) []string {
 
 // listApplications returns every Application created for componentSet, keyed by name,
 // including ones that are terminating. Callers that reason about what is deployed want
-// liveApplications instead; teardown needs to see the terminating ones.
+// liveApplications instead; teardown and removal need to see the terminating ones.
 //
 // A missing CRD is reported as an empty set rather than an error: Argo CD may not be
-// installed, and reconcileApplications raises that properly a moment later.
+// installed, and applyComponents raises that properly a moment later.
 func listApplications(
 	ctx context.Context,
 	c client.Reader,
@@ -468,68 +493,20 @@ func ownedApplications(
 	return owned
 }
 
-// releaseCount decides how many of componentSet's components may be deployed right now.
-//
-// This is the ordering mechanism: a component's Application is not created until every
-// component before it has synced and is Healthy or Succeeded. Releasing is monotonic and
-// derived entirely from which Applications exist, so it needs no state of its own and
-// survives an operator restart. A component that has been released is never withdrawn
-// just because it became unhealthy - that would delete a running Application and,
-// through the cascade finalizer, uninstall its chart.
-func (r *CCLComponentSetReconciler) releaseCount(
-	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
-	applications map[string]*argocdv1alpha1.Application,
-	healths componentHealths,
-) int {
-	components := componentSet.Spec.Components
-
-	// Already released: the leading run of components that have an Application.
-	released := 0
-	for i := range components {
-		if _, created := applications[applicationName(componentSet.Name, components[i].Name)]; !created {
-			break
-		}
-		released = i + 1
-	}
-	if released == 0 {
-		// Nothing deployed yet. The first component is always releasable; there is
-		// nothing for it to wait on. Clamped because the caller slices
-		// Components[:released]: a spec with no components is rejected by the
-		// MinItems=1 CRD marker, but this function must not depend on the schema
-		// for its own memory safety.
-		return min(1, len(components))
-	}
-
-	// Hold if anything released is still converging. Checking all of them rather than
-	// just the most recent means a component that degrades later stops the rollout,
-	// which is what a sequential dependency implies.
-	for i := 0; i < released; i++ {
-		application := applications[applicationName(componentSet.Name, components[i].Name)]
-		if !r.finished(componentSet, components[i], application, healths) {
-			return released
-		}
-	}
-
-	if released < len(components) {
-		released++
-	}
-	return released
-}
-
-// applicationsCondition turns the outcome of reconcileApplications into the
+// applicationsCondition turns the outcome of applyComponents' writes into the
 // ComponentsApplied condition. A missing CRD and a name collision are reported rather
 // than returned: neither is fixed by retrying, and both are resolved by an event the
 // controller already watches for.
 func (r *CCLComponentSetReconciler) applicationsCondition(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
-	released int,
+	written int,
 	err error,
 ) (status metav1.ConditionStatus, reason, message string, retryErr error) {
 	switch {
 	case err == nil:
 		return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationsCreated, fmt.Sprintf(
 			"Applied %d of %d components in namespace %q",
-			released, len(componentSet.Spec.Components), componentSet.Namespace), nil
+			written, len(componentSet.Spec.Components), componentSet.Namespace), nil
 	case apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err):
 		// Argo CD is not installed - `make deploy-cp ARGOCD=false`, or the operator
 		// started first.
@@ -544,14 +521,17 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 	}
 }
 
-// componentSyncStatuses builds status.componentSyncStatuses from observed Applications, one
-// entry per component that has one, in spec order. Callers replace the field with the
-// result, which drops removed components and stale observations.
+// componentSyncStatuses builds status.componentSyncStatuses from observed Applications:
+// one entry per component in the spec that has a live Application, in spec order, then
+// one per prunable Application, in pruneOrder. Callers replace the field with the result,
+// which drops stale observations and Applications that are gone.
 func (r *CCLComponentSetReconciler) componentSyncStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	prunable map[string]*argocdv1alpha1.Application,
 ) []cclusternvidiacomv1alpha1.ComponentSyncStatus {
-	statuses := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0, len(componentSet.Spec.Components))
+	statuses := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0,
+		len(componentSet.Spec.Components)+len(prunable))
 	for _, component := range componentSet.Spec.Components {
 		application := applications[applicationName(componentSet.Name, component.Name)]
 		if application == nil {
@@ -563,6 +543,19 @@ func (r *CCLComponentSetReconciler) componentSyncStatuses(
 			ComparedToMatchesSpec: comparedToMatchesSpec(application, r.applicationSpec(componentSet, component)),
 			Sync:                  application.SyncStatus(),
 			Message:               application.OperationMessage(),
+		})
+	}
+	for _, name := range pruneOrder(prunable) {
+		application := prunable[name]
+		removal := cclusternvidiacomv1alpha1.ComponentRemovalDeletePending
+		if !application.DeletionTimestamp.IsZero() {
+			removal = cclusternvidiacomv1alpha1.ComponentRemovalDeleting
+		}
+		statuses = append(statuses, cclusternvidiacomv1alpha1.ComponentSyncStatus{
+			Name:    componentName(componentSet.Name, name),
+			Sync:    application.SyncStatus(),
+			Message: application.OperationMessage(),
+			Removal: removal,
 		})
 	}
 	return statuses
@@ -588,95 +581,136 @@ func currentSyncFailed(app *argocdv1alpha1.Application, desired argocdv1alpha1.A
 		equality.Semantic.DeepEqual(*state.Operation.Sync.Source, desired.Source)
 }
 
-// rolloutStatus reports how far through the components the rollout has got.
-//
-// The first component that is not yet released, or is released but still converging, is
-// the one holding everything after it up. There is no timeout on that wait, so naming it
-// is the only way a stuck rollout is visible.
+// rolloutStatus reports how far through the components the rollout has got: the first
+// component that has not finished holds up everything after it, and once every component
+// has finished, the Applications of removed components hold up completion (see
+// pruneNext). There is no timeout on these waits, so naming what holds the rollout up is
+// the only way a stuck rollout is visible.
 //
 // invalidReason and invalidMessage are this pass's validation failure, empty when it
-// passed. The operator writes no Application on such a pass, so a component waiting for
+// passed. The operator writes and deletes no Application on such a pass, so a wait for
 // the operator is reported under that reason, which names what actually holds it up.
 // Waits on Argo CD are reported as usual: Argo CD keeps working on what was written.
 func (r *CCLComponentSetReconciler) rolloutStatus(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	prunable map[string]*argocdv1alpha1.Application,
 	invalidReason, invalidMessage string,
 	healths componentHealths,
 ) (status metav1.ConditionStatus, reason, message string) {
 	for i, component := range componentSet.Spec.Components {
-		wave := i + 1
-		name := applicationName(componentSet.Name, component.Name)
-
-		application, released := applications[name]
-		if !released {
-			if invalidReason != "" {
-				return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
-					"Wave %d (component %q) cannot be deployed until validation passes: %s",
-					wave, component.Name, invalidMessage)
-			}
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
-				"Waiting to deploy wave %d (component %q)", wave, component.Name)
-		}
+		application := applications[applicationName(componentSet.Name, component.Name)]
 		if r.finished(componentSet, component, application, healths) {
 			continue
 		}
-
-		desired := r.applicationSpec(componentSet, component)
-		switch {
-		case !equality.Semantic.DeepEqual(application.Spec, desired) && invalidReason != "":
-			// Only an edit to the CCLComponentSet or its CCLInfraPlanes, both watched,
-			// lets the operator write this spec.
-			return metav1.ConditionTrue, invalidReason, fmt.Sprintf(
-				"Wave %d (component %q) cannot be written until validation passes: %s",
-				wave, component.Name, invalidMessage)
-
-		case !equality.Semantic.DeepEqual(application.Spec, desired):
-			// The list behind this report predates this reconcile's write. The write's
-			// own event brings the CCLComponentSet back.
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
-				"Wave %d (component %q) is waiting for the operator to write the current spec",
-				wave, component.Name)
-
-		case !comparedToMatchesSpec(application, desired):
-			// The latest comparison does not match the desired source, destination and
-			// ignoreDifferences, so its health and sync statuses cannot establish
-			// completion.
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
-				"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
-					"operator wrote", wave, component.Name), application)
-
-		case application.OperationInProgress():
-			// Hooks are excluded from aggregate health and sync. Healthy/Synced can
-			// therefore precede operation completion, including a pending PostSync hook.
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
-				"Wave %d (component %q) is waiting for an Argo CD operation to complete",
-				wave, component.Name), application)
-
-		case currentSyncFailed(application, desired):
-			// A failed hook can leave aggregate health Healthy and sync Synced.
-			// A later successful sync of this source and revision resumes the rollout.
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed, fmt.Sprintf(
-				"Wave %d (component %q) failed to sync: %s. A successful sync of "+
-					"Application %q in Argo CD resumes the rollout",
-				wave, component.Name, application.OperationMessage(), name)
-
-		default:
-			// Argo CD compared this spec, and either has not synced it or the component
-			// is not healthy. The health message says which object holds it up.
-			health := healths.of(component.Name, application)
-			message := fmt.Sprintf("Wave %d (component %q) has health %q, sync %q", wave, component.Name,
-				health.Status, application.SyncStatus())
-			if health.Message != "" {
-				message += ": " + health.Message
-			}
-			return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, message
-		}
+		reason, message := r.componentWaitReason(componentSet, i+1, component, application,
+			healths, invalidReason, invalidMessage)
+		return metav1.ConditionTrue, reason, message
 	}
-
+	if len(prunable) > 0 {
+		reason, message := pruneWaitReason(prunable, invalidReason, invalidMessage)
+		return metav1.ConditionTrue, reason, message
+	}
 	return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete, fmt.Sprintf(
 		"All %d components have synced the current spec and are healthy",
 		len(componentSet.Spec.Components))
+}
+
+// componentWaitReason returns the Progressing reason and message for the component at
+// position wave, which has not finished. application is nil when it has not been
+// released.
+func (r *CCLComponentSetReconciler) componentWaitReason(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	wave int,
+	component cclusternvidiacomv1alpha1.ComponentSpec,
+	application *argocdv1alpha1.Application,
+	healths componentHealths,
+	invalidReason, invalidMessage string,
+) (reason, message string) {
+	if application == nil {
+		if invalidReason != "" {
+			return invalidReason, fmt.Sprintf(
+				"Wave %d (component %q) cannot be deployed until validation passes: %s",
+				wave, component.Name, invalidMessage)
+		}
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
+			"Waiting to deploy wave %d (component %q)", wave, component.Name)
+	}
+
+	desired := r.applicationSpec(componentSet, component)
+	switch {
+	case !equality.Semantic.DeepEqual(application.Spec, desired) && invalidReason != "":
+		// Only an edit to the CCLComponentSet or its CCLInfraPlanes, both watched,
+		// lets the operator write this spec.
+		return invalidReason, fmt.Sprintf(
+			"Wave %d (component %q) cannot be written until validation passes: %s",
+			wave, component.Name, invalidMessage)
+
+	case !equality.Semantic.DeepEqual(application.Spec, desired):
+		// The list behind this report predates this reconcile's write. The write's
+		// own event brings the CCLComponentSet back.
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, fmt.Sprintf(
+			"Wave %d (component %q) is waiting for the operator to write the current spec",
+			wave, component.Name)
+
+	case !comparedToMatchesSpec(application, desired):
+		// The latest comparison does not match the desired source, destination and
+		// ignoreDifferences, so its health and sync statuses cannot establish
+		// completion.
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+			"Wave %d (component %q) is waiting for Argo CD to compare the spec the "+
+				"operator wrote", wave, component.Name), application)
+
+	case application.OperationInProgress():
+		// Hooks are excluded from aggregate health and sync. Healthy/Synced can
+		// therefore precede operation completion, including a pending PostSync hook.
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, withRunningOperationMessage(fmt.Sprintf(
+			"Wave %d (component %q) is waiting for an Argo CD operation to complete",
+			wave, component.Name), application)
+
+	case currentSyncFailed(application, desired):
+		// A failed hook can leave aggregate health Healthy and sync Synced.
+		// A later successful sync of this source and revision resumes the rollout.
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed, fmt.Sprintf(
+			"Wave %d (component %q) failed to sync: %s. A successful sync of "+
+				"Application %q in Argo CD resumes the rollout",
+			wave, component.Name, application.OperationMessage(), application.Name)
+
+	default:
+		// Argo CD compared this spec, and either has not synced it or the component
+		// is not healthy. The health message says which object holds it up.
+		health := healths.of(component.Name, application)
+		message := fmt.Sprintf("Wave %d (component %q) has health %q, sync %q", wave, component.Name,
+			health.Status, application.SyncStatus())
+		if health.Message != "" {
+			message += ": " + health.Message
+		}
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing, message
+	}
+}
+
+// pruneWaitReason returns the Progressing reason and message while the Applications in
+// prunable are not all gone. They go one at a time (see pruneNext), so a terminating one
+// is the one being waited on; otherwise it is the next to delete.
+func pruneWaitReason(
+	prunable map[string]*argocdv1alpha1.Application,
+	invalidReason, invalidMessage string,
+) (reason, message string) {
+	if terminating := terminatingName(prunable); terminating != "" {
+		return cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving, fmt.Sprintf(
+			"Waiting for Argo CD to delete Application %q, whose component is no longer "+
+				"in the spec", terminating)
+	}
+	name := pruneOrder(prunable)[0]
+	if invalidReason != "" {
+		return invalidReason, fmt.Sprintf(
+			"Application %q, whose component is no longer in the spec, cannot be deleted "+
+				"until validation passes: %s", name, invalidMessage)
+	}
+	// The list behind this report predates this reconcile's delete. The delete's own
+	// event brings the CCLComponentSet back.
+	return cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving, fmt.Sprintf(
+		"Waiting to delete Application %q, whose component is no longer in the spec", name)
 }
 
 // withRunningOperationMessage appends the message of the operation Argo CD is running.

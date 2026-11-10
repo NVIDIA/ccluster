@@ -135,13 +135,24 @@ class ComponentHealthStatus(BaseModel):
     """
     name: str
     """
-    name identifies the component in spec.components.
+    name identifies the component in spec.components, or a component removed from it.
     """
     reason: str | None = None
     """
     reason is a CamelCase, machine-readable refinement of health, such as
     CrashLoopBackOff or Unschedulable.
     """
+
+
+class Removal(Enum):
+    """
+    removal is set for a component no longer in spec.components whose Application is
+    still there: DeletePending until the operator deletes the Application, Deleting
+    while Argo CD uninstalls its chart.
+    """
+
+    delete_pending = "DeletePending"
+    deleting = "Deleting"
 
 
 class ComponentSyncStatus(BaseModel):
@@ -157,7 +168,8 @@ class ComponentSyncStatus(BaseModel):
     """
     comparedToMatchesSpec reports whether Argo CD's latest comparison used the
     desired source, destination and ignoreDifferences. While false, sync does not
-    establish convergence on the desired configuration.
+    establish convergence on the desired configuration. Always false for a removed
+    component, which has no desired configuration.
     """
     message: str | None = None
     """
@@ -165,7 +177,14 @@ class ComponentSyncStatus(BaseModel):
     """
     name: str
     """
-    name identifies the component in spec.components.
+    name identifies the component in spec.components, or, with removal set, a
+    component removed from it.
+    """
+    removal: Removal | None = None
+    """
+    removal is set for a component no longer in spec.components whose Application is
+    still there: DeletePending until the operator deletes the Application, Deleting
+    while Argo CD uninstalls its chart.
     """
     sync: str | None = None
     """
@@ -254,7 +273,9 @@ class CCLComponentSetStatus(BaseModel):
     """
     componentHealthStatuses reports the health of each released component's live
     objects, as its chart judges it from what Argo CD reports, such as a Job that
-    succeeded or a Pod in CrashLoopBackOff.
+    succeeded or a Pod in CrashLoopBackOff. A component removed from the spec stays
+    listed until its Application is gone, judged by the default health function, as
+    componentSyncStatuses lists it.
 
     It describes the objects running now, whichever spec they were rendered from.
     Whether they are the current spec's is the same component's entry in
@@ -267,7 +288,9 @@ class CCLComponentSetStatus(BaseModel):
     ] = None
     """
     componentSyncStatuses reports the latest observed Application state for each
-    released component, judged against the spec at status.observedGeneration.
+    released component, judged against the spec at status.observedGeneration. A
+    component removed from that spec stays listed, with removal set, until its
+    Application is gone.
     """
     conditions: list[Condition] | None = None
     """

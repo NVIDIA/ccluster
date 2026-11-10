@@ -175,15 +175,19 @@ A type is absent when the operator did not get far enough to write it: a set who
 validation failed has no `ComponentsApplied` condition for this generation.
 
 `Progressing=False` means every Application matches the operator's current desired spec,
-Argo CD's latest comparison was of that spec and reports `Healthy` and `Synced`, and no
-operation for it is pending, running or failed.
+Argo CD's latest comparison was of that spec and reports `Synced`, no operation for it is
+pending, running or failed, every component is `Healthy` or `Succeeded`, and no
+Application of a component removed from the spec is left.
 While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when the last
 sync of a component's current spec failed. The operator does not retry a failed sync; a
 later successful sync of that Application in Argo CD clears `WaveSyncFailed` and resumes
 the rollout. When validation failed and the component being waited on needs the operator
-to write its Application, the reason is the `Validated` condition's, such as
-`InfraPlaneNotFound`: the operator writes nothing until validation passes.
-Updates to already released components are not serialized by wave.
+to write or delete its Application, the reason is the `Validated` condition's, such as
+`InfraPlaneNotFound`: the operator writes and deletes nothing until validation passes.
+Updates follow list order like the first rollout: a component's new spec is written only
+after every component before it has finished on its own current spec. The Applications of
+components removed from the spec are deleted last, after every remaining component has
+finished, one at a time in reverse order; the reason is `ComponentRemoving` meanwhile.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
 then uninstalls the set's charts in reverse order, one at a time, so the object stays in

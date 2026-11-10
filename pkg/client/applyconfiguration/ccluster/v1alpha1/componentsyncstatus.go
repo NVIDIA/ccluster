@@ -6,22 +6,32 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	cclusterv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+)
+
 // ComponentSyncStatusApplyConfiguration represents a declarative configuration of the ComponentSyncStatus type for use
 // with apply.
 //
 // ComponentSyncStatus reports the latest observed Application state.
 // The controller derives rollout decisions from Applications, not this report.
 type ComponentSyncStatusApplyConfiguration struct {
-	// name identifies the component in spec.components.
+	// name identifies the component in spec.components, or, with removal set, a
+	// component removed from it.
 	Name *string `json:"name,omitempty"`
 	// comparedToMatchesSpec reports whether Argo CD's latest comparison used the
 	// desired source, destination and ignoreDifferences. While false, sync does not
-	// establish convergence on the desired configuration.
+	// establish convergence on the desired configuration. Always false for a removed
+	// component, which has no desired configuration.
 	ComparedToMatchesSpec *bool `json:"comparedToMatchesSpec,omitempty"`
 	// sync is Argo CD's observed Application sync status.
 	Sync *string `json:"sync,omitempty"`
 	// message is Argo CD's latest operation message, including progress, retries and failures.
 	Message *string `json:"message,omitempty"`
+	// removal is set for a component no longer in spec.components whose Application is
+	// still there: DeletePending until the operator deletes the Application, Deleting
+	// while Argo CD uninstalls its chart.
+	Removal *cclusterv1alpha1.ComponentRemoval `json:"removal,omitempty"`
 }
 
 // ComponentSyncStatusApplyConfiguration constructs a declarative configuration of the ComponentSyncStatus type for use with
@@ -59,5 +69,13 @@ func (b *ComponentSyncStatusApplyConfiguration) WithSync(value string) *Componen
 // If called multiple times, the Message field is set to the value of the last call.
 func (b *ComponentSyncStatusApplyConfiguration) WithMessage(value string) *ComponentSyncStatusApplyConfiguration {
 	b.Message = &value
+	return b
+}
+
+// WithRemoval sets the Removal field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Removal field is set to the value of the last call.
+func (b *ComponentSyncStatusApplyConfiguration) WithRemoval(value cclusterv1alpha1.ComponentRemoval) *ComponentSyncStatusApplyConfiguration {
+	b.Removal = &value
 	return b
 }

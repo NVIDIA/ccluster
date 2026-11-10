@@ -30,9 +30,12 @@ const (
 )
 
 // judgeAll judges the component that each of applications deploys, all at the same time,
-// so a pass waits for at most one readTimeout. applications is keyed by Application name.
-// Both controllers use it: ComponentHealthReconciler reports the result, and the rollout
-// judges again before it releases the next component.
+// so a pass waits for at most one readTimeout. applications is keyed by Application name,
+// the result by component name. Both controllers use it: ComponentHealthReconciler
+// reports the result, and the rollout judges again before it releases the next component.
+//
+// A component removed from the spec has no spec entry, so no chart to look a function up
+// by, and is judged by catalogs.DefaultHealth.
 func judgeAll(
 	ctx context.Context,
 	argoCD ArgoCDServer,
@@ -40,21 +43,23 @@ func judgeAll(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
 ) componentHealths {
+	entries := make(map[string]cclusternvidiacomv1alpha1.ComponentEntry, len(componentSet.Spec.Components))
+	for _, component := range componentSet.Spec.Components {
+		entries[applicationName(componentSet.Name, component.Name)] = component.ComponentEntry
+	}
+
 	var (
 		mu      sync.Mutex
 		wg      sync.WaitGroup
 		healths = componentHealths{}
 	)
-	for _, component := range componentSet.Spec.Components {
-		application := applications[applicationName(componentSet.Name, component.Name)]
-		if application == nil {
-			continue
-		}
+	for name, application := range applications {
+		entry := entries[name]
 		wg.Go(func() {
-			health := judge(ctx, argoCD, healthFuncs, application, component.ComponentEntry)
+			health := judge(ctx, argoCD, healthFuncs, application, entry)
 			mu.Lock()
 			defer mu.Unlock()
-			healths[component.Name] = health
+			healths[componentName(componentSet.Name, name)] = health
 		})
 	}
 	wg.Wait()

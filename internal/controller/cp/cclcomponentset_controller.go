@@ -48,8 +48,10 @@ const (
 	// This is why a CCLComponentSet's name is capped at a label value's 63 characters.
 	labelComponentSetName = "ccluster.nvidia.com/componentset-name"
 
-	// labelWave carries a component's position in the rollout. Nothing acts on it; it
-	// exists so `kubectl get applications -L ccluster.nvidia.com/wave` shows the order.
+	// labelWave carries a component's 1-based position in the rollout, so
+	// `kubectl get applications -L ccluster.nvidia.com/wave` shows the order. Once a
+	// component is removed from the spec, the label is the only record of its position:
+	// removed components are deleted highest wave first (pruneOrder).
 	labelWave = "ccluster.nvidia.com/wave"
 
 	// componentSetFinalizerName guards the generated Applications, which nothing else
@@ -113,18 +115,20 @@ type CCLComponentSetReconciler struct {
 //     name, and that name only exists once its cluster Secret has been mirrored. An
 //     Available CCLInfraPlane also guarantees its namespace's AppProject exists, so the
 //     project is never checked here. Reported as the Validated condition.
-//  2. One Argo CD Application is written per released component, into the
-//     CCLComponentSet's own namespace under that project. Reported as the
-//     ComponentsApplied condition.
+//  2. One Argo CD Application is written per component the rollout has reached, into the
+//     CCLComponentSet's own namespace under that project. Once every component has
+//     finished, the Application of one component no longer in the spec is deleted.
+//     Reported as the ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
-//     released and to report where the rollout has got to. A component Argo CD has
+//     written and to report where the rollout has got to. A component Argo CD has
 //     synced is judged healthy or not by its chart's health function, afresh on each
 //     pass. Reported as the Progressing condition and status.componentSyncStatuses, on
 //     every pass, including one that stopped at step 1 or 2.
 //
-// Ordering is enforced by withholding a component's Application until everything before
-// it has finished - see releaseCount - rather than by an Argo CD sync strategy, which would
-// mean switching off the automated sync these Applications depend on.
+// Ordering is enforced by withholding a component's current spec, on release and on
+// update, until everything before it has finished - see applyComponents - rather than by an
+// Argo CD sync strategy, which would mean switching off the automated sync these
+// Applications depend on. Removed components go last, in reverse - see pruneNext.
 //
 // The operator installs nothing itself; Argo CD does all of the work.
 func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -165,6 +169,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	applications := liveApplications(all)
+	prunable := prunableApplications(&componentSet, all)
 	healths := r.judgeSynced(ctx, &componentSet, applications)
 	statusBase := componentSet.DeepCopy()
 
@@ -183,7 +188,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				len(componentSet.Spec.Components))))
 
 		var applied metav1.Condition
-		applied, retryErr = r.applyComponents(ctx, &componentSet, applications, healths)
+		applied, retryErr = r.applyComponents(ctx, &componentSet, applications, prunable, healths)
 		conditions = append(conditions, applied)
 
 		// Re-listed because applyComponents may have written some, even on a pass that
@@ -192,6 +197,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		applications = liveApplications(all)
+		prunable = prunableApplications(&componentSet, all)
 	}
 
 	// Rebuilt on every pass, validated or not, from one list of Applications.
@@ -199,9 +205,9 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// for it, so neither it nor Progressing may outlive the generation this write records.
 	// An Application claimed by another CCLComponentSet is left out of both.
 	reported := ownedApplications(&componentSet, applications)
-	componentSet.Status.ComponentSyncStatuses = r.componentSyncStatuses(&componentSet, reported)
-	progressStatus, progressReason, progressMessage :=
-		r.rolloutStatus(&componentSet, reported, reason, message, healths)
+	componentSet.Status.ComponentSyncStatuses = r.componentSyncStatuses(&componentSet, reported, prunable)
+	progressStatus, progressReason, progressMessage := r.rolloutStatus(
+		&componentSet, reported, prunable, reason, message, healths)
 
 	conditions = append(conditions,
 		condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing, progressStatus, progressReason, progressMessage))
@@ -222,24 +228,47 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, retryErr
 }
 
-// applyComponents writes the Applications of the components released so far and returns
-// the ComponentsApplied condition. A returned error is retried after the status is
-// written; a missing CRD or a name conflict is reported in the condition instead.
+// applyComponents writes each component's current spec in list order and stops after
+// the first one that has not finished on the Applications read before the pass. If none
+// stopped it, it deletes one Application of a removed component (DESIGN.md §5).
 func (r *CCLComponentSetReconciler) applyComponents(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
+	prunable map[string]*argocdv1alpha1.Application,
 	healths componentHealths,
 ) (metav1.Condition, error) {
 	log := logf.FromContext(ctx)
+	components := len(componentSet.Spec.Components)
 
-	released := r.releaseCount(componentSet, applications, healths)
-	changed, applyErr := r.reconcileApplications(ctx, componentSet, released, applications)
-	status, reason, message, retryErr := r.applicationsCondition(componentSet, released, applyErr)
+	written, allFinished, changed := 0, true, false
+	var applyErr error
+	for i, component := range componentSet.Spec.Components {
+		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
+		if err != nil {
+			applyErr = err
+			break
+		}
+		written++
+		changed = changed || op != controllerutil.OperationResultNone
+		application := applications[applicationName(componentSet.Name, component.Name)]
+		if !r.finished(componentSet, component, application, healths) {
+			allFinished = false
+			break
+		}
+	}
+	if applyErr == nil && allFinished {
+		// Every component had finished on its current spec before the writes, so none of
+		// the writes above changed a spec.
+		var pruned bool
+		pruned, applyErr = r.pruneNext(ctx, componentSet, prunable)
+		changed = changed || pruned
+	}
+	status, reason, message, retryErr := r.applicationsCondition(componentSet, written, applyErr)
 
 	if applyErr == nil && changed {
 		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,
-			"released", released, "components", len(componentSet.Spec.Components))
+			"written", written, "components", components)
 	}
 	if status != metav1.ConditionTrue {
 		log.Info("Did not apply Argo CD Applications", "cclcomponentset", componentSet.Name,

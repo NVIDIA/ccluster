@@ -7,6 +7,7 @@ package cp
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -32,7 +33,8 @@ const (
 )
 
 // ComponentHealthReconciler reports each released component's health in
-// status.componentHealthStatuses. It is the only writer of that field.
+// status.componentHealthStatuses, and that of each component removed from the spec until
+// its Application is gone. It is the only writer of that field.
 //
 // It is separate from CCLComponentSetReconciler because it polls: a Pod failing changes
 // no Application field, so no watch would see it. The rollout controller stays watch
@@ -70,11 +72,15 @@ func (r *ComponentHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	// A component without an Application is not released: nothing runs to judge.
+	// A component without an Application is not released: nothing runs to judge. A
+	// removed component's objects run until Argo CD has uninstalled them, so it is judged
+	// while its Application is terminating too.
 	applications := ownedApplications(&componentSet, liveApplications(all))
+	prunable := prunableApplications(&componentSet, all)
+	maps.Copy(applications, prunable)
 	healths := judgeAll(ctx, r.ArgoCD, r.Health, &componentSet, applications)
 
-	statuses := r.healthStatuses(&componentSet, healths)
+	statuses := r.healthStatuses(&componentSet, healths, prunable)
 	if !sameHealthStatuses(statuses, componentSet.Status.ComponentHealthStatuses) {
 		base := componentSet.DeepCopy()
 		componentSet.Status.ComponentHealthStatuses = statuses
@@ -87,11 +93,14 @@ func (r *ComponentHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{RequeueAfter: pollInterval(statuses)}, nil
 }
 
-// healthStatuses builds status.componentHealthStatuses in spec order from this pass's
-// healths. A component whose health is unchanged keeps its lastTransitionTime.
+// healthStatuses builds status.componentHealthStatuses from this pass's healths, in the
+// order of componentSyncStatuses: the components in the spec in spec order, then the
+// removed ones in pruneOrder. A component whose health is unchanged keeps its
+// lastTransitionTime.
 func (r *ComponentHealthReconciler) healthStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	healths componentHealths,
+	prunable map[string]*argocdv1alpha1.Application,
 ) []cclusternvidiacomv1alpha1.ComponentHealthStatus {
 	previous := make(map[string]cclusternvidiacomv1alpha1.ComponentHealthStatus,
 		len(componentSet.Status.ComponentHealthStatuses))
@@ -99,21 +108,29 @@ func (r *ComponentHealthReconciler) healthStatuses(
 		previous[status.Name] = status
 	}
 
+	names := make([]string, 0, len(componentSet.Spec.Components)+len(prunable))
+	for _, component := range componentSet.Spec.Components {
+		names = append(names, component.Name)
+	}
+	for _, name := range pruneOrder(prunable) {
+		names = append(names, componentName(componentSet.Name, name))
+	}
+
 	now := metav1.NewTime(r.clock())
 	var statuses []cclusternvidiacomv1alpha1.ComponentHealthStatus
-	for _, component := range componentSet.Spec.Components {
-		health, judged := healths[component.Name]
+	for _, name := range names {
+		health, judged := healths[name]
 		if !judged {
 			continue
 		}
 		status := cclusternvidiacomv1alpha1.ComponentHealthStatus{
-			Name:               component.Name,
+			Name:               name,
 			Health:             health.Status,
 			Reason:             health.Reason,
 			Message:            health.Message,
 			LastTransitionTime: now,
 		}
-		if before, ok := previous[component.Name]; ok && before.Health == health.Status {
+		if before, ok := previous[name]; ok && before.Health == health.Status {
 			status.LastTransitionTime = before.LastTransitionTime
 		}
 		statuses = append(statuses, status)

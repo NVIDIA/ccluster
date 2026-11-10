@@ -1368,8 +1368,8 @@ type: kubernetes.io/service-account-token
 				})
 			}
 
-			// DESIGN.md §5: `releaseCount` withholds a component's Application until
-			// every earlier one is Healthy and Synced, and `teardownNext` deletes them
+			// DESIGN.md §5: `applyComponents` withholds a component's Application until
+			// every earlier one has finished, and `teardownNext` deletes them
 			// in reverse, one at a time, waiting for each to be gone before starting the
 			// next. Both are proven only against hand-written status in envtest today;
 			// this spec drives the same two invariants against a real Argo CD
