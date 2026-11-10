@@ -129,7 +129,7 @@ func infraPlane(namespace, name string, generation int64, conditions ...metav1.C
 	}
 }
 
-func TestBuildOverviewSummarisesAndListsWhatNeedsAttention(t *testing.T) {
+func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 	healthy := infraPlane("team-a", "gpu", 1,
 		cond(v1alpha1.CCLInfraPlaneConditionAvailable, metav1.ConditionTrue, v1alpha1.CCLInfraPlaneReasonClusterSecretCreated, 1))
 	healthy.Status.ClusterConfig = &v1alpha1.CCLClusterConfigStatus{Conditions: []metav1.Condition{
@@ -171,13 +171,8 @@ func TestBuildOverviewSummarisesAndListsWhatNeedsAttention(t *testing.T) {
 		if !reflect.DeepEqual(got.Summary, wantSummary) {
 			t.Errorf("Summary =\n%+v\nwant\n%+v", got.Summary, wantSummary)
 		}
-		wantAttention := []Attention{
-			{Kind: "CCLInfraPlane", Namespace: "team-b", Name: "cpu", Reason: "SecretNotFound", Message: "Available SecretNotFound"},
-			{Kind: "CCLComponentSet", Namespace: "team-a", Name: "jobs", Component: "a", Reason: "CrashLoopBackOff", Message: "back-off"},
-			{Kind: "CCLComponentSet", Namespace: "team-b", Name: "apps", Reason: "InfraPlaneNotReady", Message: "Validated InfraPlaneNotReady"},
-		}
-		if !reflect.DeepEqual(got.NeedsAttention, wantAttention) {
-			t.Errorf("NeedsAttention =\n%+v\nwant\n%+v", got.NeedsAttention, wantAttention)
+		if row := got.ComponentSets[2]; row.Status != SetStatusFailed || row.Message != "Validated InfraPlaneNotReady" {
+			t.Errorf("team-b/apps = %s %q, want Failed with the Validated message", row.Status, row.Message)
 		}
 		if names := setNames(got.ComponentSets); !reflect.DeepEqual(names, []string{"team-a/base", "team-a/jobs", "team-b/apps"}) {
 			t.Errorf("component sets = %v, want sorted by namespace and name", names)
@@ -206,7 +201,7 @@ func TestBuildOverviewSummarisesAndListsWhatNeedsAttention(t *testing.T) {
 		if want := []string{"team-a", "team-b", "team-c"}; !reflect.DeepEqual(got.Namespaces, want) {
 			t.Errorf("Namespaces = %v, want %v", got.Namespaces, want)
 		}
-		if len(got.InfraPlanes) != 0 || len(got.ComponentSets) != 0 || len(got.NeedsAttention) != 0 {
+		if len(got.InfraPlanes) != 0 || len(got.ComponentSets) != 0 {
 			t.Errorf("overview of an empty namespace = %+v", got)
 		}
 	})
@@ -218,9 +213,6 @@ func TestInfraPlaneConditionsOfAnOlderGenerationArePending(t *testing.T) {
 	row := infraPlaneRow(&plane)
 	if row.Available != nil {
 		t.Errorf("Available = %+v, want nil for a condition of generation 1 on generation 2", row.Available)
-	}
-	if entries := infraPlaneAttention(row); len(entries) != 0 {
-		t.Errorf("needs attention = %+v, want none while pending", entries)
 	}
 }
 

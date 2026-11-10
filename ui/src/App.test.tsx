@@ -22,9 +22,6 @@ function overview(selected = ""): Overview {
         { health: "NotReleased", count: 1 },
       ],
     },
-    needsAttention: [
-      { kind: "CCLComponentSet", namespace: "team-a", name: "apps", component: "web", reason: "CrashLoopBackOff", message: "back-off restarting" },
-    ],
     infraPlanes: [
       {
         namespace: "team-a",
@@ -88,7 +85,7 @@ beforeEach(() => {
 });
 
 describe("App", () => {
-  it("shows the summary, what needs attention and both tables", async () => {
+  it("shows the summary and both tables", async () => {
     mockFetch(() => json(overview()));
     renderApp();
 
@@ -105,9 +102,6 @@ describe("App", () => {
     expect(within(sets).getByText("0 of 2 healthy")).toBeInTheDocument();
     expect(within(sets).getByText("web failed to sync")).toBeInTheDocument();
 
-    const attention = screen.getByRole("region", { name: "Needs attention" });
-    expect(within(attention).getByText("CrashLoopBackOff")).toBeInTheDocument();
-    expect(within(attention).getByText("back-off restarting")).toBeInTheDocument();
 
     expect(screen.getByText("Not released")).toBeInTheDocument();
     expect(screen.getByText("kind-cp")).toBeInTheDocument();

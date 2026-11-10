@@ -301,7 +301,7 @@ plane. `internal/server` is one `net/http` handler for both halves:
 - Every response carries a `default-src 'self'` Content-Security-Policy, and requests
   whose `Host` is not a loopback name are refused against DNS rebinding.
 
-The overview's rules, such as a component set's status and what needs attention, are
+The overview's rules, such as a component set's status and the summary's counts, are
 pure functions in `internal/server/overview.go`; the TypeScript types in `ui/src/api.ts`
 mirror its JSON, so change both together.
 

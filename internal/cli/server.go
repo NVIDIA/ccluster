@@ -64,7 +64,7 @@ func newServerCommand() *cobra.Command {
 		Long: `Serve a read-only dashboard of the control plane in the browser.
 
 Shows the infra planes and component sets of the control plane saved by ccluster init:
-a summary, what needs attention, and a table of each kind, refreshed every few seconds.
+a summary and a table of each kind, refreshed every few seconds.
 It reads with the kubeconfig context's credentials, so Kubernetes RBAC decides what it
 shows, and it changes nothing.
 

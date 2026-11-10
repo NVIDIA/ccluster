@@ -7,7 +7,6 @@ import { ComponentSetTable } from "./components/ComponentSetTable";
 import { ErrorPanel } from "./components/ErrorPanel";
 import { Header } from "./components/Header";
 import { InfraPlaneTable } from "./components/InfraPlaneTable";
-import { NeedsAttention } from "./components/NeedsAttention";
 import { SummaryCards } from "./components/SummaryCards";
 import { clock } from "./format";
 import { useNamespace } from "./useNamespace";
@@ -53,7 +52,6 @@ export function App() {
           </p>
         )}
         <SummaryCards summary={data.summary} />
-        <NeedsAttention entries={data.needsAttention} showNamespace={showNamespace} />
         <InfraPlaneTable rows={data.infraPlanes} showNamespace={showNamespace} />
         <ComponentSetTable rows={data.componentSets} showNamespace={showNamespace} />
       </>

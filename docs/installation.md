@@ -319,8 +319,8 @@ ccluster get cs base -n tenant-a -o yaml
 ### Dashboard
 
 `ccluster server` shows the control plane in the browser: a read-only dashboard of its
-infra planes and component sets, with a summary, what needs attention, and a table of each
-kind, refreshed every five seconds. It listens on `127.0.0.1:8484` and opens the page.
+infra planes and component sets, with a summary and a table of each kind, refreshed every
+five seconds. It listens on `127.0.0.1:8484` and opens the page.
 
 ```bash
 ccluster server               # every namespace; needs cluster-wide read of both kinds

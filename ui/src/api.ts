@@ -45,15 +45,6 @@ export interface Summary {
   components: HealthCount[];
 }
 
-export interface Attention {
-  kind: "CCLInfraPlane" | "CCLComponentSet";
-  namespace: string;
-  name: string;
-  component?: string;
-  reason?: string;
-  message?: string;
-}
-
 export interface InfraPlaneRow {
   namespace: string;
   name: string;
@@ -94,7 +85,6 @@ export interface Overview {
   /** The namespace shown, or "" for all of them. */
   selected: string;
   summary: Summary;
-  needsAttention: Attention[];
   infraPlanes: InfraPlaneRow[];
   componentSets: ComponentSetRow[];
 }

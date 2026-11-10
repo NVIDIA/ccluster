@@ -24,11 +24,10 @@ type Overview struct {
 	// component set, plus the selected one. With --namespace, only that namespace.
 	Namespaces []string `json:"namespaces"`
 	// Selected is the namespace shown, or "" for all of them.
-	Selected       string            `json:"selected"`
-	Summary        Summary           `json:"summary"`
-	NeedsAttention []Attention       `json:"needsAttention"`
-	InfraPlanes    []InfraPlaneRow   `json:"infraPlanes"`
-	ComponentSets  []ComponentSetRow `json:"componentSets"`
+	Selected      string            `json:"selected"`
+	Summary       Summary           `json:"summary"`
+	InfraPlanes   []InfraPlaneRow   `json:"infraPlanes"`
+	ComponentSets []ComponentSetRow `json:"componentSets"`
 }
 
 // Summary counts what the tables list.
@@ -110,13 +109,6 @@ var componentHealthOrder = []string{
 	string(cclusternvidiacomv1alpha1.ComponentHealthSucceeded),
 }
 
-// unhealthy are the component healths that put a component on the needs-attention list.
-var unhealthy = map[string]bool{
-	string(cclusternvidiacomv1alpha1.ComponentHealthFailed):   true,
-	string(cclusternvidiacomv1alpha1.ComponentHealthDegraded): true,
-	string(cclusternvidiacomv1alpha1.ComponentHealthMissing):  true,
-}
-
 // ComponentSetRow is one row of the component sets table.
 type ComponentSetRow struct {
 	Namespace string    `json:"namespace"`
@@ -145,17 +137,6 @@ type ComponentRow struct {
 	Sync string `json:"sync,omitempty"`
 }
 
-// Attention is one entry of the needs-attention list.
-type Attention struct {
-	Kind      string `json:"kind"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	// Component names the component of a component set the entry is about, if any.
-	Component string `json:"component,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	Message   string `json:"message,omitempty"`
-}
-
 // buildOverview turns the listed objects into the page. planes and sets are those of
 // every namespace offered; selected, when not empty, narrows the summary and tables to
 // one of them. namespaces is the dropdown's fixed choice, or nil to derive it from the
@@ -170,11 +151,10 @@ func buildOverview(
 		namespaces = namespacesOf(planes, sets, selected)
 	}
 	overview := Overview{
-		Namespaces:     namespaces,
-		Selected:       selected,
-		NeedsAttention: []Attention{},
-		InfraPlanes:    []InfraPlaneRow{},
-		ComponentSets:  []ComponentSetRow{},
+		Namespaces:    namespaces,
+		Selected:      selected,
+		InfraPlanes:   []InfraPlaneRow{},
+		ComponentSets: []ComponentSetRow{},
 	}
 
 	for i := range planes {
@@ -191,7 +171,6 @@ func buildOverview(
 		if isTrue(row.Verified) {
 			overview.Summary.InfraPlanes.Verified++
 		}
-		overview.NeedsAttention = append(overview.NeedsAttention, infraPlaneAttention(row)...)
 	}
 
 	healthCounts := map[string]int{}
@@ -211,28 +190,11 @@ func buildOverview(
 			counts.Finished++
 		case SetStatusFailed:
 			counts.Failed++
-			overview.NeedsAttention = append(overview.NeedsAttention, Attention{
-				Kind:      "CCLComponentSet",
-				Namespace: row.Namespace,
-				Name:      row.Name,
-				Reason:    failedReason(set),
-				Message:   row.Message,
-			})
 		default:
 			counts.RollingOut++
 		}
 		for _, component := range row.Components {
 			healthCounts[component.Health]++
-			if unhealthy[component.Health] {
-				overview.NeedsAttention = append(overview.NeedsAttention, Attention{
-					Kind:      "CCLComponentSet",
-					Namespace: row.Namespace,
-					Name:      row.Name,
-					Component: component.Name,
-					Reason:    firstNonEmpty(component.Reason, component.Health),
-					Message:   component.Message,
-				})
-			}
 		}
 	}
 	overview.Summary.Components = []HealthCount{}
@@ -247,13 +209,6 @@ func buildOverview(
 		return compareNames(a.Namespace, a.Name, b.Namespace, b.Name)
 	})
 	slices.SortFunc(overview.ComponentSets, func(a, b ComponentSetRow) int {
-		return compareNames(a.Namespace, a.Name, b.Namespace, b.Name)
-	})
-	slices.SortStableFunc(overview.NeedsAttention, func(a, b Attention) int {
-		if c := strings.Compare(a.Kind, b.Kind); c != 0 {
-			// CCLInfraPlane before CCLComponentSet: a broken plane explains broken sets.
-			return -c
-		}
 		return compareNames(a.Namespace, a.Name, b.Namespace, b.Name)
 	})
 	return overview
@@ -277,25 +232,6 @@ func infraPlaneRow(plane *cclusternvidiacomv1alpha1.CCLInfraPlane) InfraPlaneRow
 			config.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified))
 	}
 	return row
-}
-
-// infraPlaneAttention lists what is wrong with a plane: each of its conditions that is
-// reported False. A condition not reported yet is pending, not wrong.
-func infraPlaneAttention(row InfraPlaneRow) []Attention {
-	var entries []Attention
-	for _, condition := range []*Condition{row.Available, row.ClusterConfigApplied, row.Verified, row.DNSReady} {
-		if condition == nil || condition.Status != metav1.ConditionFalse {
-			continue
-		}
-		entries = append(entries, Attention{
-			Kind:      "CCLInfraPlane",
-			Namespace: row.Namespace,
-			Name:      row.Name,
-			Reason:    condition.Reason,
-			Message:   condition.Message,
-		})
-	}
-	return entries
 }
 
 func componentSetRow(set *cclusternvidiacomv1alpha1.CCLComponentSet) ComponentSetRow {
@@ -354,13 +290,6 @@ func failedCondition(set *cclusternvidiacomv1alpha1.CCLComponentSet) *metav1.Con
 		return &condition
 	}
 	return nil
-}
-
-func failedReason(set *cclusternvidiacomv1alpha1.CCLComponentSet) string {
-	if condition := failedCondition(set); condition != nil {
-		return condition.Reason
-	}
-	return ""
 }
 
 // componentRows lists the set's components in rollout order with their reported health
@@ -456,13 +385,4 @@ func compareNames(namespaceA, nameA, namespaceB, nameB string) int {
 		return c
 	}
 	return strings.Compare(nameA, nameB)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
