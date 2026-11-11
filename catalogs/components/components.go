@@ -28,6 +28,7 @@ import (
 
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	dynamoplatform "github.com/NVIDIA/ccluster/catalogs/cluster_base/dynamo_platform"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -68,6 +69,7 @@ var NamespaceBase = []Component{
 var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}},
 	{certmanager.Chart, certmanager.Values{}},
+	{dynamoplatform.Chart, dynamoplatform.Values{}},
 	{finalstack.Chart, finalstack.Values{}},
 	{fluentbit.Chart, fluentbit.Values{}},
 	{gpuoperator.Chart, gpuoperator.Values{}},

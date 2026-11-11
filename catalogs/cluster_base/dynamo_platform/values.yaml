@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+dynamo-platform:
+  global:
+    # The event plane for KV-aware routing. Its JetStream store is a 10Gi
+    # PersistentVolumeClaim on the cluster's default StorageClass.
+    nats:
+      install: true
+    # Grove gang-schedules disaggregated workers: with enabled, the Dynamo operator
+    # runs each DynamoGraphDeployment as Grove PodCliqueSets, and Grove rejects one
+    # whose pods carry no kai.scheduler/queue label. Off, as on the legacy platform's
+    # production clusters; set both to true to install and use it.
+    grove:
+      install: false
+      enabled: false
+  # Applies only when global.grove.install is true.
+  grove:
+    # Argo CD applies the chart's grove.io CRDs on every sync, upgrades included, so
+    # Grove's own CRD-installer init container would only contend with it for them.
+    crdInstaller:
+      enabled: false
+    # The operator creates and rotates its webhook certificate Secret itself. Rendered
+    # here, it is an empty Secret that self-heal would reset over the operator's
+    # certificate; upstream disables it for GitOps installs.
+    webhookServerSecret:
+      enabled: false

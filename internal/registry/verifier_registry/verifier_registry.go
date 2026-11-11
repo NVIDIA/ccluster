@@ -15,6 +15,7 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	dynamoplatform "github.com/NVIDIA/ccluster/catalogs/cluster_base/dynamo_platform"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -76,6 +77,7 @@ func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, argorollouts.Verify)
 	r.Register(certmanager.Chart, certmanager.Verify)
+	r.Register(dynamoplatform.Chart, alwaysVerified)
 	r.Register(finalstack.Chart, finalstack.Verify)
 	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
