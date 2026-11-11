@@ -41,9 +41,9 @@ patches:
       name: cclclusterconfigs.ccluster.nvidia.com
 # An env entry on the manager is what makes `make helm-generate` give the chart's
 # Deployment manager.env and manager.envOverrides. The chart renders the container's
-# environment from those values alone, not from the entry here. The operator reads
-# CCLUSTER_BASE_DOMAIN as the default for --base-domain, so an install sets it with
-# --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=<domain> and leaves manager.args alone.
+# environment from those values alone, not from the entry here. Each of the operator's
+# own flags defaults to a CCLUSTER_* variable, so an install sets one with
+# --set manager.envOverrides.<variable>=<value> and leaves manager.args alone.
 - patch: |-
     apiVersion: apps/v1
     kind: Deployment

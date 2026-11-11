@@ -344,7 +344,7 @@ var _ = Describe("Manager", Ordered, func() {
 			const infraPlaneName = "e2e-infra-plane"
 			const credentialsName = "e2e-infra-plane-credentials"
 
-			// deploy-cp leaves --argocd-namespace unset, so the operator uses its own
+			// deploy-cp leaves CCLUSTER_ARGOCD_NAMESPACE unset, so the operator uses its own
 			// namespace and the mirror lands alongside the manager.
 			const mirrorNamespace = namespace
 
@@ -730,7 +730,7 @@ var _ = Describe("Manager", Ordered, func() {
   provider:
     name: inmemory
   extraArgs:
-    - --inmemory-zone=` + e2eBaseDomain + `
+    - --inmemory-zone=`+e2eBaseDomain+`
   interval: 10s
 `), 0o600)).To(Succeed())
 			_, err = utils.Run(exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain, fmt.Sprintf("IMG_CP=%s", managerImage),
@@ -1245,10 +1245,11 @@ type: kubernetes.io/service-account-token
 				Expect(err).NotTo(HaveOccurred())
 				Expect(token).NotTo(BeEmpty(), "the hook Job stored no token")
 
-				args, err := utils.Run(exec.Command("kubectl", "get", "deploy/ccluster-cp-controller-manager",
-					"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].args}"))
+				service, err := utils.Run(exec.Command("kubectl", "get", "deploy/ccluster-cp-controller-manager",
+					"-n", namespace, "-o",
+					`jsonpath={.spec.template.spec.containers[0].env[?(@.name=="CCLUSTER_ARGOCD_SERVER_SERVICE")].value}`))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(args).To(ContainSubstring("--argocd-server-service=ccluster-cp-argocd-server"))
+				Expect(service).To(Equal("ccluster-cp-argocd-server"))
 				serverHost := fmt.Sprintf("ccluster-cp-argocd-server.%s.svc", namespace)
 
 				cmd := exec.Command("kubectl", "exec", "-i", "-n", namespace, "deploy/ccluster-cp-argocd-server",
@@ -2246,7 +2247,7 @@ func applyCCLInfraPlaneIn(ns, name, credentialsName string) {
 	})
 }
 
-// e2eBaseDomain is the cp operator's --base-domain, which every deploy-cp passes as
+// e2eBaseDomain is the cp operator's base domain, which every deploy-cp sets from
 // BASE_DOMAIN. The DNS spec's in-memory external-dns zone is the same.
 const e2eBaseDomain = "e2e.example.com"
 
@@ -2485,18 +2486,33 @@ func mirrorSecretKey(name, key string) string {
 	return string(decoded)
 }
 
-// catalogSource reads the catalog repository and revision the deployed manager was given
-// on its command line, so a hand-written Application can use exactly the source the
+// catalogSource reads the catalog repository and revision the deployed manager was given,
+// through its CCLUSTER_CATALOG_* environment or, taking precedence as the operator gives
+// it, its command line, so a hand-written Application can use exactly the source the
 // operator would.
 func catalogSource() (repoURL, revision string) {
 	GinkgoHelper()
 
 	out, err := utils.Run(exec.Command("kubectl", "get", "deployment", "ccluster-cp-controller-manager",
-		"-n", namespace, "-o", `jsonpath={.spec.template.spec.containers[?(@.name=="manager")].args}`))
+		"-n", namespace, "-o", `jsonpath={.spec.template.spec.containers[?(@.name=="manager")]}`))
 	Expect(err).NotTo(HaveOccurred())
-	var args []string
-	Expect(json.Unmarshal([]byte(out), &args)).To(Succeed())
-	for _, arg := range args {
+	var container struct {
+		Args []string `json:"args"`
+		Env  []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"env"`
+	}
+	Expect(json.Unmarshal([]byte(out), &container)).To(Succeed())
+	for _, env := range container.Env {
+		switch env.Name {
+		case "CCLUSTER_CATALOG_REPO_URL":
+			repoURL = env.Value
+		case "CCLUSTER_CATALOG_REVISION":
+			revision = env.Value
+		}
+	}
+	for _, arg := range container.Args {
 		if v, ok := strings.CutPrefix(arg, "--catalog-repo-url="); ok {
 			repoURL = v
 		}
@@ -2504,8 +2520,8 @@ func catalogSource() (repoURL, revision string) {
 			revision = v
 		}
 	}
-	Expect(repoURL).NotTo(BeEmpty(), "manager has no --catalog-repo-url: %s", out)
-	Expect(revision).NotTo(BeEmpty(), "manager has no --catalog-revision: %s", out)
+	Expect(repoURL).NotTo(BeEmpty(), "manager has no catalog repository: %s", out)
+	Expect(revision).NotTo(BeEmpty(), "manager has no catalog revision: %s", out)
 	return repoURL, revision
 }
 

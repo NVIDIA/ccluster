@@ -31,86 +31,86 @@ manager:
     tag: ""
     pullPolicy: IfNotPresent
 
-  ## Environment
+  ## Configuration
   ##
-  ## The base domain is required, and has no default: the operator does not start
+  ## Every setting of the operator's own is an environment variable named after its
+  ## flag: --catalog-revision reads CCLUSTER_CATALOG_REVISION. Set them in envOverrides,
+  ## a map of variable name to value, so one --set changes one setting and keeps the
+  ## others:
+  ##   --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com
+  ## A flag added to args takes precedence over its variable. `ccluster-cp-operator
+  ## --help` lists every flag and its variable.
+  ##
+  ## CCLUSTER_BASE_DOMAIN is required, and has no default: the operator does not start
   ## without it. Every CCLInfraPlane's domain is derived under it as
   ## "<name>.<namespace>.<base domain>", which the operator writes to the plane's
-  ## CCLClusterConfig and publishes the plane's records under. Set it here, or with
-  ##   --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com
-  ## The operator reads it as the default of --base-domain, which takes precedence when
-  ## given in args. Set it once: changing it moves every plane's domain and records. Two
-  ## control planes must not share one, or same-named planes in same-named namespaces
-  ## claim the same records.
+  ## CCLClusterConfig and publishes the plane's records under. Set it once: changing it
+  ## moves every plane's domain and records. Two control planes must not share one, or
+  ## same-named planes in same-named namespaces claim the same records.
   ##
-  ## envOverrides is a map of variable name to value, so --set adds one entry without
-  ## replacing the others. env is a list of full EnvVar entries, rendered first.
-  env: []
-  envOverrides: {}
-
-  ## Arguments
+  ## CCLUSTER_CATALOG_REPO_URL and CCLUSTER_CATALOG_REVISION are the Git repository and
+  ## revision a CCLComponentSet's components are resolved against; each component's
+  ## `chart` is a path within that repository. Argo CD's repo-server clones it, so the
+  ## revision has to be pushed: point it at a branch to try a catalog change before it
+  ## merges. A released chart pins the revision to the release's vX.Y.Z tag, so an upgrade
+  ## brings the matching catalog, unless --reuse-values keeps the previous release's.
   ##
-  ## Setting args with --set, --set-json or a values file replaces this whole list, not
-  ## just one entry, so start from it and keep every entry. A released chart's list pins
-  ## --catalog-revision to the release's vX.Y.Z tag, which `helm show values` prints;
-  ## leave it out and the operator deploys the catalog from main. Change it with the chart
-  ## version on every upgrade: --reuse-values keeps the old one.
-  ##
-  ## --argocd-namespace is where the operator writes the Argo CD cluster Secret it
+  ## CCLUSTER_ARGOCD_NAMESPACE is where the operator writes the Argo CD cluster Secret it
   ## clones from each CCLInfraPlane's clusterCredentialsRef, and the AppProject it
   ## creates for each namespace holding CCLInfraPlanes. (The Applications built from a
   ## CCLComponentSet go into the CCLComponentSet's own namespace — see
   ## `application.namespaces` below.) Unset, it is the operator's own namespace, the
   ## release namespace, which is where the `argo-cd` subchart below installs Argo CD.
-  ## Set it only for an existing Argo CD in another namespace, such as `argocd`:
-  ##   - --argocd-namespace=argocd
-  ##
-  ## --catalog-repo-url and --catalog-revision are the Git repository and revision a
-  ## CCLComponentSet's components are resolved against; each component's `chart` is a
-  ## path within that repository. Argo CD's repo-server clones it, so the revision has
-  ## to be pushed — point --catalog-revision at a branch to try a catalog change before
-  ## it merges.
+  ## Set it only for an existing Argo CD in another namespace, such as `argocd`.
   ##
   ## The operator reads components' resource trees, and a few live objects, through
   ## argocd-server's API to judge their health for status.componentHealthStatuses and
   ## before releasing the next component, as the Argo CD account declared under
   ## `argo-cd.configs` below. Argo CD must run in this cluster:
-  ## - --argocd-server-service (default argocd-server, a stock install's) is
-  ##   argocd-server's Service in --argocd-namespace. The default below is the
-  ##   `argo-cd` subchart's, fixed by its fullnameOverride; drop it for an existing
-  ##   Argo CD. The operator connects over HTTPS without verifying the server's
-  ##   certificate.
-  ## - --argocd-token-secret (default ccluster-cp-argocd-token) is the Secret in
-  ##   --argocd-namespace whose `token` key holds that account's token.
+  ## - CCLUSTER_ARGOCD_SERVER_SERVICE (operator default argocd-server, a stock
+  ##   install's) is argocd-server's Service in the Argo CD namespace. The default below
+  ##   is the `argo-cd` subchart's, fixed by its fullnameOverride; set it to the Service
+  ##   of an existing Argo CD instead. The operator connects over HTTPS without verifying
+  ##   the server's certificate.
+  ## - CCLUSTER_ARGOCD_TOKEN_SECRET (default ccluster-cp-argocd-token) is the Secret in
+  ##   the Argo CD namespace whose `token` key holds that account's token.
   ##
   ## The operator writes and watches each infra-plane cluster's CCLClusterConfig with the
-  ## cluster's registered credentials. --infraplane-resync-period (default 5m) is a
-  ## safety net behind the watch: how often a written one is reconciled anyway; 0
+  ## cluster's registered credentials. CCLUSTER_INFRAPLANE_RESYNC_PERIOD (default 5m) is
+  ## a safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
   ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<lb>.<domain>"
   ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>,
   ## such as "*.nginx.<domain>" at its ingress, <domain> being the plane's derived one.
   ## Nothing is published unless the `external-dns` dependency below is enabled.
-  ## --dns-endpoint-namespace (default: the operator's own namespace, where that
+  ## CCLUSTER_DNS_ENDPOINT_NAMESPACE (default: the operator's own namespace, where that
   ## external-dns runs) is where the DNSEndpoints go; set it only for an external-dns
   ## installed elsewhere. The operator watches DNSEndpoints only if their CRD exists when
   ## it starts. Enabling external-dns on an installed release neither installs that CRD,
   ## which Helm does only with the release, nor restarts the operator: apply the CRD first
   ## and restart the operator afterwards. Until then a plane's DNSReady moves on only with
-  ## the resync, and never with --infraplane-resync-period=0.
+  ## the resync, and never with CCLUSTER_INFRAPLANE_RESYNC_PERIOD=0.
   ##
-  ## --componentset-max-concurrent-reconciles (default 4) is how many CCLComponentSets
-  ## the operator reconciles at once, for the rollout and for component health each.
-  ## Raise it when the cclcomponentset or componenthealth controller's
+  ## CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES (default 4) is how many
+  ## CCLComponentSets the operator reconciles at once, for the rollout and for component
+  ## health each. Raise it when the cclcomponentset or componenthealth controller's
   ## workqueue_depth and workqueue_queue_duration_seconds metrics stay high and
   ## controller_runtime_active_workers sits at the worker count.
   ## CCLInfraPlanes are always reconciled one at a time.
+  envOverrides:
+    CCLUSTER_CATALOG_REPO_URL: https://github.com/NVIDIA/ccluster
+    CCLUSTER_CATALOG_REVISION: main
+    CCLUSTER_ARGOCD_SERVER_SERVICE: ccluster-cp-argocd-server
+
+  ## Full EnvVar entries, rendered before envOverrides, for variables that need more
+  ## than a value, such as one read from a Secret.
+  env: []
+
+  ## Arguments. Only the operator-agnostic flags, which have no variable. Setting args
+  ## replaces this whole list.
   args:
     - --leader-elect
-    - --catalog-repo-url=https://github.com/NVIDIA/ccluster
-    - --catalog-revision=main
-    - --argocd-server-service=ccluster-cp-argocd-server
 
   ## Image pull secrets, rendered as the pod's imagePullSecrets when non-empty.
   ## The released ghcr.io/nvidia images are public and need none; set one to pull

@@ -106,9 +106,10 @@ the usual `server`, `config`, and optionally `tlsClientConfig` keys.
 The cluster's DNS domain is not in the spec: the operator derives it as
 `<name>.<namespace>.<base domain>`, the base domain being its required `--base-domain`
 flag, so `ccluster-local` above, with `--base-domain=example.com`, is
-`ccluster-local.default.example.com`. The flag defaults to `$CCLUSTER_BASE_DOMAIN`, which
-the cp chart sets from `manager.envOverrides`: a map, so an install sets the base domain
-without replacing the chart's `manager.args` list. A CEL rule keeps the name a DNS label, as a
+`ccluster-local.default.example.com`. Like every flag of the operator's own, it defaults
+to an environment variable, `$CCLUSTER_BASE_DOMAIN`, which the cp chart sets from
+`manager.envOverrides`: a map, so an install sets one setting without replacing the
+others. A CEL rule keeps the name a DNS label, as a
 namespace already is. The domain is written to the cluster's `CCLClusterConfig` (below),
 and with DNS published `*.<lb>.<domain>` resolves
 to each LoadBalancer the plane reports (below). The control-plane operator records the

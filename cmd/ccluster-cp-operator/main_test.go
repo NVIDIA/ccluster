@@ -6,10 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveNamespaces(t *testing.T) {
@@ -88,9 +90,84 @@ func TestValidateBaseDomain(t *testing.T) {
 			}
 			// The chart sets the base domain through the environment, so a missing one
 			// has to point there too.
-			if tc.value == "" && !strings.Contains(err.Error(), baseDomainEnv) {
-				t.Errorf("error %q does not name $%s", err, baseDomainEnv)
+			if tc.value == "" && !strings.Contains(err.Error(), "CCLUSTER_BASE_DOMAIN") {
+				t.Errorf("error %q does not name $CCLUSTER_BASE_DOMAIN", err)
 			}
 		})
 	}
+}
+
+func TestDefaultFlagsFromEnv(t *testing.T) {
+	newFlags := func() (*flag.FlagSet, *string, *int, *time.Duration, *string) {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		inheritedFlag := fs.String("kubeconfig", "", "")
+		revision := fs.String("catalog-revision", "main", "")
+		workers := fs.Int("componentset-max-concurrent-reconciles", 4, "")
+		resync := fs.Duration("infraplane-resync-period", 5*time.Minute, "")
+		return fs, revision, workers, resync, inheritedFlag
+	}
+	inherited := map[string]bool{"kubeconfig": true}
+	env := func(vars map[string]string) func(string) string {
+		return func(name string) string { return vars[name] }
+	}
+
+	t.Run("environment sets each type", func(t *testing.T) {
+		fs, revision, workers, resync, _ := newFlags()
+		err := defaultFlagsFromEnv(fs, inherited, env(map[string]string{
+			"CCLUSTER_CATALOG_REVISION":                       "v1.2.3",
+			"CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES": "8",
+			"CCLUSTER_INFRAPLANE_RESYNC_PERIOD":               "1m",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if *revision != "v1.2.3" || *workers != 8 || *resync != time.Minute {
+			t.Errorf("got %q, %d, %s", *revision, *workers, *resync)
+		}
+	})
+
+	t.Run("command line wins", func(t *testing.T) {
+		fs, revision, _, _, _ := newFlags()
+		if err := defaultFlagsFromEnv(fs, inherited,
+			env(map[string]string{"CCLUSTER_CATALOG_REVISION": "v1.2.3"})); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Parse([]string{"--catalog-revision=feature"}); err != nil {
+			t.Fatal(err)
+		}
+		if *revision != "feature" {
+			t.Errorf("revision = %q, want the command line's", *revision)
+		}
+	})
+
+	t.Run("unset and empty keep the default", func(t *testing.T) {
+		fs, revision, _, _, _ := newFlags()
+		if err := defaultFlagsFromEnv(fs, inherited,
+			env(map[string]string{"CCLUSTER_CATALOG_REVISION": ""})); err != nil {
+			t.Fatal(err)
+		}
+		if *revision != "main" {
+			t.Errorf("revision = %q, want the default", *revision)
+		}
+	})
+
+	t.Run("inherited flags have no variable", func(t *testing.T) {
+		fs, _, _, _, kubeconfig := newFlags()
+		if err := defaultFlagsFromEnv(fs, inherited,
+			env(map[string]string{"CCLUSTER_KUBECONFIG": "/tmp/config"})); err != nil {
+			t.Fatal(err)
+		}
+		if *kubeconfig != "" {
+			t.Errorf("kubeconfig = %q, want it untouched", *kubeconfig)
+		}
+	})
+
+	t.Run("invalid value names the variable", func(t *testing.T) {
+		fs, _, _, _, _ := newFlags()
+		err := defaultFlagsFromEnv(fs, inherited,
+			env(map[string]string{"CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES": "many"}))
+		if err == nil || !strings.Contains(err.Error(), "CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES") {
+			t.Errorf("error = %v, want one naming the variable", err)
+		}
+	})
 }

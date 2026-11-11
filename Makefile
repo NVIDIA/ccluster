@@ -501,8 +501,8 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # The operator looks for Argo CD in its own namespace, the release namespace, where
 # the chart's argo-cd dependency installs it. Set ARGOCD_NAMESPACE for an existing
 # Argo CD elsewhere. With the bundled Argo CD, deploy-cp also points the operator at its
-# argocd-server Service. manager.args is restated in full because `--set manager.args[1]=...` builds
-# a sparse list and nulls index 0, silently dropping --leader-elect.
+# argocd-server Service. Every setting goes through manager.envOverrides, a map, so each
+# --set changes one variable and the chart's manager.args stays as it is.
 # The one target that names both clusters: deploy-cp and deploy-ip on their own still
 # act on the current kubeconfig context, so they can be pointed anywhere.
 .PHONY: deploy
@@ -518,8 +518,11 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
 		--set external-dns.enabled=$(DNS) \
-		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
+		--set-string manager.envOverrides.CCLUSTER_CATALOG_REPO_URL=$(CATALOG_REPO_URL) \
+		--set-string manager.envOverrides.CCLUSTER_CATALOG_REVISION=$(CATALOG_REVISION) \
 		--set-string manager.envOverrides.CCLUSTER_BASE_DOMAIN=$(BASE_DOMAIN) \
+		$(if $(ARGOCD_NAMESPACE),--set-string manager.envOverrides.CCLUSTER_ARGOCD_NAMESPACE=$(ARGOCD_NAMESPACE)) \
+		$(ARGOCD_SERVER_OVERRIDE) \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -578,17 +581,16 @@ ARGOCD ?= true
 # The namespace of an existing Argo CD, for deploy-cp ARGOCD=false and run-cp. Empty
 # means the operator's own namespace; run-cp, which has none, then uses `argocd`.
 ARGOCD_NAMESPACE ?=
-# A literal comma cannot appear inside $(if).
-COMMA := ,
-# The manager arg deploy-cp adds for the bundled Argo CD.
-ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-service=ccluster-cp-argocd-server")
+# Without the bundled Argo CD, deploy-cp drops the chart's CCLUSTER_ARGOCD_SERVER_SERVICE,
+# the bundled argocd-server's Service, so the operator uses its default, argocd-server.
+ARGOCD_SERVER_OVERRIDE = $(if $(filter true,$(ARGOCD)),,--set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=null)
 # Set DNS=true to install the chart's external-dns, which publishes each CCLInfraPlane's
 # wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
 # `-f dns-values.yaml` (docs/development.md).
 DNS ?= false
 # The cp operator's required base domain, which every CCLInfraPlane's domain is derived
 # under: <name>.<namespace>.<BASE_DOMAIN>. deploy-cp sets it as the chart's
-# CCLUSTER_BASE_DOMAIN env override, and run-cp as --base-domain. With DNS=true, the
+# CCLUSTER_BASE_DOMAIN, and run-cp as --base-domain. With DNS=true, the
 # external-dns zone must cover it.
 BASE_DOMAIN ?= example.com
 # The chart catalog the operator points its generated Applications at. Override
@@ -704,7 +706,7 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 # A main-branch build is keyed by the commit: images are :<sha>, and the charts - which
 # need a semver version - are published as <next>-dev.<sha>, where <next> is the VERSION
 # file with the patch bumped (0.0.2-dev.28ecd0dbadf6 after v0.0.1), with the image tag
-# and --catalog-revision inside them set to the same sha. The Python package is published
+# and CCLUSTER_CATALOG_REVISION inside them set to the same sha. The Python package is published
 # as <next>.dev<N>, N being the commit count (0.0.2.dev57): PEP 440 has no place for a
 # hash and PyPI refuses local versions. That is what .github/workflows/main.yml pushes for
 # every merge. The pre-release form keeps dev builds ordered between the release they
@@ -741,7 +743,8 @@ helm-package: helm-package-cp helm-package-ip ## Package both charts into $(DIST
 # Packaging works on a copy so charts/{cp,ip}/chart stay byte-identical to what
 # `make helm-generate` emits; CI fails on any diff there. The stamped values are the
 # image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
-# --catalog-revision, so a chart always pins the catalog to the commit or tag it came from.
+# CCLUSTER_CATALOG_REVISION, so a chart always pins the catalog to the commit or tag it
+# came from.
 # The copy also gets the project LICENSE and THIRD_PARTY_NOTICES.md, so every packaged
 # chart carries its license payload; the cp chart's notices cover its bundled argo-cd.
 CHART_LICENSE_FILES ?= LICENSE THIRD_PARTY_NOTICES.md
@@ -753,7 +756,7 @@ helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/
 	cp $(CHART_LICENSE_FILES) $(DIST_CHARTS)/ccluster-cp/
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-cp-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
-	"$(YQ)" -i '(.manager.args[] | select(. == "--catalog-revision=*")) = "--catalog-revision=$(CATALOG_REV)"' \
+	"$(YQ)" -i '.manager.envOverrides.CCLUSTER_CATALOG_REVISION = "$(CATALOG_REV)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
 	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)
 

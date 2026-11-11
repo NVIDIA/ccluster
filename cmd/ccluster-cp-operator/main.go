@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -70,10 +71,12 @@ var dnsEndpointNamespace string
 // argoCDNamespace; validateBaseDomain rejects an invalid value before the manager starts.
 var baseDomain string
 
-// baseDomainEnv is the environment variable --base-domain defaults to. The cp chart
-// sets it from manager.envOverrides, a map, so an install sets the base domain without
-// replacing the chart's manager.args list.
-const baseDomainEnv = "CCLUSTER_BASE_DOMAIN"
+// envPrefix starts the environment variable each of this operator's own flags defaults
+// to: --catalog-revision reads CCLUSTER_CATALOG_REVISION. The cp chart sets them from
+// manager.envOverrides, a map, so an install changes one setting with one --set, where
+// manager.args, a list, can only be replaced whole. The operator-agnostic flags of
+// internal/manager, --leader-elect among them, stay flags only.
+const envPrefix = "CCLUSTER_"
 
 // maxBaseDomainLength leaves room in a 253-character domain for the "<name>.<namespace>."
 // in front of the base domain, each of them a DNS label of at most 63 characters.
@@ -109,8 +112,13 @@ func init() {
 }
 
 func main() {
-	// Registered before manager.Run, which parses flag.CommandLine. This flag is
-	// specific to the control-plane operator, so it does not belong in
+	// Flags registered before this point, such as controller-runtime's --kubeconfig, are
+	// not this operator's and get no environment variable.
+	inherited := map[string]bool{}
+	flag.VisitAll(func(f *flag.Flag) { inherited[f.Name] = true })
+
+	// Registered before manager.Run, which parses flag.CommandLine. These flags are
+	// specific to the control-plane operator, so they do not belong in
 	// internal/manager alongside the operator-agnostic ones.
 	flag.StringVar(&argoCDNamespace, "argocd-namespace", "",
 		"The namespace Argo CD runs in. Cluster Secrets mirrored from CCLInfraPlanes, "+
@@ -134,15 +142,19 @@ func main() {
 		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
 			"*.<lb>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
 			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
-	flag.StringVar(&baseDomain, "base-domain", os.Getenv(baseDomainEnv),
+	flag.StringVar(&baseDomain, "base-domain", "",
 		"Required. The DNS domain every CCLInfraPlane's domain is derived under: "+
 			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
 			"CCLClusterConfig and publishes the plane's "+
-			"records under it. Set it once: changing it moves every plane's domain. "+
-			"Defaults to $"+baseDomainEnv+".")
+			"records under it. Set it once: changing it moves every plane's domain.")
 	flag.IntVar(&componentSetMaxConcurrentReconciles, "componentset-max-concurrent-reconciles", 4,
 		"How many CCLComponentSets are reconciled at once, by the rollout controller and by "+
 			"the health controller each. CCLInfraPlanes are always reconciled one at a time.")
+
+	if err := defaultFlagsFromEnv(flag.CommandLine, inherited, os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -240,12 +252,37 @@ func validateFlags() error {
 	return nil
 }
 
+// flagEnvVar returns the environment variable the operator's flag name defaults to.
+func flagEnvVar(name string) string {
+	return envPrefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// defaultFlagsFromEnv sets every flag of fs not in inherited from its environment
+// variable, when that is set and not empty, and names the variable in the flag's help.
+// It runs before flag.Parse, so a flag given on the command line still takes precedence.
+func defaultFlagsFromEnv(fs *flag.FlagSet, inherited map[string]bool, getenv func(string) string) error {
+	var errs []error
+	fs.VisitAll(func(f *flag.Flag) {
+		if inherited[f.Name] {
+			return
+		}
+		env := flagEnvVar(f.Name)
+		f.Usage += " Environment: $" + env + "."
+		if value := getenv(env); value != "" {
+			if err := fs.Set(f.Name, value); err != nil {
+				errs = append(errs, fmt.Errorf("$%s: %w", env, err))
+			}
+		}
+	})
+	return errors.Join(errs...)
+}
+
 // validateBaseDomain checks the --base-domain value: a lowercase DNS name, with or without
 // dots, short enough that "<name>.<namespace>.<value>" always is one too.
 func validateBaseDomain(value string) error {
 	if value == "" {
 		return fmt.Errorf("--base-domain or $%s is required: every CCLInfraPlane's domain is "+
-			"derived under it, as <name>.<namespace>.<base-domain>", baseDomainEnv)
+			"derived under it, as <name>.<namespace>.<base-domain>", flagEnvVar("base-domain"))
 	}
 	for label := range strings.SplitSeq(value, ".") {
 		if errs := validation.IsDNS1123Label(label); len(errs) > 0 {
