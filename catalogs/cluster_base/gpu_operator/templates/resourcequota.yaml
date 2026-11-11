@@ -1,0 +1,26 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-operator-critical-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cluster_base.labels" . | nindent 4 }}
+spec:
+  # On clusters (e.g. GKE) where the ResourceQuota admission plugin
+  # gates `system-node-critical` / `system-cluster-critical` priority
+  # classes, no gpu-operator pod (the operator, node-feature-discovery
+  # and the ClusterPolicy operand DaemonSets, all system-node-critical)
+  # can be created unless a matching quota exists in this namespace.
+  hard:
+    pods: {{ .Values.quota.criticalPodLimit | quote }}
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values:
+          - system-node-critical
+          - system-cluster-critical
