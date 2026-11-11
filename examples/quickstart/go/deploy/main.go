@@ -3,25 +3,25 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Command deploy deploys a basic inference service onto a registered infra-plane cluster
-// through pkg/cclclient, or removes it.
+// Command deploy serves a small LLM on a registered infra-plane cluster through
+// pkg/cclclient, or removes it.
 //
-// The service is Hugging Face's text-embeddings-inference serving BAAI/bge-small-en-v1.5
-// on CPU, so no GPU is needed. It is deployed in two component sets, each rolled out in
-// order:
+// The model is Qwen2.5-0.5B-Instruct, served by llama.cpp on CPU, so no GPU is needed. It
+// is deployed in two component sets, each rolled out in order:
 //
-//  1. "platform": the platform components the service needs, in auto-mode: Prometheus,
-//     Istio, ingress-nginx, KEDA and Argo Rollouts.
-//  2. "embeddings": the service itself.
+//  1. "dependencies": the infra-plane dependencies the service needs, installed by the
+//     control plane (auto-mode).
+//  2. "qwen": the model server.
 //
-// The cluster must be registered and support LoadBalancer Services. From the repository
-// root, with the control plane's kubeconfig context:
+// The cluster must be registered, the control plane must publish DNS for it, and its
+// ingress load balancer must be reachable from the internet, for the Let's Encrypt
+// certificate. From the repository root, with the control plane's kubeconfig context:
 //
 //	go run ./examples/quickstart/go/deploy -context <control-plane context> \
 //	    -namespace team-a -infra-plane edge-1
 //
 // Rollout takes several minutes. When it finishes, the command prints a request to try.
-// Add -delete to remove the service, then the platform components.
+// Add -delete to remove the model server, then the dependencies.
 package main
 
 import (
@@ -38,6 +38,8 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
+	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/keda"
@@ -48,16 +50,16 @@ import (
 )
 
 const (
-	platform = "platform"
-	service  = "embeddings"
-	timeout  = 30 * time.Minute
+	dependencies = "dependencies"
+	service      = "qwen"
+	timeout      = 30 * time.Minute
 )
 
 func main() {
 	kubeContext := flag.String("context", "", "control-plane kubeconfig context; default: current")
 	namespace := flag.String("namespace", "", "namespace the cluster is registered in")
 	plane := flag.String("infra-plane", "", "name the cluster is registered as")
-	remove := flag.Bool("delete", false, "remove the service and platform components")
+	remove := flag.Bool("delete", false, "remove the model server and the dependencies")
 	flag.Parse()
 	if *namespace == "" || (*plane == "" && !*remove) {
 		log.Fatal("-namespace and -infra-plane are required")
@@ -77,9 +79,9 @@ func main() {
 	ctx := context.Background()
 
 	if *remove {
-		// The service first: removing a set uninstalls its charts, and the service
-		// depends on the platform components.
-		for _, name := range []string{service, platform} {
+		// The model server first: removing a set uninstalls its charts, and the server
+		// depends on the dependencies.
+		for _, name := range []string{service, dependencies} {
 			if err := client.DeleteComponentSet(ctx, name); err != nil {
 				log.Fatal(err)
 			}
@@ -93,46 +95,53 @@ func main() {
 }
 
 func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
-	// Platform components, in the order and namespaces the catalog expects. The
-	// inference chart needs every one of them: Prometheus's CRDs and server, Istio's
-	// traffic rules, the ingress controller, KEDA for autoscaling and Argo Rollouts to
-	// run the pods.
-	platformComponents, err := components(plane, []named{
+	// The dependencies, in the order and namespaces the catalog expects: Prometheus's
+	// CRDs and server, Istio's traffic rules, cert-manager and the Let's Encrypt issuer in
+	// final-stack for TLS, the ingress controller, KEDA for autoscaling and Argo Rollouts
+	// to run the pods.
+	dependencyComponents, err := components(plane, []named{
 		{"kube-prometheus-stack", entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{}))},
 		{"istio", entry(istio.New("istio-system", istio.Values{}))},
+		{"cert-manager", entry(certmanager.New("cert-manager", certmanager.Values{}))},
 		{"ingress-nginx", entry(ingressnginx.New("ingress-nginx", ingressnginx.Values{}))},
+		{"final-stack", entry(finalstack.New("final-stack", finalstack.Values{}))},
 		{"keda", entry(keda.New("keda", keda.Values{}))},
 		{"argo-rollouts", entry(argorollouts.New("argo-rollouts", argorollouts.Values{}))},
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := client.ApplyComponentSet(ctx, platform, platformComponents); err != nil {
+	if _, err := client.ApplyComponentSet(ctx, dependencies, dependencyComponents); err != nil {
 		return err
 	}
-	if err := waitFinished(ctx, client, platform); err != nil {
+	if err := waitFinished(ctx, client, dependencies); err != nil {
 		return err
 	}
 
-	// The cluster's domain, <plane>.<namespace>.<base domain>; the service is served at
-	// embeddings.nginx.<domain>.
+	// The cluster's domain, <plane>.<namespace>.<base domain>; the model is served at
+	// qwen.nginx.<domain>.
 	infraPlane, err := client.GetInfraPlane(ctx, plane)
 	if err != nil {
 		return err
 	}
 	domain := infraPlane.Status.Domain
-	size := deployments.Resources{CPU: "2", Memory: "4Gi"}
+	size := deployments.Resources{CPU: "2", Memory: "2Gi"}
 	serviceComponents, err := components(plane, []named{
 		{service, entry(inferencedeployment.New(service, inferencedeployment.Values{
 			Workload: deployments.Workload{
 				Name:         service,
 				DeploymentID: service,
-				ImageURL:     "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8",
+				ImageURL:     "ghcr.io/ggml-org/llama.cpp:server-b5350",
 				Resources:    deployments.ResourceRequirements{Limits: size, Requests: size},
 				// The default scheduler: this example installs no kai-scheduler.
 				SchedulerName: new(""),
 			},
-			Args:          []string{"--model-id", "BAAI/bge-small-en-v1.5", "--port", "8080"},
+			Args: []string{
+				"--hf-repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+				"--hf-file", "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+				"--host", "0.0.0.0",
+				"--port", "8080",
+			},
 			ContainerPort: 8080,
 			Healthcheck:   new("/health"),
 			Domain:        domain,
@@ -148,19 +157,10 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 		return err
 	}
 
-	address := "<ingress address>"
-	if infraPlane, err = client.GetInfraPlane(ctx, plane); err == nil && infraPlane.Status.ClusterConfig != nil {
-		if lb := infraPlane.Status.ClusterConfig.LoadBalancer("nginx"); lb != nil {
-			address = lb.IP
-			if address == "" {
-				address = lb.Hostname
-			}
-		}
-	}
 	host := fmt.Sprintf("%s.nginx.%s", service, domain)
 	fmt.Printf("\n%s is running at https://%s. Try:\n\n", service, host)
-	fmt.Printf("  curl -k https://%s/embed --resolve %s:443:%s \\\n", host, host, address)
-	fmt.Printf("    -H 'Content-Type: application/json' -d '{\"inputs\": \"Hello, CCluster\"}'\n")
+	fmt.Printf("  curl https://%s/v1/chat/completions -H 'Content-Type: application/json' \\\n", host)
+	fmt.Printf("    -d '{\"messages\": [{\"role\": \"user\", \"content\": \"What is Kubernetes, in one sentence?\"}]}'\n")
 	return nil
 }
 

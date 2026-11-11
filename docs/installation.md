@@ -55,6 +55,8 @@ Replace `planes.example.com` with your base domain and `X.Y.Z` with a
   tag; leave it out and the operator deploys the catalog from `main`. Point them at a fork
   or branch to deploy your own charts. Argo CD clones the repository itself, so the
   revision must be pushed, and a private fork needs its credentials configured in Argo CD.
+- `--argocd-server-service` names the bundled Argo CD's API Service, which the operator
+  reads Applications' health through.
 - On every `helm upgrade`, change `--version` and `--catalog-revision` together.
   `--reuse-values` keeps the old revision.
 

@@ -1,29 +1,32 @@
 # Quickstarts
 
 Each quickstart does the same two things in a different way: **registers** an infra-plane
-cluster with the control plane, as `edge-1` in namespace `team-a`, and **deploys** a basic
-inference service onto it. The service is Hugging Face's
-[text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference)
-serving `BAAI/bge-small-en-v1.5` on CPU, so no GPU is needed. It is deployed as two
-component sets, each rolled out in order:
+cluster with the control plane, as `edge-1` in namespace `team-a`, and **serves** a small
+LLM on it: [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct),
+served by [llama.cpp](https://github.com/ggml-org/llama.cpp) on CPU, so no GPU is needed.
+It is deployed as two component sets, each rolled out in order:
 
-1. `platform`: the platform components the service needs, installed by the control plane
-   (auto-mode): Prometheus, Istio, ingress-nginx, KEDA and Argo Rollouts.
-2. `embeddings`: the service itself.
+1. `dependencies`: the infra-plane dependencies the model server needs, installed by the
+   control plane (auto-mode): Prometheus, Istio, cert-manager, ingress-nginx, the Let's
+   Encrypt issuer, KEDA and Argo Rollouts.
+2. `qwen`: the model server.
 
 | Directory | Uses | Register | Deploy |
 | --- | --- | --- | --- |
 | [`python/examples/`](../../python/examples/) | The Python SDK, `pip install ccluster-py` | `register.py` | `deploy.py` |
 | [`go/`](go/) | The Go SDK, [`pkg/cclclient`](../../pkg/cclclient/) | `register/` | `deploy/` |
-| [`helm/`](helm/) | Helm charts that template the resources | `infraplane/` | `componentset/` with `platform-values.yaml`, `embeddings-values.yaml` |
+| [`helm/`](helm/) | Helm charts that template the resources | `infraplane/` | `componentset/` with `dependencies-values.yaml`, `qwen-values.yaml` |
 | [`kubectl/`](kubectl/) | Plain manifests for a single cluster that registers itself, used by the [development setup](../../README.md#developing-ccluster) | `v1alpha1_cclinfraplane.yaml` | `v1alpha1_cclcomponentset.yaml` |
 
 ## Before you start
 
 - The CCluster operators are installed: the control-plane chart in one cluster and the
   infra-plane chart in the cluster to register; see the [README](../../README.md#install).
+- The control plane publishes DNS for its clusters; see
+  [Installation: DNS](../../docs/installation.md#dns).
 - The infra-plane cluster supports LoadBalancer Services, as managed Kubernetes on any
-  cloud does. The service is reached through the ingress controller's load balancer.
+  cloud does, and its ingress load balancer is reachable from the internet on ports 80 and
+  443, so that Let's Encrypt can issue the model server's certificate.
 - You have kubeconfig contexts for both clusters. Below, `$CP` and `$IP` stand for them.
 
 The commands below run from this directory.
@@ -44,8 +47,8 @@ SERVER=$(kubectl config view --minify --flatten --context "$IP" \
   -o jsonpath='{.clusters[0].cluster.server}')
 ```
 
-The ServiceAccount is cluster-admin, because Argo CD installs CRDs and other cluster-scoped
-objects there, and whoever can read the token has those rights. `SERVER` must be an address
+The ServiceAccount is cluster-admin, because the control plane installs CRDs and other
+cluster-scoped objects there, and whoever can read the token has those rights. `SERVER` must be an address
 the control-plane cluster can reach.
 
 `ccluster register edge-1 -n team-a --infra-plane "$IP"` does this step and the next in one
@@ -78,7 +81,7 @@ kubectl --context "$CP" -n team-a get cclinfraplane edge-1   # wait for AVAILABL
 
 The cluster's domain is `edge-1.team-a.<base domain>`; `kubectl get cclinfraplane` shows it.
 
-## 3. Deploy the inference service
+## 3. Deploy the model
 
 **Python** and **Go** deploy both sets, wait for each to roll out, and print a request to
 try:
@@ -89,39 +92,32 @@ python ../../python/examples/deploy.py --context "$CP" --namespace team-a --infr
 go run ./examples/quickstart/go/deploy -context "$CP" -namespace team-a -infra-plane edge-1
 ```
 
-**Helm:** install the platform set, wait until its `PROGRESS` is `RolloutComplete`, then install the
-service with the cluster's domain:
+**Helm:** install the dependencies, wait until their `PROGRESS` is `RolloutComplete`, then
+install the model server with the cluster's domain:
 
 ```bash
-helm --kube-context "$CP" install platform helm/componentset -n team-a \
-  -f helm/platform-values.yaml --set infraPlane=edge-1
-kubectl --context "$CP" -n team-a get cclcomponentset platform -w   # until PROGRESS is RolloutComplete
+helm --kube-context "$CP" install dependencies helm/componentset -n team-a \
+  -f helm/dependencies-values.yaml --set infraPlane=edge-1
+kubectl --context "$CP" -n team-a get cclcomponentset dependencies -w
 
 DOMAIN=$(kubectl --context "$CP" -n team-a get cclinfraplane edge-1 -o jsonpath='{.status.domain}')
-helm --kube-context "$CP" install embeddings helm/componentset -n team-a \
-  -f helm/embeddings-values.yaml --set infraPlane=edge-1 --set domain="$DOMAIN"
-kubectl --context "$CP" -n team-a get cclcomponentset embeddings -w
+helm --kube-context "$CP" install qwen helm/componentset -n team-a \
+  -f helm/qwen-values.yaml --set infraPlane=edge-1 --set domain="$DOMAIN"
+kubectl --context "$CP" -n team-a get cclcomponentset qwen -w
 ```
 
-## 4. Call the service
+## 4. Ask it something
 
-The service is served at `https://embeddings.nginx.<domain>`. Until DNS is published for
-the cluster (see [Installation: DNS](../../docs/installation.md#dns)), resolve the name to
-the ingress's address yourself; `-k` accepts the ingress's default certificate:
+The model is served at `https://qwen.nginx.<domain>`, with an OpenAI-compatible API:
 
 ```bash
-INGRESS=$(kubectl --context "$IP" -n ingress-nginx get svc \
-  -l ccluster.nvidia.com/loadbalancer=nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}')
-curl -k "https://embeddings.nginx.$DOMAIN/embed" --resolve "embeddings.nginx.$DOMAIN:443:$INGRESS" \
-  -H 'Content-Type: application/json' -d '{"inputs": "Hello, CCluster"}'
+curl "https://qwen.nginx.$DOMAIN/v1/chat/completions" -H 'Content-Type: application/json' \
+  -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```
-
-On clouds whose load balancers have a hostname rather than an IP, such as AWS, read
-`.hostname` instead and resolve it to an address first.
 
 ## Clean up
 
-Remove the service before the platform components it depends on. Removing a set
+Remove the model server before the dependencies it needs. Removing a set
 uninstalls its charts from the cluster, in reverse order; wait for each to disappear.
 
 ```bash
@@ -129,8 +125,8 @@ python ../../python/examples/deploy.py --context "$CP" --namespace team-a --dele
 python ../../python/examples/register.py --context "$CP" --namespace team-a edge-1 --delete
 # or with Go: add -delete to the same commands
 # or with Helm:
-helm --kube-context "$CP" uninstall embeddings -n team-a   # wait until the set is gone
-helm --kube-context "$CP" uninstall platform -n team-a     # wait until the set is gone
+helm --kube-context "$CP" uninstall qwen -n team-a           # wait until the set is gone
+helm --kube-context "$CP" uninstall dependencies -n team-a   # wait until the set is gone
 helm --kube-context "$CP" uninstall edge-1 -n team-a
 ```
 

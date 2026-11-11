@@ -1,23 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deploy a basic inference service onto a registered infra-plane cluster.
+"""Serve a small LLM on a registered infra-plane cluster, or remove it.
 
-The service is Hugging Face's text-embeddings-inference serving BAAI/bge-small-en-v1.5 on
-CPU, so no GPU is needed. It is deployed in two component sets, each rolled out in order:
+The model is Qwen2.5-0.5B-Instruct, served by llama.cpp on CPU, so no GPU is needed. It is
+deployed in two component sets, each rolled out in order:
 
-1. "platform": the platform components the service needs, in auto-mode: Prometheus,
-   Istio, ingress-nginx, KEDA and Argo Rollouts.
-2. "embeddings": the service itself.
+1. "dependencies": the infra-plane dependencies the service needs, installed by the
+   control plane (auto-mode).
+2. "qwen": the model server.
 
-Prerequisites: the cluster is registered, with register.py or `ccluster register`, it
-supports LoadBalancer Services, and `pip install ccluster-py`. Then, with the control
-plane's kubeconfig context:
+Prerequisites: the cluster is registered, with register.py or `ccluster register`; the
+control plane publishes DNS for it; its ingress load balancer is reachable from the
+internet, for the Let's Encrypt certificate; and `pip install ccluster-py`. Then, with the
+control plane's kubeconfig context:
 
     python deploy.py --context <control-plane context> --namespace team-a --infra-plane edge-1
 
 Rollout takes several minutes. When it finishes, the script prints a request to try.
-Add --delete to remove the service, then the platform components.
+Add --delete to remove the model server, then the dependencies.
 """
 
 import argparse
@@ -29,6 +30,8 @@ from kubernetes.dynamic.exceptions import NotFoundError
 from ccluster import catalogs
 from ccluster.catalogs.cluster_base import (
     argo_rollouts,
+    cert_manager,
+    final_stack,
     ingress_nginx,
     istio,
     keda,
@@ -37,7 +40,8 @@ from ccluster.catalogs.cluster_base import (
 from ccluster.catalogs.deployments import inference_deployment as inference
 from ccluster.client import CCLClient, component_set_current_conditions
 
-SERVICE = "embeddings"
+DEPENDENCIES = "dependencies"
+SERVICE = "qwen"
 TIMEOUT_SECONDS = 30 * 60
 
 
@@ -77,28 +81,31 @@ def wait_deleted(client: CCLClient, name: str) -> None:
 
 
 def deploy(client: CCLClient, plane: str) -> None:
-    # Platform components, in the order and namespaces the catalog expects. The
-    # inference chart needs every one of them: Prometheus's CRDs and server, Istio's
-    # traffic rules, the ingress controller, KEDA for autoscaling and Argo Rollouts to
-    # run the pods.
+    # The dependencies, in the order and namespaces the catalog expects: Prometheus's CRDs
+    # and server, Istio's traffic rules, cert-manager and the Let's Encrypt issuer in
+    # final-stack for TLS, the ingress controller, KEDA for autoscaling and Argo Rollouts
+    # to run the pods.
     client.apply_component_set(
-        name="platform",
+        name=DEPENDENCIES,
         components=[
-            catalogs.component(
-                "kube-prometheus-stack", plane, kube_prometheus_stack.CHART, "prometheus"
-            ),
-            catalogs.component("istio", plane, istio.CHART, "istio-system"),
-            catalogs.component("ingress-nginx", plane, ingress_nginx.CHART, "ingress-nginx"),
-            catalogs.component("keda", plane, keda.CHART, "keda"),
-            catalogs.component("argo-rollouts", plane, argo_rollouts.CHART, "argo-rollouts"),
+            catalogs.component(name, plane, chart, namespace)
+            for name, chart, namespace in [
+                ("kube-prometheus-stack", kube_prometheus_stack.CHART, "prometheus"),
+                ("istio", istio.CHART, "istio-system"),
+                ("cert-manager", cert_manager.CHART, "cert-manager"),
+                ("ingress-nginx", ingress_nginx.CHART, "ingress-nginx"),
+                ("final-stack", final_stack.CHART, "final-stack"),
+                ("keda", keda.CHART, "keda"),
+                ("argo-rollouts", argo_rollouts.CHART, "argo-rollouts"),
+            ]
         ],
     )
-    wait_finished(client, "platform")
+    wait_finished(client, DEPENDENCIES)
 
-    # The cluster's domain, <plane>.<namespace>.<base domain>; the service is served at
-    # embeddings.nginx.<domain>.
+    # The cluster's domain, <plane>.<namespace>.<base domain>; the model is served at
+    # qwen.nginx.<domain>.
     domain = client.get_infraplane(name=plane).status.domain
-    resources = inference.Resources(cpu="2", memory="4Gi")
+    size = inference.Resources(cpu="2", memory="2Gi")
     client.apply_component_set(
         name=SERVICE,
         components=[
@@ -110,14 +117,17 @@ def deploy(client: CCLClient, plane: str) -> None:
                 inference.Values(
                     name=SERVICE,
                     deployment_id=SERVICE,
-                    image_url="ghcr.io/huggingface/text-embeddings-inference:cpu-1.8",
-                    args=["--model-id", "BAAI/bge-small-en-v1.5", "--port", "8080"],
+                    image_url="ghcr.io/ggml-org/llama.cpp:server-b5350",
+                    args=[
+                        "--hf-repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+                        "--hf-file", "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                        "--host", "0.0.0.0",
+                        "--port", "8080",
+                    ],
                     container_port=8080,
                     healthcheck="/health",
                     domain=domain,
-                    resources=inference.ResourceRequirements(
-                        limits=resources, requests=resources
-                    ),
+                    resources=inference.ResourceRequirements(limits=size, requests=size),
                     # The default scheduler: this example installs no kai-scheduler.
                     scheduler_name="",
                 ),
@@ -126,21 +136,12 @@ def deploy(client: CCLClient, plane: str) -> None:
     )
     wait_finished(client, SERVICE)
 
-    status = client.get_infraplane(name=plane).status
-    ingress = next(
-        (
-            lb
-            for lb in (status.cluster_config.load_balancers or [])
-            if lb.name == "nginx"
-        ),
-        None,
-    ) if status.cluster_config else None
-    address = (ingress.ip or ingress.hostname) if ingress else "<ingress address>"
-    host = f"{SERVICE}.nginx.{domain}"
-    print(f"\n{SERVICE} is running at https://{host}. Try:\n")
+    print(f"\n{SERVICE} is running at https://{SERVICE}.nginx.{domain}. Try:\n")
     print(
-        f"  curl -k https://{host}/embed --resolve {host}:443:{address} \\\n"
-        "    -H 'Content-Type: application/json' -d '{\"inputs\": \"Hello, CCluster\"}'"
+        f"  curl https://{SERVICE}.nginx.{domain}/v1/chat/completions"
+        " -H 'Content-Type: application/json' \\\n"
+        "    -d '{\"messages\": [{\"role\": \"user\","
+        " \"content\": \"What is Kubernetes, in one sentence?\"}]}'"
     )
 
 
@@ -148,20 +149,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--context", help="control-plane kubeconfig context; default: current")
     parser.add_argument("--namespace", required=True, help="namespace the cluster is registered in")
-    parser.add_argument("--infra-plane", required=True, help="name the cluster is registered as")
+    parser.add_argument("--infra-plane", help="name the cluster is registered as")
     parser.add_argument(
-        "--delete", action="store_true", help="remove the service and platform components"
+        "--delete", action="store_true", help="remove the model server and the dependencies"
     )
     args = parser.parse_args()
+    if not args.delete and args.infra_plane is None:
+        parser.error("--infra-plane is required unless --delete is given")
 
     client = CCLClient(args.namespace, api_client=new_client_from_config(context=args.context))
     if args.delete:
-        # The service first: removing a set uninstalls its charts, and the service
-        # depends on the platform components.
-        client.delete_component_set(name=SERVICE)
-        wait_deleted(client, SERVICE)
-        client.delete_component_set(name="platform")
-        wait_deleted(client, "platform")
+        # The model server first: removing a set uninstalls its charts, and the server
+        # depends on the dependencies.
+        for name in (SERVICE, DEPENDENCIES):
+            client.delete_component_set(name=name)
+            wait_deleted(client, name)
         return
     deploy(client, args.infra_plane)
 

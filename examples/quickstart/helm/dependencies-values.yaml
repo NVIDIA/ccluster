@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# The platform components the embeddings service needs, in the order and namespaces the
-# catalog expects: Prometheus's CRDs and server, Istio's traffic rules, the ingress
-# controller, KEDA for autoscaling and Argo Rollouts to run the pods.
+# The infra-plane dependencies the model server needs, in the order and namespaces the
+# catalog expects: Prometheus's CRDs and server, Istio's traffic rules, cert-manager and
+# the Let's Encrypt issuer in final-stack for TLS, the ingress controller, KEDA for
+# autoscaling and Argo Rollouts to run the pods.
 #
-#   helm install platform ./componentset -n team-a -f platform-values.yaml --set infraPlane=edge-1
+#   helm install dependencies ./componentset -n team-a -f dependencies-values.yaml \
+#     --set infraPlane=edge-1
 components:
   - name: kube-prometheus-stack
     chart: catalogs/cluster_base/kube_prometheus_stack
@@ -12,9 +14,15 @@ components:
   - name: istio
     chart: catalogs/cluster_base/istio
     namespace: istio-system
+  - name: cert-manager
+    chart: catalogs/cluster_base/cert_manager
+    namespace: cert-manager
   - name: ingress-nginx
     chart: catalogs/cluster_base/ingress_nginx
     namespace: ingress-nginx
+  - name: final-stack
+    chart: catalogs/cluster_base/final_stack
+    namespace: final-stack
   - name: keda
     chart: catalogs/cluster_base/keda
     namespace: keda

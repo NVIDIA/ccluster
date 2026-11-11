@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A small LLM: Qwen2.5-0.5B-Instruct served by llama.cpp on CPU, at
+# https://qwen.nginx.<domain>. Deploy it once the dependencies have rolled out:
+#
+#   helm install qwen ./componentset -n team-a -f qwen-values.yaml \
+#     --set infraPlane=edge-1 \
+#     --set domain=$(kubectl get cclinfraplane edge-1 -n team-a -o jsonpath='{.status.domain}')
+components:
+  - name: qwen
+    chart: catalogs/deployments/inference_deployment
+    namespace: qwen
+    values:
+      name: qwen
+      deploymentId: qwen
+      imageUrl: ghcr.io/ggml-org/llama.cpp:server-b5350
+      args:
+        - --hf-repo
+        - Qwen/Qwen2.5-0.5B-Instruct-GGUF
+        - --hf-file
+        - qwen2.5-0.5b-instruct-q4_k_m.gguf
+        - --host
+        - 0.0.0.0
+        - --port
+        - "8080"
+      containerPort: 8080
+      healthcheck: /health
+      domain: '{{ required "set domain" .Values.domain }}'
+      resources:
+        limits: {cpu: "2", memory: 2Gi}
+        requests: {cpu: "2", memory: 2Gi}
+      # The default scheduler: this example installs no kai-scheduler.
+      schedulerName: ""

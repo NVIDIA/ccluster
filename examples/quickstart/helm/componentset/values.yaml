@@ -3,7 +3,7 @@
 # Install into the namespace the cluster is registered in, with a values file listing
 # the components:
 #
-#   helm install platform ./componentset -n team-a -f platform-values.yaml \
+#   helm install dependencies ./componentset -n team-a -f dependencies-values.yaml \
 #     --set infraPlane=edge-1
 
 # Name of the registered cluster every component deploys to, unless the component
