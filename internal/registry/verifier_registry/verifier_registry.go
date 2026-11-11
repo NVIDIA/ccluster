@@ -87,7 +87,7 @@ func Get() *Registry {
 	r.Register(certmanager.Chart, certmanager.Verify)
 	r.Register(dynamoplatform.Chart, alwaysVerified)
 	r.Register(externalsecrets.Chart, externalsecrets.Verify)
-	r.Register(finalstack.Chart, alwaysVerified)
+	r.Register(finalstack.Chart, finalstack.Verify)
 	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gatewayapi.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)

@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	certmanagerv1 "github.com/NVIDIA/ccluster/internal/certmanager/v1"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
@@ -35,6 +36,8 @@ func init() {
 	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(scheme))
 	// APIServices, which metrics_server's Verifier reads.
 	utilruntime.Must(apiregistrationv1.AddToScheme(scheme))
+	// ClusterIssuers, which final_stack's Verifier reads.
+	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
 }
 
 func main() {
