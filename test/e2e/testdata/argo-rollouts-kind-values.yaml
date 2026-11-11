@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The argo_rollouts Verifier checks only the Rollout CRD, so one controller replica
+# is plenty on kind.
+argo-rollouts:
+  controller:
+    replicas: 1

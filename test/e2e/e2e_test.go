@@ -574,8 +574,8 @@ var _ = Describe("Manager", Ordered, func() {
 		// CCLInfraPlane. Both targets run the same spec:
 		// in-cluster proves the cp operator's own RBAC covers CCLClusterConfig, ex-cluster
 		// that a `ccluster register` token reaches another cluster over the network. The
-		// verdict changing only after metrics_server and kube_prometheus_stack are
-		// installed there, and the ingress LoadBalancer's address arriving, both well
+		// verdict changing only after the cluster_base charts with a check of their own
+		// are installed there, and the ingress LoadBalancer's address arriving, both well
 		// inside --infraplane-resync-period, prove the remote watch is wired to the
 		// controller.
 		//
