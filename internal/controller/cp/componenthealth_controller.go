@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -47,6 +48,10 @@ type ComponentHealthReconciler struct {
 	// so that the health reported here is the health the rollout gates on.
 	ArgoCD ArgoCDServer
 	Health *healthregistry.Registry
+
+	// MaxConcurrentReconciles is how many CCLComponentSets are judged at once. Zero falls
+	// back to the manager's controller default, as on CCLComponentSetReconciler.
+	MaxConcurrentReconciles int
 
 	// now is the clock; nil means time.Now. Tests replace it.
 	now func() time.Time
@@ -173,7 +178,8 @@ func (r *ComponentHealthReconciler) clock() time.Time {
 func (r *ComponentHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{},
-			builder.WithPredicates(predicate.GenerationChangedPredicate{}))
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles})
 
 	// Registered only when the CRD is installed, for the reason given in
 	// CCLComponentSetReconciler.SetupWithManager.

@@ -79,8 +79,9 @@ const maxBaseDomainLength = validation.DNS1123SubdomainMaxLength - 2*(validation
 // argoCDNamespace.
 var infraPlaneResyncPeriod time.Duration
 
-// componentSetMaxConcurrentReconciles is how many CCLComponentSets are reconciled at once.
-// The CCLInfraPlane controller has no such flag: it always runs one worker. Set by a flag,
+// componentSetMaxConcurrentReconciles is how many CCLComponentSets the rollout controller
+// reconciles at once, and how many the health controller judges at once. The CCLInfraPlane
+// controller has no such flag: it always runs one worker. Set by a flag,
 // for the same reason as argoCDNamespace; validateFlags rejects a value below one before
 // the manager starts.
 var componentSetMaxConcurrentReconciles int
@@ -134,8 +135,8 @@ func main() {
 			"CCLClusterConfig and publishes the plane's "+
 			"records under it. Set it once: changing it moves every plane's domain.")
 	flag.IntVar(&componentSetMaxConcurrentReconciles, "componentset-max-concurrent-reconciles", 4,
-		"How many CCLComponentSets are reconciled at once. CCLInfraPlanes are always "+
-			"reconciled one at a time.")
+		"How many CCLComponentSets are reconciled at once, by the rollout controller and by "+
+			"the health controller each. CCLInfraPlanes are always reconciled one at a time.")
 
 	err := manager.Run(manager.Options{
 		Name:             "ccluster-cp-operator",
@@ -210,6 +211,8 @@ func setupControllers(mgr ctrl.Manager) error {
 		Client: mgr.GetClient(),
 		ArgoCD: argoCDServer,
 		Health: healthFuncs,
+
+		MaxConcurrentReconciles: componentSetMaxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller ComponentHealth: %w", err)
 	}
