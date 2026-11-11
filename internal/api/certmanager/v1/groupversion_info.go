@@ -9,8 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 // cert-manager owns the type and its CRD, which catalogs/cluster_base/cert_manager
 // installs. As with internal/argocd/v1alpha1, importing github.com/cert-manager/cert-manager
 // would pull in its controllers' dependencies, and unstructured.Unstructured would cost
-// compile-time checking of the field names. It lives under internal/ rather than api/ so
-// that `make manifests` generates no CRD for it.
+// compile-time checking of the field names. It lives under internal/api/ rather than api/
+// so that no generator of ./api/... picks it up: `make manifests` would otherwise generate
+// a CRD the operator's own chart would then install.
 //
 // +kubebuilder:object:generate=true
 // +groupName=cert-manager.io
