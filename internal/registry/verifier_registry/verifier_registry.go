@@ -81,7 +81,7 @@ func Get() *Registry {
 	r.Register(gpuoperator.Chart, alwaysVerified)
 	r.Register(ingressnginx.Chart, alwaysVerified)
 	r.Register(istio.Chart, alwaysVerified)
-	r.Register(kaischeduler.Chart, alwaysVerified)
+	r.Register(kaischeduler.Chart, kaischeduler.Verify)
 	r.Register(keda.Chart, alwaysVerified)
 	r.Register(kubeprometheusstack.Chart, kubeprometheusstack.Verify)
 	r.Register(longhorn.Chart, alwaysVerified)

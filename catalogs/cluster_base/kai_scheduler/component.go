@@ -9,8 +9,17 @@ SPDX-License-Identifier: Apache-2.0
 package kaischeduler
 
 import (
+	"context"
+	"errors"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	kaiv1 "github.com/NVIDIA/ccluster/internal/api/kai/v1"
 )
 
 const (
@@ -137,4 +146,43 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// SchedulerName is the scheduler the catalog's workloads name in spec.schedulerName: the
+// deployments charts default their schedulerName value to it.
+const SchedulerName = "kai-scheduler"
+
+// Verify checks that KAI is configured to schedule the pods the catalog's workloads
+// create: the KAI Config, kai.ConfigName, exists and its scheduler name, unset meaning
+// KAI's default, is SchedulerName. The KAI operator starts every scheduler with that name
+// as --scheduler-name, so a pod naming any other scheduler would stay Pending.
+//
+// It checks KAI's configuration, not that a scheduler is running: the operator deploys
+// the scheduler from the Config after this check can pass. The chart applies the Config
+// from a hook Job rather than as a release resource, so a hook that never ran shows here
+// as a missing Config. A cluster without KAI has no Config kind, and that is reported as
+// such rather than as a failed read. Nothing here depends on the cluster's domain, so the
+// CCLClusterConfig spec is not consulted.
+//
+// r must be able to read kai.scheduler/v1 Configs: the operator's scheme registers
+// internal/api/kai/v1 and its ClusterRole grants get, list and watch.
+func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	var config kaiv1.Config
+	if err := r.Get(ctx, client.ObjectKey{Name: kaiv1.ConfigName}, &config); err != nil {
+		switch {
+		case meta.IsNoMatchError(err):
+			return errors.New("KAI Config kind not served, is KAI installed?")
+		case apierrors.IsNotFound(err):
+			return fmt.Errorf("KAI Config %s not found", kaiv1.ConfigName)
+		}
+		return fmt.Errorf("reading KAI Config %s: %w", kaiv1.ConfigName, err)
+	}
+	name := kaiv1.DefaultSchedulerName
+	if g := config.Spec.Global; g != nil && g.SchedulerName != nil {
+		name = *g.SchedulerName
+	}
+	if name != SchedulerName {
+		return fmt.Errorf("KAI Config %s sets schedulerName %q, want %q", kaiv1.ConfigName, name, SchedulerName)
+	}
+	return nil
 }
