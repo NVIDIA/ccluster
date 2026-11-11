@@ -70,6 +70,11 @@ var dnsEndpointNamespace string
 // argoCDNamespace; validateBaseDomain rejects an invalid value before the manager starts.
 var baseDomain string
 
+// baseDomainEnv is the environment variable --base-domain defaults to. The cp chart
+// sets it from manager.envOverrides, a map, so an install sets the base domain without
+// replacing the chart's manager.args list.
+const baseDomainEnv = "CCLUSTER_BASE_DOMAIN"
+
 // maxBaseDomainLength leaves room in a 253-character domain for the "<name>.<namespace>."
 // in front of the base domain, each of them a DNS label of at most 63 characters.
 const maxBaseDomainLength = validation.DNS1123SubdomainMaxLength - 2*(validation.DNS1123LabelMaxLength+1)
@@ -129,11 +134,12 @@ func main() {
 		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
 			"*.<lb>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
 			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
-	flag.StringVar(&baseDomain, "base-domain", "",
+	flag.StringVar(&baseDomain, "base-domain", os.Getenv(baseDomainEnv),
 		"Required. The DNS domain every CCLInfraPlane's domain is derived under: "+
 			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
 			"CCLClusterConfig and publishes the plane's "+
-			"records under it. Set it once: changing it moves every plane's domain.")
+			"records under it. Set it once: changing it moves every plane's domain. "+
+			"Defaults to $"+baseDomainEnv+".")
 	flag.IntVar(&componentSetMaxConcurrentReconciles, "componentset-max-concurrent-reconciles", 4,
 		"How many CCLComponentSets are reconciled at once, by the rollout controller and by "+
 			"the health controller each. CCLInfraPlanes are always reconciled one at a time.")
@@ -238,8 +244,8 @@ func validateFlags() error {
 // dots, short enough that "<name>.<namespace>.<value>" always is one too.
 func validateBaseDomain(value string) error {
 	if value == "" {
-		return fmt.Errorf("--base-domain is required: every CCLInfraPlane's domain is derived " +
-			"under it, as <name>.<namespace>.<base-domain>")
+		return fmt.Errorf("--base-domain or $%s is required: every CCLInfraPlane's domain is "+
+			"derived under it, as <name>.<namespace>.<base-domain>", baseDomainEnv)
 	}
 	for label := range strings.SplitSeq(value, ".") {
 		if errs := validation.IsDNS1123Label(label); len(errs) > 0 {

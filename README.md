@@ -88,7 +88,7 @@ You need Kubernetes clusters for the control plane and each infra plane,
 ```bash
 helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
   -n ccluster-cp-system --create-namespace \
-  --set-json 'manager.args=["--leader-elect","--catalog-repo-url=https://github.com/NVIDIA/ccluster","--catalog-revision=vX.Y.Z","--argocd-server-service=ccluster-cp-argocd-server","--base-domain=planes.example.com"]'
+  --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com
 ```
 
 To give each cluster's services public names under the base domain, also enable DNS

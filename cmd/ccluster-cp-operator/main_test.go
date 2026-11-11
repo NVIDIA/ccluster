@@ -86,6 +86,11 @@ func TestValidateBaseDomain(t *testing.T) {
 			if err != nil && !strings.Contains(err.Error(), "--base-domain") {
 				t.Errorf("error %q does not name --base-domain", err)
 			}
+			// The chart sets the base domain through the environment, so a missing one
+			// has to point there too.
+			if tc.value == "" && !strings.Contains(err.Error(), baseDomainEnv) {
+				t.Errorf("error %q does not name $%s", err, baseDomainEnv)
+			}
 		})
 	}
 }

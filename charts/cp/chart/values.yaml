@@ -31,16 +31,24 @@ manager:
     tag: ""
     pullPolicy: IfNotPresent
 
-  ## Arguments
+  ## Environment
   ##
-  ## --base-domain is required, and has no default: the operator does not start
+  ## The base domain is required, and has no default: the operator does not start
   ## without it. Every CCLInfraPlane's domain is derived under it as
-  ## "<name>.<namespace>.<base-domain>", which the operator writes to the plane's
-  ## CCLClusterConfig and publishes the plane's records under. Add it to the list below, for example:
-  ##   - --base-domain=planes.example.com
-  ## Set it once: changing it moves every plane's domain and records. Two
+  ## "<name>.<namespace>.<base domain>", which the operator writes to the plane's
+  ## CCLClusterConfig and publishes the plane's records under. Set it here, or with
+  ##   --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com
+  ## The operator reads it as the default of --base-domain, which takes precedence when
+  ## given in args. Set it once: changing it moves every plane's domain and records. Two
   ## control planes must not share one, or same-named planes in same-named namespaces
   ## claim the same records.
+  ##
+  ## envOverrides is a map of variable name to value, so --set adds one entry without
+  ## replacing the others. env is a list of full EnvVar entries, rendered first.
+  env: []
+  envOverrides: {}
+
+  ## Arguments
   ##
   ## Setting args with --set, --set-json or a values file replaces this whole list, not
   ## just one entry, so start from it and keep every entry. A released chart's list pins

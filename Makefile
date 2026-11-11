@@ -518,7 +518,8 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
 		--set external-dns.enabled=$(DNS) \
-		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)","--base-domain=$(BASE_DOMAIN)"$(ARGOCD_SERVER_ARGS)]' \
+		--set-json 'manager.args=["--leader-elect"$(if $(ARGOCD_NAMESPACE),$(COMMA)"--argocd-namespace=$(ARGOCD_NAMESPACE)"),"--catalog-repo-url=$(CATALOG_REPO_URL)","--catalog-revision=$(CATALOG_REVISION)"$(ARGOCD_SERVER_ARGS)]' \
+		--set-string manager.envOverrides.CCLUSTER_BASE_DOMAIN=$(BASE_DOMAIN) \
 		$(CATALOG_CREDENTIALS) \
 		--wait --timeout $(HELM_TIMEOUT) $(HELM_ARGS)
 
@@ -585,9 +586,10 @@ ARGOCD_SERVER_ARGS = $(if $(filter true,$(ARGOCD)),$(COMMA)"--argocd-server-serv
 # wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
 # `-f dns-values.yaml` (docs/development.md).
 DNS ?= false
-# The cp operator's required --base-domain, which every CCLInfraPlane's domain is derived
-# under: <name>.<namespace>.<BASE_DOMAIN>. With DNS=true, the external-dns zone must
-# cover it.
+# The cp operator's required base domain, which every CCLInfraPlane's domain is derived
+# under: <name>.<namespace>.<BASE_DOMAIN>. deploy-cp sets it as the chart's
+# CCLUSTER_BASE_DOMAIN env override, and run-cp as --base-domain. With DNS=true, the
+# external-dns zone must cover it.
 BASE_DOMAIN ?= example.com
 # The chart catalog the operator points its generated Applications at. Override
 # CATALOG_REVISION to deploy from a branch that is not yet merged; Argo CD's
