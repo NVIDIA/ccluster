@@ -53,6 +53,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - clusterissuers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - discovery.k8s.io
   resources:
   - endpointslices

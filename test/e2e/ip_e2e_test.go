@@ -79,13 +79,13 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// argo_rollouts, cert_manager, metrics_server and kube_prometheus_stack are the
-	// cluster_base components with a check of their own, and kind ships no Rollout CRD,
-	// cert-manager, metrics server or Prometheus, so the condition starts False naming
-	// them, and stops naming them once their charts are installed - which proves the
-	// chart's CRD and RBAC let a real manager reconcile the singleton, read
-	// CustomResourceDefinitions, ValidatingWebhookConfigurations, APIServices, Services
-	// and EndpointSlices and write its status.
+	// argo_rollouts, cert_manager, final_stack, metrics_server and kube_prometheus_stack
+	// are the cluster_base components with a check of their own, and kind ships no Rollout
+	// CRD, cert-manager, ClusterIssuer, metrics server or Prometheus, so the condition
+	// starts False naming them, and stops naming them once they are installed - which
+	// proves the chart's CRD and RBAC let a real manager reconcile the singleton, read
+	// CustomResourceDefinitions, ValidatingWebhookConfigurations, ClusterIssuers,
+	// APIServices, Services and EndpointSlices and write its status.
 	It("should report the checked cluster_base components verified once installed", func() {
 		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
