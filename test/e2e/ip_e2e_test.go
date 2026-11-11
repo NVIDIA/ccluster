@@ -79,12 +79,13 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// metrics_server and kube_prometheus_stack are the cluster_base components with a
-	// check of their own, and kind ships neither a metrics server nor Prometheus, so the
-	// condition starts False naming them, and stops naming them once their charts are
-	// installed - which proves the chart's CRD and RBAC let a real manager reconcile the
-	// singleton, read APIServices, Services and EndpointSlices and write its status.
-	It("should report metrics_server and kube_prometheus_stack verified once installed", func() {
+	// argo_rollouts, metrics_server and kube_prometheus_stack are the cluster_base
+	// components with a check of their own, and kind ships no Rollout CRD, metrics server
+	// or Prometheus, so the condition starts False naming them, and stops naming them once
+	// their charts are installed - which proves the chart's CRD and RBAC let a real
+	// manager reconcile the singleton, read CustomResourceDefinitions, APIServices,
+	// Services and EndpointSlices and write its status.
+	It("should report the checked cluster_base components verified once installed", func() {
 		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
 			filepath.Join("test", "e2e", "testdata", "cclclusterconfig.yaml")))
@@ -99,7 +100,7 @@ var _ = Describe("IP operator", Ordered, func() {
 			return parts[0], parts[1]
 		}
 
-		By("reporting metrics_server and kube_prometheus_stack as failing")
+		By("reporting argo_rollouts, metrics_server and kube_prometheus_stack as failing")
 		Eventually(func(g Gomega) {
 			status, message := verified(g)
 			g.Expect(status).To(Equal("False"))
@@ -109,7 +110,7 @@ var _ = Describe("IP operator", Ordered, func() {
 		installClusterBase(ip)
 
 		// The operator rechecks failing components every minute.
-		By("reporting metrics_server and kube_prometheus_stack verified")
+		By("reporting argo_rollouts, metrics_server and kube_prometheus_stack verified")
 		Eventually(func(g Gomega) {
 			_, message := verified(g)
 			expectBaseComponentsVerified(g, message)

@@ -74,7 +74,7 @@ type Registry struct {
 // internal/controller/ip.
 func Get() *Registry {
 	r := &Registry{}
-	r.Register(argorollouts.Chart, alwaysVerified)
+	r.Register(argorollouts.Chart, argorollouts.Verify)
 	r.Register(certmanager.Chart, alwaysVerified)
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(fluentbit.Chart, alwaysVerified)
