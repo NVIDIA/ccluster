@@ -10,7 +10,6 @@ package e2e
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -27,18 +26,14 @@ var (
 	// ipManagerImage is the infra-plane operator image, built the same way and run on
 	// both clusters: each is an infra plane.
 	ipManagerImage = "example.com/ccluster-ip-operator:v0.0.1"
-	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
-	shouldCleanupCertManager = false
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager, and two Kind clusters - a
+// The default setup requires Kind, and two Kind clusters - a
 // control plane ($KIND_CLUSTER) and a separate infra plane ($KIND_CLUSTER_IP) - which
 // `make test-e2e` creates and deletes. The control-plane cluster is the current
 // kubeconfig context, so a plain `kubectl` reaches it; utils.IP().Kubectl reaches the
 // other.
-//
-// To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting ccluster e2e test suite\n")
@@ -73,8 +68,6 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(exec.Command("kubectl", "config", "use-context", utils.CP().Context()))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-	setupCertManager()
-
 	// Both clusters are infra planes - the control plane registered with itself, and
 	// the separate one - so both run the infra-plane operator for the whole suite.
 	for _, c := range []utils.Cluster{utils.CP(), utils.IP()} {
@@ -92,38 +85,4 @@ var _ = AfterSuite(func() {
 	for _, c := range []utils.Cluster{utils.CP(), utils.IP()} {
 		undeployIPOperator(c)
 	}
-	teardownCertManager()
 })
-
-// setupCertManager installs CertManager if needed for webhook tests.
-// Skips installation if CERT_MANAGER_INSTALL_SKIP=true or if already present.
-func setupCertManager() {
-	if os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true" {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager installation (CERT_MANAGER_INSTALL_SKIP=true)\n")
-		return
-	}
-
-	By("checking if CertManager is already installed")
-	if utils.IsCertManagerCRDsInstalled() {
-		_, _ = fmt.Fprintf(GinkgoWriter, "CertManager is already installed. Skipping installation.\n")
-		return
-	}
-
-	// Mark for cleanup before installation to handle interruptions and partial installs.
-	shouldCleanupCertManager = true
-
-	By("installing CertManager")
-	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
-}
-
-// teardownCertManager uninstalls CertManager if it was installed by setupCertManager.
-// This ensures we only remove what we installed.
-func teardownCertManager() {
-	if !shouldCleanupCertManager {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager cleanup (not installed by this suite)\n")
-		return
-	}
-
-	By("uninstalling CertManager")
-	utils.UninstallCertManager()
-}
