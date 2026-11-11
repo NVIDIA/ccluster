@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# A stand-in for the acme-ca ClusterIssuer catalogs/cluster_base/final_stack renders.
+# That one registers an account with Let's Encrypt's production server, which an e2e run
+# would do from shared CI runner addresses against its rate limits. The final_stack
+# Verifier checks only the issuer's name and Ready condition, which cert-manager sets on
+# a self-signed issuer as soon as its controller reconciles it.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: acme-ca
+spec:
+  selfSigned: {}

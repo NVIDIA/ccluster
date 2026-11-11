@@ -185,7 +185,9 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 // installClusterBase installs the cluster_base charts that have a Verifier of their own,
 // which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD, cert_manager, for
 // its admission webhook, metrics_server, for the resource metrics API, and
-// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address.
+// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address. For
+// final_stack it applies a self-signed stand-in for the acme-ca ClusterIssuer, which
+// final_stack's own would register with Let's Encrypt.
 func installClusterBase(c utils.Cluster) {
 	GinkgoHelper()
 
@@ -193,6 +195,11 @@ func installClusterBase(c utils.Cluster) {
 		"argo-rollouts-kind-values.yaml", 3*time.Minute)
 	installClusterBaseChart(c, "cert_manager", "cert-manager", "cert-manager",
 		"cert-manager-kind-values.yaml", 5*time.Minute)
+
+	By("applying the self-signed acme-ca ClusterIssuer on " + c.Name)
+	_, err := utils.Run(c.Kubectl("apply", "-f",
+		filepath.Join("test", "e2e", "testdata", "acme-ca-selfsigned.yaml")))
+	Expect(err).NotTo(HaveOccurred(), "Failed to apply the acme-ca ClusterIssuer on %s", c.Name)
 	installClusterBaseChart(c, "metrics_server", "metrics-server", "kube-system",
 		"metrics-server-kind-values.yaml", 3*time.Minute)
 	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus",
@@ -230,6 +237,8 @@ var argoRolloutsCRDs = []string{
 func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
+	// Before cert-manager, whose CRDs, and with them every ClusterIssuer, go with it.
+	_, _ = utils.Run(c.Kubectl("delete", "clusterissuer", "acme-ca", "--ignore-not-found"))
 	uninstallClusterBaseChart(c, "cert-manager", "cert-manager")
 	uninstallClusterBaseChart(c, "argo-rollouts", "argo-rollouts")
 	_, _ = utils.Run(c.Kubectl(append([]string{"delete", "crd", "--ignore-not-found", "--wait"},
@@ -237,11 +246,14 @@ func uninstallClusterBase(c utils.Cluster) {
 }
 
 // expectBaseComponentsFailing asserts that a Verified message names argo_rollouts,
-// cert_manager, metrics_server and kube_prometheus_stack among the failing cluster_base
-// components, for want of what they provide on a bare kind cluster: the Rollout CRD,
-// cert-manager's webhook, the APIService and the Prometheus Service. "Not found" rather
-// than a read error proves the ip chart's ClusterRole lets the manager read
-// CustomResourceDefinitions, ValidatingWebhookConfigurations, APIServices and Services.
+// cert_manager, final_stack, metrics_server and kube_prometheus_stack among the failing
+// cluster_base components, for want of what they provide on a bare kind cluster: the
+// Rollout CRD, cert-manager's webhook, the acme-ca ClusterIssuer, the APIService and the
+// Prometheus Service. "Not found" rather than a read error proves the ip chart's
+// ClusterRole lets the manager read CustomResourceDefinitions,
+// ValidatingWebhookConfigurations, APIServices and Services. final_stack's reason is left
+// open: the ClusterIssuer kind is not served on a fresh cluster, but on one that had
+// cert-manager installed by an earlier spec the operator may report the issuer not found.
 // Other failing components are not asserted on, so a cluster_base chart gaining a check
 // of its own does not break the suite.
 func expectBaseComponentsFailing(g Gomega, message string) {
@@ -249,6 +261,7 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 		"catalogs/cluster_base/argo_rollouts (CustomResourceDefinition rollouts.argoproj.io not found"))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/cert_manager (no ValidatingWebhookConfiguration has webhook webhook.cert-manager.io"))
+	g.Expect(message).To(ContainSubstring("catalogs/cluster_base/final_stack (ClusterIssuer "))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
 	g.Expect(message).To(ContainSubstring(
@@ -256,18 +269,20 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 }
 
 // expectBaseComponentsVerified asserts that a Verified message no longer names
-// argo_rollouts, cert_manager, metrics_server or kube_prometheus_stack as failing, once installClusterBase has
-// installed them. It says nothing about the other components, but an empty message,
-// such as a copy that lost its conditions, fails.
+// argo_rollouts, cert_manager, final_stack, metrics_server or kube_prometheus_stack as
+// failing, once installClusterBase has installed them. It says nothing about the other
+// components, but an empty message, such as a copy that lost its conditions, fails.
 //
 // This, not expectBaseComponentsFailing, proves the ip chart's ClusterRole lets the
-// manager read EndpointSlices: the Prometheus Verifier lists them only once the Service
-// exists. Without the permission the cached List times out and kube_prometheus_stack
-// stays in the message.
+// manager read EndpointSlices and ClusterIssuers: the Prometheus Verifier lists the
+// former only once the Service exists, and the final_stack Verifier reads the latter
+// only once cert-manager serves the kind. Without a permission the cached read times
+// out and the component stays in the message.
 func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(BeEmpty())
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/argo_rollouts"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/cert_manager"))
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/final_stack"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/kube_prometheus_stack"))
 }
