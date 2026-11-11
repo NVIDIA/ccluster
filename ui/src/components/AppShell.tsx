@@ -18,8 +18,8 @@ interface AppShellProps {
 }
 
 /**
- * The page frame, after the NVIDIA platform UI: a Kaizen AppBar with the product and
- * page on the left, and the page's controls and a theme toggle on the right; then the
+ * The page frame, after the NVIDIA platform UI: a Kaizen AppBar with the product, the
+ * control plane's name (its kubeconfig context) and the page on the left, and the page's controls and a theme toggle on the right; then the
  * content, and a footer with the version and when the data was read.
  */
 export function AppShell({ config, controls, updatedAt, children }: AppShellProps) {
@@ -33,6 +33,14 @@ export function AppShell({ config, controls, updatedAt, children }: AppShellProp
           slotStart={
             <>
               <Text kind="label/bold/md">CCluster</Text>
+              {config?.context && (
+                <>
+                  <ChevronRight className="icon-sm muted" aria-hidden="true" />
+                  <Text kind="label/regular/md" title="Control plane: the kubeconfig context saved by ccluster init">
+                    {config.context}
+                  </Text>
+                </>
+              )}
               <ChevronRight className="icon-sm muted" aria-hidden="true" />
               <Text kind="label/regular/md" className="muted">
                 Overview

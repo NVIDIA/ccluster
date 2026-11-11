@@ -94,7 +94,8 @@ export function App() {
         <div>
           <h1 className="page-title">Overview</h1>
           <p className="section-description">
-            Infra planes and component sets on the control plane, read with your kubeconfig credentials.
+            Infra planes and component sets on the control plane
+            {config.data?.context ? ` ${config.data.context}` : ""}, read with your kubeconfig credentials.
           </p>
         </div>
         {body}

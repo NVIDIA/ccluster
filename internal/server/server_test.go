@@ -37,7 +37,7 @@ var testUI = fstest.MapFS{
 func newTestServer(t *testing.T, opts Options, objects ...runtime.Object) (http.Handler, *fake.Clientset) {
 	t.Helper()
 	clientset := fake.NewClientset(objects...)
-	opts.Source = LocalSource{Clientset: clientset}
+	opts.Clientset = clientset
 	if opts.UI == nil {
 		opts.UI = testUI
 	}
@@ -204,7 +204,7 @@ func TestServesTheUI(t *testing.T) {
 		t.Errorf("favicon = %d %q", recorder.Code, recorder.Body)
 	}
 	if recorder := get(t, handler, "/api/v1/nothing"); recorder.Code != http.StatusNotFound ||
-		decode[Error](t, recorder).Reason != ReasonNotFound {
+		decode[Error](t, recorder).Reason != string(metav1.StatusReasonNotFound) {
 		t.Errorf("unknown API path = %d %s, want a JSON 404", recorder.Code, recorder.Body)
 	}
 }
@@ -218,7 +218,7 @@ func TestServesTheEmbeddedBuild(t *testing.T) {
 	}
 	_ = index.Close()
 
-	handler := New(Options{Source: LocalSource{Clientset: fake.NewClientset()}})
+	handler := New(Options{Clientset: fake.NewClientset()})
 	recorder := get(t, handler, "/")
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `<div id="root">`) {
 		t.Errorf("GET / = %d %q, want the embedded index.html", recorder.Code, recorder.Body)

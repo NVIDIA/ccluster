@@ -113,7 +113,7 @@ func runServer(ctx context.Context, out, errOut io.Writer, opts serverOptions) e
 	srv := &http.Server{
 		Handler: server.New(server.Options{
 			Namespace:    opts.namespace,
-			Source:       server.LocalSource{Clientset: clientset},
+			Clientset:    clientset,
 			Context:      kubeContext,
 			Version:      Version(),
 			AllowedHosts: server.LoopbackHosts,

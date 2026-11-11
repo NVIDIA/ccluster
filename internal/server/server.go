@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 // control plane's infra planes and component sets.
 //
 // One handler serves both halves from one origin. Under /api/v1/ it answers JSON, read
-// from Kubernetes on every request with the clientset a ClientSource picks for it, so
-// Kubernetes RBAC alone decides what a request may see. Every other GET returns the
+// from Kubernetes on every request with Options.Clientset, so Kubernetes RBAC alone
+// decides what the page may show. Every other GET returns the
 // React UI embedded by package ui: its hashed assets as files, and any other path
 // index.html, which routes in the browser.
 //
@@ -32,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/NVIDIA/ccluster/internal/server/ui"
+	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )
 
 // RefreshInterval is how often the UI reloads the overview.
@@ -49,16 +50,16 @@ const (
 	ReasonNamespaceNotServed = "NamespaceNotServed"
 	// ReasonKubernetesUnavailable: the API server could not be reached or failed.
 	ReasonKubernetesUnavailable = "KubernetesUnavailable"
-	// ReasonNotFound: no such API path.
-	ReasonNotFound = "NotFound"
 )
 
 // Options configures New.
 type Options struct {
 	// Namespace, when set, is the only namespace the server reads.
 	Namespace string
-	// Source picks each request's clientset.
-	Source ClientSource
+	// Clientset is what every request reads Kubernetes with. Whatever credentials it
+	// carries decide, through Kubernetes RBAC, what the page may show; the server adds no
+	// access control of its own.
+	Clientset versioned.Interface
 	// Context is the kubeconfig context shown in the UI; informational only.
 	Context string
 	// Version is the ccluster version shown in the UI.
@@ -113,7 +114,7 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/config", s.config)
 	mux.HandleFunc("GET /api/v1/overview", s.overview)
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, ReasonNotFound, "No API at "+r.URL.Path+".")
+		writeError(w, http.StatusNotFound, string(metav1.StatusReasonNotFound), "No API at "+r.URL.Path+".")
 	})
 	mux.HandleFunc("GET /", s.static)
 	return checkHost(opts.AllowedHosts, secureHeaders(mux))
@@ -141,15 +142,10 @@ func (s *server) overview(w http.ResponseWriter, r *http.Request) {
 		requested, listNamespace, namespaces = fixed, fixed, []string{fixed}
 	}
 
-	client, err := s.opts.Source.Client(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, string(metav1.StatusReasonUnauthorized), err.Error())
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
-	api := client.CclusterV1alpha1()
+	api := s.opts.Clientset.CclusterV1alpha1()
 	planes, err := api.CCLInfraPlanes(listNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		s.writeKubernetesError(w, "CCLInfraPlanes", listNamespace, err)
