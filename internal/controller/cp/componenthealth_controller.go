@@ -185,7 +185,8 @@ func (r *ComponentHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// CCLComponentSetReconciler.SetupWithManager.
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("componenthealth"), "Application") {
 		b = b.Watches(&argocdv1alpha1.Application{},
-			handler.EnqueueRequestsFromMapFunc(componentSetForApplication))
+			handler.EnqueueRequestsFromMapFunc(componentSetForApplication),
+			builder.WithPredicates(applicationChanged))
 	}
 
 	return b.Named("componenthealth").Complete(r)

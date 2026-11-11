@@ -1051,12 +1051,14 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   next one). Its own CCLComponentSet events include status updates; see
   [component health](#component-health).
 - The component health controller watches `CCLComponentSet` spec changes and the same
-  `Application`s.
+  `Application`s. Both drop an Application update that changes no field the operator
+  decodes, such as Argo CD's periodic refresh.
 
 Control-plane progress is watch-driven: every input to a component's verdict is a field of
 an Application, or a health report written by the component health controller, and those
 arrive as events. Teardown has a 15s retry of its own. The component health controller
-also polls ([component health](#component-health)). The infra-plane operator periodically re-verifies the live state it does not write, apart from its
+also polls, and a rollout pass that judged a component without its resource tree comes
+back after 30 seconds ([component health](#component-health)). The infra-plane operator periodically re-verifies the live state it does not write, apart from its
 labelled LoadBalancer Services, which it watches (§3a), and the `CCLInfraPlane` controller
 retries a `CCLClusterConfig` it could not write every minute, with a slower resync behind
 its watch (§3).
@@ -1142,22 +1144,44 @@ Two controllers judge health, for two purposes:
   A set whose reads are slow, such as one on an unreachable infra-plane cluster, then
   holds one worker for up to the 10-second deadline instead of delaying every other
   set's poll.
-- **`CCLComponentSetReconciler`** gates on it. `finished` (§5) judges, in the same pass,
-  each released component Argo CD has synced. It never reads `componentHealthStatuses`
-  back: what the other controller last wrote may predate the Applications this pass read.
+- **`CCLComponentSetReconciler`** gates on it. `applyComponents` and `rolloutStatus` (§5)
+  stop at the first component that is not finished, so the rollout needs no health past
+  it. It judges in the same pass, in spec order, and stops at the first component that
+  is not synced to the current spec or not healthy. All the reads of one pass share one
+  10-second deadline, so a hung argocd-server holds a pass for at most that long. It never
+  reads `componentHealthStatuses` back: what the other controller last wrote may predate
+  the Applications this pass read.
 
-Both get the same argocd-server client and health registry, and judge through the same
-`judgeAll`, so the health reported is the health the rollout gates on.
+Both get the same argocd-server client and health registry, and judge each component
+through the same `judge`, so the health reported is the health the rollout gates on.
 
-The rollout does not poll. A change in health that changes no Application field, such as a
-Job starting to run, reaches it as the CCLComponentSet update `ComponentHealthReconciler`
-writes. That is why the rollout's `For` has no predicate, and must keep none. The two write
-disjoint fields. The rollout's patch carries a resource version, so a health write in
-between makes it requeue and recompute rather than overwrite.
+Judging in order trades time for reads. The rollout reads one tree after another, where
+the health controller reads them all at once, but a pass reads no tree past the first
+component that is not finished. A set whose components have all finished still reads
+every tree on each pass; dropping refresh-only Application events (below) keeps those
+passes rare.
 
-Every Application status write, Argo CD's periodic refresh included, reconciles its
-CCLComponentSet, so that controller's load grows with the number of Applications. A pass
-that changes nothing the status reports does not write it. The controller runs
+The rollout does not poll, apart from one retry. A change in health that changes no
+Application field, such as a Job starting to run, reaches it as the CCLComponentSet update
+`ComponentHealthReconciler` writes. That is why the rollout's `For` has no predicate, and
+must keep none. The two write disjoint fields. The rollout's patch carries a resource
+version, so a health write in between makes it requeue and recompute rather than
+overwrite.
+
+The one retry is for a pass that judged a component by Argo CD's aggregate health because
+it could not read the tree. A later read may judge it differently, and no event need say
+so: the health controller writes only when its own verdict changes, and Argo CD's refresh
+is dropped (below). So that pass comes back after 30 seconds. A pass that runs out of its
+deadline shows it the same way, on the next tree it tries to read.
+
+An Application status write reconciles its CCLComponentSet in both controllers when it
+changes a field the operator decodes. Argo CD's periodic refresh writes
+`status.reconciledAt`, which the Application types here leave out. The Application CRD has
+no status subresource, so that write also moves `metadata.generation`. `applicationChanged`
+ignores generation along with `resourceVersion` and `managedFields`, so it drops the
+refresh. Without that, a set of N finished components would read N² trees each refresh
+interval. The controller's load still grows with the number of Applications. A pass that
+changes nothing the status reports does not write it. The controller runs
 `--componentset-max-concurrent-reconciles` workers, four by default, and
 `ComponentHealthReconciler` runs as many again. The `workqueue_depth` and
 `workqueue_queue_duration_seconds` of either controller (`cclcomponentset`,

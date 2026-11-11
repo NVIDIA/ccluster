@@ -2037,11 +2037,55 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Expect(secondApplication()).To(Succeed())
 			})
 
-			It("should judge by Argo CD's aggregate health when the resource tree cannot be read", func() {
+			It("should judge in spec order, within one deadline, up to the first component that is not finished", func() {
+				ref := func(component string) apiclient.ApplicationRef {
+					return apiclient.ApplicationRef{
+						Namespace: namespace,
+						Name:      applicationName(componentSetName, component),
+						Project:   projectName(namespace),
+					}
+				}
+				judgeWith(&fakeArgoCD{})
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+				release(firstComponent)
+				reportCurrentComparison(secondComponent, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+
+				By("reading every finished component's tree, all within one deadline")
+				argoCD := &fakeArgoCD{}
+				judgeWith(argoCD)
+				reconcileAndGet()
+				Expect(argoCD.treesRead()).To(Equal([]apiclient.ApplicationRef{ref(firstComponent), ref(secondComponent)}))
+				deadlines := argoCD.treeDeadlines()
+				Expect(deadlines).To(HaveLen(2))
+				Expect(deadlines[1]).To(Equal(deadlines[0]),
+					"a hung argocd-server would hold the pass for one timeout per component")
+
+				By("reading nothing past the first component that is not finished")
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthProgressing}
+				argoCD = &fakeArgoCD{}
+				judgeWith(argoCD)
+				reconcileAndGet()
+				Expect(argoCD.treesRead()).To(Equal([]apiclient.ApplicationRef{ref(firstComponent)}))
+			})
+
+			It("should judge by Argo CD's aggregate health when the resource tree cannot be read, and come back", func() {
 				judgeWith(&fakeArgoCD{treeErr: errors.New("argocd-server unavailable")})
 				release(firstComponent)
 				Expect(k8sClient.Get(ctx, appKey(secondComponent), &argocdv1alpha1.Application{})).To(Succeed(),
 					"a component Argo CD reports Healthy was held although its chart could not judge it")
+
+				By("coming back, since no event need follow once the tree can be read")
+				result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.RequeueAfter).To(Equal(treeRetryInterval))
+
+				By("not polling once every tree it judged by was read")
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+				judgeWith(&fakeArgoCD{})
+				result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.RequeueAfter).To(BeZero())
 			})
 		})
 
