@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 // API, covering only the DNSEndpoint fields the control-plane operator writes or reads.
 //
 // external-dns owns the type and its CRD, which the external-dns dependency of the cp
-// chart installs. As with internal/argocd/v1alpha1, importing sigs.k8s.io/external-dns
+// chart installs. As with internal/api/argocd/v1alpha1, importing sigs.k8s.io/external-dns
 // would pull in every DNS provider's SDK, and unstructured.Unstructured would cost
-// compile-time checking of the field names. It lives under internal/ rather than api/ for
+// compile-time checking of the field names. It lives under internal/api/ rather than api/ for
 // the same reason too: `make manifests` would otherwise generate a CRD the operator's own
 // chart would then install.
 //

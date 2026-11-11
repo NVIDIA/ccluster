@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 // project does not use, while addressing the resources as unstructured.Unstructured
 // costs compile-time checking of every field name.
 //
-// It lives under internal/ rather than api/ deliberately: `make manifests` runs
+// It lives under internal/api/ rather than api/ deliberately: `make manifests` runs
 // controller-gen's CRD generator over ./api/... only, and a CRD generated from these
 // types would be installed by the ccluster-cp chart - making the operator own Argo CD's
 // CRDs, which it must never do.

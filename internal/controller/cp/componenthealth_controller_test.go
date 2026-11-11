@@ -22,8 +22,8 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 )
 
