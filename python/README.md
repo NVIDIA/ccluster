@@ -112,7 +112,7 @@ from kubernetes.config import new_client_from_config
 client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-[`examples/quickstart/python/register.py`](../examples/quickstart/python/register.py) is the same as a command. The call returns once the
+[`examples/register.py`](examples/register.py) is the same as a command. The call returns once the
 objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
 has marked the plane `Available`.
 
@@ -195,7 +195,8 @@ then uninstalls the set's charts in reverse order, one at a time, so the object 
 `CCLInfraPlane`s stay. `kubectl get cclcomponentset -n <namespace>` shows each set's
 `Progress` column, which carries the `Progressing` condition's reason, and when a deleted
 one has disappeared.
-[`examples/quickstart/python/deploy.py`](../examples/quickstart/python/deploy.py) deploys an inference service the same way.
+[`examples/deploy.py`](examples/deploy.py) deploys an inference service the same way;
+[`examples/quickstart`](../examples/quickstart/) walks through both.
 
 ## Command line
 
@@ -271,7 +272,7 @@ value stays `null`, which Helm reads as "remove this default":
 its null.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
-command), `ccluster/catalogs/__init__.py` (`entry`, `component`) and `tests/` are hand-written.
+command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.
 
 ## Regenerating
 

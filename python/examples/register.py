@@ -4,8 +4,8 @@
 """Register an infra-plane cluster with the control plane, or unregister it.
 
 The token and CA certificate are those of a ServiceAccount on the infra-plane cluster
-with the rights Argo CD needs there; ../README.md shows how to create them. With the
-control plane's kubeconfig context:
+with the rights Argo CD needs there; examples/quickstart/README.md at the repository
+root shows how to create them. With the control plane's kubeconfig context:
 
     python register.py --context <control-plane context> --namespace team-a \\
         edge-1 https://<infra-plane API server> --token-file token --ca-file ca.crt

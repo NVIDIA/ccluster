@@ -13,7 +13,7 @@ component sets, each rolled out in order:
 
 | Directory | Uses | Register | Deploy |
 | --- | --- | --- | --- |
-| [`python/`](python/) | The Python SDK, `pip install ccluster-py` | `register.py` | `deploy.py` |
+| [`python/examples/`](../../python/examples/) | The Python SDK, `pip install ccluster-py` | `register.py` | `deploy.py` |
 | [`go/`](go/) | The Go SDK, [`pkg/cclclient`](../../pkg/cclclient/) | `register/` | `deploy/` |
 | [`helm/`](helm/) | Helm charts that template the resources | `infraplane/` | `componentset/` with `platform-values.yaml`, `embeddings-values.yaml` |
 | [`kubectl/`](kubectl/) | Plain manifests for a single cluster that registers itself, used by the [development setup](../../README.md#developing-ccluster) | `v1alpha1_cclinfraplane.yaml` | `v1alpha1_cclcomponentset.yaml` |
@@ -56,7 +56,7 @@ command.
 **Python:**
 
 ```bash
-python python/register.py --context "$CP" --namespace team-a \
+python ../../python/examples/register.py --context "$CP" --namespace team-a \
   edge-1 "$SERVER" --token-file token --ca-file ca.crt
 ```
 
@@ -84,7 +84,7 @@ The cluster's domain is `edge-1.team-a.<base domain>`; `kubectl get cclinfraplan
 try:
 
 ```bash
-python python/deploy.py --context "$CP" --namespace team-a --infra-plane edge-1
+python ../../python/examples/deploy.py --context "$CP" --namespace team-a --infra-plane edge-1
 # or, from the repository root:
 go run ./examples/quickstart/go/deploy -context "$CP" -namespace team-a -infra-plane edge-1
 ```
@@ -125,8 +125,8 @@ Remove the service before the platform components it depends on. Removing a set
 uninstalls its charts from the cluster, in reverse order; wait for each to disappear.
 
 ```bash
-python python/deploy.py --context "$CP" --namespace team-a --delete
-python python/register.py --context "$CP" --namespace team-a edge-1 --delete
+python ../../python/examples/deploy.py --context "$CP" --namespace team-a --delete
+python ../../python/examples/register.py --context "$CP" --namespace team-a edge-1 --delete
 # or with Go: add -delete to the same commands
 # or with Helm:
 helm --kube-context "$CP" uninstall embeddings -n team-a   # wait until the set is gone
