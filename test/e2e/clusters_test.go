@@ -209,13 +209,28 @@ func installClusterBase(c utils.Cluster) {
 	}, 5*time.Minute, 5*time.Second).Should(Succeed())
 }
 
+// argoRolloutsCRDs are the CRDs the argo_rollouts chart installs. It marks them
+// helm.sh/resource-policy: keep (the upstream keepCRDs), so they outlive the release.
+var argoRolloutsCRDs = []string{
+	"analysisruns.argoproj.io",
+	"analysistemplates.argoproj.io",
+	"clusteranalysistemplates.argoproj.io",
+	"experiments.argoproj.io",
+	"rollouts.argoproj.io",
+}
+
 // uninstallClusterBase removes what installClusterBase installed from c. The CRDs the
-// Prometheus and Argo Rollouts charts installed stay, as Helm leaves them, and go with
-// the cluster.
+// Prometheus chart installed stay, as Helm leaves them, and go with the cluster. The
+// Argo Rollouts CRDs are deleted by name, because the argo_rollouts Verifier checks only
+// that the Rollout CRD exists: left behind, they would verify argo_rollouts for the
+// next spec on the cluster, which expects it to fail. By name, not by group, so the
+// control-plane cluster keeps Argo CD's argoproj.io CRDs.
 func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
 	uninstallClusterBaseChart(c, "argo-rollouts", "argo-rollouts")
+	_, _ = utils.Run(c.Kubectl(append([]string{"delete", "crd", "--ignore-not-found", "--wait"},
+		argoRolloutsCRDs...)...))
 }
 
 // expectBaseComponentsFailing asserts that a Verified message names argo_rollouts,
