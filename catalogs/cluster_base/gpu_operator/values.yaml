@@ -1,5 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+quota:
+  # The most system-node-critical and system-cluster-critical pods the
+  # gpu-operator-critical-pods ResourceQuota admits in this namespace; about 250
+  # GPU nodes at 7-8 critical pods each.
+  criticalPodLimit: 2048
 gpu-operator:
   nfd:
     enabled: true

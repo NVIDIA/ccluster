@@ -22,6 +22,19 @@ const (
 // Values is the top-level values document for catalogs/cluster_base/gpu_operator.
 type Values struct {
 	GPUOperator *ChartValues `json:"gpu-operator,omitempty"`
+
+	// Quota configures the ResourceQuotas the chart creates in the release namespace.
+	Quota *Quota `json:"quota,omitempty"`
+}
+
+// Quota configures the ResourceQuotas the chart creates in the release namespace.
+type Quota struct {
+	// CriticalPodLimit is the most pods of the system-node-critical and
+	// system-cluster-critical priority classes the gpu-operator-critical-pods
+	// ResourceQuota admits. GKE admits such pods outside kube-system only under a
+	// quota like it, and gpu-operator runs about 7-8 per GPU node. The chart ships
+	// 2048.
+	CriticalPodLimit *int32 `json:"criticalPodLimit,omitempty"`
 }
 
 // ChartValues are the upstream gpu-operator values worth setting per cluster.

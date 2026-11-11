@@ -41,6 +41,25 @@ class MIG(BaseModel):
     """
 
 
+class Quota(BaseModel):
+    """
+    Quota configures the ResourceQuotas the chart creates in the release namespace.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    critical_pod_limit: Annotated[int | None, Field(alias="criticalPodLimit")] = None
+    """
+    CriticalPodLimit is the most pods of the system-node-critical and
+    system-cluster-critical priority classes the gpu-operator-critical-pods
+    ResourceQuota admits. GKE admits such pods outside kube-system only under a
+    quota like it, and gpu-operator runs about 7-8 per GPU node. The chart ships
+    2048.
+    """
+
+
 class Toggle(BaseModel):
     """
     Toggle is a subchart's enable flag.
@@ -105,6 +124,10 @@ class Values(BaseModel):
         populate_by_name=True,
     )
     gpu_operator: Annotated[ChartValues | None, Field(alias="gpu-operator")] = None
+    quota: Quota | None = None
+    """
+    Quota configures the ResourceQuotas the chart creates in the release namespace.
+    """
 
 
 # CHART is the chart directory, relative to the root of the catalog repository.

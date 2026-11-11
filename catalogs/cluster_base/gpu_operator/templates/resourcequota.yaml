@@ -16,9 +16,7 @@ spec:
   # and the ClusterPolicy operand DaemonSets, all system-node-critical)
   # can be created unless a matching quota exists in this namespace.
   hard:
-    # gpu-operator runs about 7-8 critical pods per GPU node with the
-    # driver and toolkit enabled, so this covers roughly 250 GPU nodes.
-    pods: "2048"
+    pods: {{ .Values.quota.criticalPodLimit | quote }}
   scopeSelector:
     matchExpressions:
       - operator: In
