@@ -145,7 +145,7 @@ func TestPTYResizeAndSignal(t *testing.T) {
 	session, stdin, stdout := startTestPTY(t, client)
 	command := `trap 'exit 7' USR1; printf '\nREADY=%s\n' yes; ` +
 		`while [ "$(stty size)" != '33 101' ]; do sleep 0.01; done; ` +
-		`printf '\nRESIZED=%s\n' yes; while :; do read line; done`
+		`printf '\nRESIZED=%s\n' yes; while :; do sleep 0.01; done`
 	if _, err := io.WriteString(stdin, command+"\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestPTYResizeAndSignal(t *testing.T) {
 
 func TestPTYForegroundOutputWithSlowReader(t *testing.T) {
 	// Exceed the SSH window while the final bytes still fit in the PTY and copy buffers.
-	const outputSize = 2*1024*1024 + 8192
+	const outputSize = 2*1024*1024 + 1024
 	client, finished := newShellTestClient(t, "/bin/bash")
 	session, stdin, stdout := startTestPTY(t, client)
 	command := fmt.Sprintf(
