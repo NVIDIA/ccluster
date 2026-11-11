@@ -21,10 +21,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/api/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/cp"
-	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"

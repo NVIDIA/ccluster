@@ -736,7 +736,7 @@ declares the account and stores a token in the Secret. Argo CD checks an account
 against its live settings on every request, so neither case restarts Argo CD.
 
 The client mirrors only the parts of the API it uses, like
-`internal/argocd/v1alpha1`. It names the Application's namespace and project on every
+`internal/api/argocd/v1alpha1`. It names the Application's namespace and project on every
 request, so argocd-server answers a deleted Application with 404, not 403. It tells
 apart the few failures a caller can act on by status and message: an unauthorized
 token, a deleted Application, a tree not yet cached, and a node gone since the tree was

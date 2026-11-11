@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 // never holds those itself, and what it can read is bounded by the Argo CD account its
 // token belongs to: a read-only account the cp chart declares.
 //
-// Like internal/argocd/v1alpha1, the client mirrors only the parts of the API it uses
+// Like internal/api/argocd/v1alpha1, the client mirrors only the parts of the API it uses
 // rather than importing Argo CD's Go client, whose dependency tree is most of Argo CD.
 package apiclient
 
