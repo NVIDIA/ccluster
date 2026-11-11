@@ -128,7 +128,11 @@ func TestServerServesTheDashboard(t *testing.T) {
 func TestServerRejects(t *testing.T) {
 	t.Run("a non-loopback address", func(t *testing.T) {
 		setUpInitialized(t)
-		for _, listen := range []string{"0.0.0.0:8484", ":8484", "192.168.1.10:8484", "example.com:8484"} {
+		for _, listen := range []string{
+			"0.0.0.0:8484", ":8484", "192.168.1.10:8484", "example.com:8484",
+			// Loopback, but not a host name the server answers to.
+			"127.0.0.2:8484", "[0:0:0:0:0:0:0:1]:8484",
+		} {
 			expectError(t, "is not a loopback address", "server", "--no-browser", "--listen", listen)
 		}
 		expectError(t, "is not host:port", "server", "--no-browser", "--listen", "127.0.0.1")

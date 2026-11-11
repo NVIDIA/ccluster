@@ -61,6 +61,8 @@ export interface ComponentRow {
   reason?: string;
   message?: string;
   sync?: string;
+  /** Set for a component removed from the spec whose Application is still being deleted. */
+  removal?: "DeletePending" | "Deleting";
 }
 
 export interface ComponentSetRow {

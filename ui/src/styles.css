@@ -277,3 +277,14 @@ code {
 .segment-gray {
   background-color: var(--background-color-accent-gray-subtle);
 }
+
+/* A removed component: hatched, so it reads as leaving rather than as a health. */
+.segment-removing {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--background-color-accent-gray-subtle) 0 2px,
+    transparent 2px 4px
+  );
+  outline: 1px solid var(--background-color-accent-gray-subtle);
+  outline-offset: -1px;
+}

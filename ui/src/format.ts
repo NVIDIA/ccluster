@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Condition, SetStatus } from "./api";
+import type { ComponentRow, Condition, SetStatus } from "./api";
 
 /** A Kaizen Badge color. Every status keeps its meaning in the label too. */
 export type BadgeColor = "blue" | "green" | "red" | "yellow" | "gray";
@@ -54,6 +54,11 @@ export function healthLook(health: string): StatusLook {
 
 export function healthLabel(health: string): string {
   return health === "NotReleased" ? "Not released" : health;
+}
+
+/** How far the removal of a component no longer in the spec has got. */
+export function removalLabel(removal: ComponentRow["removal"]): string {
+  return removal === "Deleting" ? "Removing" : "Waiting to be removed";
 }
 
 /** The text behind a condition's badge, for its tooltip. */

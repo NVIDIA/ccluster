@@ -9,12 +9,15 @@ import react from "@vitejs/plugin-react";
 
 const licensesFile = "THIRD_PARTY_LICENSES.md";
 
-// Vite's license file lists the JavaScript packages in the bundle. Roboto arrives through
-// CSS, so its license, which must travel with the font files, is appended here.
-function fontLicenses(): Plugin {
+// Vite's license file lists the JavaScript packages in the bundle. What arrives through CSS
+// is appended here: Roboto's license, which must travel with the font files, and the
+// notices of the Kaizen UI stylesheets, such as the CC-BY-4.0 attribution of the NVIDIA
+// GUI Icons that base-external.css embeds. scripts/fetch-kui-styles.js keeps those
+// notices, because the minifier drops the comments that carry them.
+function cssLicenses(): Plugin {
   let outDir = "";
   return {
-    name: "ccluster-font-licenses",
+    name: "ccluster-css-licenses",
     apply: "build",
     configResolved(config) {
       outDir = config.build.outDir;
@@ -23,6 +26,18 @@ function fontLicenses(): Plugin {
       const pkg = JSON.parse(await readFile("node_modules/@fontsource/roboto/package.json", "utf8")) as { version: string };
       const license = await readFile("node_modules/@fontsource/roboto/LICENSE", "utf8");
       await appendFile(join(outDir, licensesFile), `\n## @fontsource/roboto - ${pkg.version} (OFL-1.1)\n\n${license.trim()}\n`);
+
+      const kui = JSON.parse(
+        await readFile("node_modules/@nvidia/foundations-react-core/package.json", "utf8"),
+      ) as { version: string };
+      const notices = (await readFile("src/generated/kui-notices.md", "utf8")).trim();
+      if (!notices.includes("CC-BY-4.0")) {
+        throw new Error("src/generated/kui-notices.md lacks the NVIDIA GUI Icons' CC-BY-4.0 notice");
+      }
+      await appendFile(
+        join(outDir, licensesFile),
+        `\n## Kaizen UI Foundations stylesheets - ${kui.version}\n\n${notices}\n`,
+      );
     },
   };
 }
@@ -31,7 +46,7 @@ function fontLicenses(): Plugin {
 // internal/server/ui/embed.go. `npm run dev` serves the UI with hot reload and passes /api
 // to a ccluster server started with --no-browser on its default address.
 export default defineConfig({
-  plugins: [react(), fontLicenses()],
+  plugins: [react(), cssLicenses()],
   base: "/",
   build: {
     outDir: "../internal/server/ui/dist",

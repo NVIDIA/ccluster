@@ -2,26 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ComponentRow, ComponentSetRow } from "../api";
-import { age, healthLabel, healthLook, setStatusLook } from "../format";
+import { age, healthLabel, healthLook, removalLabel, setStatusLook } from "../format";
 import { DataTable, EmptyTable, Section, type Column } from "./DataTable";
 import { StatusBadge } from "./StatusBadge";
 
-/** One segment per component, in rollout order, colored and titled by its health. */
+/**
+ * One segment per component, in rollout order, colored and titled by its health, then a
+ * hatched segment per removed component whose chart is still being uninstalled. Only the
+ * components in the spec count towards healthy.
+ */
 function ComponentBar({ components }: { components: ComponentRow[] }) {
-  const done = components.filter((c) => c.health === "Healthy" || c.health === "Succeeded").length;
+  const current = components.filter((c) => !c.removal);
+  const removing = components.length - current.length;
+  const done = current.filter((c) => c.health === "Healthy" || c.health === "Succeeded").length;
   return (
     <span className="component-cell">
       <span className="component-bar" aria-hidden="true">
         {components.map((component) => (
           <span
             key={component.name}
-            className={`segment segment-${healthLook(component.health).color}`}
-            title={`${component.name}: ${healthLabel(component.health)}`}
+            className={
+              component.removal ? "segment segment-removing" : `segment segment-${healthLook(component.health).color}`
+            }
+            title={`${component.name}: ${
+              component.removal ? removalLabel(component.removal) : healthLabel(component.health)
+            }`}
           />
         ))}
       </span>
       <span className="muted tabular">
-        {done} of {components.length} healthy
+        {done} of {current.length} healthy
+        {removing > 0 && `, ${removing} removing`}
       </span>
     </span>
   );

@@ -128,7 +128,11 @@ Every published artifact carries its license; keep it that way when changing a r
 The CLI also embeds the UI's build, which carries the licenses of the npm packages it
 bundles: Vite writes them to `internal/server/ui/dist/THIRD_PARTY_LICENSES.md`, and
 `ccluster server` serves that file beside the UI. The bundled Kaizen UI stylesheets come
-from the same Apache-2.0 release as `@nvidia/foundations-react-core`, listed there.
+from the same Apache-2.0 release as `@nvidia/foundations-react-core`, listed there,
+except the NVIDIA GUI Icons that `base-external.css` embeds, which are CC-BY-4.0. The
+minifier drops the stylesheets' own license comments, so `ui/scripts/fetch-kui-styles.js`
+keeps them and `ui/vite.config.ts` appends them to that file, failing the build if the
+icons' CC-BY-4.0 notice is missing.
 
 `go-licenses` fails the image build and `cli-package` when a newly linked module's
 license cannot be classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to

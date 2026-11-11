@@ -42,6 +42,7 @@ function overview(selected = ""): Overview {
         components: [
           { name: "web", chart: "catalogs/web", infraPlane: "gpu", health: "Degraded" },
           { name: "db", chart: "catalogs/db", infraPlane: "gpu", health: "NotReleased" },
+          { name: "cache", chart: "", infraPlane: "", health: "Healthy", removal: "Deleting" },
         ],
         created: "2026-11-09T10:00:00Z",
       },
@@ -96,7 +97,7 @@ describe("App", () => {
 
     const sets = screen.getByRole("region", { name: /Component sets/ });
     expect(within(sets).getByText("Failed")).toBeInTheDocument();
-    expect(within(sets).getByText("0 of 2 healthy")).toBeInTheDocument();
+    expect(within(sets).getByText("0 of 2 healthy, 1 removing")).toBeInTheDocument();
     expect(within(sets).getByText("web failed to sync")).toBeInTheDocument();
 
 

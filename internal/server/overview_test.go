@@ -62,19 +62,34 @@ func TestComponentSetStatus(t *testing.T) {
 			SetStatusRollingOut,
 		},
 		{
-			"validation failed",
+			"waiting for an infra plane is rolling out",
 			componentSet("ns", "s", 1,
-				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonInfraPlaneNotFound, 1)),
-			SetStatusFailed,
-		},
-		{
-			"stale validation failure is not current",
-			componentSet("ns", "s", 2,
-				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonInfraPlaneNotFound, 1)),
+				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonInfraPlaneNotReady, 1),
+				cond(v1alpha1.CCLComponentSetConditionProgressing, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonInfraPlaneNotReady, 1)),
 			SetStatusRollingOut,
 		},
 		{
-			"applications failed",
+			"a retried apply error is rolling out",
+			componentSet("ns", "s", 1,
+				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonComponentsAccepted, 1),
+				cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationFailed, 1)),
+			SetStatusRollingOut,
+		},
+		{
+			"application CRD missing",
+			componentSet("ns", "s", 1,
+				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonComponentsAccepted, 1),
+				cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationCRDMissing, 1)),
+			SetStatusFailed,
+		},
+		{
+			"stale application conflict is not current",
+			componentSet("ns", "s", 2,
+				cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationConflict, 1)),
+			SetStatusRollingOut,
+		},
+		{
+			"application conflict",
 			componentSet("ns", "s", 1,
 				cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonComponentsAccepted, 1),
 				cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationConflict, 1)),
@@ -122,6 +137,30 @@ func TestComponentRowsMarkUnreleasedComponents(t *testing.T) {
 	}
 }
 
+func TestComponentRowsListRemovedComponentsLast(t *testing.T) {
+	set := componentSet("ns", "s", 2)
+	set.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
+		{Name: "a", Health: v1alpha1.ComponentHealthHealthy},
+		{Name: "b", Health: v1alpha1.ComponentHealthHealthy},
+		{Name: "old", Health: v1alpha1.ComponentHealthProgressing},
+	}
+	set.Status.ComponentSyncStatuses = []v1alpha1.ComponentSyncStatus{
+		{Name: "a", Sync: "Synced"},
+		{Name: "b", Sync: "Synced", Removal: v1alpha1.ComponentRemovalDeletePending},
+		{Name: "old", Sync: "Synced", Message: "deleting", Removal: v1alpha1.ComponentRemovalDeleting},
+	}
+
+	want := []ComponentRow{
+		{Name: "a", Chart: "catalogs/a", InfraPlane: "plane", Health: "Healthy", Sync: "Synced"},
+		// b is back in the spec, so a stale removal entry does not mark it removed.
+		{Name: "b", Chart: "catalogs/b", InfraPlane: "plane", Health: "Healthy", Sync: "Synced"},
+		{Name: "old", Health: "Progressing", Sync: "Synced", Message: "deleting", Removal: "Deleting"},
+	}
+	if got := componentRows(&set); !reflect.DeepEqual(got, want) {
+		t.Errorf("componentRows =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
 func infraPlane(namespace, name string, generation int64, conditions ...metav1.Condition) v1alpha1.CCLInfraPlane {
 	return v1alpha1.CCLInfraPlane{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Generation: generation},
@@ -144,7 +183,8 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 		{Name: "b", Health: v1alpha1.ComponentHealthHealthy},
 	}
 	failed := componentSet("team-b", "apps", 1,
-		cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonInfraPlaneNotReady, 1))
+		cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonComponentsAccepted, 1),
+		cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationConflict, 1))
 	degraded := componentSet("team-a", "jobs", 1)
 	degraded.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
 		{Name: "a", Health: v1alpha1.ComponentHealthDegraded, Reason: "CrashLoopBackOff", Message: "back-off"},
@@ -166,8 +206,8 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 		if !reflect.DeepEqual(got.Summary, wantSummary) {
 			t.Errorf("Summary =\n%+v\nwant\n%+v", got.Summary, wantSummary)
 		}
-		if row := got.ComponentSets[2]; row.Status != SetStatusFailed || row.Message != "Validated InfraPlaneNotReady" {
-			t.Errorf("team-b/apps = %s %q, want Failed with the Validated message", row.Status, row.Message)
+		if row := got.ComponentSets[2]; row.Status != SetStatusFailed || row.Message != "ComponentsApplied ApplicationConflict" {
+			t.Errorf("team-b/apps = %s %q, want Failed with the ComponentsApplied message", row.Status, row.Message)
 		}
 		if names := setNames(got.ComponentSets); !reflect.DeepEqual(names, []string{"team-a/base", "team-a/jobs", "team-b/apps"}) {
 			t.Errorf("component sets = %v, want sorted by namespace and name", names)

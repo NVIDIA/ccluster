@@ -750,3 +750,20 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+## Kaizen UI Foundations stylesheets - 1.21.0
+
+### base-external.css
+
+NVIDIA GUI Icons are embedded in this file as inline SVG data URIs.
+
+"NVIDIA GUI Icons" (https://github.com/NVIDIA/icons)
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+The icon assets are licensed under the Creative Commons Attribution 4.0
+International license (CC-BY-4.0):
+https://creativecommons.org/licenses/by/4.0/
+
+"NVIDIA" and the NVIDIA logo are trademarks and/or registered trademarks of
+NVIDIA Corporation. CC-BY-4.0 does not grant any license or right to use
+NVIDIA's trademarks.

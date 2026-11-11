@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,21 +155,23 @@ func runServer(ctx context.Context, out, errOut io.Writer, opts serverOptions) e
 	return nil
 }
 
-// checkLoopback returns an error unless listen is a host:port on a loopback address.
-// The dashboard reads with the user's own credentials, so no other machine may reach it.
+// checkLoopback returns an error unless listen is a host:port whose host is one of
+// server.LoopbackHosts. The dashboard reads with the user's own credentials, so no other
+// machine may reach it. Other loopback addresses, such as 127.0.0.2, are refused too:
+// the browser would send them as the Host header, which the server does not answer.
 func checkLoopback(listen string) error {
 	host, _, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("--listen %q is not host:port: %w", listen, err)
 	}
-	if strings.EqualFold(host, "localhost") {
+	if slices.ContainsFunc(server.LoopbackHosts, func(loopback string) bool {
+		return strings.EqualFold(host, loopback)
+	}) {
 		return nil
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return nil
-	}
-	return fmt.Errorf("--listen %q is not a loopback address; the dashboard reads with your "+
-		"credentials, so it listens only on 127.0.0.1, ::1 or localhost", listen)
+	return fmt.Errorf("--listen %q is not a loopback address the dashboard answers on; it "+
+		"reads with your credentials, so it listens only on %s", listen,
+		strings.Join(server.LoopbackHosts, ", "))
 }
 
 // browserAddress is the host:port to open: the host as given to --listen, so the

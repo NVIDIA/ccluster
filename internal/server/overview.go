@@ -112,6 +112,9 @@ type ComponentRow struct {
 	Message string `json:"message,omitempty"`
 	// Sync is Argo CD's sync status of the component's Application, if released.
 	Sync string `json:"sync,omitempty"`
+	// Removal is set for a component removed from the spec whose Application the
+	// operator is still deleting: a cclusternvidiacomv1alpha1.ComponentRemoval.
+	Removal string `json:"removal,omitempty"`
 }
 
 // buildOverview turns the listed objects into the page. planes and sets are those of
@@ -238,28 +241,32 @@ func componentSetStatus(set *cclusternvidiacomv1alpha1.CCLComponentSet) SetStatu
 	}
 }
 
-// failedCondition returns the current condition that makes a set Failed: Validated or
-// ComponentsApplied reported False, or Progressing with reason WaveSyncFailed. nil if
-// none.
+// failedCondition returns the current condition that makes a set Failed: one saying the
+// rollout cannot go on until someone acts. That is Progressing with reason
+// WaveSyncFailed, or ComponentsApplied False because Argo CD's Application CRD is
+// missing or another set owns an Application. nil if none. A set waiting on an infra
+// plane (Validated False) or on a retried apply error is still rolling out: the operator
+// carries on by itself once the plane is available or the API server answers.
 func failedCondition(set *cclusternvidiacomv1alpha1.CCLComponentSet) *metav1.Condition {
 	current := cclclient.ComponentSetCurrentConditions(set)
-	for _, conditionType := range []string{
-		cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated,
-		cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied,
-	} {
-		if condition, ok := current[conditionType]; ok && condition.Status == metav1.ConditionFalse {
-			return &condition
-		}
-	}
 	if condition, ok := current[cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing]; ok &&
 		condition.Reason == cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncFailed {
+		return &condition
+	}
+	if condition, ok := current[cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied]; ok &&
+		condition.Status == metav1.ConditionFalse && slices.Contains([]string{
+		cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationCRDMissing,
+		cclusternvidiacomv1alpha1.CCLComponentSetReasonApplicationConflict,
+	}, condition.Reason) {
 		return &condition
 	}
 	return nil
 }
 
 // componentRows lists the set's components in rollout order with their reported health
-// and sync status. A component without a health entry has not been released.
+// and sync status, then the components removed from the spec whose Applications are
+// still being deleted, in the order the operator deletes them. A component without a
+// health entry has not been released.
 func componentRows(set *cclusternvidiacomv1alpha1.CCLComponentSet) []ComponentRow {
 	health := map[string]cclusternvidiacomv1alpha1.ComponentHealthStatus{}
 	for _, status := range set.Status.ComponentHealthStatuses {
@@ -269,27 +276,39 @@ func componentRows(set *cclusternvidiacomv1alpha1.CCLComponentSet) []ComponentRo
 	for _, status := range set.Status.ComponentSyncStatuses {
 		sync[status.Name] = status
 	}
-
-	rows := make([]ComponentRow, 0, len(set.Spec.Components))
-	for _, component := range set.Spec.Components {
-		row := ComponentRow{
-			Name:       component.Name,
-			Chart:      component.Chart,
-			InfraPlane: component.InfraPlaneRef.Name,
-			Health:     HealthNotReleased,
-		}
-		if status, ok := health[component.Name]; ok {
+	row := func(name string) ComponentRow {
+		row := ComponentRow{Name: name, Health: HealthNotReleased}
+		if status, ok := health[name]; ok {
 			row.Health = string(status.Health)
 			row.Reason = status.Reason
 			row.Message = status.Message
 		}
-		if status, ok := sync[component.Name]; ok {
+		if status, ok := sync[name]; ok {
 			row.Sync = status.Sync
+			row.Removal = string(status.Removal)
 			if row.Message == "" {
 				row.Message = status.Message
 			}
 		}
-		rows = append(rows, row)
+		return row
+	}
+
+	// A status written before a removed component was added back can still mark it
+	// removed; the spec wins.
+	inSpec := map[string]bool{}
+	rows := make([]ComponentRow, 0, len(set.Status.ComponentSyncStatuses)+len(set.Spec.Components))
+	for _, component := range set.Spec.Components {
+		inSpec[component.Name] = true
+		r := row(component.Name)
+		r.Chart = component.Chart
+		r.InfraPlane = component.InfraPlaneRef.Name
+		r.Removal = ""
+		rows = append(rows, r)
+	}
+	for _, status := range set.Status.ComponentSyncStatuses {
+		if status.Removal != "" && !inSpec[status.Name] {
+			rows = append(rows, row(status.Name))
+		}
 	}
 	return rows
 }
