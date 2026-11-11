@@ -6,11 +6,14 @@ dynamo-platform:
     # PersistentVolumeClaim on the cluster's default StorageClass.
     nats:
       install: true
-    # Install Grove, and have the Dynamo operator turn each DynamoGraphDeployment into
-    # Grove PodCliqueSets for gang scheduling of disaggregated workers.
+    # Grove gang-schedules disaggregated workers: with enabled, the Dynamo operator
+    # runs each DynamoGraphDeployment as Grove PodCliqueSets, and Grove rejects one
+    # whose pods carry no kai.scheduler/queue label. Off, as on the legacy platform's
+    # production clusters; set both to true to install and use it.
     grove:
-      install: true
-      enabled: true
+      install: false
+      enabled: false
+  # Applies only when global.grove.install is true.
   grove:
     # Argo CD applies the chart's grove.io CRDs on every sync, upgrades included, so
     # Grove's own CRD-installer init container would only contend with it for them.
