@@ -1,6 +1,7 @@
 ### Added
 - The cp operator takes `--componentset-max-concurrent-reconciles` (default 4), the number
-  of `CCLComponentSet`s it reconciles at once. Before, it reconciled them one at a time.
+  of `CCLComponentSet`s it reconciles at once, for the rollout and for component health
+  each. Before, it reconciled them one at a time.
   `CCLInfraPlane`s are still reconciled one at a time.
 
 ### Changed

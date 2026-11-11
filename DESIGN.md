@@ -1138,7 +1138,10 @@ Two controllers judge health, for two purposes:
   spec changes and Application events; `GenerationChangedPredicate` filters out status
   writes. It is the only writer of `componentHealthStatuses`. It patches only that field,
   only when a health, reason or message has changed, and moves `lastTransitionTime` only
-  with health, so polling alone writes nothing.
+  with health, so polling alone writes nothing. It runs as many workers as the rollout.
+  A set whose reads are slow, such as one on an unreachable infra-plane cluster, then
+  holds one worker for up to the 10-second deadline instead of delaying every other
+  set's poll.
 - **`CCLComponentSetReconciler`** gates on it. `finished` (§5) judges, in the same pass,
   each released component Argo CD has synced. It never reads `componentHealthStatuses`
   back: what the other controller last wrote may predate the Applications this pass read.
@@ -1155,10 +1158,11 @@ between makes it requeue and recompute rather than overwrite.
 Every Application status write, Argo CD's periodic refresh included, reconciles its
 CCLComponentSet, so that controller's load grows with the number of Applications. A pass
 that changes nothing the status reports does not write it. The controller runs
-`--componentset-max-concurrent-reconciles` workers, four by default; the
-`cclcomponentset` controller's `workqueue_depth` and `workqueue_queue_duration_seconds`
-staying high, with `controller_runtime_active_workers` at the worker count, show when
-more would help. Different CCLComponentSets write disjoint
+`--componentset-max-concurrent-reconciles` workers, four by default, and
+`ComponentHealthReconciler` runs as many again. The `workqueue_depth` and
+`workqueue_queue_duration_seconds` of either controller (`cclcomponentset`,
+`componenthealth`) staying high, with `controller_runtime_active_workers` at the worker
+count, show when more would help. Different CCLComponentSets write disjoint
 Applications, apart from the name collision in §4. The `CCLInfraPlane` controller always
 runs one worker (§3).
 
