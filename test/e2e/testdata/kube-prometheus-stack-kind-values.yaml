@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Overrides on catalogs/cluster_base/kube_prometheus_stack for kind: only what its
+# Verifier needs, a Prometheus whose pod becomes ready behind the Service the catalog's
+# consumers address, so the install is quick on a CI runner. Everything else the stack
+# runs, and the rules and monitors the chart renders itself, is off. The chart's own
+# fullnameOverride is kept: it fixes the Service's name.
+kube-prometheus-stack:
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  kubeApiServer:
+    enabled: false
+  kubelet:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  coreDns:
+    enabled: false
+  prometheusOperator:
+    # The admission webhook's certgen Jobs are slow and not what is under test.
+    admissionWebhooks:
+      enabled: false
+    tls:
+      enabled: false
+  prometheus:
+    prometheusSpec:
+      replicas: 1
+      retention: 1h
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+
+# These render PrometheusRule and PodMonitor objects, which need the CRDs in the same
+# release.
+prometheusRules:
+  podAlerts:
+    enabled: false
+  envoyStats:
+    enabled: false

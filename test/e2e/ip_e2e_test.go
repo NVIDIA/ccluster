@@ -32,7 +32,7 @@ var _ = Describe("IP operator", Ordered, func() {
 	AfterAll(func() {
 		By("removing the CCLClusterConfig")
 		_, _ = utils.Run(ip.Kubectl("delete", "cclclusterconfig", "cluster", "--ignore-not-found"))
-		uninstallMetricsServer(ip)
+		uninstallClusterBase(ip)
 	})
 
 	AfterEach(func() {
@@ -79,11 +79,12 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// metrics_server is the one cluster_base component with a check of its own, and kind
-	// ships no metrics server, so the condition starts False naming it, and stops naming
-	// it once its chart is installed - which proves the chart's CRD and RBAC let a
-	// real manager reconcile the singleton, read APIServices and write its status.
-	It("should report metrics_server verified once it is installed", func() {
+	// metrics_server and kube_prometheus_stack are the cluster_base components with a
+	// check of their own, and kind ships neither a metrics server nor Prometheus, so the
+	// condition starts False naming them, and stops naming them once their charts are
+	// installed - which proves the chart's CRD and RBAC let a real manager reconcile the
+	// singleton, read APIServices, Services and EndpointSlices and write its status.
+	It("should report metrics_server and kube_prometheus_stack verified once installed", func() {
 		By("applying the CCLClusterConfig")
 		_, err := utils.Run(ip.Kubectl("apply", "-f",
 			filepath.Join("test", "e2e", "testdata", "cclclusterconfig.yaml")))
@@ -98,20 +99,20 @@ var _ = Describe("IP operator", Ordered, func() {
 			return parts[0], parts[1]
 		}
 
-		By("reporting metrics_server as failing")
+		By("reporting metrics_server and kube_prometheus_stack as failing")
 		Eventually(func(g Gomega) {
 			status, message := verified(g)
 			g.Expect(status).To(Equal("False"))
-			expectMetricsServerFailing(g, message)
+			expectBaseComponentsFailing(g, message)
 		}).Should(Succeed())
 
-		installMetricsServer(ip)
+		installClusterBase(ip)
 
 		// The operator rechecks failing components every minute.
-		By("reporting metrics_server verified")
+		By("reporting metrics_server and kube_prometheus_stack verified")
 		Eventually(func(g Gomega) {
 			_, message := verified(g)
-			expectMetricsServerVerified(g, message)
+			expectBaseComponentsVerified(g, message)
 		}).WithTimeout(3 * time.Minute).Should(Succeed())
 	})
 })
