@@ -101,14 +101,19 @@ helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z
   -n ccluster-ip-system --create-namespace
 ```
 
-**The command line**, with Go or Python (the Python package includes the SDK), or from the
-binaries on each GitHub Release:
+**The command line**, from the binaries on each GitHub Release (Linux and macOS, amd64 and
+arm64):
 
 ```bash
-go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z
-# or
-pip install ccluster-py
+VERSION=X.Y.Z
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+curl -fsSL "https://github.com/NVIDIA/ccluster/releases/download/v${VERSION}/ccluster_${VERSION}_${OS}_${ARCH}.tar.gz" | tar -xz
+sudo install "ccluster_${VERSION}_${OS}_${ARCH}/ccluster" /usr/local/bin/
 ```
+
+`go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` works too, and
+`pip install ccluster-py` installs the Python SDK with its own `ccluster` command.
 
 [Installation](docs/installation.md) covers the chart options, upgrades and uninstalling.
 

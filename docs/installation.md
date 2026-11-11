@@ -93,7 +93,27 @@ The `ccluster` command registers infra-plane clusters with a control plane.
 
 ### Install
 
-Use one of:
+Download the binary for your platform, Linux or macOS on amd64 or arm64, from the
+[GitHub Release](https://github.com/NVIDIA/ccluster/releases):
+
+```bash
+VERSION=X.Y.Z
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+curl -fsSL "https://github.com/NVIDIA/ccluster/releases/download/v${VERSION}/ccluster_${VERSION}_${OS}_${ARCH}.tar.gz" | tar -xz
+sudo install "ccluster_${VERSION}_${OS}_${ARCH}/ccluster" /usr/local/bin/
+```
+
+The tarball also carries the license and third-party notices. The macOS binaries are not
+yet signed or notarized. `curl` does not quarantine what it downloads, so the commands
+above work, but macOS refuses to run a binary downloaded with a browser until its
+quarantine is cleared:
+
+```bash
+xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
+```
+
+Alternatively:
 
 ```bash
 # Go 1.21 or newer, which downloads the toolchain go.mod pins
@@ -103,23 +123,9 @@ go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z
 pip install ccluster-py
 ```
 
-or download `ccluster_X.Y.Z_<os>_<arch>.tar.gz` for Linux or macOS on amd64 or arm64 from
-the [GitHub Release](https://github.com/NVIDIA/ccluster/releases) and put the `ccluster`
-binary on your `PATH`. The Go and Python builds take the same subcommands, long flags and
-config file; the Python one also accepts the short forms `-cp` and `-ip`. Install only one:
-both are called `ccluster`, and the first on your `PATH` wins.
-
-The macOS binaries are not yet signed or notarized, so macOS refuses to run one downloaded
-with a browser. Download the tarball with `curl`, which does not quarantine it, or clear
-the quarantine before the first run:
-
-```bash
-curl -fsSL https://github.com/NVIDIA/ccluster/releases/download/vX.Y.Z/ccluster_X.Y.Z_darwin_arm64.tar.gz | tar -xz
-# or, after unpacking a browser download:
-xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
-```
-
-Use `darwin_amd64` on an Intel Mac.
+The Go and Python builds take the same subcommands, long flags and config file; the Python
+one also accepts the short forms `-cp` and `-ip`. Install only one: both are called
+`ccluster`, and the first on your `PATH` wins.
 
 ### Choose a control plane
 
