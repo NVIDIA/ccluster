@@ -21,7 +21,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	certmanagerv1 "github.com/NVIDIA/ccluster/internal/certmanager/v1"
+	certmanagerv1 "github.com/NVIDIA/ccluster/internal/api/certmanager/v1"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
 	"github.com/NVIDIA/ccluster/internal/manager"
 	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"

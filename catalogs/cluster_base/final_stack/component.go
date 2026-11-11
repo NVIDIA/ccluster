@@ -18,7 +18,7 @@ import (
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
-	certmanagerv1 "github.com/NVIDIA/ccluster/internal/certmanager/v1"
+	certmanagerv1 "github.com/NVIDIA/ccluster/internal/api/certmanager/v1"
 )
 
 const (
@@ -63,7 +63,7 @@ const ClusterIssuer = "acme-ca"
 // is not consulted.
 //
 // r must be able to read cert-manager.io/v1 ClusterIssuers: the operator's scheme
-// registers internal/certmanager/v1 and its ClusterRole grants get, list and watch.
+// registers internal/api/certmanager/v1 and its ClusterRole grants get, list and watch.
 func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	var issuer certmanagerv1.ClusterIssuer
 	if err := r.Get(ctx, client.ObjectKey{Name: ClusterIssuer}, &issuer); err != nil {

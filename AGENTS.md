@@ -15,7 +15,7 @@ This repository's conventions take precedence over generic kubebuilder scaffoldi
 | `api/ccluster/v1alpha1/` | CRD types; API group is `ccluster.nvidia.com`. |
 | `pkg/client/` | Generated Go clientset, apply configurations, listers and informers for the API types, for programs outside this repository and for the cp operator's infra-plane watch in `internal/remote/`; `test/client/` tests them. |
 | `pkg/cclclient/` | Hand-written high-level client on `pkg/client`, the Go counterpart of Python's `CCLClient`: registers infra planes and applies component sets in one namespace. |
-| `internal/argocd/v1alpha1/`, `internal/externaldns/v1alpha1/`, `internal/certmanager/v1/` | Hand-written partial Argo CD, external-dns and cert-manager API mirrors; extend them rather than using `unstructured`. |
+| `internal/argocd/v1alpha1/`, `internal/externaldns/v1alpha1/`, `internal/api/certmanager/v1/` | Hand-written partial Argo CD, external-dns and cert-manager API mirrors; extend them rather than using `unstructured`. |
 | `config/` → `charts/{cp,ip}/chart/` | Kustomize sources → generated operator Helm charts. Deploy with Helm. |
 | `catalogs/` | Helm charts with typed Go values, part of the Go module: `cluster_base/` platform components (each registered with a `Verifier` the ip operator runs), `deployments/` tenant workloads, `resources/` the queues and volumes they use. A chart that runs a binary built here keeps its source in a subdirectory, such as `deployments/compute_deployment/compute-ssh/`. |
 | `hack/pyschema/` → `python/` | CRD spec/status and chart values → JSON Schema → Pydantic package. |
