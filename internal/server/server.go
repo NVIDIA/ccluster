@@ -64,8 +64,6 @@ type Options struct {
 	Context string
 	// Version is the ccluster version shown in the UI.
 	Version string
-	// AllowedHosts, when set, are the only Host header names the server answers.
-	AllowedHosts []string
 	// UI is the files served besides the API. nil means the embedded build.
 	UI fs.FS
 	// Logger receives failed Kubernetes reads. nil means slog.Default().
@@ -117,7 +115,7 @@ func New(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, string(metav1.StatusReasonNotFound), "No API at "+r.URL.Path+".")
 	})
 	mux.HandleFunc("GET /", s.static)
-	return checkHost(opts.AllowedHosts, secureHeaders(mux))
+	return checkHost(LoopbackHosts, secureHeaders(mux))
 }
 
 func (s *server) config(w http.ResponseWriter, _ *http.Request) {

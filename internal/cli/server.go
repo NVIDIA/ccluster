@@ -112,12 +112,11 @@ func runServer(ctx context.Context, out, errOut io.Writer, opts serverOptions) e
 	}
 	srv := &http.Server{
 		Handler: server.New(server.Options{
-			Namespace:    opts.namespace,
-			Clientset:    clientset,
-			Context:      kubeContext,
-			Version:      Version(),
-			AllowedHosts: server.LoopbackHosts,
-			Logger:       slog.New(slog.NewTextHandler(errOut, nil)),
+			Namespace: opts.namespace,
+			Clientset: clientset,
+			Context:   kubeContext,
+			Version:   Version(),
+			Logger:    slog.New(slog.NewTextHandler(errOut, nil)),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

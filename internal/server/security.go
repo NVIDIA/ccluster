@@ -34,12 +34,8 @@ func secureHeaders(next http.Handler) http.Handler {
 // checkHost refuses a request whose Host header names none of hosts, compared without
 // the port and ignoring case. A page on another site that rebinds its own host name to
 // 127.0.0.1 can make the browser send requests here, but they still carry that site's
-// name, so this keeps it from reading the dashboard with the user's credentials. An empty
-// hosts accepts every request.
+// name, so this keeps it from reading the dashboard with the user's credentials.
 func checkHost(hosts []string, next http.Handler) http.Handler {
-	if len(hosts) == 0 {
-		return next
-	}
 	allowed := map[string]bool{}
 	for _, host := range hosts {
 		allowed[strings.ToLower(host)] = true

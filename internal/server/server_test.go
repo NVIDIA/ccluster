@@ -229,7 +229,7 @@ func TestServesTheEmbeddedBuild(t *testing.T) {
 }
 
 func TestSecurity(t *testing.T) {
-	handler, _ := newTestServer(t, Options{AllowedHosts: LoopbackHosts})
+	handler, _ := newTestServer(t, Options{})
 
 	recorder := get(t, handler, "/api/v1/config")
 	for header, want := range map[string]string{
