@@ -5,8 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 // Package dynamoplatform describes the values of catalogs/cluster_base/dynamo_platform:
 // the NVIDIA Dynamo operator, which serves the DynamoGraphDeployment the
-// catalogs/deployments/dynamo_deployment chart creates, with its NATS event plane and the
-// Grove gang scheduler. Install it before any dynamo_deployment.
+// catalogs/deployments/dynamo_deployment chart creates, with its NATS event plane. The
+// chart bundles the Grove gang scheduler but leaves it off, as the legacy platform's
+// production clusters do. Install it before any dynamo_deployment.
 package dynamoplatform
 
 import (
