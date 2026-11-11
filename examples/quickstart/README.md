@@ -16,7 +16,7 @@ It is deployed as two component sets, each rolled out in order:
 | [`python/examples/`](../../python/examples/) | The Python SDK, `pip install ccluster-py` | `register.py` | `deploy.py` |
 | [`go/`](go/) | The Go SDK, [`pkg/cclclient`](../../pkg/cclclient/) | `register/` | `deploy/` |
 | [`helm/`](helm/) | Helm charts that template the resources | `infraplane/` | `componentset/` with `dependencies-values.yaml`, `qwen-values.yaml` |
-| [`kubectl/`](kubectl/) | Plain manifests for a single cluster that registers itself, used by the [development setup](../../README.md#developing-ccluster) | `v1alpha1_cclinfraplane.yaml` | `v1alpha1_cclcomponentset.yaml` |
+| [`manifests/`](manifests/) | Plain manifests for a single cluster that registers itself, used by the [development setup](../../README.md#developing-ccluster) | `v1alpha1_cclinfraplane.yaml` | `v1alpha1_cclcomponentset.yaml` |
 
 ## Before you start
 

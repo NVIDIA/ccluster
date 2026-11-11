@@ -218,7 +218,7 @@ make load     # load the images into the kind clusters
 make deploy   # install each operator's chart into its cluster
 ```
 
-Then apply the [single-cluster examples](examples/quickstart/kubectl/), which register the
+Then apply the [single-cluster examples](examples/quickstart/manifests/), which register the
 control-plane cluster with itself, or build the CLI with `make build-cli` and register
 the infra-plane cluster:
 

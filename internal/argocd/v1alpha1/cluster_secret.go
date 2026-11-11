@@ -25,6 +25,6 @@ const (
 	// InClusterServer is the server URL Argo CD treats as its own cluster. A Secret
 	// naming it with no credentials of its own registers the cluster Argo CD and the
 	// control-plane operator run in: Argo CD connects with its own ServiceAccount. See
-	// examples/quickstart/kubectl/v1alpha1_cclinfraplane.yaml.
+	// examples/quickstart/manifests/v1alpha1_cclinfraplane.yaml.
 	InClusterServer = "https://kubernetes.default.svc"
 )

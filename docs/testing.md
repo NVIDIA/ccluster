@@ -95,7 +95,7 @@ each registered the way a user would register that kind of cluster:
 
 | Target | Cluster | Registration |
 | --- | --- | --- |
-| `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart/kubectl` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
+| `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart/manifests` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
 | `ex-cluster` | infra plane | `ccluster register`, the CLI built from `cmd/ccluster` by `BeforeSuite`: a cluster-admin token and the cluster's CA, with the server on kind's Docker network (`https://<cluster>-control-plane:6443`). |
 
 To run a spec against both, generate it in a `for _, t := range targets()` loop, register with

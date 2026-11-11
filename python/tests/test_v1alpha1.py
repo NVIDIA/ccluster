@@ -22,7 +22,7 @@ from ccluster.v1alpha1.cclcomponentset import (
 from ccluster.v1alpha1.cclinfraplane import CCLInfraPlaneSpec, CCLInfraPlaneStatus
 from ccluster.v1alpha1.cclinfraplane import LocalObjectReference as InfraPlaneRef
 
-EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "quickstart" / "kubectl"
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "quickstart" / "manifests"
 
 
 def dump(model):

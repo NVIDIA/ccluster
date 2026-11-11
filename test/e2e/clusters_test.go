@@ -47,7 +47,7 @@ type target struct {
 
 // targets are the two clusters every infra-plane spec runs against:
 //   - in-cluster: the control-plane cluster registered with itself, credential-free, as
-//     examples/quickstart/kubectl does. Argo CD and the cp operator each use their own
+//     examples/quickstart/manifests does. Argo CD and the cp operator each use their own
 //     ServiceAccount.
 //   - ex-cluster: the separate infra-plane cluster, registered with `ccluster register`,
 //     which gives it a cluster-admin token and its CA, reached over Kind's Docker
@@ -76,7 +76,7 @@ func credentialsSecretName(planeName string) string {
 // registerInCluster registers the control-plane cluster with itself as planeName in ns.
 // The server must be exactly https://kubernetes.default.svc, with no credentials, for
 // Argo CD to connect with its own ServiceAccount; the cp operator does the same with
-// its own. See examples/quickstart/kubectl/v1alpha1_cclinfraplane.yaml.
+// its own. See examples/quickstart/manifests/v1alpha1_cclinfraplane.yaml.
 func registerInCluster(ns, planeName string) {
 	GinkgoHelper()
 
