@@ -1267,7 +1267,7 @@ type: kubernetes.io/service-account-token
 			// CD actually cloning the catalog, installing the chart, and the operator
 			// reading Application health back. Only this container has real Argo CD
 			// (see its BeforeAll). This spec runs once per target - the control-plane
-			// cluster registered with itself, as examples/quickstart documents, and the
+			// cluster registered with itself, as examples/quickstart/kubectl documents, and the
 			// separate cluster registered with `ccluster register`, which Argo CD reaches
 			// over the network - and drives one catalog component all the way to
 			// Healthy/Synced, which is what `make test-e2e-argocd` never actually did
@@ -1388,7 +1388,7 @@ type: kubernetes.io/service-account-token
 			// next. Both are proven only against hand-written status in envtest today;
 			// this spec drives the same two invariants against a real Argo CD
 			// reconciling two real components (matching
-			// examples/quickstart/v1alpha1_cclcomponentset.yaml), combined into one spec so the
+			// examples/quickstart/kubectl/v1alpha1_cclcomponentset.yaml), combined into one spec so the
 			// suite pays for one KEDA + argo-rollouts image pull cycle per target, on each
 			// target's node.
 			for _, t := range targets() {
@@ -2265,7 +2265,7 @@ func applyCCLComponentSet(name, planeName string) {
 }
 
 // applyOrderedCCLComponentSet creates a two-component CCLComponentSet (argo-rollouts then
-// keda) targeting planeName, matching examples/quickstart/v1alpha1_cclcomponentset.yaml.
+// keda) targeting planeName, matching examples/quickstart/kubectl/v1alpha1_cclcomponentset.yaml.
 func applyOrderedCCLComponentSet(name, planeName string) {
 	GinkgoHelper()
 	applyManifest("cclcomponentset_ordered.yaml", map[string]string{

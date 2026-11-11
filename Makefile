@@ -594,10 +594,10 @@ BASE_DOMAIN ?= example.com
 # repo-server clones the repository itself, so the revision must be pushed.
 CATALOG_REPO_URL ?= https://github.com/NVIDIA/ccluster
 CATALOG_REVISION ?= main
-# Argo CD clones the catalog anonymously unless told otherwise, and GitHub answers a
-# private repository with "authentication required: Repository not found". Set
-# GITHUB_TOKEN (a token with read access to CATALOG_REPO_URL; in GitHub Actions the
-# built-in one) and deploy-cp registers the catalog as an Argo CD repository with that
+# Argo CD clones the catalog anonymously unless told otherwise, which is all the public
+# catalog needs. A private fork is answered with "authentication required: Repository not
+# found": set GITHUB_TOKEN (a token with read access to CATALOG_REPO_URL; in GitHub Actions
+# the built-in one) and deploy-cp registers the catalog as an Argo CD repository with that
 # credential, through the argo-cd chart's configs.repositories. Empty means anonymous.
 #
 # The token is expanded by the recipe's shell ($$GITHUB_TOKEN, exported below) rather than

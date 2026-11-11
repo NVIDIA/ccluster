@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: ccluster-componentset
+description: Deploys an ordered set of CCluster catalog charts onto registered clusters. The release name is the set's name.
+type: application
+version: 0.1.0
+home: https://github.com/NVIDIA/ccluster

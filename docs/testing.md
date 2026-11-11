@@ -95,7 +95,7 @@ each registered the way a user would register that kind of cluster:
 
 | Target | Cluster | Registration |
 | --- | --- | --- |
-| `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
+| `in-cluster` | control plane | A credential-free Secret for `https://kubernetes.default.svc`, as `examples/quickstart/kubectl` does. Argo CD and the cp operator each use their own ServiceAccount, which covers the cp role's `cclclusterconfigs` rule. |
 | `ex-cluster` | infra plane | `ccluster register`, the CLI built from `cmd/ccluster` by `BeforeSuite`: a cluster-admin token and the cluster's CA, with the server on kind's Docker network (`https://<cluster>-control-plane:6443`). |
 
 To run a spec against both, generate it in a `for _, t := range targets()` loop, register with
@@ -114,7 +114,7 @@ ex-cluster target, which is registered before the infra-plane operator is instal
 and gets it only once the plane reports `CRDMissing`.
 
 The full tier pulls real images and waits for Argo CD convergence. Argo CD clones the
-catalog over the network; a private repository needs `GITHUB_TOKEN`, as with deployment.
+catalog over the network; a private fork needs `GITHUB_TOKEN`, as with deployment.
 The full tier can also be selected with `make test-e2e E2E_FULL=true`. CI runs it for PRs
 labelled `release`; other applicable PRs run the quick tier.
 

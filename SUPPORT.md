@@ -27,7 +27,7 @@ manner.
 
 ## What is in scope
 
-Support covers the `catalog` package and the bundled Helm charts/schemas in this
-repository. The upstream projects wrapped by `cluster_base` (Istio,
+Support covers what this repository publishes: the operators and their Helm charts, the
+`ccluster` command line, the Python and Go SDKs, and the catalog charts under `catalogs/`. The upstream projects wrapped by `cluster_base` (Istio,
 cert-manager, GPU Operator, etc.) are maintained by their respective
 communities — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

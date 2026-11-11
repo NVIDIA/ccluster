@@ -112,7 +112,7 @@ from kubernetes.config import new_client_from_config
 client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-`examples/create_infraplane.py` is the same as a command. The call returns once the
+[`examples/quickstart/python/register.py`](../examples/quickstart/python/register.py) is the same as a command. The call returns once the
 objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
 has marked the plane `Available`.
 
@@ -195,14 +195,14 @@ then uninstalls the set's charts in reverse order, one at a time, so the object 
 `CCLInfraPlane`s stay. `kubectl get cclcomponentset -n <namespace>` shows each set's
 `Progress` column, which carries the `Progressing` condition's reason, and when a deleted
 one has disappeared.
-`examples/create_component_set.py` is the same as a command.
+[`examples/quickstart/python/deploy.py`](../examples/quickstart/python/deploy.py) deploys an inference service the same way.
 
 ## Command line
 
 The package installs a `ccluster` command, built on click. Run without a subcommand, it
 prints its usage. A Go build of the same command, taking the same long flags but not
 `-cp` and `-ip`, is also released; see
-[the main README](https://github.com/NVIDIA/ccluster#command-line). Both read the same
+[Installation: command line](https://github.com/NVIDIA/ccluster/blob/main/docs/installation.md#command-line). Both read the same
 config file, but install only one of them: the two are both called `ccluster`, and the
 first on your `PATH` wins.
 
@@ -271,7 +271,7 @@ value stays `null`, which Helm reads as "remove this default":
 its null.
 
 `ccluster/__init__.py`, `ccluster/client.py` (`CCLClient`), `ccluster/cli.py` (the `ccluster`
-command), `ccluster/catalogs/__init__.py` (`entry`, `component`), `examples/` and `tests/` are hand-written.
+command), `ccluster/catalogs/__init__.py` (`entry`, `component`) and `tests/` are hand-written.
 
 ## Regenerating
 

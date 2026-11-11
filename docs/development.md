@@ -1,6 +1,6 @@
 # Development mechanics
 
-Start with the [README local loop](../README.md#local-development) and
+Start with the [README development section](../README.md#developing-ccluster) and
 [agent guide](../AGENTS.md). Read [DESIGN.md](../DESIGN.md) before changing controller
 behaviour. Test selection is in [Testing](testing.md); image and CI contracts are in
 [Build and release](build-and-release.md).
@@ -305,7 +305,7 @@ required check on pull requests.
 
 ## Cluster operations
 
-Use the [README](../README.md#local-development) for initial setup. `make init`, `build`,
+Use the [README](../README.md#developing-ccluster) for initial setup. `make init`, `build`,
 `load` and `deploy` drive both operators; their `-cp` / `-ip` halves target one operator.
 `build-cp` and `build-ip` build binaries; `docker-build-cp` and `docker-build-ip` build images.
 `make help` lists the remaining targets.
@@ -340,7 +340,7 @@ the host-manager loop with `make run-cp`, where no chart is installed.
 intentionally absent. The operator looks for Argo CD in its own namespace unless
 `--argocd-namespace` is set: pass an existing Argo CD's namespace as `ARGOCD_NAMESPACE`.
 `make run-cp` has no namespace of its own and uses `ARGOCD_NAMESPACE`, or `argocd`. The operator must tolerate the Application CRD being absent at
-startup. Argo CD clones `CATALOG_REPO_URL` itself; a private catalog requires credentials,
+startup. Argo CD clones `CATALOG_REPO_URL` itself; a private fork of the catalog requires credentials,
 provided through `GITHUB_TOKEN` to `make deploy-cp`. Missing credentials surface as
 Application comparison errors. Use `CATALOG_REVISION` to select the catalog commit or tag.
 

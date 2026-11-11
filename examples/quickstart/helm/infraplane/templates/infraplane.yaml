@@ -1,0 +1,27 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+{{- $config := dict "tlsClientConfig" (dict "insecure" false) -}}
+{{- with .Values.bearerToken }}{{ $_ := set $config "bearerToken" (trim .) }}{{ end -}}
+{{- with .Values.caCert }}{{ $_ := set $config.tlsClientConfig "caData" (b64enc .) }}{{ end -}}
+# The cluster's credentials, in Argo CD's cluster Secret shape. The control plane copies
+# them to Argo CD, so whoever can read this Secret can reach the cluster as its token can.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-credentials
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  server: {{ .Values.server | default "https://kubernetes.default.svc" | quote }}
+  config: {{ toJson $config | quote }}
+---
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLInfraPlane
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterCredentialsRef:
+    name: {{ .Release.Name }}-credentials

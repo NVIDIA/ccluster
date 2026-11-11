@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A basic inference service: Hugging Face's text-embeddings-inference serving
+# BAAI/bge-small-en-v1.5 on CPU, at https://embeddings.nginx.<domain>. Deploy it once the
+# platform set has rolled out:
+#
+#   helm install embeddings ./componentset -n team-a -f embeddings-values.yaml \
+#     --set infraPlane=edge-1 \
+#     --set domain=$(kubectl get cclinfraplane edge-1 -n team-a -o jsonpath='{.status.domain}')
+components:
+  - name: embeddings
+    chart: catalogs/deployments/inference_deployment
+    namespace: embeddings
+    values:
+      name: embeddings
+      deploymentId: embeddings
+      imageUrl: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+      args: ["--model-id", "BAAI/bge-small-en-v1.5", "--port", "8080"]
+      containerPort: 8080
+      healthcheck: /health
+      domain: '{{ required "set domain" .Values.domain }}'
+      resources:
+        limits: {cpu: "2", memory: 4Gi}
+        requests: {cpu: "2", memory: 4Gi}
+      # The default scheduler: this example installs no kai-scheduler.
+      schedulerName: ""

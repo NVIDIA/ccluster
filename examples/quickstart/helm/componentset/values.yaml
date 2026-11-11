@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Install into the namespace the cluster is registered in, with a values file listing
+# the components:
+#
+#   helm install platform ./componentset -n team-a -f platform-values.yaml \
+#     --set infraPlane=edge-1
+
+# Name of the registered cluster every component deploys to, unless the component
+# names its own infraPlane.
+infraPlane: ""
+# The cluster's domain, for components whose values need it. A component's values are
+# rendered as a template, so they can use it as '{{ .Values.domain }}'. The registered
+# cluster shows it: kubectl get cclinfraplane <name> -n <namespace> -o jsonpath='{.status.domain}'
+domain: ""
+# The components, rolled out in this order. Each has:
+#   name:       unique within the set
+#   chart:      the chart's path in the catalog repository, such as
+#               catalogs/cluster_base/keda
+#   namespace:  the namespace on the cluster to install it into
+#   values:     the chart's values (optional)
+#   infraPlane: the cluster to deploy it to (optional; default infraPlane above)
+components: []

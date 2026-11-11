@@ -45,7 +45,8 @@ _FIELD_MANAGER = "ccluster"
 
 # Argo CD special-cases this exact server URL: it connects with its own ServiceAccount
 # rather than anything in the Secret's "config", so no token or CA is needed to register
-# the cluster the operator itself runs in. See examples/quickstart/v1alpha1_cclinfraplane.yaml.
+# the cluster the operator itself runs in.
+# See examples/quickstart/kubectl/v1alpha1_cclinfraplane.yaml.
 _IN_CLUSTER_SERVER = "https://kubernetes.default.svc"
 
 

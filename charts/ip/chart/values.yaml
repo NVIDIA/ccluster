@@ -35,8 +35,8 @@ manager:
     - --leader-elect
 
   ## Image pull secrets, rendered as the pod's imagePullSecrets when non-empty.
-  ## The ghcr.io/nvidia operator images are private, so anything outside GitHub
-  ## Actions needs one:
+  ## The released ghcr.io/nvidia images are public and need none; set one to pull
+  ## from a private registry, such as a fork's:
   ##
   ## imagePullSecrets:
   ##   - name: ghcr-credentials
