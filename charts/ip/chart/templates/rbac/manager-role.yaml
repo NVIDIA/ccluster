@@ -74,3 +74,11 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - kai.scheduler
+  resources:
+  - configs
+  verbs:
+  - get
+  - list
+  - watch
