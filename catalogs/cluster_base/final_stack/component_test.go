@@ -23,7 +23,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	certmanagerv1 "github.com/NVIDIA/ccluster/internal/certmanager/v1"
+	certmanagerv1 "github.com/NVIDIA/ccluster/internal/api/certmanager/v1"
 )
 
 func scheme(t *testing.T) *runtime.Scheme {
