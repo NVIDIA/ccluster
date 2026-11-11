@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The cert_manager Verifier checks that the webhook is registered, has its CA bundle and
+# is served, which one replica of each component shows as well as two.
+cert-manager:
+  replicaCount: 1
+  webhook:
+    replicaCount: 1
+  cainjector:
+    replicaCount: 1

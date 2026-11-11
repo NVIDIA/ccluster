@@ -75,7 +75,7 @@ type Registry struct {
 func Get() *Registry {
 	r := &Registry{}
 	r.Register(argorollouts.Chart, argorollouts.Verify)
-	r.Register(certmanager.Chart, alwaysVerified)
+	r.Register(certmanager.Chart, certmanager.Verify)
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
