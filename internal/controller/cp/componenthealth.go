@@ -22,7 +22,8 @@ import (
 
 const (
 	// readTimeout limits how long one component's reads take: the tree, and the reads
-	// of its chart's health function. The rollout waits for them, so it is short.
+	// of its chart's health function. The rollout waits for them, so it is short, and
+	// all the reads of one rollout pass share it.
 	readTimeout = 10 * time.Second
 
 	// maxHealthMessage limits the length of a health message.
@@ -31,8 +32,8 @@ const (
 
 // judgeAll judges the component that each of applications deploys, all at the same time,
 // so a pass waits for at most one readTimeout. applications is keyed by Application name,
-// the result by component name. Both controllers use it: ComponentHealthReconciler
-// reports the result, and the rollout judges again before it releases the next component.
+// the result by component name. ComponentHealthReconciler reports what it returns. The
+// rollout judges in order instead, see judgeUntilUnfinished.
 //
 // A component removed from the spec has no spec entry, so no chart to look a function up
 // by, and is judged by catalogs.DefaultHealth.
@@ -171,4 +172,15 @@ func (h componentHealths) of(component string, application *argocdv1alpha1.Appli
 		return health
 	}
 	return catalogs.Health{Status: catalogs.FromArgoCD(application.HealthStatus())}
+}
+
+// treeUnread reports whether any health was judged without its resource tree. A pass
+// that runs out of its deadline shows it the same way, on the next tree it tries to read.
+func (h componentHealths) treeUnread() bool {
+	for _, health := range h {
+		if health.Reason == cclusternvidiacomv1alpha1.ComponentHealthReasonResourceTreeUnavailable {
+			return true
+		}
+	}
+	return false
 }

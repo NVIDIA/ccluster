@@ -184,16 +184,16 @@ func (r *CCLComponentSetReconciler) finished(
 	application *argocdv1alpha1.Application,
 	healths componentHealths,
 ) bool {
-	return r.syncedCurrentSpec(componentSet, component, application) &&
+	return r.currentSpecSynced(componentSet, component, application) &&
 		healthy(healths.of(component.Name, application).Status)
 }
 
-// syncedCurrentSpec reports whether Argo CD has synced the current spec, not only
+// currentSpecSynced reports whether Argo CD has synced the current spec, not only
 // whether sync status is Synced. That means four things: the Application has the spec
 // the operator writes, Argo CD compared that spec, no operation runs, and the last sync
 // of that spec did not fail. Argo CD leaves hooks out of sync status, so a running
 // operation, such as a PostSync hook, also means not yet.
-func (r *CCLComponentSetReconciler) syncedCurrentSpec(
+func (r *CCLComponentSetReconciler) currentSpecSynced(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	component cclusternvidiacomv1alpha1.ComponentSpec,
 	application *argocdv1alpha1.Application,

@@ -6,5 +6,5 @@
 
 ### Changed
 - The cp operator skips the `CCLComponentSet` status write when the status is unchanged,
-  such as after an Argo CD Application refresh that changes nothing the status reports.
-  This saves one API request per such reconcile.
+  such as after an Application event that changes nothing the status reports. This saves
+  one API request per such reconcile.

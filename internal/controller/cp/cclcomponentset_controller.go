@@ -19,11 +19,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
@@ -70,6 +73,12 @@ const (
 	// watch event brings it back. The queue keeps one entry per object at its earliest
 	// time, so the event and this requeue make one pass unless the event never comes.
 	statusConflictRetryInterval = 500 * time.Millisecond
+
+	// treeRetryInterval brings back a pass that judged a component without its resource
+	// tree. A later read may judge it differently, and no event need say so: applicationChanged
+	// drops Argo CD's refresh, and ComponentHealthReconciler writes only when its own
+	// verdict changes.
+	treeRetryInterval = 30 * time.Second
 )
 
 // CCLComponentSetReconciler reconciles a CCLComponentSet object
@@ -120,10 +129,11 @@ type CCLComponentSetReconciler struct {
 //     finished, the Application of one component no longer in the spec is deleted.
 //     Reported as the ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
-//     written and to report where the rollout has got to. A component Argo CD has
-//     synced is judged healthy or not by its chart's health function, afresh on each
-//     pass. Reported as the Progressing condition and status.componentSyncStatuses, on
-//     every pass, including one that stopped at step 1 or 2.
+//     written and to report where the rollout has got to. Components are judged by their
+//     charts' health functions, afresh on each pass, in spec order up to the first that
+//     has not finished (judgeUntilUnfinished). Reported as the Progressing condition and
+//     status.componentSyncStatuses, on every pass, including one that stopped at step 1
+//     or 2.
 //
 // Ordering is enforced by withholding a component's current spec, on release and on
 // update, until everything before it has finished - see applyComponents - rather than by an
@@ -170,7 +180,7 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	applications := liveApplications(all)
 	prunable := prunableApplications(&componentSet, all)
-	healths := r.judgeSynced(ctx, &componentSet, applications)
+	healths := r.judgeUntilUnfinished(ctx, &componentSet, applications)
 	statusBase := componentSet.DeepCopy()
 
 	var conditions []metav1.Condition
@@ -225,6 +235,9 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{RequeueAfter: statusConflictRetryInterval}, nil
 		}
 	}
+	if retryErr == nil && healths.treeUnread() {
+		return ctrl.Result{RequeueAfter: treeRetryInterval}, nil
+	}
 	return ctrl.Result{}, retryErr
 }
 
@@ -277,22 +290,32 @@ func (r *CCLComponentSetReconciler) applyComponents(
 	return condition(cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied, status, reason, message), retryErr
 }
 
-// judgeSynced judges the released components that Argo CD has synced to the current
-// spec. It never reads status.componentHealthStatuses, which may predate this pass's
-// Applications. See DESIGN.md §7, "Component health".
-func (r *CCLComponentSetReconciler) judgeSynced(
+// judgeUntilUnfinished judges components in spec order and stops at the first that is not
+// finished, because applyComponents and rolloutStatus look no further. All its reads
+// share one readTimeout, so a hung argocd-server holds a pass for at most that long. It
+// never reads status.componentHealthStatuses, which may predate this pass's Applications.
+// See DESIGN.md §7, "Component health".
+func (r *CCLComponentSetReconciler) judgeUntilUnfinished(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
 ) componentHealths {
-	synced := make(map[string]*argocdv1alpha1.Application)
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	healths := componentHealths{}
 	for _, component := range componentSet.Spec.Components {
-		name := applicationName(componentSet.Name, component.Name)
-		if r.syncedCurrentSpec(componentSet, component, applications[name]) {
-			synced[name] = applications[name]
+		application := applications[applicationName(componentSet.Name, component.Name)]
+		if !r.currentSpecSynced(componentSet, component, application) {
+			break
+		}
+		health := judge(ctx, r.ArgoCD, r.Health, application, component.ComponentEntry)
+		healths[component.Name] = health
+		if !healthy(health.Status) {
+			break
 		}
 	}
-	return judgeAll(ctx, r.ArgoCD, r.Health, componentSet, synced)
+	return healths
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
@@ -398,10 +421,11 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 // completion computed for older input. A conflict is returned for Reconcile to requeue; a
 // missing object has no status left to record.
 //
-// Skipping an unchanged status matters because every Application status write, Argo CD's
-// periodic refresh included, brings the CCLComponentSet back. A skipped write is safe
-// against a stale read: a newer CCLComponentSet has its own watch event, and that pass
-// compares against the newer status.
+// Skipping an unchanged status matters because every Application update that
+// applicationChanged lets through, and every componentHealthStatuses write, brings the
+// CCLComponentSet back. A skipped write is safe against a stale read: a newer
+// CCLComponentSet has its own watch event, and that pass compares against the newer
+// status.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -463,13 +487,35 @@ func componentSetForApplication(_ context.Context, obj client.Object) []reconcil
 	}}
 }
 
+// applicationChanged drops an Application update that changes no field the operator
+// decodes, such as Argo CD's periodic refresh, which writes status.reconciledAt.
+// Without it, every refresh of every Application makes both controllers judge its
+// CCLComponentSet again. The Application types here leave out the fields the operator
+// does not read, so the decoded objects compare equal after such an update.
+var applicationChanged = predicate.Funcs{
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		return !equality.Semantic.DeepEqual(withoutWriteMetadata(e.ObjectOld), withoutWriteMetadata(e.ObjectNew))
+	},
+}
+
+// withoutWriteMetadata returns a copy of obj without the metadata that every write changes.
+// That includes generation: the Application CRD has no status subresource, so the API
+// server moves generation on status writes too.
+func withoutWriteMetadata(obj client.Object) client.Object {
+	obj = obj.DeepCopyObject().(client.Object)
+	obj.SetResourceVersion("")
+	obj.SetGeneration(0)
+	obj.SetManagedFields(nil)
+	return obj
+}
+
 // SetupWithManager sets up the controller with the Manager.
 //
 // Every CCLComponentSet update triggers it, status updates included. Keep it without a
 // predicate: ComponentHealthReconciler's status write is what wakes the rollout when
 // health changes but no Application field does.
 func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	builder := ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{}).
 		Watches(&cclusternvidiacomv1alpha1.CCLInfraPlane{},
 			handler.EnqueueRequestsFromMapFunc(r.componentSetsForInfraPlane)).
@@ -491,11 +537,12 @@ func (r *CCLComponentSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// installed for a rollout to progress past its first wave. That is the same
 	// restart the chart performs when it installs both together.
 	if argoCDKindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclcomponentset"), "Application") {
-		builder = builder.Watches(&argocdv1alpha1.Application{},
-			handler.EnqueueRequestsFromMapFunc(componentSetForApplication))
+		b = b.Watches(&argocdv1alpha1.Application{},
+			handler.EnqueueRequestsFromMapFunc(componentSetForApplication),
+			builder.WithPredicates(applicationChanged))
 	}
 
-	return builder.Named("cclcomponentset").Complete(r)
+	return b.Named("cclcomponentset").Complete(r)
 }
 
 // argoCDKindInstalled reports whether the API server currently serves the named Argo CD

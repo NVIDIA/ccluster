@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,7 +22,8 @@ import (
 
 // fakeArgoCD is an ArgoCDServer over a fixed tree, objects and events. Objects and
 // events are keyed by "Kind/name". treeErr fails ResourceTree; readErr fails the other
-// reads. It records each Application it read from, one entry per request.
+// reads. It records each Application it read from, one entry per request, and the
+// deadline of each tree read.
 type fakeArgoCD struct {
 	tree    apiclient.ResourceTree
 	objects map[string]*unstructured.Unstructured
@@ -29,15 +31,18 @@ type fakeArgoCD struct {
 	treeErr error
 	readErr error
 
-	mu    sync.Mutex
-	trees []apiclient.ApplicationRef
-	reads []apiclient.ApplicationRef
+	mu        sync.Mutex
+	trees     []apiclient.ApplicationRef
+	deadlines []time.Time
+	reads     []apiclient.ApplicationRef
 }
 
-func (f *fakeArgoCD) ResourceTree(_ context.Context, app apiclient.ApplicationRef) (*apiclient.ResourceTree, error) {
+func (f *fakeArgoCD) ResourceTree(ctx context.Context, app apiclient.ApplicationRef) (*apiclient.ResourceTree, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.trees = append(f.trees, app)
+	deadline, _ := ctx.Deadline()
+	f.deadlines = append(f.deadlines, deadline)
 	if f.treeErr != nil {
 		return nil, f.treeErr
 	}
@@ -76,6 +81,13 @@ func (f *fakeArgoCD) treesRead() []apiclient.ApplicationRef {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]apiclient.ApplicationRef(nil), f.trees...)
+}
+
+// treeDeadlines returns the deadline of each tree read.
+func (f *fakeArgoCD) treeDeadlines() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Time(nil), f.deadlines...)
 }
 
 // objectsRead returns the Application of each object or events read.
