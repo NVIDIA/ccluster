@@ -19,8 +19,9 @@ const (
 )
 
 // Well-known cniBinDir values. The chart's default is CNIBinDirDefault; other node
-// images need theirs set explicitly, and getting it wrong breaks sidecar networking in
-// ways that only show up when a workload is scheduled.
+// images need theirs set explicitly. A wrong path keeps istio-cni-node unready or,
+// for a directory the container runtime never scans, breaks pod networking only once
+// a workload is scheduled.
 const (
 	// CNIBinDirK3s is where k3s embeds its CNI plugins. containerd looks for them
 	// there, so istio-cni must install its binary alongside them.
@@ -96,15 +97,16 @@ type IstioCNI struct {
 
 // CNI is where istio-cni writes its plugin binary and configuration. These are the only
 // values in this chart that must be tuned per cluster: the chart's defaults are the
-// standard paths, and the correct paths depend on the node image. See the CNIBinDir and
-// CNIConfDir constants.
+// standard paths, and the correct paths depend on the node image.
 type CNI struct {
-	// CNIConfDir is the CNI configuration directory. The chart ships
-	// CNIConfDirDefault; use CNIConfDirK3s on k3s.
+	// CNIConfDir is the CNI configuration directory. The chart ships /etc/cni/net.d
+	// (CNIConfDirDefault); k3s needs /var/lib/rancher/k3s/agent/etc/cni/net.d
+	// (CNIConfDirK3s).
 	CNIConfDir *string `json:"cniConfDir,omitempty"`
 
-	// CNIBinDir is the CNI binary directory. The chart ships CNIBinDirDefault; use
-	// CNIBinDirGKE on GKE COS and CNIBinDirK3s on k3s.
+	// CNIBinDir is the CNI binary directory. The chart ships /opt/cni/bin
+	// (CNIBinDirDefault); GKE COS needs /home/kubernetes/bin (CNIBinDirGKE) and k3s
+	// /var/lib/rancher/k3s/data/cni (CNIBinDirK3s).
 	CNIBinDir *string `json:"cniBinDir,omitempty"`
 }
 

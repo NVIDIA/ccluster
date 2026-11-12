@@ -14,8 +14,7 @@ class CNI(BaseModel):
     """
     CNI is where istio-cni writes its plugin binary and configuration. These are the only
     values in this chart that must be tuned per cluster: the chart's defaults are the
-    standard paths, and the correct paths depend on the node image. See the CNIBinDir and
-    CNIConfDir constants.
+    standard paths, and the correct paths depend on the node image.
     """
 
     model_config = ConfigDict(
@@ -24,13 +23,15 @@ class CNI(BaseModel):
     )
     cni_conf_dir: Annotated[str | None, Field(alias="cniConfDir")] = None
     """
-    CNIConfDir is the CNI configuration directory. The chart ships
-    CNIConfDirDefault; use CNIConfDirK3s on k3s.
+    CNIConfDir is the CNI configuration directory. The chart ships /etc/cni/net.d
+    (CNIConfDirDefault); k3s needs /var/lib/rancher/k3s/agent/etc/cni/net.d
+    (CNIConfDirK3s).
     """
     cni_bin_dir: Annotated[str | None, Field(alias="cniBinDir")] = None
     """
-    CNIBinDir is the CNI binary directory. The chart ships CNIBinDirDefault; use
-    CNIBinDirGKE on GKE COS and CNIBinDirK3s on k3s.
+    CNIBinDir is the CNI binary directory. The chart ships /opt/cni/bin
+    (CNIBinDirDefault); GKE COS needs /home/kubernetes/bin (CNIBinDirGKE) and k3s
+    /var/lib/rancher/k3s/data/cni (CNIBinDirK3s).
     """
 
 

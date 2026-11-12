@@ -51,7 +51,9 @@ istio-cni:
     #   k3s/k3d:   cniConfDir=/var/lib/rancher/k3s/agent/etc/cni/net.d and
     #              cniBinDir=/var/lib/rancher/k3s/data/cni, where k3s keeps
     #              its CNI configuration and plugins.
-    # With the wrong paths istio-cni-node never becomes ready.
+    # A wrong path keeps istio-cni-node unready or, for a cniBinDir the
+    # container runtime never scans, breaks pod networking only once a
+    # workload is scheduled.
     cniConfDir: /etc/cni/net.d
     cniBinDir: /opt/cni/bin
     # When a pod (e.g. ingress-nginx) is scheduled onto a node before
