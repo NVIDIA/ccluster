@@ -81,10 +81,99 @@ The operator then needs a read-only Argo CD account and an API token; see
 
 ### DNS
 
-The operator writes a DNS record request for each registered cluster's load balancers, such
-as `*.nginx.<cluster domain>` for its ingress. Nothing is published unless the chart's
-bundled external-dns is enabled and configured for your DNS provider and zone; see
-[Development: DNS and external-dns](development.md#dns-and-external-dns).
+The operator writes a DNSEndpoint for each registered cluster. It asks for
+`*.<lb>.<cluster domain>` to point at each of the cluster's LoadBalancer Services labelled
+`ccluster.nvidia.com/loadbalancer: <lb>`, such as `*.nginx.<cluster domain>` at its ingress.
+The chart's bundled [external-dns](https://github.com/kubernetes-sigs/external-dns)
+publishes these records. It is disabled by default, and without it nothing is published.
+
+Create a DNS zone for the base domain at your DNS provider and delegate it from its parent
+zone. Then put the provider, the zone and the credentials in a values file:
+
+```yaml
+# dns-values.yaml
+external-dns:
+  enabled: true
+  provider:
+    name: <provider>        # such as aws, azure, google or cloudflare
+  domainFilters:
+    - planes.example.com    # the base domain
+  # Credentials, in the form the provider's tutorial gives: for example a ServiceAccount
+  # annotation for workload identity, or environment variables from a Secret.
+  serviceAccount:
+    annotations: {}
+  env: []
+```
+
+external-dns's [tutorials](https://github.com/kubernetes-sigs/external-dns/tree/master/docs/tutorials)
+give each provider's name and credentials, and its chart's
+[Providers](https://github.com/kubernetes-sigs/external-dns/blob/master/charts/external-dns/README.md#providers)
+section maps them to chart values. Put those values under `external-dns:`, and always set
+`provider.name`, which defaults to `aws`. external-dns runs as the ServiceAccount
+`ccluster-cp-external-dns` in the release namespace; a provider that trusts a ServiceAccount
+by name must trust this one. [Development: DNS and external-dns](development.md#dns-and-external-dns)
+has a Route53 example with IRSA and its IAM policy. The chart already sets `sources`,
+`namespaced` and `txtOwnerId`, so that external-dns publishes only the operator's
+DNSEndpoints and deletes only records it created.
+
+**New install.** Add the values file to the `helm install` above:
+
+```bash
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
+  -n ccluster-cp-system --create-namespace \
+  --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com \
+  -f dns-values.yaml
+```
+
+**Installed release.** Helm installs a chart's CRDs only with the release, and not those of
+a disabled dependency, so the release has no DNSEndpoint CRD yet. Apply it from the chart,
+upgrade, then restart the operator:
+
+```bash
+CHART_DIR=$(mktemp -d)
+helm pull oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z --untar --untardir "$CHART_DIR"
+kubectl apply -f "$CHART_DIR/ccluster-cp/charts/external-dns/crds/"
+helm upgrade ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
+  -n ccluster-cp-system --reuse-values -f dns-values.yaml
+kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
+```
+
+This upgrade only enables external-dns on the installed version: `X.Y.Z` is the version
+`helm list -n ccluster-cp-system` shows. Do not change the version in the same step: with
+`--reuse-values` a newer chart would keep the old catalog revision. Upgrade the version
+separately, as [Control plane](#control-plane) describes. The operator
+watches DNSEndpoints only if their CRD existed when it started. Without the restart it
+misses external-dns reading the DNSEndpoint, and `DNSReady` stays `Pending` until the next
+resync, after `CCLUSTER_INFRAPLANE_RESYNC_PERIOD` (default 5m), or for good if that is 0.
+
+**Check.** The `DNS` column turns `True` once external-dns has read a cluster's DNSEndpoint:
+
+```bash
+kubectl get cclinfraplane -A
+```
+
+Until then, `kubectl describe cclinfraplane <name> -n <namespace>` gives the `DNSReady`
+reason: `LoadBalancerPending` until the cluster has a labelled LoadBalancer with an
+address, `DNSEndpointCRDMissing` without the CRD, and `Pending` until external-dns reads the
+DNSEndpoint.
+
+`True` (`Published`) does not mean the records were written. external-dns marks a
+DNSEndpoint read before it calls the provider, and reports a rejected or skipped record
+only in its logs ([#174](https://github.com/NVIDIA/ccluster/issues/174)). Resolve a name
+under the record, and read the logs if it does not resolve:
+
+```bash
+dig +short test.nginx.edge-1.team-a.planes.example.com
+kubectl -n ccluster-cp-system logs deploy/ccluster-cp-external-dns
+```
+
+Provider errors, such as denied credentials, show at the default log level. A record
+outside `domainFilters`, or outside every zone the credentials can see, is dropped without
+an error and shows only with `external-dns.logLevel=debug`, as
+`ignoring record <name> that does not match domain filter` or a provider's message such as
+Route53's `Skipping record`. One external-dns writes every cluster's records with one set of
+credentials. Separate credentials per tenant need an external-dns per tenant, each reading
+only its tenant's DNSEndpoints, which the chart does not set up.
 
 ## Infra planes
 
