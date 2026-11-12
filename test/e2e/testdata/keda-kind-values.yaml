@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The keda Verifier checks the ScaledObject CRD and the external metrics APIService,
+# which one replica of KEDA's operator shows as well as two.
+keda:
+  operator:
+    replicaCount: 1
