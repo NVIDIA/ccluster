@@ -20,12 +20,13 @@ clusters**:
 
 - Kubernetes clusters for the control plane and for each infra plane. One cluster can play
   both roles for a trial.
-- [Helm](https://helm.sh/) 3 and `kubectl`, with a kubeconfig context for each cluster.
+- [Helm](https://helm.sh/) 3 or 4 and `kubectl`, with a kubeconfig context for each cluster.
 - Network reachability from the control-plane cluster to each infra-plane cluster's API
   server: Argo CD and the control-plane operator both connect to it.
 - A DNS domain for the control plane, the *base domain*. Each registered cluster gets a
-  domain under it, `<name>.<namespace>.<base domain>`. Publishing DNS records for it is
-  optional; see [DNS](#dns).
+  domain under it, `<name>.<namespace>.<base domain>`. The operators run without publishing
+  DNS records for it, but HTTPS endpoints such as the quickstart's need them; see
+  [DNS](#dns).
 - GPU workloads additionally need the NVIDIA GPU Operator, which the catalog's
   `cluster_base/gpu_operator` component deploys.
 
@@ -152,13 +153,13 @@ again to switch control planes.
 ### Register a cluster
 
 ```bash
-ccluster register edge-1 -n tenant-a --infra-plane <infra-plane context>
+ccluster register edge-1 -n team-a --infra-plane <infra-plane context>
 ```
 
-This registers the cluster as `edge-1` in the control plane's namespace `tenant-a`, creating
+This registers the cluster as `edge-1` in the control plane's namespace `team-a`, creating
 the namespace if needed. Namespaces are the isolation boundary: clusters and deployments in
 one namespace are not visible to another. The cluster's domain is
-`edge-1.tenant-a.<base domain>`.
+`edge-1.team-a.<base domain>`.
 
 On the infra plane, `register` creates the ServiceAccount `kube-system/ccluster-manager`,
 binds it to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there,
@@ -170,12 +171,19 @@ reuses the same token.
 
 `--server` is the address the control plane dials, and defaults to the infra-plane
 context's server. Set it when that address is only reachable from your workstation, as with
-kind, whose kubeconfig points at `127.0.0.1`.
+kind, whose kubeconfig points at `127.0.0.1`: use `https://kubernetes.default.svc` when the
+infra plane is the control-plane cluster itself, and
+`https://<kind cluster name>-control-plane:6443` for another kind cluster.
+
+`kubectl get cclinfraplane -n team-a` shows `CLUSTERCONFIG True` once the control plane has
+connected to the cluster. `AVAILABLE` alone does not mean it can; if `CLUSTERCONFIG` stays
+`False`, `kubectl describe cclinfraplane edge-1 -n team-a` gives the reason, such as
+`ClusterUnreachable`.
 
 ### Unregister a cluster
 
 ```bash
-ccluster unregister edge-1 -n tenant-a
+ccluster unregister edge-1 -n team-a
 ```
 
 This removes the registration and its credentials Secret from the control plane, and leaves
@@ -215,15 +223,17 @@ field of the underlying resources.
 
 ## Development builds
 
-Every merge to `main` publishes both operator images tagged with the commit hash, both
-charts as a pre-release of the next version, `X.Y.Z-dev.<sha>`, and the Python package as
-`ccluster-py==X.Y.Z.dev<N>`, where `N` is the commit's position on `main`
-(`git rev-list --count <sha>`):
+Every merge to `main` publishes both operator images tagged `<sha12>`, the first 12
+characters of the commit hash, both charts as a pre-release of the next version,
+`X.Y.Z-dev.<sha12>`, and the Python package as `ccluster-py==X.Y.Z.dev<N>`, where `N` is
+the commit's position on `main` (`git rev-list --count <sha>` in a full clone):
 
 ```bash
-helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.2-dev.<sha> ...
-pip install "ccluster-py==0.0.2.dev$(git rev-list --count <sha>)"
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z-dev.<sha12> ...
+pip install "ccluster-py==X.Y.Z.dev$(git rev-list --count <sha>)"
 ```
+
+The chart sets `CCLUSTER_CATALOG_REVISION` to the same `<sha12>`.
 
 `pip` ignores these pre-releases unless pinned exactly or given `--pre`. The CLI binaries
 are built only for releases. [Build and release contracts](build-and-release.md#artifact-versions-and-publishing)
@@ -235,3 +245,7 @@ While the operators still run, delete your component sets, which uninstalls thei
 from the infra planes in reverse order, then unregister the clusters. Then `helm uninstall`
 each chart. The charts keep their CRDs; deleting a CRD deletes every remaining resource of
 its kind.
+
+Uninstalling a component set's charts leaves the namespaces Argo CD created for them on
+the infra plane, and the CRDs those charts installed. Delete them with `kubectl` once
+nothing uses them.

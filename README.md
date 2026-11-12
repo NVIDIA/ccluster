@@ -80,7 +80,7 @@ The lifecycle:
 ## Install
 
 You need Kubernetes clusters for the control plane and each infra plane,
-[Helm](https://helm.sh/) 3, and a DNS zone for the control plane's *base domain*. Pick a
+[Helm](https://helm.sh/) 3 or 4, and a DNS zone for the control plane's *base domain*. Pick a
 [release](https://github.com/NVIDIA/ccluster/releases) `X.Y.Z`.
 
 **Control-plane cluster:**
@@ -135,7 +135,9 @@ boundary. See [Installation: command line](docs/installation.md#command-line) fo
 Serve [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) with
 [llama.cpp](https://github.com/ggml-org/llama.cpp) on CPU, so no GPU is needed, using the
 Python SDK. The cluster needs DNS publishing and an ingress load balancer reachable from the
-internet, so that it can get a TLS certificate from Let's Encrypt.
+internet, so that it can get a TLS certificate from Let's Encrypt, and the resource metrics
+API; the quickstarts' [prerequisites](examples/quickstart/#before-you-start) say how to get
+each.
 
 **1. Install the infra-plane dependencies (auto-mode),** rolled out in the order listed:
 
@@ -173,7 +175,7 @@ client.apply_component_set(name="qwen", components=[
     catalogs.component("qwen", "edge-1", inference.CHART, "qwen", inference.Values(
         name="qwen",
         deployment_id="qwen",
-        image_url="ghcr.io/ggml-org/llama.cpp:server-b5350",
+        image_url="ghcr.io/ggml-org/llama.cpp:server-b11706",
         args=["--hf-repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
               "--hf-file", "qwen2.5-0.5b-instruct-q4_k_m.gguf",
               "--host", "0.0.0.0", "--port", "8080"],
@@ -228,10 +230,17 @@ control-plane cluster with itself, or build the CLI with `make build-cli` and re
 the infra-plane cluster:
 
 ```bash
+kubectl --context kind-ccluster-cp apply -f examples/quickstart/manifests/v1alpha1_cclinfraplane.yaml
+kubectl --context kind-ccluster-cp apply -f examples/quickstart/manifests/v1alpha1_cclcomponentset.yaml
+# or:
 bin/ccluster init --control-plane kind-ccluster-cp
 bin/ccluster register edge-1 -n team-a --infra-plane kind-ccluster-ip \
     --server https://ccluster-ip-control-plane:6443
 ```
+
+Apply the two manifests in that order, since the first creates the namespace. Leave out
+`v1alpha1_cclclusterconfig.yaml`: the control plane writes that object to the infra plane
+itself.
 
 Useful targets while iterating:
 
