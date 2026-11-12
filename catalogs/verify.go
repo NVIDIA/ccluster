@@ -17,6 +17,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -132,4 +133,34 @@ func verifyWebhookClient(ctx context.Context, r client.Reader, cc admissionregis
 		return nil
 	}
 	return VerifyServiceReady(ctx, r, cc.Service.Namespace, cc.Service.Name)
+}
+
+// VerifyAPIServiceAvailable is a building block for a chart's Verify function: it returns
+// nil when the APIService name, such as "v1beta1.metrics.k8s.io", exists and is
+// Available, and otherwise an error saying it is missing or giving the aggregator's
+// reason. The API server's aggregator sets Available only once the Service behind the
+// APIService answers discovery, so Available means the API is served, by whichever
+// server registered it. Use it for a component that provides an aggregated API.
+//
+// r must be able to read apiregistration.k8s.io/v1 APIServices: the ip operator's scheme
+// registers the kind and its ClusterRole grants get, list and watch. A read that fails is
+// returned wrapped, not reported as missing.
+func VerifyAPIServiceAvailable(ctx context.Context, r client.Reader, name string) error {
+	var svc apiregistrationv1.APIService
+	if err := r.Get(ctx, client.ObjectKey{Name: name}, &svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("APIService %s not found", name)
+		}
+		return fmt.Errorf("reading APIService %s: %w", name, err)
+	}
+	for _, c := range svc.Status.Conditions {
+		if c.Type != apiregistrationv1.Available {
+			continue
+		}
+		if c.Status == apiregistrationv1.ConditionTrue {
+			return nil
+		}
+		return fmt.Errorf("APIService %s not available: %s: %s", name, c.Reason, c.Message)
+	}
+	return fmt.Errorf("APIService %s not available", name)
 }

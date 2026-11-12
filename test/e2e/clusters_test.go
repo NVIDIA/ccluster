@@ -185,8 +185,9 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 // installClusterBase installs the cluster_base charts that have a Verifier of their own,
 // which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD, cert_manager, for
 // its admission webhook, metrics_server, for the resource metrics API, and
-// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address, and
-// kai_scheduler, for the KAI Config its hook Job applies. For final_stack it applies a
+// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address,
+// kai_scheduler, for the KAI Config its hook Job applies, and keda, for the ScaledObject
+// CRD and the external metrics API. For final_stack it applies a
 // self-signed stand-in for the acme-ca ClusterIssuer, which final_stack's own would
 // register with Let's Encrypt.
 func installClusterBase(c utils.Cluster) {
@@ -199,6 +200,8 @@ func installClusterBase(c utils.Cluster) {
 
 	installClusterBaseChart(c, "kai_scheduler", "kai-scheduler", "kai-scheduler",
 		"kai-scheduler-kind-values.yaml", 5*time.Minute)
+
+	installClusterBaseChart(c, "keda", "keda", "keda", "keda-kind-values.yaml", 5*time.Minute)
 
 	By("applying the self-signed acme-ca ClusterIssuer on " + c.Name)
 	_, err := utils.Run(c.Kubectl("apply", "-f",
@@ -245,6 +248,7 @@ func uninstallClusterBase(c utils.Cluster) {
 	_, _ = utils.Run(c.Kubectl("delete", "clusterissuer", "acme-ca", "--ignore-not-found"))
 	uninstallClusterBaseChart(c, "cert-manager", "cert-manager")
 	uninstallClusterBaseChart(c, "argo-rollouts", "argo-rollouts")
+	uninstallClusterBaseChart(c, "keda", "keda")
 	// The chart's post-delete hook deletes the kai-config Config, which its post-install
 	// hook applied outside the release; KAI's CRDs stay, as Helm leaves them.
 	uninstallClusterBaseChart(c, "kai-scheduler", "kai-scheduler")
@@ -253,10 +257,10 @@ func uninstallClusterBase(c utils.Cluster) {
 }
 
 // expectBaseComponentsFailing asserts that a Verified message names argo_rollouts,
-// cert_manager, final_stack, kai_scheduler, metrics_server and kube_prometheus_stack among
-// the failing cluster_base components, for want of what they provide on a bare kind
+// cert_manager, final_stack, kai_scheduler, keda, metrics_server and kube_prometheus_stack
+// among the failing cluster_base components, for want of what they provide on a bare kind
 // cluster: the Rollout CRD, cert-manager's webhook, the acme-ca ClusterIssuer, the KAI
-// Config, the APIService and the Prometheus Service. "Not found" rather than a read error proves the ip chart's
+// Config, the ScaledObject CRD, the APIService and the Prometheus Service. "Not found" rather than a read error proves the ip chart's
 // ClusterRole lets the manager read CustomResourceDefinitions,
 // ValidatingWebhookConfigurations, APIServices and Services. The reasons of final_stack
 // and kai_scheduler are left open: their kinds are not served on a fresh cluster, but on
@@ -272,13 +276,15 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 	g.Expect(message).To(ContainSubstring("catalogs/cluster_base/final_stack (ClusterIssuer "))
 	g.Expect(message).To(ContainSubstring("catalogs/cluster_base/kai_scheduler (KAI Config "))
 	g.Expect(message).To(ContainSubstring(
+		"catalogs/cluster_base/keda (CustomResourceDefinition scaledobjects.keda.sh not found"))
+	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/kube_prometheus_stack (no Service prometheus/prometheus-op-kube-prometh-prometheus found"))
 }
 
 // expectBaseComponentsVerified asserts that a Verified message no longer names
-// argo_rollouts, cert_manager, final_stack, kai_scheduler, metrics_server or
+// argo_rollouts, cert_manager, final_stack, kai_scheduler, keda, metrics_server or
 // kube_prometheus_stack as failing, once installClusterBase has installed them. It says nothing about the other
 // components, but an empty message, such as a copy that lost its conditions, fails.
 //
@@ -293,6 +299,7 @@ func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/cert_manager"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/final_stack"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/kai_scheduler"))
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/keda"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/kube_prometheus_stack"))
 }
