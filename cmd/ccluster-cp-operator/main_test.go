@@ -162,12 +162,13 @@ func TestDefaultFlagsFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid value names the variable", func(t *testing.T) {
+	t.Run("invalid value names the variable and the value", func(t *testing.T) {
 		fs, _, _, _, _ := newFlags()
 		err := defaultFlagsFromEnv(fs, inherited,
 			env(map[string]string{"CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES": "many"}))
-		if err == nil || !strings.Contains(err.Error(), "CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES") {
-			t.Errorf("error = %v, want one naming the variable", err)
+		if err == nil || !strings.Contains(err.Error(), "CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES") ||
+			!strings.Contains(err.Error(), `"many"`) {
+			t.Errorf("error = %v, want one naming the variable and the value", err)
 		}
 	})
 }

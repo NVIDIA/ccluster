@@ -270,7 +270,7 @@ func defaultFlagsFromEnv(fs *flag.FlagSet, inherited map[string]bool, getenv fun
 		f.Usage += " Environment: $" + env + "."
 		if value := getenv(env); value != "" {
 			if err := fs.Set(f.Name, value); err != nil {
-				errs = append(errs, fmt.Errorf("$%s: %w", env, err))
+				errs = append(errs, fmt.Errorf("invalid value %q for $%s: %w", value, env, err))
 			}
 		}
 	})
