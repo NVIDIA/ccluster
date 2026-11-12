@@ -18,13 +18,12 @@ const (
 	Chart = "catalogs/cluster_base/istio"
 )
 
-// Well-known cniBinDir values. The chart's own default targets k3s/k3d; anything else
-// has to be set explicitly, and getting it wrong breaks sidecar networking in ways that
-// only show up when a workload is scheduled.
+// Well-known cniBinDir values. The chart's default is CNIBinDirDefault; other node
+// images need theirs set explicitly, and getting it wrong breaks sidecar networking in
+// ways that only show up when a workload is scheduled.
 const (
 	// CNIBinDirK3s is where k3s embeds its CNI plugins. containerd looks for them
-	// there, so istio-cni must install its binary alongside them. This is the chart's
-	// default.
+	// there, so istio-cni must install its binary alongside them.
 	CNIBinDirK3s = "/var/lib/rancher/k3s/data/cni"
 
 	// CNIBinDirGKE is the writable CNI binary directory on GKE's COS images.
@@ -33,12 +32,19 @@ const (
 	CNIBinDirGKE = "/home/kubernetes/bin"
 
 	// CNIBinDirDefault is the standard location, correct for EKS, kind and kubeadm.
+	// This is the chart's default.
 	CNIBinDirDefault = "/opt/cni/bin"
 )
 
-// CNIConfDirDefault is the standard CNI configuration directory, correct for every
-// distro except k3s, whose default the chart already carries.
-const CNIConfDirDefault = "/etc/cni/net.d"
+// Well-known cniConfDir values.
+const (
+	// CNIConfDirK3s is where k3s keeps its CNI configuration.
+	CNIConfDirK3s = "/var/lib/rancher/k3s/agent/etc/cni/net.d"
+
+	// CNIConfDirDefault is the standard CNI configuration directory, correct for every
+	// distro except k3s. This is the chart's default.
+	CNIConfDirDefault = "/etc/cni/net.d"
+)
 
 // Values is the top-level values document for catalogs/cluster_base/istio.
 //
@@ -89,15 +95,16 @@ type IstioCNI struct {
 }
 
 // CNI is where istio-cni writes its plugin binary and configuration. These are the only
-// values in this chart that must be tuned per cluster: the chart's defaults target
-// k3s/k3d, and the correct paths depend on the node image. See the CNIBinDir constants.
+// values in this chart that must be tuned per cluster: the chart's defaults are the
+// standard paths, and the correct paths depend on the node image. See the CNIBinDir and
+// CNIConfDir constants.
 type CNI struct {
-	// CNIConfDir is the CNI configuration directory. Use CNIConfDirDefault on
-	// anything but k3s.
+	// CNIConfDir is the CNI configuration directory. The chart ships
+	// CNIConfDirDefault; use CNIConfDirK3s on k3s.
 	CNIConfDir *string `json:"cniConfDir,omitempty"`
 
-	// CNIBinDir is the CNI binary directory. Use CNIBinDirGKE on GKE COS and
-	// CNIBinDirDefault on EKS, kind and kubeadm.
+	// CNIBinDir is the CNI binary directory. The chart ships CNIBinDirDefault; use
+	// CNIBinDirGKE on GKE COS and CNIBinDirK3s on k3s.
 	CNIBinDir *string `json:"cniBinDir,omitempty"`
 }
 

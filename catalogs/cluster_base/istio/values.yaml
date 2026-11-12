@@ -43,22 +43,17 @@ istio-gateway:
 
 istio-cni:
   cni:
-    # Defaults below target k3s/k3d. Override per-cluster via
-    # IstioOverrides for other distros:
-    #   GKE (COS):   cniConfDir=/etc/cni/net.d, cniBinDir=/home/kubernetes/bin
-    #   EKS / kind / kubeadm:
-    #                cniConfDir=/etc/cni/net.d, cniBinDir=/opt/cni/bin
-    # On GKE COS specifically, /opt/cni/bin is mounted read-only — using
-    # it there will fail with "read-only file system" during binary copy.
-    cniConfDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
-    # k3s embeds its CNI plugins under the k3s data dir; containerd looks
-    # for them there, so istio-cni must install its binary alongside them.
-    # This matches the cniBinDir pinned in the local-v2 Pulumi stacks
-    # (iac/{control-plane/local-v2,infra-planes/local-k8s-v2}). Using /bin
-    # here would install to a path k3s never scans, breaking sidecar
-    # networking on local/k3d clusters (which register with no cloud
-    # provider, so Istio.cluster_defaults() leaves this default in place).
-    cniBinDir: /var/lib/rancher/k3s/data/cni
+    # Where istio-cni writes its CNI configuration and plugin binary. The
+    # defaults are the standard paths, correct for EKS, kind and kubeadm.
+    # Other node images need their own:
+    #   GKE (COS): cniBinDir=/home/kubernetes/bin. /opt/cni/bin is mounted
+    #              read-only there, and the binary copy fails.
+    #   k3s/k3d:   cniConfDir=/var/lib/rancher/k3s/agent/etc/cni/net.d and
+    #              cniBinDir=/var/lib/rancher/k3s/data/cni, where k3s keeps
+    #              its CNI configuration and plugins.
+    # With the wrong paths istio-cni-node never becomes ready.
+    cniConfDir: /etc/cni/net.d
+    cniBinDir: /opt/cni/bin
     # When a pod (e.g. ingress-nginx) is scheduled onto a node before
     # istio-cni-node has installed iptables rules, the istio-validation
     # init container fails and the pod CrashLoopBackOffs forever. Delete
