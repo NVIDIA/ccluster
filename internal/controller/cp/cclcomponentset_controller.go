@@ -129,10 +129,11 @@ type CCLComponentSetReconciler struct {
 //     finished, the Application of one component no longer in the spec is deleted.
 //     Reported as the ComponentsApplied condition.
 //  3. Those Applications are read back, both to decide whether the next component may be
-//     written and to report where the rollout has got to. A component Argo CD has
-//     synced is judged healthy or not by its chart's health function, afresh on each
-//     pass. Reported as the Progressing condition and status.componentSyncStatuses, on
-//     every pass, including one that stopped at step 1 or 2.
+//     written and to report where the rollout has got to. Components are judged by their
+//     charts' health functions, afresh on each pass, in spec order up to the first that
+//     has not finished (judgeUntilUnfinished). Reported as the Progressing condition and
+//     status.componentSyncStatuses, on every pass, including one that stopped at step 1
+//     or 2.
 //
 // Ordering is enforced by withholding a component's current spec, on release and on
 // update, until everything before it has finished - see applyComponents - rather than by an
@@ -420,10 +421,11 @@ func condition(conditionType string, status metav1.ConditionStatus, reason, mess
 // completion computed for older input. A conflict is returned for Reconcile to requeue; a
 // missing object has no status left to record.
 //
-// Skipping an unchanged status matters because every Application status write, Argo CD's
-// periodic refresh included, brings the CCLComponentSet back. A skipped write is safe
-// against a stale read: a newer CCLComponentSet has its own watch event, and that pass
-// compares against the newer status.
+// Skipping an unchanged status matters because every Application update that
+// applicationChanged lets through, and every componentHealthStatuses write, brings the
+// CCLComponentSet back. A skipped write is safe against a stale read: a newer
+// CCLComponentSet has its own watch event, and that pass compares against the newer
+// status.
 func (r *CCLComponentSetReconciler) setConditions(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,

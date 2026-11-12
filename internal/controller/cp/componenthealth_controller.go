@@ -173,8 +173,9 @@ func (r *ComponentHealthReconciler) clock() time.Time {
 // SetupWithManager sets up the controller with the Manager.
 //
 // Only spec changes trigger it among CCLComponentSet events: its own status writes, and
-// the rollout controller's, would otherwise judge every component again on each. Every
-// Application event does, so a component is judged as soon as Argo CD reports on it.
+// the rollout controller's, would otherwise judge every component again on each. An
+// Application event does when it changes a field the operator decodes (applicationChanged),
+// so a component is judged as soon as Argo CD reports a change on it.
 func (r *ComponentHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLComponentSet{},
