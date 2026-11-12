@@ -68,11 +68,12 @@ lists them with their flags.
 ### Existing Argo CD
 
 To use an Argo CD already running in the control-plane cluster, install with
-`--set argo-cd.enabled=false`, and point the operator at it:
+`--set argo-cd.enabled=false`, and point the operator at its namespace and its
+argocd-server Service (default `argocd-server`):
 
 ```bash
-  --set manager.envOverrides.CCLUSTER_ARGOCD_NAMESPACE=argocd \
-  --set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=argocd-server
+  --set manager.envOverrides.CCLUSTER_ARGOCD_NAMESPACE=<argocd-namespace> \
+  --set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=<argocd-server-service>
 ```
 
 The operator then needs a read-only Argo CD account and an API token; see
