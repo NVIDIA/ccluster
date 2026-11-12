@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -362,6 +363,27 @@ func TestVerifyValidatingWebhookServedReturnsReadErrors(t *testing.T) {
 	}).Build()
 
 	if err := VerifyValidatingWebhookServed(context.Background(), r, "check.example.com"); !apierrors.IsForbidden(err) {
+		t.Fatalf("want the Forbidden error wrapped, got %v", err)
+	}
+}
+
+// TestVerifyAPIServiceAvailableReturnsReadErrors: an APIService the operator cannot read
+// is not reported as missing. Its other outcomes are pinned by the metrics_server and
+// keda tests.
+func TestVerifyAPIServiceAvailableReturnsReadErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := apiregistrationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	forbidden := apierrors.NewForbidden(schema.GroupResource{
+		Group: "apiregistration.k8s.io", Resource: "apiservices"}, "v1beta1.example.com", errors.New("no RBAC"))
+	r := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return forbidden
+		},
+	}).Build()
+
+	if err := VerifyAPIServiceAvailable(context.Background(), r, "v1beta1.example.com"); !apierrors.IsForbidden(err) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }
