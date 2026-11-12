@@ -14,12 +14,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/spf13/cobra"
 
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/cclclient"
 )
 
@@ -39,6 +41,15 @@ const (
 var (
 	tokenTimeout      = 30 * time.Second
 	tokenPollInterval = time.Second
+)
+
+// How long register waits for the control plane to write the cluster's CCLClusterConfig.
+// It is longer than the operator's one-minute retry of a failed write, so register run
+// again after a fix, such as installing the ccluster-ip chart, sees that retry. Tests
+// shorten both.
+var (
+	clusterConfigTimeout      = 2 * time.Minute
+	clusterConfigPollInterval = 2 * time.Second
 )
 
 type registerOptions struct {
@@ -61,6 +72,11 @@ NAME-credentials carrying that token and the cluster CA, and the CCLInfraPlane N
 pointing at it. The control-plane operator derives the cluster's domain,
 NAME.NAMESPACE.<base domain>, and writes it to the infra plane's CCLClusterConfig.
 Re-running reuses the same token.
+
+register then waits until the CCLInfraPlane's ClusterConfigApplied condition is True,
+which means the control plane reached the cluster, and prints the domain. If it is not
+True within two minutes, register fails with the condition's reason and message. The
+CCLInfraPlane stays: fix the cause and run register again to wait for it.
 
 Pass --server when the kubeconfig's address is not reachable from the control plane, for
 example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
@@ -127,9 +143,63 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 	if err != nil {
 		return apiError(err)
 	}
-	_, _ = fmt.Fprintf(out, "Registered CCLInfraPlane %s/%s for %s\n",
+	_, _ = fmt.Fprintf(out, "Applied CCLInfraPlane %s/%s for %s; waiting for the control plane to reach the cluster\n",
 		plane.Namespace, plane.Name, server)
+
+	plane, err = waitForClusterConfig(ctx, client, name, server)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "Registered CCLInfraPlane %s/%s; its domain is %s\n",
+		plane.Namespace, plane.Name, plane.Status.Domain)
 	return nil
+}
+
+// waitForClusterConfig polls the CCLInfraPlane name until its ClusterConfigApplied
+// condition is True, and returns it. At the timeout it returns an error with the
+// condition's last reason and message.
+//
+// A False does not end the wait. Registering again with another server changes only the
+// credentials Secret, not the CCLInfraPlane's generation, so until the operator has tried
+// the new server the condition still describes the old one.
+func waitForClusterConfig(
+	ctx context.Context,
+	client *cclclient.Client,
+	name, server string,
+) (*cclusternvidiacomv1alpha1.CCLInfraPlane, error) {
+	var plane *cclusternvidiacomv1alpha1.CCLInfraPlane
+	// Each Get runs under ctx, not the poll's deadline, as in clusterAdminToken.
+	err := wait.PollUntilContextTimeout(ctx, clusterConfigPollInterval, clusterConfigTimeout, true,
+		func(context.Context) (bool, error) {
+			var err error
+			if plane, err = client.GetInfraPlane(ctx, name); err != nil {
+				return false, err
+			}
+			return apimeta.IsStatusConditionTrue(plane.Status.Conditions,
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
+		})
+	if wait.Interrupted(err) && ctx.Err() == nil {
+		return nil, clusterConfigError(plane, server)
+	}
+	if err != nil {
+		return nil, apiError(err)
+	}
+	return plane, nil
+}
+
+// clusterConfigError says why plane's ClusterConfigApplied condition is not True.
+func clusterConfigError(plane *cclusternvidiacomv1alpha1.CCLInfraPlane, server string) error {
+	conditionType := cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied
+	condition := apimeta.FindStatusCondition(plane.Status.Conditions, conditionType)
+	if condition == nil {
+		return fmt.Errorf("CCLInfraPlane %s/%s is applied, but after %s it has no %s condition; "+
+			"is the ccluster-cp operator running?",
+			plane.Namespace, plane.Name, clusterConfigTimeout, conditionType)
+	}
+	return fmt.Errorf("CCLInfraPlane %s/%s is applied, but after %s %s is %s (%s): %s; "+
+		"if the control plane cannot reach %s, run register again with --server set to an address it can reach",
+		plane.Namespace, plane.Name, clusterConfigTimeout,
+		conditionType, condition.Status, condition.Reason, condition.Message, server)
 }
 
 // clusterAdminToken creates the cluster-admin ServiceAccount and its token Secret, and

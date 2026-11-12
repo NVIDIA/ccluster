@@ -89,8 +89,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// The operator reports the plane Available once Argo CD can reach the cluster.
-	fmt.Printf("registered %s/%s; waiting for it to become Available\n", *namespace, *name)
+	// ClusterConfigApplied turns True once the control plane has reached the cluster and
+	// written its domain there. Available only means the credentials were handed to Argo CD.
+	// A False is not final: after a change of server it can still describe the old one.
+	fmt.Printf("registered %s/%s; waiting for the control plane to reach it\n", *namespace, *name)
 	var plane *cclusternvidiacomv1alpha1.CCLInfraPlane
 	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true,
 		func(ctx context.Context) (bool, error) {
@@ -99,10 +101,20 @@ func main() {
 				return false, err
 			}
 			return apimeta.IsStatusConditionTrue(plane.Status.Conditions,
-				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable), nil
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
 		})
-	if err != nil {
-		log.Fatalf("%s did not become Available (see kubectl describe cclinfraplane): %v", *name, err)
+	if wait.Interrupted(err) {
+		applied := apimeta.FindStatusCondition(plane.Status.Conditions,
+			cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
+		if applied == nil {
+			log.Fatalf("%s has no ClusterConfigApplied condition; is the operator running?", *name)
+		}
+		log.Fatalf("%s: ClusterConfigApplied is %s (%s): %s; if the control plane cannot reach the "+
+			"server, register the cluster again with one it can reach",
+			*name, applied.Status, applied.Reason, applied.Message)
 	}
-	fmt.Printf("%s is Available; its domain is %s\n", *name, plane.Status.Domain)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s is registered; its domain is %s\n", *name, plane.Status.Domain)
 }

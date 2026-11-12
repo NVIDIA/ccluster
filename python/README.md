@@ -237,6 +237,11 @@ read `<name>-credentials` there is cluster-admin on the infra plane, so keep rea
 that namespace's Secrets tight. Running it again reuses the
 same token.
 
+`register` then waits until the CCLInfraPlane's `ClusterConfigApplied` condition is `True`,
+which means the control plane reached the cluster, and prints the domain. If it is not
+`True` within two minutes, `register` fails with the condition's reason and message; the
+CCLInfraPlane stays, so fix the cause and run `register` again.
+
 `--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
 the kubeconfig. Set it when that address is only reachable from your workstation, as with
 kind, whose kubeconfig points at `127.0.0.1`.

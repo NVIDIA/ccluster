@@ -91,7 +91,8 @@ helm --kube-context "$CP" install edge-1 helm/infraplane -n team-a --create-name
   --set server="$SERVER" --set-file bearerToken=token --set-file caCert=ca.crt
 ```
 
-Then check that the control plane reached the cluster:
+The Python and Go programs wait until the control plane has reached the cluster. After
+Helm, check it yourself:
 
 ```bash
 kubectl --context "$CP" -n team-a get cclinfraplane edge-1   # wait for CLUSTERCONFIG True

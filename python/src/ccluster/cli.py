@@ -8,8 +8,9 @@ subcommand, it prints its usage. init saves the kubeconfig context of the one co
 plane the user works with, after checking it serves the ccluster API, to a small config
 file; the other commands read it from there. register registers an infra-plane cluster
 with that control plane: it creates a cluster-admin ServiceAccount token on the infra
-plane and hands it to CCLClient.apply_infraplane on the control plane. Both clusters are
-reached through kubeconfig contexts, so no credentials are stored by ccluster itself.
+plane, hands it to CCLClient.apply_infraplane on the control plane, and waits for the
+control-plane operator to report that it reached the cluster. Both clusters are reached
+through kubeconfig contexts, so no credentials are stored by ccluster itself.
 unregister reverses register on the control plane and leaves the infra plane alone.
 """
 
@@ -31,7 +32,8 @@ from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
 from ccluster.client import CCLClient
-from ccluster.v1alpha1 import API_VERSION, Kind
+from ccluster.v1alpha1 import API_VERSION, CCLInfraPlane, Kind
+from ccluster.v1alpha1.cclinfraplane import Condition, Status
 
 
 # What register creates on the infra plane. Argo CD deploys charts that install CRDs,
@@ -50,6 +52,13 @@ CONFIG_ENV = "CCLUSTER_CONFIG"
 # How long register waits for the token controller to fill in the token Secret.
 _TOKEN_TIMEOUT_SECONDS = 30.0
 _TOKEN_POLL_SECONDS = 1.0
+
+# How long register waits for the control plane to write the cluster's CCLClusterConfig.
+# It is longer than the operator's one-minute retry of a failed write, so register run
+# again after a fix, such as installing the ccluster-ip chart, sees that retry.
+_CLUSTER_CONFIG_TIMEOUT_SECONDS = 120.0
+_CLUSTER_CONFIG_POLL_SECONDS = 2.0
+_CLUSTER_CONFIG_APPLIED = "ClusterConfigApplied"
 
 
 @click.group(
@@ -134,6 +143,11 @@ def register(
     checks the CCLInfraPlane first, so a NAME it refuses creates nothing on the infra plane.
     Re-running reuses the same token.
 
+    register then waits until the CCLInfraPlane's ClusterConfigApplied condition is True,
+    which means the control plane reached the cluster, and prints the domain. If it is not
+    True within two minutes, register fails with the condition's reason and message. The
+    CCLInfraPlane stays: fix the cause and run register again to wait for it.
+
     Pass --server when the kubeconfig's address is not reachable from the control plane,
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
     """
@@ -154,9 +168,14 @@ def register(
         plane = client.apply_infraplane(
             name=name, server=server, bearer_token=token, ca_cert=ca_cert
         )
+        click.echo(
+            f"Applied CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "
+            f"for {server}; waiting for the control plane to reach the cluster"
+        )
+        plane = _wait_for_cluster_config(client, name, server)
     click.echo(
-        f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "
-        f"for {server}"
+        f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name}; "
+        f"its domain is {plane.status.domain}"
     )
 
 
@@ -296,6 +315,46 @@ def _cluster_admin_token(api_client: k8s.ApiClient) -> tuple[str, bytes]:
                 f"token within {_TOKEN_TIMEOUT_SECONDS:g}s"
             )
         time.sleep(_TOKEN_POLL_SECONDS)
+
+
+def _wait_for_cluster_config(client: CCLClient, name: str, server: str) -> CCLInfraPlane:
+    """Poll the CCLInfraPlane name until its ClusterConfigApplied condition is True.
+
+    Returns the plane; at the timeout, raises an error with the condition's last reason and
+    message. A False does not end the wait. Registering again with another server changes
+    only the credentials Secret, not the CCLInfraPlane's generation, so until the operator
+    has tried the new server the condition still describes the old one.
+    """
+    deadline = time.monotonic() + _CLUSTER_CONFIG_TIMEOUT_SECONDS
+    while True:
+        plane = client.get_infraplane(name=name)
+        conditions = plane.status.conditions if plane.status else None
+        condition = next((c for c in conditions or [] if c.type == _CLUSTER_CONFIG_APPLIED), None)
+        if condition is not None and condition.status == Status.true:
+            return plane
+        if time.monotonic() >= deadline:
+            raise click.ClickException(_cluster_config_error(plane, condition, server))
+        time.sleep(_CLUSTER_CONFIG_POLL_SECONDS)
+
+
+def _cluster_config_error(
+    plane: CCLInfraPlane, condition: Condition | None, server: str
+) -> str:
+    """Say why plane's ClusterConfigApplied condition, condition, is not True."""
+    prefix = (
+        f"CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} is applied, "
+        f"but after {_CLUSTER_CONFIG_TIMEOUT_SECONDS:g}s"
+    )
+    if condition is None:
+        return (
+            f"{prefix} it has no {_CLUSTER_CONFIG_APPLIED} condition; "
+            "is the ccluster-cp operator running?"
+        )
+    return (
+        f"{prefix} {_CLUSTER_CONFIG_APPLIED} is {condition.status.value} ({condition.reason}): "
+        f"{condition.message}; if the control plane cannot reach {server}, run register "
+        "again with --server set to an address it can reach"
+    )
 
 
 def _create_if_absent(create, *args) -> None:

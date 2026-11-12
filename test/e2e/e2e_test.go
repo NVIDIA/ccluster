@@ -581,8 +581,9 @@ var _ = Describe("Manager", Ordered, func() {
 		//
 		// ex-cluster is also registered before the ip chart is installed on it, the order
 		// a user who runs `ccluster register` first meets. Only a real API server proves
-		// that a missing CRD reads as CRDMissing, and that the remote watch, which cannot
-		// start without it, starts once it is installed and delivers the verdict.
+		// that a missing CRD reads as CRDMissing, that the remote watch, which cannot
+		// start without it, starts once it is installed and delivers the verdict, and
+		// that register, waiting meanwhile, then succeeds.
 		for _, t := range targets() {
 			It("should write the CCLClusterConfig on the "+t.name+" infra plane and sync its verification back", func() {
 				planeName := "e2e-cluster-config-" + t.name
@@ -598,9 +599,11 @@ var _ = Describe("Manager", Ordered, func() {
 				}
 
 				By("registering the " + t.name + " plane")
-				t.register(planeName)
-
 				if beforeIPChart {
+					// register waits for the CCLClusterConfig, which needs the ip chart's
+					// CRD installed below.
+					registered := startRegisterWithCLI(planeName)
+
 					By("reporting CRDMissing while the ip chart is not installed")
 					Eventually(func(g Gomega) {
 						g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
@@ -609,6 +612,11 @@ var _ = Describe("Manager", Ordered, func() {
 					}, crossClusterTimeout).Should(Succeed())
 
 					deployIPOperator(t.cluster)
+
+					By("returning from ccluster register once the CCLClusterConfig is written")
+					registered()
+				} else {
+					t.register(planeName)
 				}
 
 				// After a late CRD install the operator notices it through its retry of

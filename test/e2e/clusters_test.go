@@ -102,20 +102,43 @@ func createInClusterCredentials(ns, name string) {
 // registerWithCLI registers the separate infra-plane cluster as planeName with
 // `ccluster register`, exactly as the README documents: a cluster-admin token
 // created on that cluster, and its address on Kind's Docker network, where the
-// control-plane cluster's Pods reach it.
+// control-plane cluster's Pods reach it. register returns once the control plane has
+// written the cluster's CCLClusterConfig.
 func registerWithCLI(planeName string) {
 	GinkgoHelper()
 
+	startRegisterWithCLI(planeName)()
+}
+
+// startRegisterWithCLI starts registerWithCLI's command without waiting for it, for a
+// spec that must change the cluster before register can succeed. The returned function
+// waits for register to exit and fails the spec unless it succeeded.
+func startRegisterWithCLI(planeName string) (wait func()) {
+	GinkgoHelper()
+
 	ip := utils.IP()
-	_, err := utils.Run(cclusterCLI("register", planeName,
+	cmd := cclusterCLI("register", planeName,
 		"--namespace", crNamespace,
 		"--infra-plane", ip.Context(),
-		"--server", ip.Server()))
-	Expect(err).NotTo(HaveOccurred(), "ccluster register failed")
+		"--server", ip.Server())
+	// Buffered, so the goroutine ends even when a failed spec never waits.
+	result := make(chan error, 1)
+	go func() {
+		_, err := utils.Run(cmd)
+		result <- err
+	}()
 	DeferCleanup(func() {
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "secret", credentialsSecretName(planeName),
 			"-n", crNamespace, "--ignore-not-found"))
 	})
+	return func() {
+		GinkgoHelper()
+
+		// register gives up two minutes after applying the CCLInfraPlane.
+		var err error
+		Eventually(result, crossClusterTimeout).Should(Receive(&err))
+		Expect(err).NotTo(HaveOccurred(), "ccluster register failed")
+	}
 }
 
 // cclusterCLI returns the ccluster CLI built by BeforeSuite, run against the suite's
