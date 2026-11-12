@@ -461,7 +461,8 @@ once. The operator reaches argocd-server through its Service in the same namespa
 `--argocd-server-service`, without verifying its certificate, so Argo CD must run in the
 operator's cluster. The chart pins the bundled Argo CD's names with
 `argo-cd.fullnameOverride`, so its Service is always `ccluster-cp-argocd-server`, which the
-chart's default `manager.args` and `make deploy-cp` both pass.
+chart's default `CCLUSTER_ARGOCD_SERVER_SERVICE` names. Each of the operator's flags can
+also be set as its `CCLUSTER_*` variable, as the chart does.
 
 With the bundled Argo CD, `make deploy-cp` (any `helm install` of the cp chart) creates it.
 The chart declares the account and its RBAC line (`argo-cd.configs` in
@@ -491,8 +492,8 @@ may update the account, such as admin or an SSO user with `role:admin`:
 3. Generate a token: `argocd account generate-token --account ccluster-cp`.
 4. Store it: `kubectl -n <argocd-namespace> create secret generic ccluster-cp-argocd-token
    --from-literal=token=<token>`.
-5. If argocd-server's Service is not named `argocd-server`, pass its name with
-   `--argocd-server-service`.
+5. If argocd-server's Service is not named `argocd-server`, set its name as
+   `CCLUSTER_ARGOCD_SERVER_SERVICE` (`--argocd-server-service`).
 
 The same steps recover a bundled installation whose token and initial admin Secret are
 both gone; the hook Job then logs them instead of creating a token.

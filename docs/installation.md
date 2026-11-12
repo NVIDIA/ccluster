@@ -39,36 +39,44 @@ The `ccluster-cp` chart installs the operator and, as a dependency, Argo CD:
 ```bash
 helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
   -n ccluster-cp-system --create-namespace \
-  --set-json 'manager.args=["--leader-elect","--catalog-repo-url=https://github.com/NVIDIA/ccluster","--catalog-revision=vX.Y.Z","--argocd-server-service=ccluster-cp-argocd-server","--base-domain=planes.example.com"]'
+  --set manager.envOverrides.CCLUSTER_BASE_DOMAIN=planes.example.com
 ```
 
 Replace `planes.example.com` with your base domain and `X.Y.Z` with a
 [release](https://github.com/NVIDIA/ccluster/releases).
 
-- `--base-domain` is required; the operator does not start without it. Set it once: changing
-  it moves every registered cluster's domain. Two control planes must not share one.
-- Setting `manager.args` replaces the chart's whole list, so the command repeats the chart's
-  other arguments. `helm show values oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z`
-  prints them.
-- `--catalog-repo-url` and `--catalog-revision` name the Git repository and revision Argo
-  CD deploys catalog charts from. A released chart pins the revision to its own `vX.Y.Z`
-  tag; leave it out and the operator deploys the catalog from `main`. Point them at a fork
-  or branch to deploy your own charts. Argo CD clones the repository itself, so the
-  revision must be pushed, and a private fork needs its credentials configured in Argo CD.
-- `--argocd-server-service` names the bundled Argo CD's API Service, which the operator
-  reads Applications' health through.
-- On every `helm upgrade`, change `--version` and `--catalog-revision` together.
-  `--reuse-values` keeps the old revision.
+The operator is configured through environment variables, one per setting, named after
+its flags: `--catalog-revision` reads `CCLUSTER_CATALOG_REVISION`. Set them with
+`--set manager.envOverrides.<variable>=<value>`; each `--set` changes one variable and
+keeps the chart's others. A flag in `manager.args` takes precedence over its variable.
 
-`charts/cp/chart/values.yaml` documents every other value and operator flag.
+- `CCLUSTER_BASE_DOMAIN` is required; the operator does not start without it. Set it
+  once: changing it moves every registered cluster's domain. Two control planes must not
+  share one.
+- `CCLUSTER_CATALOG_REPO_URL` and `CCLUSTER_CATALOG_REVISION` name the Git repository and
+  revision Argo CD deploys catalog charts from. A released chart sets them to this
+  repository at its own `vX.Y.Z` tag. Point them at a fork or branch to deploy your own
+  charts. Argo CD clones the repository itself, so the revision must be pushed, and a
+  private fork needs its credentials configured in Argo CD.
+- Upgrade with `helm upgrade --version <new version>` and the same `--set` flags. The new
+  chart brings its own catalog revision; `--reuse-values` would keep the previous
+  release's, and with it the previous catalog.
+
+`charts/cp/chart/values.yaml` documents every variable, and `ccluster-cp-operator --help`
+lists them with their flags.
 
 ### Existing Argo CD
 
 To use an Argo CD already running in the control-plane cluster, install with
-`--set argo-cd.enabled=false` and, in `manager.args`, add
-`--argocd-namespace=<its namespace>` and `--argocd-server-service=<its argocd-server
-Service>` (default `argocd-server`). The operator then needs a read-only Argo CD account
-and an API token; see
+`--set argo-cd.enabled=false`, and point the operator at its namespace and its
+argocd-server Service (default `argocd-server`):
+
+```bash
+  --set manager.envOverrides.CCLUSTER_ARGOCD_NAMESPACE=<argocd-namespace> \
+  --set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=<argocd-server-service>
+```
+
+The operator then needs a read-only Argo CD account and an API token; see
 [Development: Argo CD API token](development.md#argo-cd-api-token) for the steps.
 
 ### DNS
