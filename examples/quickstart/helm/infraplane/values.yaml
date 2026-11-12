@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Install into the namespace to register the cluster in, under the name to register it as:
+#
+#   helm install edge-1 ./infraplane -n team-a --create-namespace \
+#     --set server=https://<infra-plane API server> \
+#     --set-file bearerToken=token --set-file caCert=ca.crt
+#
+# The release name must be a DNS label: the cluster's domain is
+# <release name>.<namespace>.<base domain>.
+
+# API server URL the control plane connects to. Empty registers the control-plane cluster
+# itself, credential-free, through Argo CD's in-cluster address.
+server: ""
+# Token of a ServiceAccount on the cluster with the rights Argo CD needs there.
+bearerToken: ""
+# The API server's CA certificate, PEM.
+caCert: ""

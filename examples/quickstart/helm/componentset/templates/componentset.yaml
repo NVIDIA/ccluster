@@ -1,0 +1,22 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLComponentSet
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  components:
+    {{- range .Values.components }}
+    - name: {{ .name | quote }}
+      infraPlaneRef:
+        name: {{ .infraPlane | default $.Values.infraPlane | required "set infraPlane" | quote }}
+      chart: {{ .chart | quote }}
+      namespace: {{ .namespace | quote }}
+      {{- with .values }}
+      values:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+    {{- end }}

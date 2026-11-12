@@ -7,360 +7,285 @@
 
 CCluster aims to give AI teams a single control plane for their GPU fleet — provisioning clusters, deploying and scaling workloads, and running the full model lifecycle (inference, fine-tuning, batch jobs, and training) across clouds and regions, while keeping expensive accelerators as busy and as cost-effective as possible.
 
-> **Project status: early.** CCluster is at the start of an ambitious roadmap. What exists today is the first working slice of the control plane — two `v1alpha1` CRDs that register clusters with Argo CD and roll out ordered bundles of Helm charts onto them (see [DESIGN.md](DESIGN.md)) — plus the chart catalog they deploy from. The broader platform described below is the vision we're building toward, not yet shipped. Expect rapid, breaking change.
+> **Project status: early.** What exists today is the first working slice: a control plane
+> that registers Kubernetes clusters and rolls out ordered sets of Helm charts onto them,
+> plus the catalog of charts it deploys. The broader platform described below is the
+> vision we're building toward. Expect rapid, breaking change.
 
-# Vision
+## Vision
 
 GPU capacity is scarce, expensive, and increasingly spread across many clouds, regions, and on-prem sites. Teams end up stitching together bespoke tooling for each environment, and utilization suffers. CCluster's goal is to make a heterogeneous, multi-cloud GPU fleet feel like one efficient, Kubernetes-native platform.
 
 Guiding principles:
 
 - **Efficiency first.** Maximize accelerator utilization through bin-packing, autoscaling, and workload-aware scheduling — treating idle GPU time as the primary cost to eliminate.
-- **Kubernetes-native.** Everything is expressed as Kubernetes resources and reconciled declaratively (GitOps via Argo CD), so the platform composes with the existing cloud-native ecosystem instead of replacing it.
+- **Kubernetes-native.** Everything is expressed as Kubernetes resources and reconciled declaratively (GitOps), so the platform composes with the existing cloud-native ecosystem instead of replacing it.
 - **Multi-cloud by default.** A cluster on AWS, GCP, Azure, Nebius, or on-prem is a first-class citizen; workloads and policy span providers without per-cloud rewrites.
 - **End-to-end lifecycle.** One platform for the whole journey — from provisioning a cluster, to training and fine-tuning, to batch and interactive compute, to production inference and autoscaling.
-- **Typed and validated.** Deployment configuration is modeled as CRD schemas with server-side validation, so misconfiguration is rejected by the API server rather than discovered at sync time.
+- **Secure and isolated.** Teams share one control plane without sharing access: each team's clusters, credentials and deployments are confined to its own namespace, and every component runs with only the permissions its job needs.
 
-See [DESIGN.md](DESIGN.md) for what's shipped today — the control-plane API, the ordering
-algorithm, and the chart catalog it deploys from — and why it's built the way it is.
+## How it works
 
-# Getting Started
+One **control-plane cluster** manages any number of **infra-plane clusters**, the clusters
+that run your workloads, on any cloud or on-prem:
 
-## Deploying the operators
-
-Each operator ships as a Helm chart. The control-plane chart also installs Argo CD, which
-the control plane depends on — CCluster reconciles clusters and workloads by creating Argo CD
-`Application` resources, so Argo CD is a prerequisite rather than something the operator
-installs for itself.
-
-```bash
-# Control-plane cluster: ccluster-cp-operator + Argo CD
-make deploy-cp
-
-# Infra-plane cluster: ccluster-ip-operator
-make deploy-ip
+```
+                        control-plane cluster
+    ┌────────────────────────────────────────────────────────┐
+    │                                                        │
+    │          ccluster-cp-operator (orchestrator) ◀─────────┼─── catalog
+    │                                                        │    (Helm charts)
+    └─────────────┬──────────────────────────┬───────────────┘
+                  │                          │
+        deploys ▼ │ ▲ status       deploys ▼ │ ▲ status
+                  │                          │
+    ┌─────────────┴────────────┐ ┌───────────┴──────────────┐
+    │ ccluster-ip-operator     │ │ ccluster-ip-operator     │
+    │   (verifies, reports)    │ │   (verifies, reports)    │
+    │ infra-plane dependencies │ │ infra-plane dependencies │
+    │ workloads                │ │ workloads                │
+    └──────────────────────────┘ └──────────────────────────┘
+       infra-plane cluster A        infra-plane cluster B
 ```
 
-Both targets act on your current kubeconfig context. Pin it first:
+- **The control-plane operator orchestrates.** It holds every registered cluster's
+  credentials, decides what is deployed where and in what order, deploys it, and collects
+  each cluster's status in one place.
+- **The infra-plane operator verifies and reports.** It checks that the cluster's
+  dependencies are installed and healthy, and reports back. It never changes the cluster.
+- **The catalog** holds the Helm charts that bring up a functional infra plane for AI
+  infrastructure (GPU Operator, cert-manager, Istio, KEDA and others), and the inference,
+  training and compute workloads that run on it.
+
+The lifecycle:
+
+1. **Install** the control-plane operator in one cluster and the infra-plane operator in
+   each cluster you want to manage.
+2. **Register** each infra-plane cluster with the control plane, in a namespace that
+   belongs to one team. The cluster gets a DNS domain under the control plane's base domain.
+3. **Install the infra-plane dependencies** in one of two modes:
+   - **Auto-mode:** the control plane installs them from the catalog.
+   - **Self-mode:** you install them yourself with Helm.
+
+   Either way, the infra-plane operator verifies them.
+4. **Deploy workloads** as ordered sets of catalog charts. The control plane rolls them out
+   one at a time, each waiting for the one before it to be healthy.
+5. **Watch status** from the control plane: rollout progress and each cluster's
+   verification result.
+
+[DESIGN.md](DESIGN.md) describes how each step works.
+
+# Getting started
+
+## Install
+
+You need Kubernetes clusters for the control plane and each infra plane,
+[Helm](https://helm.sh/) 3, and a DNS zone for the control plane's *base domain*. Pick a
+[release](https://github.com/NVIDIA/ccluster/releases) `X.Y.Z`.
+
+**Control-plane cluster:**
 
 ```bash
-export KUBECONFIG=~/.kube/my-cluster.yaml
-```
-
-If the cluster already runs Argo CD, install the operator on its own with
-`make deploy-cp ARGOCD=false ARGOCD_NAMESPACE=<its namespace>`, such as `argocd`.
-
-The `make deploy-*` targets install the charts from this checkout with a locally built
-image. Released versions are published to GHCR and can be installed without a clone:
-
-```bash
-# Control-plane cluster: ccluster-cp-operator + Argo CD
 helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z \
   -n ccluster-cp-system --create-namespace \
   --set-json 'manager.args=["--leader-elect","--catalog-repo-url=https://github.com/NVIDIA/ccluster","--catalog-revision=vX.Y.Z","--argocd-server-service=ccluster-cp-argocd-server","--base-domain=planes.example.com"]'
+```
 
-# Infra-plane cluster: ccluster-ip-operator
+To give each cluster's services public names under the base domain, also enable DNS
+publishing for your DNS provider; see [Installation: DNS](docs/installation.md#dns).
+
+**Each infra-plane cluster:**
+
+```bash
 helm install ccluster-ip oci://ghcr.io/nvidia/charts/ccluster-ip --version X.Y.Z \
   -n ccluster-ip-system --create-namespace
 ```
 
-Each released chart references `ghcr.io/nvidia/ccluster-{cp,ip}-operator:X.Y.Z` and pins
-`--catalog-revision` to the matching `vX.Y.Z` tag. The cp operator does not start without
-`--base-domain`, the DNS domain every CCLInfraPlane's domain is derived under (see
-[DESIGN.md](DESIGN.md#3-cclinfraplane--registering-a-cluster)). Setting it replaces the
-chart's whole `manager.args` list, so the command above repeats the chart's other
-arguments, `--catalog-revision=vX.Y.Z` among them: without it the operator deploys the
-catalog from `main`. Change both versions together on every `helm upgrade`. The Pydantic
-models for the API and the catalog ship as `pip install ccluster-py` (imported as
-`ccluster`), and the Go client as the module's `pkg/cclclient` package.
-
-The charts themselves live in `charts/cp/chart` and `charts/ip/chart`; they are generated
-from the kustomize overlays in `config/`, so regenerate them with `make helm-generate`
-after changing the API or any RBAC marker.
-
-## Command line
-
-The `ccluster` command registers infra-plane clusters with a control plane. Install it
-with Go, or download `ccluster_X.Y.Z_<os>_<arch>.tar.gz` for Linux or macOS on amd64 or
-arm64 from the GitHub Release and put the `ccluster` binary on your `PATH`:
+**The command line**, from the binaries on each GitHub Release (Linux and macOS, amd64 and
+arm64):
 
 ```bash
-go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z
+VERSION=X.Y.Z
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+curl -fsSL "https://github.com/NVIDIA/ccluster/releases/download/v${VERSION}/ccluster_${VERSION}_${OS}_${ARCH}.tar.gz" | tar -xz
+sudo install "ccluster_${VERSION}_${OS}_${ARCH}/ccluster" /usr/local/bin/
 ```
 
-The macOS binaries are not yet signed with an Apple Developer ID or notarized, so macOS
-refuses to run one downloaded with a browser, saying Apple cannot check it for
-malicious software. Download the tarball with `curl`, which does not quarantine it, or
-clear the quarantine from a browser download before the first run:
+`go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` works too, and
+`pip install ccluster-py` installs the Python SDK with its own `ccluster` command.
+
+[Installation](docs/installation.md) covers the chart options, upgrades and uninstalling.
+
+## Register a cluster
+
+Point the CLI at the control plane, then register an infra-plane cluster, both by their
+kubeconfig contexts:
 
 ```bash
-curl -fsSL https://github.com/NVIDIA/ccluster/releases/download/vX.Y.Z/ccluster_X.Y.Z_darwin_arm64.tar.gz | tar -xz
-# or, after unpacking a browser download:
-xattr -d com.apple.quarantine ccluster_X.Y.Z_darwin_arm64/ccluster
+ccluster init --control-plane <control-plane context>
+ccluster register edge-1 -n team-a --infra-plane <infra-plane context>
 ```
 
-Use `darwin_amd64` on an Intel Mac.
+This registers the cluster as `edge-1` in namespace `team-a`, the team's isolation
+boundary. See [Installation: command line](docs/installation.md#command-line) for the rest.
 
-`pip install ccluster-py` also installs a `ccluster` command with the same subcommands,
-flags and config file, which also accepts the short forms `-cp` and `-ip`; see the
-[Python README](python/README.md#command-line). Install only one of them: both are called
-`ccluster`, and the first on your `PATH` wins.
+## Quickstart: serve an LLM
 
-Start with `ccluster init`, which names the control plane by its kubeconfig context, checks
-that it serves the ccluster API, and saves the context name to
-`~/.config/ccluster/config.yaml` (`$XDG_CONFIG_HOME/ccluster/config.yaml` if set, or the file
-named by `$CCLUSTER_CONFIG`). Only the context name is saved; credentials stay in the
-kubeconfig, found through `$KUBECONFIG` or `~/.kube/config` as `kubectl` finds it. Run it
-again to switch control planes.
+Serve [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) with
+[llama.cpp](https://github.com/ggml-org/llama.cpp) on CPU, so no GPU is needed, using the
+Python SDK. The cluster needs DNS publishing and an ingress load balancer reachable from the
+internet, so that it can get a TLS certificate from Let's Encrypt.
 
-```bash
-ccluster init --control-plane kind-ccluster-cp
+**1. Install the infra-plane dependencies (auto-mode),** rolled out in the order listed:
+
+```python
+from kubernetes.config import new_client_from_config
+from ccluster import catalogs
+from ccluster.catalogs.cluster_base import (
+    argo_rollouts, cert_manager, final_stack, ingress_nginx, istio, keda, kube_prometheus_stack,
+)
+from ccluster.catalogs.deployments import inference_deployment as inference
+from ccluster.client import CCLClient
+
+client = CCLClient("team-a", api_client=new_client_from_config(context="<control-plane context>"))
+client.apply_component_set(name="dependencies", components=[
+    catalogs.component(name, "edge-1", chart, namespace)
+    for name, chart, namespace in [
+        ("kube-prometheus-stack", kube_prometheus_stack.CHART, "prometheus"),
+        ("istio", istio.CHART, "istio-system"),
+        ("cert-manager", cert_manager.CHART, "cert-manager"),
+        ("ingress-nginx", ingress_nginx.CHART, "ingress-nginx"),
+        ("final-stack", final_stack.CHART, "final-stack"),
+        ("keda", keda.CHART, "keda"),
+        ("argo-rollouts", argo_rollouts.CHART, "argo-rollouts"),
+    ]
+])
 ```
 
-`ccluster register` then registers an infra-plane cluster, also named by its kubeconfig
-context, with that control plane:
+**2. Deploy the model** once `client.is_component_set_finished(name="dependencies")`
+returns `True`. Every catalog chart has typed values:
 
-```bash
-ccluster register edge-1 -n tenant-a --infra-plane kind-ccluster-ip \
-    --server https://ccluster-ip-control-plane:6443
+```python
+domain = client.get_infraplane(name="edge-1").status.domain
+size = inference.Resources(cpu="2", memory="2Gi")
+client.apply_component_set(name="qwen", components=[
+    catalogs.component("qwen", "edge-1", inference.CHART, "qwen", inference.Values(
+        name="qwen",
+        deployment_id="qwen",
+        image_url="ghcr.io/ggml-org/llama.cpp:server-b5350",
+        args=["--hf-repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+              "--hf-file", "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+              "--host", "0.0.0.0", "--port", "8080"],
+        container_port=8080,
+        healthcheck="/health",
+        domain=domain,
+        resources=inference.ResourceRequirements(limits=size, requests=size),
+        scheduler_name="",  # the default scheduler; kai-scheduler is not installed here
+    )),
+])
 ```
 
-On the infra plane it creates the ServiceAccount `kube-system/ccluster-manager`, binds it
-to `cluster-admin` (Argo CD installs CRDs and other cluster-scoped objects there, so it needs
-the same rights `argocd cluster add` grants), and reads the long-lived token the token
-controller writes into the Secret `kube-system/ccluster-manager-token`. On the control plane
-it creates the namespace if needed, then applies the Secret `<name>-credentials` carrying
-that token and the cluster CA and the `CCLInfraPlane` pointing at it. The
-control-plane operator uses the same token to write the plane's derived domain
-(`edge-1.tenant-a.<base domain>`) to the infra plane's
-`CCLClusterConfig`. Anyone who can read `<name>-credentials` there is cluster-admin on the
-infra plane, so keep read access to that namespace's Secrets tight. Running it again reuses
-the same token.
-
-`--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
-the kubeconfig. Set it when that address is only reachable from your workstation, as with
-kind, whose kubeconfig points at `127.0.0.1`.
-
-`ccluster unregister` reverses `register` on the control plane: it deletes the
-CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. The infra
-plane is not touched; its ServiceAccount and token stay, so registering the cluster again
-reuses them.
+**3. Ask it something:**
 
 ```bash
-ccluster unregister edge-1 -n tenant-a
+curl https://qwen.nginx.<domain>/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```
 
-`ccluster completion <shell>` prints a tab-completion script for commands and flags. To load
-it in every new shell:
+[`examples/quickstart`](examples/quickstart/) has the whole walkthrough as runnable
+quickstarts for the Python SDK, the Go SDK and Helm, from registering the cluster to
+cleaning up. For a GPU model, set `accelerator_count` in the resources and add
+`gpu_operator` to the dependencies. The [Python README](python/README.md) covers the full
+SDK; Go programs can use [`pkg/cclclient`](pkg/cclclient/).
+
+# Developing CCluster
+
+The development setup runs the two operators in a pair of local
+[kind](https://kind.sigs.k8s.io/) clusters, `ccluster-cp` and `ccluster-ip`. You need Go
+1.21 or newer (`make` downloads the toolchain `go.mod` pins), Docker,
+[Helm](https://helm.sh/) and [uv](https://docs.astral.sh/uv/). `make` downloads its other
+tools into `bin/`.
+
+**Make targets act on your current kubeconfig context without asking**, and kind changes
+the current context. If your kubeconfig holds other clusters, pin a dedicated one first:
 
 ```bash
-# bash (needs the bash-completion package)
-echo 'eval "$(ccluster completion bash)"' >> ~/.bashrc
-
-# zsh (the first line only if completion is not enabled yet; ccluster's line goes after it)
-echo 'autoload -U compinit; compinit' >> ~/.zshrc
-echo 'eval "$(ccluster completion zsh)"' >> ~/.zshrc
-
-# fish
-ccluster completion fish > ~/.config/fish/completions/ccluster.fish
-```
-
-Start a new shell for the change to take effect.
-
-The command is built on `pkg/cclclient`, a Go client that registers clusters and applies,
-polls and deletes component sets in one namespace. It is the Go counterpart of the Python
-package's `CCLClient`; both write under the server-side apply field manager `ccluster`.
-
-## Trying it out
-
-With the operators deployed and a kubeconfig pinned:
-
-```bash
-# Register a cluster (the samples register the control-plane cluster with itself)
-kubectl apply -f examples/quickstart/v1alpha1_cclinfraplane.yaml
-
-# Roll out an ordered bundle of catalog charts onto it
-kubectl apply -f examples/quickstart/v1alpha1_cclcomponentset.yaml
-
-kubectl -n ccluster-quickstart get cclinfraplanes
-kubectl -n ccluster-quickstart get cclcomponentsets
-# The Applications sit next to the CCLComponentSet, in its namespace, under an Argo CD
-# AppProject named after that namespace.
-kubectl get applications -L ccluster.nvidia.com/wave
-```
-
-In the infra-plane cluster, its operator reports whether every `catalogs/cluster_base`
-component verifies against the cluster's `CCLClusterConfig` (every component's check is a
-placeholder reporting true for now). The control-plane operator writes that object into
-every cluster a `CCLInfraPlane` registers, and reports `Conflict` for one it did not
-create, so apply the example only to an infra-plane cluster no `CCLInfraPlane` registers:
-
-```bash
-kubectl apply -f examples/quickstart/v1alpha1_cclclusterconfig.yaml
-kubectl get cclclusterconfig cluster
-kubectl get cclclusterconfig cluster -o jsonpath='{.status.conditions[0].message}'
-```
-
-The sample `CCLComponentSet` deploys from `--catalog-repo-url` at `--catalog-revision`
-(`https://github.com/NVIDIA/ccluster` at `main` by default). Argo CD clones that repository
-itself, so if it is private give it a token with read access:
-`make deploy-cp GITHUB_TOKEN=...`. Point it at a fork or branch with
-`make deploy-cp CATALOG_REPO_URL=... CATALOG_REVISION=...`.
-
-## Local development
-
-CCluster's local loop runs both operators in a pair of [kind](https://kind.sigs.k8s.io/)
-clusters, `ccluster-cp` and `ccluster-ip`, so the control-plane and infra-plane operators
-stay isolated the same way they are in production. Docker must be running first.
-
-```bash
-make init    # create both kind clusters (idempotent)
-make build   # manifests, CRDs, deepcopy, Go client, operator binaries and CLI, both images, both charts, Python models
-make load    # build each operator image and load it into its own cluster
-make deploy  # helm install: cp into ccluster-cp, ip into ccluster-ip
-```
-
-To author CRs from Python instead of YAML, `python/` is a generated Pydantic package covering
-both CRDs and the catalog's typed chart values; see [python/README.md](python/README.md).
-Go programs can use the generated clientset, listers and informers in [`pkg/client/`](pkg/client/).
-
-Each of those has `-cp` / `-ip` halves (`make build-cp`, `make deploy-ip`, ...) if you only
-want to touch one operator. `make clean` deletes both clusters; `make clean-all` also wipes
-`bin/` and `dist/`, so the next build re-downloads `controller-gen`, `kustomize`, `envtest`, `kind`
-and `kubebuilder`.
-
-For the fastest inner loop, run the control-plane manager on your host against the cluster's
-API server instead of building an image each time — this installs the CRDs but not the chart,
-so don't combine it with `make deploy-cp`:
-
-```bash
-export KUBECONFIG=~/.kube/ccluster-dev.yaml   # see the warning below
-make install    # CRDs only
-make run-cp     # runs the manager locally; Ctrl-C to stop
-```
-
-Note this loop runs as your kubeconfig identity, not the operator's ServiceAccount, so it
-does not exercise RBAC — use `make load-cp` and a `rollout restart` for that.
-
-**Every cluster-touching target acts on the current kubeconfig context, with no
-confirmation.** Development machines often carry other contexts (EKS, GKE, teleport) in the
-default kubeconfig, and `kind create cluster` switches the current context out from under
-you. Pin a dedicated kubeconfig before running any of the above:
-
-```bash
-kubectl config view --minify --flatten --context kind-ccluster-cp > ~/.kube/ccluster-dev.yaml
 export KUBECONFIG=~/.kube/ccluster-dev.yaml
 ```
 
-See [Development](docs/development.md) for controller wiring, RBAC, CRD and chart
-generation, [Testing](docs/testing.md) for test selection, and
-[Build and release contracts](docs/build-and-release.md) for Docker and CI mechanics.
-
-# Requirements
-
-- **Go:** 1.21 or newer. `make` builds with the toolchain pinned in `go.mod` and
-  downloads it on first use.
-- **Deployment targets (external):** a Kubernetes cluster and [Helm](https://helm.sh/).
-  [Argo CD](https://argo-cd.readthedocs.io/) reconciles the charts and is installed into the
-  control-plane cluster by `make deploy-cp`. GPU workloads additionally require the NVIDIA
-  GPU Operator / drivers on the cluster.
-- **Local development:** Docker and [uv](https://docs.astral.sh/uv/), which
-  `make build` uses to regenerate the Python models. `make` builds the pinned
-  [kind](https://kind.sigs.k8s.io/) into `bin/`. `make init` creates both development
-  clusters; `make build load deploy` builds, loads and installs into them.
-- **Linux inotify limits:** kind nodes share the host's per-user inotify limits. The full
-  e2e tier, and a development cluster running catalog components such as istio, need
-  kind's recommended `fs.inotify.max_user_instances=512` and
-  `fs.inotify.max_user_watches=524288`. `make init` and the quick e2e tier warn below
-  them; `make test-e2e-full` fails. See
-  [Testing](docs/testing.md#e2e-setup-and-lifecycle) for raising them.
-
-## Releases
-
-Every merge to `main` publishes both operator images tagged with the commit hash and both
-charts as a pre-release of the next version, `X.Y.Z-dev.<sha>` (for example
-`0.0.2-dev.<sha>` while the latest release is `v0.0.1`), so any commit can be deployed
-before it is released. The same merge publishes the matching client to PyPI as
-`ccluster-py==X.Y.Z.dev<N>`, where `N` is the commit's position on `main`, because a
-Python version cannot carry a hash:
+Create the clusters, build everything from your checkout, and deploy:
 
 ```bash
-make deploy-cp IMG_TAG=<sha>
-helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version 0.0.2-dev.<sha> ...
-pip install "ccluster-py==0.0.2.dev$(git rev-list --count <sha>)"
+make init     # create both kind clusters
+make build    # generated code, binaries, images, charts and Python models
+make load     # load the images into the kind clusters
+make deploy   # install each operator's chart into its cluster
 ```
 
-The commit for a published `.dev<N>` is in the file's provenance on PyPI and in the
-summary of the `Main` workflow run that published it. `pip` ignores these pre-releases
-unless pinned exactly, given `--pre`, or no release satisfies the requested range, so
-`pip install ccluster-py` still installs the latest release but `ccluster-py>0.0.8`
-installs a `0.0.9.dev<N>` when 0.0.8 is the latest release.
+Then apply the [single-cluster examples](examples/quickstart/manifests/), which register the
+control-plane cluster with itself, or build the CLI with `make build-cli` and register
+the infra-plane cluster:
 
-A release is a GitHub Release. Create one against a new tag `vX.Y.Z` (in the GitHub UI, or
-`gh release create vX.Y.Z --generate-notes`) and `.github/workflows/release.yml` retags
-the images already built for that commit as `X.Y.Z`, re-packages both charts as `X.Y.Z`
-pointing at them, publishes `ccluster-py==X.Y.Z` to PyPI, and attaches the chart and CLI
-tarballs and the Python dists to the release. Nothing in the tree is bumped.
+```bash
+bin/ccluster init --control-plane kind-ccluster-cp
+bin/ccluster register edge-1 -n team-a --infra-plane kind-ccluster-ip \
+    --server https://ccluster-ip-control-plane:6443
+```
+
+Useful targets while iterating:
+
+| Command | What it does |
+| --- | --- |
+| `make test` | Unit and envtest suites; no cluster needed |
+| `make load-cp deploy-cp` | Rebuild and redeploy one operator (`-cp` or `-ip`) |
+| `make run-cp` | Run the control-plane operator on your host against the cluster |
+| `make test-e2e` | End-to-end tests in their own pair of kind clusters |
+| `make pre-commit` | Every check to run before a commit: tidy, generate, lint, test |
+| `make clean` | Delete both kind clusters |
+| `make help` | List every target |
+
+Further reading:
+
+- [DESIGN.md](DESIGN.md): the API, reconciliation, ordering and tenancy, and why.
+- [Development](docs/development.md): adding controllers, APIs and catalog components;
+  code generation, RBAC and charts; cluster operations.
+- [Testing](docs/testing.md): choosing a test layer and running e2e.
+- [Build and release contracts](docs/build-and-release.md): images, CI and publishing.
+- [CONTRIBUTING.md](CONTRIBUTING.md): sign-off and pull requests.
+- [AGENTS.md](AGENTS.md): instructions for coding agents.
+
+# Releases
+
+Releases are published as [GitHub Releases](https://github.com/NVIDIA/ccluster/releases) and
+listed in [CHANGELOG.md](CHANGELOG.md). Each one publishes:
 
 | Artifact | Location |
 | --- | --- |
-| Operator images | `ghcr.io/nvidia/ccluster-cp-operator:X.Y.Z`, `ghcr.io/nvidia/ccluster-ip-operator:X.Y.Z` (also tagged with the commit hash) |
-| compute-ssh launcher image | `ghcr.io/nvidia/ccluster-compute-ssh:X.Y.Z` (also tagged with the commit hash); `compute_deployment` defaults to it |
 | Helm charts | `oci://ghcr.io/nvidia/charts/ccluster-cp`, `oci://ghcr.io/nvidia/charts/ccluster-ip` |
-| Python package | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/), imported as `ccluster` |
-| Command line | `ccluster_X.Y.Z_{linux,darwin}_{amd64,arm64}.tar.gz` on the GitHub Release, or `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` |
-| Catalog | This repository at tag `vX.Y.Z`; the released cp chart defaults `--catalog-revision` to it |
+| Operator images | `ghcr.io/nvidia/ccluster-cp-operator`, `ghcr.io/nvidia/ccluster-ip-operator` |
+| Command line | Release tarballs, or `go install github.com/NVIDIA/ccluster/cmd/ccluster@vX.Y.Z` |
+| Python SDK | [`ccluster-py` on PyPI](https://pypi.org/project/ccluster-py/) |
+| Catalog | This repository at tag `vX.Y.Z` |
 
-- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
-- Broader direction and upcoming capabilities are described in [DESIGN.md](DESIGN.md).
-
-# Contribution Guidelines
-
-CCluster is early and evolving quickly — contributions, ideas, and feedback on the direction are welcome.
-
-- Start here: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- Working on the operators: [Development](docs/development.md) for build and generation
-  mechanics, [`DESIGN.md`](DESIGN.md) for the control plane, and
-  [`AGENTS.md`](AGENTS.md) for agent instructions.
-- Development quickstart:
-
-```bash
-make build          # manifests, CRDs, deepcopy, Go client, operator binaries and CLI, both images, both charts, Python models
-make test           # envtest suites for both control-plane controllers
-make helm-generate  # regenerate the charts from config/; CI fails on any drift
-```
-
-## Maintainers
-
-- **Maintainers:** [`MAINTAINERS.md`](MAINTAINERS.md)
-- **Code of Conduct:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-
-## Security
-
-- Vulnerability disclosure: see [`SECURITY.md`](SECURITY.md).
-- Please do **not** file public GitHub issues for security reports.
-
-## Support
-
-- **Level:** Maintained (best-effort; early and evolving quickly).
-- **How to get help:** see [`SUPPORT.md`](SUPPORT.md) — GitHub Issues and Discussions.
+Every merge to `main` also publishes development builds; see
+[Installation: development builds](docs/installation.md#development-builds).
 
 # Community
 
-Questions, ideas, and feedback on the direction are welcome via
-[GitHub Issues](../../issues) and [Discussions](../../discussions). See
-[`SUPPORT.md`](SUPPORT.md) for the best channel for your question.
+- **Questions and ideas:** [GitHub Discussions](https://github.com/NVIDIA/ccluster/discussions)
+  or [Issues](https://github.com/NVIDIA/ccluster/issues); see [SUPPORT.md](SUPPORT.md). To
+  reach the maintainers by email, write to ccluster-dev@nvidia.com.
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md). Maintainers are listed in
+  [MAINTAINERS.md](MAINTAINERS.md), and the [Code of Conduct](CODE_OF_CONDUCT.md) applies.
+- **Security:** report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in a
+  public issue.
 
 # License
 
-This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
-
-The Python package under [`python/`](python/) is also licensed under Apache-2.0. Its
-[`python/LICENSE`](python/LICENSE) is a symlink to the root [LICENSE](LICENSE), so the
-Python build, which runs from `python/`, includes the root license in the sdist and wheel;
-see [Build and release contracts](docs/build-and-release.md#license-payload). Third-party
-components in the operator images and Helm charts, and the catalog charts' Helm
-dependencies, are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+CCluster, including the Python package, is licensed under the [Apache License 2.0](LICENSE).
+Third-party components in the images and charts, and the catalog charts' dependencies, are
+listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 # Notice and Disclaimer
 

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # A two-component CCLComponentSet, argo-rollouts then keda, matching
-# examples/quickstart/v1alpha1_cclcomponentset.yaml. Order is the position in the list.
+# examples/quickstart/manifests/v1alpha1_cclcomponentset.yaml. Order is the position in the list.
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLComponentSet
 metadata:

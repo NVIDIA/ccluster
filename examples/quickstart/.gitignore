@@ -1,0 +1,3 @@
+# The infra-plane credentials step 1 of README.md writes here. The token is cluster-admin.
+token
+ca.crt
