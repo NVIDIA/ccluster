@@ -111,6 +111,7 @@ kubectl --context "$CP" -n team-a get cclcomponentset qwen -w
 The model is served at `https://qwen.nginx.<domain>`, with an OpenAI-compatible API:
 
 ```bash
+DOMAIN=$(kubectl --context "$CP" -n team-a get cclinfraplane edge-1 -o jsonpath='{.status.domain}')
 curl "https://qwen.nginx.$DOMAIN/v1/chat/completions" -H 'Content-Type: application/json' \
   -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```

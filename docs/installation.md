@@ -65,8 +65,10 @@ Replace `planes.example.com` with your base domain and `X.Y.Z` with a
 ### Existing Argo CD
 
 To use an Argo CD already running in the control-plane cluster, install with
-`--set argo-cd.enabled=false` and add `--argocd-namespace=<its namespace>` to
-`manager.args`. The operator then needs a read-only Argo CD account and an API token; see
+`--set argo-cd.enabled=false` and, in `manager.args`, add
+`--argocd-namespace=<its namespace>` and `--argocd-server-service=<its argocd-server
+Service>` (default `argocd-server`). The operator then needs a read-only Argo CD account
+and an API token; see
 [Development: Argo CD API token](development.md#argo-cd-api-token) for the steps.
 
 ### DNS
