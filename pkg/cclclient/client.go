@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 	cclusterac "github.com/NVIDIA/ccluster/pkg/client/applyconfiguration/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )

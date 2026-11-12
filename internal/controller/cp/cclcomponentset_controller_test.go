@@ -34,8 +34,8 @@ import (
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
 	driftregistry "github.com/NVIDIA/ccluster/internal/registry/drift_registry"
 	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 )

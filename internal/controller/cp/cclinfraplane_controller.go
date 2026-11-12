@@ -26,8 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
-	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/api/externaldns/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/remote"
 )
 
