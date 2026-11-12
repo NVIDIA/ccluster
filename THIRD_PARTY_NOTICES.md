@@ -46,10 +46,10 @@ bundles none.
 | Component | Version | Upstream Helm repository | License |
 | --- | --- | --- | --- |
 | argo-rollouts | 2.37.7 | https://argoproj.github.io/argo-helm | Apache-2.0 |
-| istio (base) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (istiod) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (cni) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (gateway) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
+| istio (base) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (istiod) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (cni) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (gateway) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
 | cert-manager | v1.14.5 | https://charts.jetstack.io | Apache-2.0 |
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |

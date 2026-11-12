@@ -5,7 +5,7 @@ name: cluster_base_istio
 description: Istio - service mesh with mTLS, ingress gateway and CNI plugin
 type: application
 version: 0.1.0
-appVersion: "1.24.6"
+appVersion: "1.32.0"
 home: https://github.com/NVIDIA/ccluster
 sources:
   - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/istio
@@ -16,15 +16,15 @@ maintainers:
 dependencies:
   - name: base
     alias: istio-base
-    version: 1.24.6
-    repository: https://istio-release.storage.googleapis.com/charts
+    version: 1.32.0
+    repository: https://blob.istio.io/istio-release/charts
   - name: istiod
-    version: 1.24.6
-    repository: https://istio-release.storage.googleapis.com/charts
+    version: 1.32.0
+    repository: https://blob.istio.io/istio-release/charts
   - name: gateway
     alias: istio-gateway
-    version: 1.24.6
-    repository: https://istio-release.storage.googleapis.com/charts
+    version: 1.32.0
+    repository: https://blob.istio.io/istio-release/charts
     # Gateway pods use `image: auto` and depend on istiod's mutating
     # webhook to inject the real istio-proxy image at admission. If
     # gateway pods are created before istiod is Ready, kubelet tries
@@ -34,5 +34,5 @@ dependencies:
     condition: istio-gateway.enabled
   - name: cni
     alias: istio-cni
-    version: 1.24.6
-    repository: https://istio-release.storage.googleapis.com/charts
+    version: 1.32.0
+    repository: https://blob.istio.io/istio-release/charts
