@@ -27,6 +27,10 @@ import (
 	prometheusadapter "github.com/NVIDIA/ccluster/catalogs/cluster_base/prometheus_adapter"
 )
 
+// Components returns the cluster_base components for infraPlane, in install order.
+// It leaves out external_secrets, which is optional because a cluster may already run
+// ESO installed by other means. See DESIGN.md §3a, "Checks live with the catalog,
+// registration with the operator".
 func Components(
 	infraPlane string,
 ) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {
