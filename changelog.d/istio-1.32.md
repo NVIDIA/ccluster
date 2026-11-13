@@ -17,3 +17,9 @@
   so the Application could not sync and the real DaemonSet in the component's namespace kept
   its wildcard tolerations. On Cilium, set `istio-cni.tolerations` without the wildcards, so
   that istio-cni-node waits for cilium-agent.
+
+### Fixed
+- Component health counts a Pod that crash-loops in an init container, such as
+  `istio-validation` or a native sidecar like `istio-proxy`, as `Degraded`, and explains it
+  with that container's last exit, such as `OOMKilled`. Argo CD judges a running Pod by its
+  app containers alone, so such a Pod stayed `Progressing` without a reason.
