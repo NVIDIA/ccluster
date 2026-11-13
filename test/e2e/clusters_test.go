@@ -206,11 +206,14 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 }
 
 // installClusterBase installs the cluster_base charts that have a Verifier of their own,
-// which fail on a bare kind cluster: metrics_server, for the resource metrics API, and
-// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address.
+// which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD, metrics_server,
+// for the resource metrics API, and kube_prometheus_stack, for the Prometheus Service the
+// catalog's consumers address.
 func installClusterBase(c utils.Cluster) {
 	GinkgoHelper()
 
+	installClusterBaseChart(c, "argo_rollouts", "argo-rollouts", "argo-rollouts",
+		"argo-rollouts-kind-values.yaml", 3*time.Minute)
 	installClusterBaseChart(c, "metrics_server", "metrics-server", "kube-system",
 		"metrics-server-kind-values.yaml", 3*time.Minute)
 	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus",
@@ -229,20 +232,40 @@ func installClusterBase(c utils.Cluster) {
 	}, 5*time.Minute, 5*time.Second).Should(Succeed())
 }
 
+// argoRolloutsCRDs are the CRDs the argo_rollouts chart installs. It marks them
+// helm.sh/resource-policy: keep (the upstream keepCRDs), so they outlive the release.
+var argoRolloutsCRDs = []string{
+	"analysisruns.argoproj.io",
+	"analysistemplates.argoproj.io",
+	"clusteranalysistemplates.argoproj.io",
+	"experiments.argoproj.io",
+	"rollouts.argoproj.io",
+}
+
 // uninstallClusterBase removes what installClusterBase installed from c. The CRDs the
-// Prometheus chart installed stay, as Helm leaves them, and go with the cluster.
+// Prometheus chart installed stay, as Helm leaves them, and go with the cluster. The
+// Argo Rollouts CRDs are deleted by name, because the argo_rollouts Verifier checks only
+// that the Rollout CRD exists: left behind, they would verify argo_rollouts for the
+// next spec on the cluster, which expects it to fail. By name, not by group, so the
+// control-plane cluster keeps Argo CD's argoproj.io CRDs.
 func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
+	uninstallClusterBaseChart(c, "argo-rollouts", "argo-rollouts")
+	_, _ = utils.Run(c.Kubectl(append([]string{"delete", "crd", "--ignore-not-found", "--wait"},
+		argoRolloutsCRDs...)...))
 }
 
-// expectBaseComponentsFailing asserts that a Verified message names metrics_server and
-// kube_prometheus_stack among the failing cluster_base components, for want of what they
-// provide on a bare kind cluster: the APIService and the Prometheus Service. "Not found"
-// rather than a read error proves the ip chart's ClusterRole lets the manager read
-// APIServices and Services. Other failing components are not asserted on, so a
-// cluster_base chart gaining a check of its own does not break the suite.
+// expectBaseComponentsFailing asserts that a Verified message names argo_rollouts,
+// metrics_server and kube_prometheus_stack among the failing cluster_base components,
+// for want of what they provide on a bare kind cluster: the Rollout CRD, the APIService
+// and the Prometheus Service. "Not found" rather than a read error proves the ip chart's
+// ClusterRole lets the manager read CustomResourceDefinitions, APIServices and Services.
+// Other failing components are not asserted on, so a cluster_base chart gaining a check
+// of its own does not break the suite.
 func expectBaseComponentsFailing(g Gomega, message string) {
+	g.Expect(message).To(ContainSubstring(
+		"catalogs/cluster_base/argo_rollouts (CustomResourceDefinition rollouts.argoproj.io not found"))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
 	g.Expect(message).To(ContainSubstring(
@@ -250,7 +273,7 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 }
 
 // expectBaseComponentsVerified asserts that a Verified message no longer names
-// metrics_server or kube_prometheus_stack as failing, once installClusterBase has
+// argo_rollouts, metrics_server or kube_prometheus_stack as failing, once installClusterBase has
 // installed them. It says nothing about the other components, but an empty message,
 // such as a copy that lost its conditions, fails.
 //
@@ -260,6 +283,7 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 // stays in the message.
 func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(BeEmpty())
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/argo_rollouts"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/kube_prometheus_stack"))
 }
