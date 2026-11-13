@@ -3,8 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package clusterbase assembles the cluster_base catalog: the platform components every
-// infra-plane cluster gets, in the order they have to be installed.
+// Package clusterbase assembles the cluster_base catalog: the platform components an
+// infra-plane cluster gets, in the order they have to be installed, except the optional
+// ones.
 package clusterbase
 
 import (

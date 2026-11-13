@@ -194,11 +194,12 @@ func verifiedCondition(total int, failing []failure, conflicts []string) metav1.
 			total-len(failing), total, strings.Join(describe(failing), "; "))
 	case len(conflicts) > 0:
 		condition.Reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonLoadBalancerConflict
-		condition.Message = fmt.Sprintf("All %d cluster_base components are installed and configured", total)
+		condition.Message = fmt.Sprintf("All %d cluster_base components verified", total)
 	default:
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified
-		condition.Message = fmt.Sprintf("All %d cluster_base components are installed and configured", total)
+		// "verified", not "installed": an optional component passes when it is absent.
+		condition.Message = fmt.Sprintf("All %d cluster_base components verified", total)
 	}
 	if len(conflicts) > 0 {
 		condition.Message += "; conflicting LoadBalancers: " + strings.Join(conflicts, "; ")

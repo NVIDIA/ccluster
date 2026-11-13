@@ -8,3 +8,8 @@
   `Verified` stays False until ESO serves `external-secrets.io/v1` and its webhook has a
   ready endpoint. The ip operator's ClusterRole now reads ValidatingWebhookConfigurations
   and ExternalSecrets.
+
+### Changed
+- The `Verified` message on success reads "All N cluster_base components verified"
+  instead of "... are installed and configured", since an optional component passes
+  when it is absent.

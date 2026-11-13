@@ -1219,8 +1219,9 @@ runs one worker (§3).
   after it, and every removal, indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Only `metrics_server` has a check of its own; every other
-  cluster_base chart is still registered with `alwaysVerified`. The remaining checks
+- **Real Verifiers.** Only `metrics_server`, `kube_prometheus_stack` and `external_secrets`
+  have checks of their own; every other cluster_base chart is still registered with
+  `alwaysVerified`. The remaining checks
   (workload readiness, issuer readiness, CRDs Established) are not written yet.
 - **Per-component verification results.** The `CCLClusterConfig` status reaches the
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
