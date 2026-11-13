@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Both blocks: renders app-env-8f3a21c0 and app-pull-8f3a21c0.
+name: app
+suffix: 8f3a21c0
+secretStoreRef:
+  name: vault
+  kind: ClusterSecretStore
+env:
+  HF_TOKEN:
+    key: tenants/42/hf-token
+    version: "3"
+imagePull:
+  server: nvcr.io
+  username: $oauthtoken
+  password:
+    key: tenants/42/ngc-key
+    version: "2"

@@ -47,6 +47,7 @@ import (
 	namespacebase "github.com/NVIDIA/ccluster/catalogs/namespace_base"
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 	persistentvolume "github.com/NVIDIA/ccluster/catalogs/resources/persistent_volume"
+	workloadsecrets "github.com/NVIDIA/ccluster/catalogs/resources/workload_secrets"
 )
 
 // Component is one chart: its directory relative to the repository root, which is also
@@ -94,6 +95,7 @@ var Deployments = []Component{
 var Resources = []Component{
 	{kaigpuqueues.Chart, kaigpuqueues.Values{}},
 	{persistentvolume.Chart, persistentvolume.Values{}},
+	{workloadsecrets.Chart, workloadsecrets.Values{}},
 }
 
 // All is every chart in the catalog: the groups above, concatenated in that order. The

@@ -101,8 +101,10 @@ their `Values` is the chart's own top-level document with camelCase keys, the po
 fields most of them share come from embedding `deployments.Workload`, the autoscaling
 and rollout types live in the `deployments` package, and every `Values` implements
 `Validate()`. `catalogs/resources/` holds the resources those workloads reference:
-`kai_gpu_queues` (the KAI scheduler quota tree the `kaiQueue` value joins) and
-`persistent_volume` (a claim the `volumeMounts` value mounts). `catalogs/namespace_base/`
+`kai_gpu_queues` (the KAI scheduler quota tree the `kaiQueue` value joins),
+`persistent_volume` (a claim the `volumeMounts` value mounts) and `workload_secrets`
+(ExternalSecrets whose Secrets the `secretEnvVars` and `imagePullSecretNames` values
+read; see [Secrets in workload charts](#secrets-in-workload-charts)). `catalogs/namespace_base/`
 is the per-tenant namespace baseline the workloads assume is installed first; it takes
 no values. These charts derive everything namespace-scoped from
 the release namespace, which Argo CD sets to the component's `namespace`; they take no
@@ -172,8 +174,9 @@ When adding or changing a component:
   [the generated Application](../DESIGN.md#the-generated-application).
 - A chart whose required values have no default carries `ci/<case>-values.yaml`, the
   required values only; a chart with exclusive modes carries one file per mode (see
-  `persistent_volume`). `make helm-lint-catalogs`, run by CI, renders the chart with
-  each file, or with its defaults when there is none.
+  `persistent_volume`), and a chart whose optional values render objects of their own
+  carries one that sets them too (see `workload_secrets`). `make helm-lint-catalogs`, run
+  by CI, renders the chart with each file, or with its defaults when there is none.
 - Include a hand-written `.helmignore` excluding `*.go`, so source does not enter chart
   archives. List any image source subdirectory too. This is separate from the generated
   operator-chart ignore files.
@@ -203,6 +206,47 @@ only such image today. Operator binaries stay in `cmd/`.
   chart working with that launcher until the next release. To try an unreleased
   launcher, set the chart's image value (`sshInjectorImage` for `compute_deployment`) to
   the `:<sha>` image `main.yml` pushed for that commit.
+
+### Secrets in workload charts
+
+The workload charts take a secret in two ways. Only the first puts the value in the
+values, and so in the CCLComponentSet and the Argo CD Application.
+
+- `hfToken`, `imagePullSecret` and `envVars` carry the value itself.
+- `secretEnvVars` and `imagePullSecretNames` name Secrets in the release namespace. The
+  charts never create or read them.
+
+`catalogs/resources/workload_secrets` creates such Secrets with the External Secrets
+Operator (ESO), from references into a secret store; see the `workloadsecrets` package.
+It needs two things on the infra plane, and ccluster installs neither: ESO serving
+`external-secrets.io/v1` (v0.16.0 or later), and the `SecretStore` or
+`ClusterSecretStore` that `secretStoreRef` names, able to read the referenced keys.
+Without the ExternalSecret CRD, Argo CD rejects the component's whole sync.
+
+A caller deploys it as its own component, listed before the workload in the same
+CCLComponentSet:
+
+- The component is named `secrets-<suffix>`. The chart names each ExternalSecret, and
+  the Secret it creates, `<name>-env-<suffix>` or `<name>-pull-<suffix>`, and the
+  workload's `secretEnvVars` and `imagePullSecretNames` point at those names.
+- ESO fills each Secret once (`refreshPolicy: CreatedOnce`) and never updates it. A new
+  reference or `version` needs a new suffix, and so replaces the component. The cp
+  operator releases the new component first, writes the workload only once its
+  ExternalSecrets are Ready, and deletes the old component, with its Secrets, only after
+  the workload is finished. See
+  [removed components](../DESIGN.md#removed-components-go-last-in-reverse).
+- Every name comes from the one suffix. A name that stayed the same across suffixes
+  would be rendered by both components while the old one waits to be deleted.
+- By convention the suffix is the first 8 hex characters of a hash of the component's
+  other values. Returning to earlier references then gives the earlier component, which
+  the cp operator keeps if it is still waiting to be deleted.
+- With `version` unset, the Secret keeps the value ESO read when it created it. Under
+  the hash convention the suffix changes only with the values, so a value rotated in the
+  store reaches the pods only when the values change, such as a new `version`.
+- A reference ESO cannot resolve leaves the component Degraded, so the workload is not
+  written and keeps its running pods until the caller fixes or reverts the reference.
+- The chart carries no Argo CD sync or health annotation: the order and the deletion
+  come from the component list.
 
 ## Python generation
 
