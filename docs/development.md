@@ -359,6 +359,9 @@ Watch starts, stops and failures are logged under the `remote` logger, and the
 
 ### DNS and external-dns
 
+[Installation: DNS](installation.md#dns) enables DNS publishing on the released chart and
+says how to check it. This section covers the same from a checkout.
+
 Every CCLInfraPlane's domain is `<name>.<namespace>.<base domain>`, the base domain being
 the cp operator's required `--base-domain`. `make deploy-cp` and `make run-cp` pass
 `BASE_DOMAIN`, `example.com` by default; set it once per control plane, since changing it
@@ -373,7 +376,8 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
    its parent. It covers every plane. external-dns writes each record into the most
    specific zone it manages, so a tenant (`team-a.planes.example.com`) or a plane
    (`gpu-a.team-a.planes.example.com`) can also have a zone of its own.
-2. Configure the cp chart's external-dns for your provider. For Route53 with IRSA:
+2. Configure the cp chart's external-dns for your provider;
+   [Installation: DNS](installation.md#dns) has the general form. For Route53 with IRSA:
 
    ```yaml
    # dns-values.yaml
@@ -411,6 +415,7 @@ The operator writes the DNSEndpoints into its own namespace, which the chart's e
 reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
 should then read only that namespace; `make run-cp`, which has no namespace of its own,
 passes the cp chart's (`HELM_NAMESPACE_CP`).
+
 external-dns's Route53 policy, scoped by name with `planes.example.com` standing for your
 base domain:
 
@@ -442,14 +447,9 @@ base domain:
 }
 ```
 
-`DNSReady=True/Published` means external-dns read the current DNSEndpoint, not that it
-wrote the records: it marks the DNSEndpoint read before it calls the provider, and a record
-it skips or fails to write shows only in its logs
-([#174](https://github.com/NVIDIA/ccluster/issues/174)). If the name does not resolve,
-check external-dns's logs for provider errors such as denied IAM calls, at
-`--log-level=debug` for `Skipping record`, and its `--domain-filter`. One external-dns writes every plane's record with one set of
-credentials; separate credentials per tenant need an external-dns per tenant, each reading
-only its tenant's DNSEndpoints, which the chart does not set up.
+[Installation: DNS](installation.md#dns) says how to check that the records are published,
+why `DNSReady=True/Published` does not prove it, and what one external-dns means for
+per-tenant credentials.
 
 ### Argo CD API token
 
