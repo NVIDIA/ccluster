@@ -35,21 +35,6 @@ class CNI(BaseModel):
     """
 
 
-class CiliumIstioPatch(BaseModel):
-    """
-    CiliumIstioPatch configures the Cilium DaemonSet patch.
-    """
-
-    model_config = ConfigDict(
-        extra="allow",
-        populate_by_name=True,
-    )
-    enabled: bool | None = None
-    """
-    Enabled applies the patch. The chart ships it off.
-    """
-
-
 class IstioBase(BaseModel):
     """
     IstioBase configures the istio-base subchart.
@@ -64,18 +49,6 @@ class IstioBase(BaseModel):
     DefaultRevision is the revision tag installed as the default. The chart ships
     "default".
     """
-
-
-class IstioCNI(BaseModel):
-    """
-    IstioCNI configures the istio-cni subchart.
-    """
-
-    model_config = ConfigDict(
-        extra="allow",
-        populate_by_name=True,
-    )
-    cni: CNI | None = None
 
 
 class IstioGateway(BaseModel):
@@ -110,6 +83,42 @@ class Pilot(BaseModel):
     """
 
 
+class Toleration(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    key: str | None = None
+    operator: str | None = None
+    value: str | None = None
+    effect: str | None = None
+    toleration_seconds: Annotated[int | None, Field(alias="tolerationSeconds")] = None
+
+
+class IstioCNI(BaseModel):
+    """
+    IstioCNI configures the istio-cni subchart.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    cni: CNI | None = None
+    tolerations: list[Toleration] | None = None
+    """
+    Tolerations replaces the istio-cni-node DaemonSet's tolerations. The chart keeps
+    the upstream list, whose wildcards tolerate every NoSchedule and NoExecute taint.
+
+    On Cilium, list only the taints istio-cni-node must run on, such as
+    dedicated_compute=true:NoSchedule. The wildcards also tolerate
+    node.cilium.io/agent-not-ready, so istio-cni can write its CNI configuration
+    before cilium-agent is Ready and break pod networking on that node until the
+    istio-cni pod is recreated. The DaemonSet controller still adds the node-condition
+    tolerations, such as not-ready and unreachable.
+    """
+
+
 class Istiod(BaseModel):
     """
     Istiod configures the istiod subchart.
@@ -135,14 +144,6 @@ class Values(BaseModel):
     istiod: Istiod | None = None
     istio_gateway: Annotated[IstioGateway | None, Field(alias="istio-gateway")] = None
     istio_cni: Annotated[IstioCNI | None, Field(alias="istio-cni")] = None
-    cilium_istio_patch: Annotated[
-        CiliumIstioPatch | None, Field(alias="ciliumIstioPatch")
-    ] = None
-    """
-    CiliumIstioPatch enables the in-chart DaemonSet patch applied to
-    istio-cni-node when Cilium is the cluster CNI. Rendered by
-    templates/cilium-patch.yaml. The chart ships it off.
-    """
 
 
 # CHART is the chart directory, relative to the root of the catalog repository.

@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package istio
 
 import (
+	corev1 "k8s.io/api/core/v1"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
@@ -50,18 +52,13 @@ const (
 // Values is the top-level values document for catalogs/cluster_base/istio.
 //
 // Unlike the other components in this catalog, this chart wraps four upstream charts
-// rather than one, so its values have five sibling top-level keys rather than a single
+// rather than one, so its values have four sibling top-level keys rather than a single
 // chart-named one.
 type Values struct {
 	IstioBase    *IstioBase    `json:"istio-base,omitempty"`
 	Istiod       *Istiod       `json:"istiod,omitempty"`
 	IstioGateway *IstioGateway `json:"istio-gateway,omitempty"`
 	IstioCNI     *IstioCNI     `json:"istio-cni,omitempty"`
-
-	// CiliumIstioPatch enables the in-chart DaemonSet patch applied to
-	// istio-cni-node when Cilium is the cluster CNI. Rendered by
-	// templates/cilium-patch.yaml. The chart ships it off.
-	CiliumIstioPatch *CiliumIstioPatch `json:"ciliumIstioPatch,omitempty"`
 }
 
 // IstioBase configures the istio-base subchart.
@@ -93,6 +90,17 @@ type IstioGateway struct {
 // IstioCNI configures the istio-cni subchart.
 type IstioCNI struct {
 	CNI *CNI `json:"cni,omitempty"`
+
+	// Tolerations replaces the istio-cni-node DaemonSet's tolerations. The chart keeps
+	// the upstream list, whose wildcards tolerate every NoSchedule and NoExecute taint.
+	//
+	// On Cilium, list only the taints istio-cni-node must run on, such as
+	// dedicated_compute=true:NoSchedule. The wildcards also tolerate
+	// node.cilium.io/agent-not-ready, so istio-cni can write its CNI configuration
+	// before cilium-agent is Ready and break pod networking on that node until the
+	// istio-cni pod is recreated. The DaemonSet controller still adds the node-condition
+	// tolerations, such as not-ready and unreachable.
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
 // CNI is where istio-cni writes its plugin binary and configuration. These are the only
@@ -108,12 +116,6 @@ type CNI struct {
 	// (CNIBinDirDefault); GKE COS needs /home/kubernetes/bin (CNIBinDirGKE) and k3s
 	// /var/lib/rancher/k3s/data/cni (CNIBinDirK3s).
 	CNIBinDir *string `json:"cniBinDir,omitempty"`
-}
-
-// CiliumIstioPatch configures the Cilium DaemonSet patch.
-type CiliumIstioPatch struct {
-	// Enabled applies the patch. The chart ships it off.
-	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // New returns the istio chart entry, installed into namespace with values.
