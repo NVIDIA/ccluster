@@ -291,9 +291,9 @@ regenerates and fails on any drift.
 plane. `internal/server` is one `net/http` handler for both halves:
 
 - `GET /api/v1/config` and `GET /api/v1/overview?namespace=` answer JSON. Each request
-  lists `CCLInfraPlane`s and `CCLComponentSet`s through the generated clientset that a
-  `ClientSource` picks for it; `LocalSource` uses the kubeconfig context saved by
-  `ccluster init`. Kubernetes' 401 and 403 pass through to the UI, and a cluster-wide 403
+  lists `CCLInfraPlane`s and `CCLComponentSet`s with `Options.Clientset`, the generated
+  clientset `ccluster server` builds from the kubeconfig context saved by `ccluster init`.
+  Kubernetes' 401 and 403 pass through to the UI, and a cluster-wide 403
   is answered as `ClusterReadForbidden` so the page can suggest `-n`.
 - Every other `GET` serves the UI embedded by `internal/server/ui`: files under their own
   paths (`assets/` with immutable caching, since Vite hashes their names) and
