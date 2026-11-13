@@ -58,9 +58,10 @@ keeps the chart's others. A flag in `manager.args` takes precedence over its var
   repository at its own `vX.Y.Z` tag. Point them at a fork or branch to deploy your own
   charts. Argo CD clones the repository itself, so the revision must be pushed, and a
   private fork needs its credentials configured in Argo CD.
-- Upgrade with `helm upgrade --version <new version>` and the same `--set` flags. The new
-  chart brings its own catalog revision; `--reuse-values` would keep the previous
-  release's, and with it the previous catalog.
+- Upgrade with `helm upgrade --version <new version>` and the same `--set` flags and `-f`
+  values files, such as the one for [DNS](#dns). The new chart brings its own operator
+  image and catalog revision; `--reuse-values` would keep the previous release's, and with
+  them the previous operator and catalog.
 
 `charts/cp/chart/values.yaml` documents every variable, and `ccluster-cp-operator --help`
 lists them with their flags.
@@ -105,9 +106,10 @@ external-dns:
   env: []
 ```
 
-external-dns's [tutorials](https://github.com/kubernetes-sigs/external-dns/tree/master/docs/tutorials)
+The chart bundles external-dns chart 1.19.0, which runs external-dns v0.19.0. external-dns's
+[tutorials](https://github.com/kubernetes-sigs/external-dns/tree/v0.19.0/docs/tutorials)
 give each provider's name and credentials, and its chart's
-[Providers](https://github.com/kubernetes-sigs/external-dns/blob/master/charts/external-dns/README.md#providers)
+[Providers](https://github.com/kubernetes-sigs/external-dns/blob/external-dns-helm-chart-1.19.0/charts/external-dns/README.md#providers)
 section maps them to chart values. Put those values under `external-dns:`, and always set
 `provider.name`, which defaults to `aws`. external-dns runs as the ServiceAccount
 `ccluster-cp-external-dns` in the release namespace; a provider that trusts a ServiceAccount
@@ -138,24 +140,37 @@ helm upgrade ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z
 kubectl -n ccluster-cp-system rollout restart deploy/ccluster-cp-controller-manager
 ```
 
-This upgrade only enables external-dns on the installed version: `X.Y.Z` is the version
-`helm list -n ccluster-cp-system` shows. Do not change the version in the same step: with
-`--reuse-values` a newer chart would keep the old catalog revision. Upgrade the version
-separately, as [Control plane](#control-plane) describes. The operator
+This upgrade only enables external-dns on the installed version: `X.Y.Z` is the installed
+version, shown as `ccluster-cp-X.Y.Z` in the `CHART` column of
+`helm list -n ccluster-cp-system`. Do not change the version in the same step: with
+`--reuse-values` a newer chart would keep the old operator image and catalog revision.
+Upgrade the version separately, as [Control plane](#control-plane) describes. The operator
 watches DNSEndpoints only if their CRD existed when it started. Without the restart it
 misses external-dns reading the DNSEndpoint, and `DNSReady` stays `Pending` until the next
 resync, after `CCLUSTER_INFRAPLANE_RESYNC_PERIOD` (default 5m), or for good if that is 0.
 
-**Check.** The `DNS` column turns `True` once external-dns has read a cluster's DNSEndpoint:
+**Later upgrades.** Pass `-f dns-values.yaml` to every later `helm upgrade`. Without it the
+upgrade sets `external-dns.enabled` back to `false` and removes external-dns. The records
+already published stay in the zone with nothing updating them, and the `DNS` column can
+still show `True`.
+
+**Check.** The `DNS` column turns `True` once external-dns has read a cluster's DNSEndpoint,
+unless a LoadBalancer is invalid:
 
 ```bash
 kubectl get cclinfraplane -A
 ```
 
 Until then, `kubectl describe cclinfraplane <name> -n <namespace>` gives the `DNSReady`
-reason: `LoadBalancerPending` until the cluster has a labelled LoadBalancer with an
-address, `DNSEndpointCRDMissing` without the CRD, and `Pending` until external-dns reads the
-DNSEndpoint.
+reason:
+
+- `LoadBalancerPending`: the cluster has no labelled LoadBalancer with an address yet.
+- `DNSEndpointCRDMissing`: the DNSEndpoint CRD is not installed.
+- `Pending`: external-dns has not read the current DNSEndpoint yet.
+- `InvalidLoadBalancer`: a LoadBalancer gets no record, because its `<lb>` label value is
+  not a DNS label, its record name is longer than 253 characters, or its address is not
+  valid. The message names it. The DNSEndpoint still holds the other LoadBalancers'
+  records.
 
 `True` (`Published`) does not mean the records were written. external-dns marks a
 DNSEndpoint read before it calls the provider, and reports a rejected or skipped record
