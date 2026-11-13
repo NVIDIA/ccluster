@@ -107,8 +107,9 @@ class IstioCNI(BaseModel):
     cni: CNI | None = None
     tolerations: list[Toleration] | None = None
     """
-    Tolerations replaces the istio-cni-node DaemonSet's tolerations. The chart keeps
-    the upstream list, whose wildcards tolerate every NoSchedule and NoExecute taint.
+    Tolerations replaces the istio-cni-node DaemonSet's tolerations, and an empty list
+    removes them all. Unset, the chart keeps the upstream list, whose wildcards tolerate
+    every NoSchedule and NoExecute taint.
 
     On Cilium, list only the taints istio-cni-node must run on, such as
     dedicated_compute=true:NoSchedule. The wildcards also tolerate

@@ -91,8 +91,9 @@ type IstioGateway struct {
 type IstioCNI struct {
 	CNI *CNI `json:"cni,omitempty"`
 
-	// Tolerations replaces the istio-cni-node DaemonSet's tolerations. The chart keeps
-	// the upstream list, whose wildcards tolerate every NoSchedule and NoExecute taint.
+	// Tolerations replaces the istio-cni-node DaemonSet's tolerations, and an empty list
+	// removes them all. Unset, the chart keeps the upstream list, whose wildcards tolerate
+	// every NoSchedule and NoExecute taint.
 	//
 	// On Cilium, list only the taints istio-cni-node must run on, such as
 	// dedicated_compute=true:NoSchedule. The wildcards also tolerate
@@ -100,7 +101,7 @@ type IstioCNI struct {
 	// before cilium-agent is Ready and break pod networking on that node until the
 	// istio-cni pod is recreated. The DaemonSet controller still adds the node-condition
 	// tolerations, such as not-ready and unreachable.
-	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	Tolerations []corev1.Toleration `json:"tolerations,omitzero"`
 }
 
 // CNI is where istio-cni writes its plugin binary and configuration. These are the only

@@ -1,7 +1,7 @@
 ### Added
 - `catalogs/cluster_base/istio` takes `istio-cni.tolerations` (`IstioCNI.Tolerations`), which
-  replaces the istio-cni-node DaemonSet's tolerations. Unset, the DaemonSet keeps the upstream
-  wildcard tolerations.
+  replaces the istio-cni-node DaemonSet's tolerations; an empty list removes them all. Unset,
+  the DaemonSet keeps the upstream wildcard tolerations.
 
 ### Changed
 - **Breaking:** `catalogs/cluster_base/istio` upgrades Istio from 1.24.6 to 1.32.0, which
