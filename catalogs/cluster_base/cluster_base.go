@@ -13,6 +13,7 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	dynamoplatform "github.com/NVIDIA/ccluster/catalogs/cluster_base/dynamo_platform"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -33,7 +34,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as fourteen error checks. None
+	// the catalog reads as the list it is rather than as fifteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -119,6 +120,14 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(metricsserver.New("kube-system", metricsserver.Values{})),
 		}, // wave  47
+		{
+			// Not in the legacy catalog, which left it to infrastructure code. After
+			// longhorn, which provides the default StorageClass the NATS volume needs,
+			// and before any dynamo_deployment, whose DynamoGraphDeployment it serves.
+			Name:           dynamoplatform.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(dynamoplatform.New("dynamo-system", dynamoplatform.Values{})),
+		},
 	}
 
 	if err := errors.Join(errs...); err != nil {
