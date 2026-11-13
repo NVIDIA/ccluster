@@ -127,7 +127,7 @@ When adding or changing a component:
   its path under `ccluster.catalogs` in Python automatically, whether it sits in a
   catalog subdirectory or directly under `catalogs/`. A `cluster_base` component also goes into
   `catalogs/cluster_base/cluster_base.go`, which supplies a sample order and deployment
-  choices, not a universally deployable default.
+  choices, not a universally deployable default. An optional component stays out of it.
 - A `cluster_base` component is also registered with the ip operator's verifier registry,
   `verifierregistry.Get()` in `internal/registry/verifier_registry`, which must cover exactly
   `components.ClusterBase`, in its order (`TestGet` fails otherwise). Start with `alwaysVerified`.
@@ -135,7 +135,9 @@ When adding or changing a component:
   `component.go` with the `verifierregistry.VerifyFunc` signature (the chart package
   never imports controller code), reads live objects only (never Argo CD or Helm state),
   and reading a kind needs a `+kubebuilder:rbac` marker in `internal/controller/ip`, the
-  kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`.
+  kind's scheme in `cmd/ccluster-ip-operator`, and `make helm-generate`. An optional
+  component's check passes when the component is absent; see
+  [the ip verification design](../DESIGN.md#checks-live-with-the-catalog-registration-with-the-operator).
 - Every component is also registered with the cp operator's drift registry,
   `driftregistry.Get()` in `internal/registry/drift_registry`, which must cover exactly
   `components.All` (`TestGet` fails otherwise). Start with `noDrift`. A field that a

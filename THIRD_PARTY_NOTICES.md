@@ -51,6 +51,7 @@ bundles none.
 | istio (cni) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
 | istio (gateway) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
 | cert-manager | v1.14.5 | https://charts.jetstack.io | Apache-2.0 |
+| external-secrets | 2.15.0 | https://charts.external-secrets.io | Apache-2.0 |
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
 | ingress-nginx | 4.11.5 | https://kubernetes.github.io/ingress-nginx | Apache-2.0 |

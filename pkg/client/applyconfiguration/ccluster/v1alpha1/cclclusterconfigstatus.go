@@ -22,8 +22,8 @@ type CCLClusterConfigStatusApplyConfiguration struct {
 	//
 	// Condition types reported by the infra-plane operator:
 	// - "Verified": every catalogs/cluster_base component is installed in this
-	// cluster and configured for it. When False, the message names the charts
-	// that failed verification.
+	// cluster and configured for it, except an optional one, which may be absent.
+	// When False, the message names the charts that failed verification.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`

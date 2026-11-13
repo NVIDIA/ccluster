@@ -79,8 +79,8 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// metrics_server and kube_prometheus_stack are the cluster_base components with a
-	// check of their own, and kind ships neither a metrics server nor Prometheus, so the
+	// metrics_server and kube_prometheus_stack are the cluster_base components whose check
+	// fails on kind, which ships neither a metrics server nor Prometheus, so the
 	// condition starts False naming them, and stops naming them once their charts are
 	// installed - which proves the chart's CRD and RBAC let a real manager reconcile the
 	// singleton, read APIServices, Services and EndpointSlices and write its status.

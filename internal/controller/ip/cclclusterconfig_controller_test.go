@@ -450,7 +450,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		condition := verified()
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 		Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLClusterConfigReasonLoadBalancerConflict))
-		Expect(condition.Message).To(Equal("All 1 cluster_base components are installed and configured; " +
+		Expect(condition.Message).To(Equal("All 1 cluster_base components verified; " +
 			`conflicting LoadBalancers: "ingress" is on default/ingress-a, default/ingress-b`))
 	})
 

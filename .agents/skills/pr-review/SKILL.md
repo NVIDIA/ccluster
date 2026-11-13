@@ -39,8 +39,8 @@ tests pass):
 - Catalog packages: no mirror of the API types, pointer optionals with `omitempty`,
   non-pointer required fields without `omitempty`, snake_case directories, a new
   component registered in `catalogs/components/components.go` (and, for `cluster_base`,
-  in `cluster_base.go`, and in the ip verifier registry; every chart in the drift and
-  validator registries); `hack/pyschema` itself is not edited per
+  in the ip verifier registry and, unless it is optional, in `cluster_base.go`; every
+  chart in the drift and validator registries); `hack/pyschema` itself is not edited per
   chart or per CRD.
 - The ip operator verifies and never installs; a Verifier reads live objects only and a
   kind it reads has a matching RBAC marker in `internal/controller/ip`.
