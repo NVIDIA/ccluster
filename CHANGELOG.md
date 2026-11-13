@@ -7,6 +7,159 @@ and this project aims to adhere to [Semantic Versioning](https://semver.org/spec
 Changes merged since the latest release are in [`changelog.d/`](changelog.d/), one file per
 pull request, until a release collects them here.
 
+## [0.1.0] - 2026-11-13
+
+### Added
+- `CCLComponentSet` reports `status.componentHealthStatuses`: each released component's
+  `health` (`Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing`, `Unknown`,
+  `Succeeded` or `Failed`), `reason`, `message` and `lastTransitionTime`, as its chart's
+  health function judges it from Argo CD's resource tree, read through argocd-server.
+  `job_deployment`, `dynamo_deployment` and `compute_deployment` judge their Job,
+  DynamoGraphDeployment and load balancer; every other chart starts from Argo CD's
+  aggregate health and adds its Pods, such as one in CrashLoopBackOff or waiting for a GPU.
+  The reasons the operator sets itself are Go constants, `ComponentHealthReason<Reason>`,
+  in the API package; a chart's own reasons are exported from its chart package, such as
+  `jobdeployment.ReasonComplete`.
+- `status.componentSyncStatuses` keeps an entry for a component removed from the spec until
+  its Application is gone, with `removal` set to `DeletePending` or `Deleting`.
+  `status.componentHealthStatuses` lists it too, judged by the default health function.
+  `Progressing` reports the reason `ComponentRemoving` while those Applications are deleted.
+- The cp operator takes `--componentset-max-concurrent-reconciles` (default 4), the number
+  of `CCLComponentSet`s it reconciles at once, for the rollout and for component health
+  each. Before, it reconciled them one at a time.
+  `CCLInfraPlane`s are still reconciled one at a time.
+- `catalogs/cluster_base/kai_scheduler` installs the KAI scheduler (upstream chart
+  v0.15.3), which every `deployments` chart names as its `schedulerName` by default and
+  whose `Queue` CRD `kai_gpu_queues` needs. Install it before both. It bin-packs GPUs,
+  sets requests and limits for the scheduler, binder and operator, and creates an
+  unlimited `default-queue` for pods without a `kai.scheduler/queue` label. The admission
+  webhook does not set the `nvidia` RuntimeClass on GPU pods, because the catalog runs
+  gpu-operator with its container toolkit off, and a node's containerd may then have no
+  `nvidia` runtime handler. A checksum ConfigMap resyncs the Application when values
+  that reach the hook-applied `kai-config` Config CR change. `cluster_base.Components()`
+  installs it after gpu-operator.
+- The ip operator verifies `metrics_server`: `Verified` stays False until the
+  `v1beta1.metrics.k8s.io` APIService is Available, which HorizontalPodAutoscalers and
+  KEDA's cpu and memory triggers need. The check accepts any metrics server, so a managed
+  cluster's built-in one passes and the chart should be left out there. The ip
+  operator's ClusterRole now reads APIServices.
+- The ip operator verifies `kube_prometheus_stack`: `Verified` stays False until the
+  Service `prometheus/prometheus-op-kube-prometh-prometheus`, the address the inference
+  and dynamo ScaledObjects and prometheus-adapter hardcode, has a ready endpoint. A
+  Prometheus under another name or namespace fails. The ip operator's ClusterRole now
+  reads EndpointSlices.
+- `ccluster list infraplanes|componentsets -n NS` and
+  `ccluster get infraplane|componentset NAME -n NS` show what is registered and deployed in
+  a namespace, as a table, a summary, or with `-o yaml|json` the objects. `list -A` lists
+  across every namespace.
+- `Client.ListInfraPlanes` and `Client.ListComponentSets` in Go, and
+  `CCLClient.list_infraplanes` and `CCLClient.list_component_sets` in Python, list one
+  namespace.
+
+### Changed
+- **Breaking:** `cluster_base/final_stack` renames its Let's Encrypt HTTP-01 ClusterIssuer
+  from `letsencrypt-prod` to `acme-ca`, the issuer the Ingresses of `inference_deployment`
+  and `dynamo_deployment` request. On a plane built from `cluster_base` they now get a
+  trusted certificate instead of nginx's fake one. Its ACME account key Secret is now
+  `acme-ca-account-key`, so the issuer registers a new account, under the email
+  `ccluster-dev@nvidia.com`. Anything else that requested `letsencrypt-prod` must request
+  `acme-ca`. Issuance needs a publicly resolvable domain and port 80 on the ingress
+  LoadBalancer reachable from the internet.
+- **Breaking:** `cluster_base/istio` defaults `istio-cni` to the standard CNI paths,
+  `cniConfDir: /etc/cni/net.d` and `cniBinDir: /opt/cni/bin`, which suit EKS, kind and
+  kubeadm. The previous k3s defaults left `istio-cni-node` unready, and the component
+  Degraded, on every other cluster. On k3s set `cniConfDir` to
+  `/var/lib/rancher/k3s/agent/etc/cni/net.d` and `cniBinDir` to
+  `/var/lib/rancher/k3s/data/cni` (`istio.CNIConfDirK3s`, `istio.CNIBinDirK3s`); on GKE
+  COS set `cniBinDir` to `/home/kubernetes/bin` (`istio.CNIBinDirGKE`).
+- **Breaking:** `status.componentSyncs` is renamed `status.componentSyncStatuses` and loses
+  `health`; health is in `status.componentHealthStatuses`.
+- A component is released only once the one before it is `Healthy` or `Succeeded` as its
+  chart judges it, not as Argo CD's aggregate health says. A running `job_deployment` Job
+  now lets the next component follow, and a crash-looping Pod or a pending
+  DynamoGraphDeployment holds it. When the resource tree cannot be read, the aggregate
+  decides, as before.
+- Updates follow list order, like the first rollout: a component's new spec is written only
+  once every component before it has synced its own current spec and is `Healthy` or
+  `Succeeded`. An edit that changes several components reaches them one at a time, and a
+  component that does not finish holds back updates to every component after it.
+- The Application of a component removed from the spec is deleted only after every
+  remaining component has finished, one at a time, highest `ccluster.nvidia.com/wave` label
+  first. Before, it was deleted in the same pass that wrote the new spec. `Progressing`
+  stays `True` until the last one is gone.
+- Deleting a `CCLComponentSet` while removals still wait deletes the removed components'
+  Applications first, then the remaining components' in reverse order.
+- The rollout judges component health in spec order and stops at the first component that
+  is not finished, so a pass reads no resource tree past it. All the reads of one pass share
+  one 10-second deadline.
+- The cp operator no longer reconciles a `CCLComponentSet` when Argo CD's periodic refresh
+  of one of its Applications changes nothing but the refresh time. Before, every refresh
+  made the rollout and the component health controller judge the set again. A rollout pass
+  that could not read a component's resource tree now tries again after 30 seconds, which
+  the next refresh used to do.
+- The cp operator skips the `CCLComponentSet` status write when the status is unchanged,
+  such as after an Application event that changes nothing the status reports. This saves
+  one API request per such reconcile.
+- `ccluster-cp-operator` reads each of its own flags from a `CCLUSTER_*`
+  environment variable named after it, such as `CCLUSTER_BASE_DOMAIN` for `--base-domain`,
+  with a flag on the command line taking precedence. The `ccluster-cp` chart sets them in
+  `manager.envOverrides`, a map, so an install sets the base domain with
+  `--set manager.envOverrides.CCLUSTER_BASE_DOMAIN=<domain>` without restating the
+  chart's other settings, and a release keeps its own pinned catalog revision.
+  `manager.args` now holds only `--leader-elect`.
+- `ccluster register`, in Go and Python, waits until the control plane has reached the
+  registered cluster, the CCLInfraPlane's `ClusterConfigApplied` condition being `True`, and
+  prints the cluster's domain. If that takes over two minutes it fails with the condition's
+  reason and message, such as `ClusterUnreachable` for a `--server` the control plane cannot
+  reach, instead of reporting success. The quickstart's `register.py` and Go `register`
+  wait for `ClusterConfigApplied` rather than `Available`.
+- `ccluster-py` catalog `Values` models keep keys they do not model, at any depth, and
+  `catalogs.entry` and `catalogs.component` pass them to the chart unchanged, as the
+  operator already does. A chart value outside the Go type, such as
+  `ingress-nginx.controller.podLabels`, no longer needs a separate side channel; a
+  misspelled key is no longer rejected. The generated schemas no longer set
+  `additionalProperties: false`. The CRD models are unchanged.
+
+### Removed
+- **Breaking:** `cluster_base` no longer installs external-dns on infra planes. The
+  `external_dns` component and its Go and Python values packages are removed. Ingress
+  hosts already resolve through the wildcard records the control plane publishes for each
+  plane. An existing plane keeps its external-dns until its `cluster_base` CCLComponentSet
+  is reapplied without it, when the cp operator prunes the Application. Records it wrote
+  stay in the zone until deleted by hand.
+- **Breaking:** `cluster_base` no longer installs SPIRE. The `spire` and `spire_crds`
+  components and their Go and Python values packages are removed, with final_stack's
+  ClusterSPIFFEIDs and SPIRE OIDC discovery Ingress and the unused spiffe-helper
+  ConfigMaps in `cert_manager`, `fluent_bit` and `kube_prometheus_stack`. `final_stack`
+  now holds only the ClusterIssuer and no longer reads `global.cluster.domain`. An
+  existing plane keeps SPIRE until its `cluster_base` CCLComponentSet is reapplied.
+- **Breaking:** `cluster_base` no longer installs the OpenTelemetry Collector. The
+  `opentelemetry_collector` component and its Go and Python values packages are removed;
+  nothing in the catalog sent telemetry to it. An existing plane keeps it until its
+  `cluster_base` CCLComponentSet is reapplied.
+- **Breaking:** `compute_deployment` drops `domain` and `deploymentUrl`, and its SSH
+  Service loses its `external-dns.alpha.kubernetes.io/hostname` annotation. A compute
+  deployment is reached by its LoadBalancer address until #221 gives it a DNS name.
+- **Breaking:** `spirecrds.Verify` and `catalogs/common` are removed. The ip operator's
+  ClusterRole no longer reads CustomResourceDefinitions.
+- **Breaking:** `namespace_base` no longer creates the `ecr-image-pull` Secret or labels
+  the namespace `ecr-anywhere.centml.ai/namespace: enabled`, and the workload charts no
+  longer list `ecr-image-pull` in `imagePullSecrets`. A pod now lists only the Secret
+  `imagePullSecret` creates and the `imagePullSecretNames`, and has no `imagePullSecrets`
+  when both are unset. Private images are pulled through those values or through
+  credentials the cluster's nodes already have. This already shipped in 0.0.9, whose notes
+  left it out.
+
+### Fixed
+- `cluster_base/gpu_operator` now creates the ResourceQuota `gpu-operator-critical-pods` in
+  its namespace, covering the `system-node-critical` and `system-cluster-critical` priority
+  classes. On GKE, which admits pods of those classes outside `kube-system` only in a
+  namespace with such a quota, gpu-operator and node-feature-discovery pods were rejected and
+  the component never became Healthy. The new `quota.criticalPodLimit` value sets the quota's
+  pod limit, 2048 by default.
+- `cclclient.NewForConfig` returns an error, and Python's `CCLClient` raises `ValueError`,
+  for an empty namespace, which the Kubernetes clients read as every namespace.
+
 ## [0.0.9] - 2026-11-05
 
 ### Added
@@ -546,6 +699,7 @@ Template for future releases:
 ### Security
 -->
 
+[0.1.0]: https://github.com/NVIDIA/ccluster/compare/v0.0.9...v0.1.0
 [0.0.9]: https://github.com/NVIDIA/ccluster/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/NVIDIA/ccluster/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/NVIDIA/ccluster/compare/v0.0.6...v0.0.7
