@@ -147,9 +147,14 @@ class CCLClient:
     api_client is required. In a pod, call kubernetes.config.load_incluster_config() and
     pass kubernetes.client.ApiClient(); from a workstation pass
     kubernetes.config.new_client_from_config().
+
+    An empty namespace raises ValueError: the Kubernetes client reads it as every
+    namespace, so the client's lists would reach past the one it serves.
     """
 
     def __init__(self, namespace: str, *, api_client: k8s.ApiClient) -> None:
+        if not namespace:
+            raise ValueError("namespace must not be empty")
         self.namespace = namespace
         self._api = api_client
         self._discovery = _discover(api_client)
@@ -266,6 +271,16 @@ class CCLClient:
             self._get(self._discovery.infra_plane_gvr, name)
         )
 
+    def list_infraplanes(self) -> list[CCLInfraPlane]:
+        """Return the CCLInfraPlanes in the client's namespace.
+
+        A namespace that does not exist has none.
+        """
+        return [
+            CCLInfraPlane.model_validate(item)
+            for item in self._list(self._discovery.infra_plane_gvr)
+        ]
+
     def apply_component_set(
         self, *, name: str, components: list[ComponentSpec]
     ) -> CCLComponentSet:
@@ -366,6 +381,16 @@ class CCLClient:
             self._get(self._discovery.component_set_gvr, name)
         )
 
+    def list_component_sets(self) -> list[CCLComponentSet]:
+        """Return the CCLComponentSets in the client's namespace.
+
+        A namespace that does not exist has none.
+        """
+        return [
+            CCLComponentSet.model_validate(item)
+            for item in self._list(self._discovery.component_set_gvr)
+        ]
+
     def _apply(self, gvr, body, *, dry_run: bool = False):
         # dry_run="All" has the API server validate and admit the object without
         # persisting it.
@@ -387,3 +412,6 @@ class CCLClient:
 
     def _get(self, gvr, name: str) -> dict:
         return self._discovery.dynamic.get(gvr, name=name, namespace=self.namespace).to_dict()
+
+    def _list(self, gvr) -> list[dict]:
+        return self._discovery.dynamic.get(gvr, namespace=self.namespace).to_dict().get("items") or []

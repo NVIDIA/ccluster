@@ -98,7 +98,7 @@ func TestPrintsUsage(t *testing.T) {
 			!strings.Contains(out, "Usage:\n  ccluster") {
 			t.Errorf("ccluster %v printed %q, want the usage", args, out)
 		}
-		for _, command := range []string{"init", "register", "unregister"} {
+		for _, command := range []string{"init", "register", "unregister", "list", "get"} {
 			if !strings.Contains(out, command) {
 				t.Errorf("ccluster %v does not list %s", args, command)
 			}
@@ -307,6 +307,16 @@ func TestRegisterRejects(t *testing.T) {
 		setUpInitialized(t)
 		expectError(t, `required flag(s) "namespace" not set`,
 			"register", "edge-1", "--infra-plane", "ip")
+	})
+
+	t.Run("an empty namespace", func(t *testing.T) {
+		setUpInitialized(t)
+		expectError(t, "namespace must not be empty", "register", "edge-1", "-n", "", "--infra-plane", "ip")
+		// Refused before anything is written to the infra plane.
+		if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(t.Context(),
+			serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Errorf("ServiceAccount after a refused register: %v, want NotFound", err)
+		}
 	})
 }
 

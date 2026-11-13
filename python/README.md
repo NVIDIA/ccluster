@@ -160,7 +160,8 @@ raises `NotFoundError` for a missing set.
 conditions by type and drops the ones the operator computed from an older generation, so
 what is left is its verdict on the spec as it now stands — after a failed validation
 `ComponentsApplied` still carries the previous generation's. `get_component_set` and
-`get_infraplane` read one object and return it as its model, or raise `NotFoundError`.
+`get_infraplane` read one object and return it as its model, or raise `NotFoundError`;
+`list_component_sets` and `list_infraplanes` return every one in the client's namespace.
 
 ```python
 if not client.is_component_set_finished(name="local-base"):

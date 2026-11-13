@@ -182,6 +182,26 @@ This removes the registration and its credentials Secret from the control plane,
 the namespace. The infra plane is not touched; its ServiceAccount and token stay, so
 registering the cluster again reuses them.
 
+### List and inspect
+
+`ccluster list` and `ccluster get` read what is registered and deployed in one control-plane
+namespace. `list` prints the same columns as `kubectl get`; `get` shows one object's
+conditions, and for a component set each component in rollout order with Argo CD's sync
+and message and the health its chart reports. `infraplanes` can be written `infraplane` or
+`ip`, and `componentsets` `componentset` or `cs`. Add `-o yaml` or `-o json` for the objects
+themselves.
+
+```bash
+ccluster list infraplanes -n tenant-a
+ccluster list ip -A
+ccluster get infraplane edge-1 -n tenant-a
+ccluster list cs -n tenant-a
+ccluster get cs base -n tenant-a -o yaml
+```
+
+`list -A` (`--all-namespaces`) lists across every control-plane namespace instead, with a
+`NAMESPACE` column, and so needs cluster-wide list permission on the CRDs.
+
 ### Shell completion
 
 ```bash

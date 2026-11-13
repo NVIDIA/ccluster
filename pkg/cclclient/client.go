@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 //
 // Client registers infra-plane clusters with the control plane and removes them again,
 // and creates, polls and deletes the component sets deployed onto them. It works in one
-// namespace, fixed at construction, over clientsets the caller supplies. It is the Go
+// namespace, fixed at construction, over clientsets the caller supplies. Client is the Go
 // counterpart of the Python package's CCLClient, and the two write the same objects
 // under the same field manager, so either can update what the other applied.
 //
@@ -18,6 +18,7 @@ package cclclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -97,7 +98,13 @@ func New(namespace string, kube kubernetes.Interface, ccl versioned.Interface) *
 // pod, pass rest.InClusterConfig(); from a workstation, a config loaded from the
 // kubeconfig. To serve several namespaces, build the clientsets once and call New for
 // each.
+//
+// An empty namespace is an error: the clientsets read it as every namespace, so the
+// client's lists would reach past the one namespace it serves.
 func NewForConfig(namespace string, config *rest.Config) (*Client, error) {
+	if namespace == "" {
+		return nil, errors.New("namespace must not be empty")
+	}
 	kube, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("creating Kubernetes clientset: %w", err)
@@ -216,6 +223,14 @@ func (c *Client) GetInfraPlane(
 	return c.ccl.CclusterV1alpha1().CCLInfraPlanes(c.namespace).Get(ctx, name, metav1.GetOptions{})
 }
 
+// ListInfraPlanes returns the CCLInfraPlanes in the client's namespace. A namespace that
+// does not exist has none.
+func (c *Client) ListInfraPlanes(
+	ctx context.Context,
+) (*cclusternvidiacomv1alpha1.CCLInfraPlaneList, error) {
+	return c.ccl.CclusterV1alpha1().CCLInfraPlanes(c.namespace).List(ctx, metav1.ListOptions{})
+}
+
 // ApplyComponentSet creates or updates the CCLComponentSet called name.
 //
 // components deploy in list order, each onto the CCLInfraPlane its InfraPlaneRef names;
@@ -303,6 +318,14 @@ func (c *Client) GetComponentSet(
 	name string,
 ) (*cclusternvidiacomv1alpha1.CCLComponentSet, error) {
 	return c.ccl.CclusterV1alpha1().CCLComponentSets(c.namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// ListComponentSets returns the CCLComponentSets in the client's namespace. A namespace
+// that does not exist has none.
+func (c *Client) ListComponentSets(
+	ctx context.Context,
+) (*cclusternvidiacomv1alpha1.CCLComponentSetList, error) {
+	return c.ccl.CclusterV1alpha1().CCLComponentSets(c.namespace).List(ctx, metav1.ListOptions{})
 }
 
 // ComponentSetCurrentConditions returns the conditions computed from the set's current
