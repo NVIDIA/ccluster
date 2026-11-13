@@ -471,6 +471,15 @@ only one server can back the `v1beta1.metrics.k8s.io` APIService. Its check pass
 that APIService is `Available`, whichever server backs it, so a plane that leaves the
 chart out of its `cluster_base` set verifies the same.
 
+A component can be optional: its check passes when the component is absent, and
+`cluster_base.Components()` leaves it out. `external_secrets` is the example. A cluster may
+already run ESO, installed by other means, and a second ESO would fight it over the same
+CRDs, so a plane like that leaves the chart out. The check treats ESO as installed when the
+`externalsecret-validate` ValidatingWebhookConfiguration exists, whoever created it, and
+then requires the `external-secrets.io/v1` API and a ready webhook endpoint. It keys on the
+configuration, not the API, because the manager's cache keeps answering for a kind after
+its CRD is deleted, while it sees a deleted configuration.
+
 ### The controller
 
 `CCLClusterConfigReconciler` (`internal/controller/ip/cclclusterconfig_controller.go`)

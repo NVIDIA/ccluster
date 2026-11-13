@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+external-secrets:
+  installCRDs: true
+  # Two controller replicas need leader election, so that one reconciles at a time.
+  replicaCount: 2
+  leaderElect: true
+  # The webhook validates every ExternalSecret and SecretStore write, with
+  # failurePolicy Fail: a second replica keeps writes admitted through a restart.
+  webhook:
+    replicaCount: 2
+  # Re-enable once kube-prometheus-stack is deployed (provides the
+  # ServiceMonitor CRD).
+  serviceMonitor:
+    enabled: false

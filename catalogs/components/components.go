@@ -28,6 +28,7 @@ import (
 
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
+	externalsecrets "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_secrets"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -63,11 +64,13 @@ var NamespaceBase = []Component{
 	{namespacebase.Chart, namespacebase.Values{}},
 }
 
-// ClusterBase is the platform components every infra-plane cluster gets, sorted by
-// chart. The infra-plane operator's verifier registry must cover exactly these.
+// ClusterBase is the platform components an infra-plane cluster gets, some of them
+// optional, sorted by chart. The infra-plane operator's verifier registry must cover
+// exactly these.
 var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}},
 	{certmanager.Chart, certmanager.Values{}},
+	{externalsecrets.Chart, externalsecrets.Values{}},
 	{finalstack.Chart, finalstack.Values{}},
 	{fluentbit.Chart, fluentbit.Values{}},
 	{gpuoperator.Chart, gpuoperator.Values{}},
