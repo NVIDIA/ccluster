@@ -92,6 +92,8 @@ def deploy(client: CCLClient, plane: str) -> None:
             catalogs.component(name, plane, chart, namespace)
             for name, chart, namespace in [
                 ("kube-prometheus-stack", kube_prometheus_stack.CHART, "prometheus"),
+                # On GKE, give istio the values istio.Values(istio_cni=istio.IstioCNI(
+                #     cni=istio.CNI(cni_bin_dir="/home/kubernetes/bin"))).
                 ("istio", istio.CHART, "istio-system"),
                 ("cert-manager", cert_manager.CHART, "cert-manager"),
                 ("ingress-nginx", ingress_nginx.CHART, "ingress-nginx"),

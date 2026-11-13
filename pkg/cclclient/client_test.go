@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
@@ -83,6 +84,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "stopping envtest:", err)
 	}
 	os.Exit(code)
+}
+
+func TestNewForConfigRejectsAnEmptyNamespace(t *testing.T) {
+	// The clientsets would read "" as every namespace.
+	client, err := cclclient.NewForConfig("", &rest.Config{Host: server})
+	if err == nil || client != nil {
+		t.Errorf("NewForConfig(\"\") = %v, %v; want an error", client, err)
+	}
 }
 
 func TestEnsureNamespaceCreatesItOnce(t *testing.T) {
@@ -384,6 +393,44 @@ func TestComponentSetCurrentConditionsDropsStaleTypes(t *testing.T) {
 	validated := got[cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated]
 	if len(got) != 1 || validated.Reason != cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound {
 		t.Errorf("ComponentSetCurrentConditions() = %v, want only Validated", got)
+	}
+}
+
+func TestListsReturnOnlyTheClientsNamespace(t *testing.T) {
+	ctx := t.Context()
+	client, other := newClient(t), newClient(t)
+	for _, c := range []*cclclient.Client{client, other} {
+		if _, err := c.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu-a"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.ApplyComponentSet(ctx, "base", []cclusternvidiacomv1alpha1.ComponentSpec{
+			component("keda", "catalogs/cluster_base/keda", nil),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	planes, err := client.ListInfraPlanes(ctx)
+	if err != nil {
+		t.Fatalf("ListInfraPlanes() error = %v", err)
+	}
+	if len(planes.Items) != 1 || planes.Items[0].Namespace != client.Namespace() {
+		t.Errorf("ListInfraPlanes() = %v, want only %s/gpu-a", planes.Items, client.Namespace())
+	}
+	sets, err := client.ListComponentSets(ctx)
+	if err != nil {
+		t.Fatalf("ListComponentSets() error = %v", err)
+	}
+	if len(sets.Items) != 1 || sets.Items[0].Namespace != client.Namespace() {
+		t.Errorf("ListComponentSets() = %v, want only %s/base", sets.Items, client.Namespace())
+	}
+
+	empty := cclclient.New(uniqueName(t, "missing"), kubeClient, clientset)
+	if planes, err := empty.ListInfraPlanes(ctx); err != nil || len(planes.Items) != 0 {
+		t.Errorf("ListInfraPlanes() in a missing namespace = %v, %v; want none", planes, err)
+	}
+	if sets, err := empty.ListComponentSets(ctx); err != nil || len(sets.Items) != 0 {
+		t.Errorf("ListComponentSets() in a missing namespace = %v, %v; want none", sets, err)
 	}
 }
 

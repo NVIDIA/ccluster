@@ -9,8 +9,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/NVIDIA/ccluster/pkg/cclclient"
 )
 
 func newUnregisterCommand() *cobra.Command {
@@ -29,18 +27,13 @@ other registrations of the same cluster keep working and registering it again re
 token.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkNamespace(namespace); err != nil {
+				return err
+			}
 			cmd.SilenceUsage = true
 			name := args[0]
 
-			controlPlane, err := loadControlPlane()
-			if err != nil {
-				return err
-			}
-			cfg, err := restConfig(controlPlane)
-			if err != nil {
-				return err
-			}
-			client, err := cclclient.NewForConfig(namespace, cfg)
+			client, err := controlPlaneClient(namespace)
 			if err != nil {
 				return err
 			}

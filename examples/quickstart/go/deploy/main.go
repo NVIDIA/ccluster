@@ -103,6 +103,7 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 	// to run the pods.
 	dependencyComponents, err := components(plane, []named{
 		{"kube-prometheus-stack", entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{}))},
+		// On GKE: istio.Values{IstioCNI: &istio.IstioCNI{CNI: &istio.CNI{CNIBinDir: new(istio.CNIBinDirGKE)}}}
 		{"istio", entry(istio.New("istio-system", istio.Values{}))},
 		{"cert-manager", entry(certmanager.New("cert-manager", certmanager.Values{}))},
 		{"ingress-nginx", entry(ingressnginx.New("ingress-nginx", ingressnginx.Values{}))},

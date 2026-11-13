@@ -82,6 +82,9 @@ Pass --server when the kubeconfig's address is not reachable from the control pl
 example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkNamespace(opts.namespace); err != nil {
+				return err
+			}
 			cmd.SilenceUsage = true
 			return runRegister(cmd.Context(), cmd.OutOrStdout(), args[0], opts)
 		},

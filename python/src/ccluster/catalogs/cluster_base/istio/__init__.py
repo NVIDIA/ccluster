@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class CNI(BaseModel):
     """
     CNI is where istio-cni writes its plugin binary and configuration. These are the only
-    values in this chart that must be tuned per cluster: the chart's defaults target
-    k3s/k3d, and the correct paths depend on the node image. See the CNIBinDir constants.
+    values in this chart that must be tuned per cluster: the chart's defaults are the
+    standard paths, and the correct paths depend on the node image.
     """
 
     model_config = ConfigDict(
@@ -23,13 +23,15 @@ class CNI(BaseModel):
     )
     cni_conf_dir: Annotated[str | None, Field(alias="cniConfDir")] = None
     """
-    CNIConfDir is the CNI configuration directory. Use CNIConfDirDefault on
-    anything but k3s.
+    CNIConfDir is the CNI configuration directory. The chart ships /etc/cni/net.d
+    (CNIConfDirDefault); k3s needs /var/lib/rancher/k3s/agent/etc/cni/net.d
+    (CNIConfDirK3s).
     """
     cni_bin_dir: Annotated[str | None, Field(alias="cniBinDir")] = None
     """
-    CNIBinDir is the CNI binary directory. Use CNIBinDirGKE on GKE COS and
-    CNIBinDirDefault on EKS, kind and kubeadm.
+    CNIBinDir is the CNI binary directory. The chart ships /opt/cni/bin
+    (CNIBinDirDefault); GKE COS needs /home/kubernetes/bin (CNIBinDirGKE) and k3s
+    /var/lib/rancher/k3s/data/cni (CNIBinDirK3s).
     """
 
 
