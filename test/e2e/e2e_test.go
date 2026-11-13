@@ -603,10 +603,12 @@ var _ = Describe("Manager", Ordered, func() {
 					// register waits for the CCLClusterConfig, which needs the ip chart's
 					// CRD installed below.
 					registered := startRegisterWithCLI(planeName)
+					// infraPlaneCondition fails the spec at once on a missing plane, so
+					// wait until register has applied it.
+					waitInfraPlaneAvailable(planeName)
 
 					By("reporting CRDMissing while the ip chart is not installed")
 					Eventually(func(g Gomega) {
-						g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
 						g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "reason")).
 							To(Equal("CRDMissing"))
 					}, crossClusterTimeout).Should(Succeed())
