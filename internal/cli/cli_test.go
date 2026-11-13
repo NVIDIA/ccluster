@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/kubernetes"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/yaml"
 
+	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/pkg/cclclient"
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )
@@ -192,12 +194,15 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	fillTokenSecret(t)
+	reportClusterConfig(t, namespace, applied)
 
 	out, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf("Registered CCLInfraPlane %s/edge-1 for %s\n", namespace, apiServer.Host); out != want {
+	want := fmt.Sprintf("Applied CCLInfraPlane %[1]s/edge-1 for %[2]s; waiting for the control plane to reach the cluster\n"+
+		"Registered CCLInfraPlane %[1]s/edge-1; its domain is edge-1.%[1]s.example.com\n", namespace, apiServer.Host)
+	if out != want {
 		t.Errorf("register printed %q, want %q", out, want)
 	}
 
@@ -233,6 +238,7 @@ func TestRegisterAgainReusesTheTokenAndHonoursServer(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	fillTokenSecret(t)
+	reportClusterConfig(t, namespace, applied)
 	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip"}
 
 	if _, err := run(t, args...); err != nil {
@@ -246,6 +252,57 @@ func TestRegisterAgainReusesTheTokenAndHonoursServer(t *testing.T) {
 	credentials := credentialsConfig(t, namespace, "edge-1")
 	if credentials.server != "https://edge-1:6443" || credentials.config.BearerToken != token {
 		t.Errorf("credentials = %+v, want server https://edge-1:6443 and the same token", credentials)
+	}
+}
+
+func TestRegisterFailsWithTheReasonTheClusterWasNotReached(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	reportClusterConfig(t, namespace, unreachable)
+	clusterConfigTimeout = time.Second
+
+	expectError(t, fmt.Sprintf("CCLInfraPlane %s/edge-1 is applied, but after 1s ClusterConfigApplied is False "+
+		"(ClusterUnreachable): %s; if the control plane cannot reach %s, run register again with --server",
+		namespace, unreachable(apiServer.Host).Message, apiServer.Host),
+		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+}
+
+func TestRegisterFailsWithoutTheOperator(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	clusterConfigTimeout = 100 * time.Millisecond
+
+	expectError(t, fmt.Sprintf("CCLInfraPlane %s/edge-1 is applied, but after 100ms it has no "+
+		"ClusterConfigApplied condition; is the ccluster-cp operator running?", namespace),
+		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+}
+
+// Registering again with a server that works must not fail on the False the old server
+// left: the operator tries the new one only after register has applied it.
+func TestRegisterAgainWaitsPastTheOldServersCondition(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	const reachable = "https://edge-1:6443"
+	reportClusterConfig(t, namespace, func(server string) metav1.Condition {
+		if server == reachable {
+			return applied(server)
+		}
+		return unreachable(server)
+	})
+	clusterConfigTimeout = time.Second
+	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip"}
+
+	expectError(t, "ClusterConfigApplied is False (ClusterUnreachable)", args...)
+	out, err := run(t, append(args, "--server", reachable)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("Registered CCLInfraPlane %[1]s/edge-1; its domain is edge-1.%[1]s.example.com\n",
+		namespace); !strings.HasSuffix(out, want) {
+		t.Errorf("register printed %q, want it to end with %q", out, want)
 	}
 }
 
@@ -412,6 +469,9 @@ func setUp(t *testing.T) string {
 	timeout, interval := tokenTimeout, tokenPollInterval
 	tokenTimeout, tokenPollInterval = 10*time.Second, 10*time.Millisecond
 	t.Cleanup(func() { tokenTimeout, tokenPollInterval = timeout, interval })
+	configTimeout, configInterval := clusterConfigTimeout, clusterConfigPollInterval
+	clusterConfigTimeout, clusterConfigPollInterval = 10*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { clusterConfigTimeout, clusterConfigPollInterval = configTimeout, configInterval })
 
 	t.Cleanup(func() { deleteInfraPlaneObjects(t) })
 	return configFile
@@ -478,6 +538,65 @@ func fillTokenSecret(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
+}
+
+// reportClusterConfig plays the control-plane operator, which envtest does not run: once
+// register applies the CCLInfraPlane edge-1 in namespace, it writes the plane's domain and
+// the ClusterConfigApplied condition that condition returns for the server in the plane's
+// credentials Secret. Like the operator, which has to reach the cluster first, it writes
+// each change 100ms after it sees it, so register reads the plane's previous condition
+// first.
+func reportClusterConfig(t *testing.T, namespace string, condition func(server string) metav1.Condition) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		planes := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace)
+		secrets := kubeClient.CoreV1().Secrets(namespace)
+		for ctx.Err() == nil {
+			time.Sleep(10 * time.Millisecond)
+			plane, err := planes.Get(ctx, "edge-1", metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			credentials, err := secrets.Get(ctx, cclclient.CredentialsSecretName("edge-1"), metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			if !apimeta.SetStatusCondition(&plane.Status.Conditions, condition(string(credentials.Data["server"]))) {
+				continue
+			}
+			time.Sleep(100 * time.Millisecond)
+			plane.Status.Domain = "edge-1." + namespace + ".example.com"
+			_, _ = planes.UpdateStatus(ctx, plane, metav1.UpdateOptions{})
+		}
+	}()
+}
+
+// applied is the ClusterConfigApplied condition of a cluster the operator reached.
+func applied(string) metav1.Condition {
+	return metav1.Condition{
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
+		Status:  metav1.ConditionTrue,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied,
+		Message: `CCLClusterConfig "cluster" on the infra-plane cluster has the domain`,
+	}
+}
+
+// unreachable is the ClusterConfigApplied condition of a server the operator cannot reach.
+func unreachable(server string) metav1.Condition {
+	return metav1.Condition{
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied,
+		Status:  metav1.ConditionFalse,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterUnreachable,
+		Message: fmt.Sprintf(`failed to get server groups: Get "%s/api": connection refused`, server),
+	}
 }
 
 // deleteInfraPlaneObjects removes what register creates on the infra plane, so each test

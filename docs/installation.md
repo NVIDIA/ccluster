@@ -279,10 +279,12 @@ kind, whose kubeconfig points at `127.0.0.1`: use `https://kubernetes.default.sv
 infra plane is the control-plane cluster itself, and
 `https://<kind cluster name>-control-plane:6443` for another kind cluster.
 
-`kubectl get cclinfraplane -n team-a` shows `CLUSTERCONFIG True` once the control plane has
-connected to the cluster. `AVAILABLE` alone does not mean it can; if `CLUSTERCONFIG` stays
-`False`, `kubectl describe cclinfraplane edge-1 -n team-a` gives the reason, such as
-`ClusterUnreachable`.
+`register` then waits until the control plane has connected to the cluster and written its
+domain there, which `kubectl get cclinfraplane -n team-a` shows as `CLUSTERCONFIG True`, and
+prints the domain. `AVAILABLE` alone does not mean it can connect. If `CLUSTERCONFIG` is not
+`True` within two minutes, `register` fails with the reason, such as `ClusterUnreachable`
+for a `--server` the control plane cannot reach, or `CRDMissing` when the infra-plane chart
+is not installed. The registration stays in place: fix the cause and run `register` again.
 
 ### Unregister a cluster
 

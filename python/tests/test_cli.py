@@ -16,10 +16,27 @@ from kubernetes.dynamic.exceptions import ResourceNotFoundError
 
 from ccluster import cli
 from ccluster.cli import main
+from ccluster.v1alpha1 import CCLInfraPlane
 
 TOKEN = "infra-token"
 CA = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 KUBECONFIG_SERVER = "https://127.0.0.1:6443"
+
+# ClusterConfigApplied as the control-plane operator reports it.
+APPLIED = {
+    "type": "ClusterConfigApplied",
+    "status": "True",
+    "reason": "Applied",
+    "message": 'CCLClusterConfig "cluster" on the infra-plane cluster has the domain',
+    "lastTransitionTime": "2026-01-01T00:00:00Z",
+}
+UNREACHABLE = {
+    "type": "ClusterConfigApplied",
+    "status": "False",
+    "reason": "ClusterUnreachable",
+    "message": f'failed to get server groups: Get "{KUBECONFIG_SERVER}/api": connection refused',
+    "lastTransitionTime": "2026-01-01T00:00:00Z",
+}
 
 
 def invoke(*args):
@@ -99,9 +116,14 @@ class InfraPlane:
 
 
 class FakeCCLClient:
-    """Records what register asks of the control plane."""
+    """Records what register asks of the control plane, and plays its operator.
+
+    reports holds the ClusterConfigApplied conditions get_infraplane returns, one per call,
+    the last one from then on; None is a plane with no such condition yet.
+    """
 
     instances = []
+    reports = [APPLIED]
 
     def __init__(self, namespace, *, api_client):
         self.namespace = namespace
@@ -126,6 +148,18 @@ class FakeCCLClient:
         return SimpleNamespace(
             metadata=SimpleNamespace(name=kwargs["name"], namespace=self.namespace)
         )
+
+    def get_infraplane(self, *, name):
+        reports = FakeCCLClient.reports
+        condition = reports.pop(0) if len(reports) > 1 else reports[0]
+        return CCLInfraPlane.model_validate({
+            "metadata": {"name": name, "namespace": self.namespace},
+            "spec": {"clusterCredentialsRef": {"name": f"{name}-credentials"}},
+            "status": {
+                "domain": f"{name}.{self.namespace}.example.com",
+                "conditions": [condition] if condition else None,
+            },
+        })
 
 
 def new_client_from_config(context):
@@ -201,6 +235,7 @@ def infra(kubeconfig, monkeypatch, config_file):
     """An infra plane to register, with init already run against the control plane cp."""
     plane = InfraPlane()
     FakeCCLClient.instances = []
+    FakeCCLClient.reports = [APPLIED]
     config_file.parent.mkdir(parents=True)
     config_file.write_text("controlPlane:\n  context: cp\n")
     monkeypatch.setattr(cli.k8s, "CoreV1Api", plane.core)
@@ -208,6 +243,8 @@ def infra(kubeconfig, monkeypatch, config_file):
     monkeypatch.setattr(cli, "CCLClient", FakeCCLClient)
     monkeypatch.setattr(cli, "_TOKEN_TIMEOUT_SECONDS", 0)
     monkeypatch.setattr(cli, "_TOKEN_POLL_SECONDS", 0)
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 10)
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_POLL_SECONDS", 0)
     return plane
 
 
@@ -216,7 +253,11 @@ def test_register_creates_admin_token_and_infraplane(infra):
         "register", "edge-1", "--namespace", "tenant-a", "--infra-plane", "ip",
     )
     assert result.exit_code == 0, result.output
-    assert result.output == f"Registered CCLInfraPlane tenant-a/edge-1 for {KUBECONFIG_SERVER}\n"
+    assert result.output == (
+        f"Applied CCLInfraPlane tenant-a/edge-1 for {KUBECONFIG_SERVER}; "
+        "waiting for the control plane to reach the cluster\n"
+        "Registered CCLInfraPlane tenant-a/edge-1; its domain is edge-1.tenant-a.example.com\n"
+    )
 
     kinds = {kind: body for kind, body in infra.created}
     assert set(kinds) == {"ServiceAccount", "ClusterRoleBinding", "Secret"}
@@ -255,6 +296,40 @@ def test_register_again_reuses_existing_objects(infra):
     assert result.exit_code == 0, result.output
     assert infra.created == []
     assert FakeCCLClient.instances[0].applied["bearer_token"] == TOKEN
+
+
+def test_register_fails_with_the_reason_the_cluster_was_not_reached(infra, monkeypatch):
+    FakeCCLClient.reports = [UNREACHABLE]
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 0)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1
+    assert (
+        "CCLInfraPlane tenant-a/edge-1 is applied, but after 0s ClusterConfigApplied is False "
+        f"(ClusterUnreachable): {UNREACHABLE['message']}; if the control plane cannot reach "
+        f"{KUBECONFIG_SERVER}, run register again with --server"
+    ) in result.output
+
+
+def test_register_fails_without_the_operator(infra, monkeypatch):
+    FakeCCLClient.reports = [None]
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 0)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1
+    assert (
+        "CCLInfraPlane tenant-a/edge-1 is applied, but after 0s it has no ClusterConfigApplied "
+        "condition; is the ccluster-cp operator running?"
+    ) in result.output
+
+
+def test_register_again_waits_past_the_old_servers_condition(infra):
+    # Registering again with a server that works must not fail on the False the old server
+    # left: the operator tries the new one only after register has applied it.
+    FakeCCLClient.reports = [UNREACHABLE, UNREACHABLE, APPLIED]
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--server", "https://edge-1:6443")
+    assert result.exit_code == 0, result.output
+    assert result.output.endswith(
+        "Registered CCLInfraPlane tenant-a/edge-1; its domain is edge-1.tenant-a.example.com\n"
+    )
 
 
 def test_register_fails_when_token_never_arrives(infra):

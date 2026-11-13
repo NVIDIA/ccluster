@@ -9,8 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 // usage. init saves the kubeconfig context of the one control plane the user works with,
 // after checking it serves the ccluster API, to a small config file; the other commands
 // read it from there. register registers an infra-plane cluster with that control plane:
-// it creates a cluster-admin ServiceAccount token on the infra plane and hands it to
-// cclclient.Client.ApplyInfraPlane on the control plane. Both clusters are reached
+// it creates a cluster-admin ServiceAccount token on the infra plane, hands it to
+// cclclient.Client.ApplyInfraPlane on the control plane, and waits for the control-plane
+// operator to report that it reached the cluster. Both clusters are reached
 // through kubeconfig contexts, so no credentials are stored by ccluster itself.
 // unregister reverses register on the control plane and leaves the infra plane alone.
 // list and get read the infra planes and component sets on the control plane and print
