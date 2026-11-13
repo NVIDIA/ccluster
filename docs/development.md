@@ -285,6 +285,66 @@ expects `SchemeGroupVersion` and `Resource` beside kubebuilder's `GroupVersion`,
 proves those markers, that glue and the schema rather than the generated code. CI
 regenerates and fails on any drift.
 
+## Dashboard UI
+
+`ccluster server` (`internal/cli/server.go`) serves a read-only dashboard of the control
+plane. `internal/server` is one `net/http` handler for both halves:
+
+- `GET /api/v1/config` and `GET /api/v1/overview?namespace=` answer JSON. Each request
+  lists `CCLInfraPlane`s and `CCLComponentSet`s with `Options.Clientset`, the generated
+  clientset `ccluster server` builds from the kubeconfig context saved by `ccluster init`.
+  Kubernetes' 401 and 403 pass through to the UI, and a cluster-wide 403
+  is answered as `ClusterReadForbidden` so the page can suggest `-n`.
+- Every other `GET` serves the UI embedded by `internal/server/ui`: files under their own
+  paths (`assets/` with immutable caching, since Vite hashes their names) and
+  `index.html` for anything else.
+- Every response carries a `default-src 'self'` Content-Security-Policy that also allows
+  `data:` images, which is how Kaizen UI draws its icons, and requests whose `Host` is
+  not a loopback name are refused against DNS rebinding.
+
+The overview's rules, such as a component set's status and the summary's counts, are
+pure functions in `internal/server/overview.go`; the TypeScript types in `ui/src/api.ts`
+mirror its JSON, so change both together.
+
+The UI is a Vite, React and TypeScript app in `ui/`, built from
+[Kaizen UI](https://www.npmjs.com/package/@nvidia/foundations-react-core), NVIDIA's design
+system (`@nvidia/foundations-react-core`), and using TanStack Query to poll the overview
+every five seconds. Its layout follows NVIDIA's platform UI: one page under a Kaizen
+`AppBar` holding the namespace picker and the theme toggle,
+a sunken page background, bordered tables with a gray header row,
+Roboto (bundled from `@fontsource/roboto`), lucide icons, and a light/dark toggle that
+starts from the system setting and is remembered in the browser. Use Kaizen components
+and its semantic token CSS variables (such as `--text-color-secondary`), which follow the
+theme, before writing styles of your own; the package's `skills/` directory documents
+both. It has no inline script or style, which the Content-Security-Policy forbids.
+
+Kaizen publishes its stylesheets only to NVIDIA's CDN, so `ui/scripts/fetch-kui-styles.js`
+runs before every build and dev server. It downloads `base-external.css` and
+`components.css` for the installed Kaizen version into `ui/src/generated/` (not
+committed), dropping the `@font-face` rules that load fonts from the CDN, and the build
+bundles them. `make ui-build` therefore needs network access. The page uses
+`base-external.css`, Kaizen's base for open-source projects: `base.css` adds NVIDIA Sans
+and proprietary icons that only NVIDIA-licensed projects may ship. Kaizen's themes
+follow `prefers-color-scheme`.
+
+`make ui-build` builds the UI into `internal/server/ui/dist/`, which is committed so
+`go build` and `go install` never need Node; CI rebuilds it and fails on drift. Node's
+version is in `ui/.nvmrc`. `ui/go.mod` only fences `ui/` off from the Go module, because
+some npm packages ship `.go` files.
+
+| Target | Does |
+| --- | --- |
+| `make ui-install` | `npm ci` in `ui/`, rerun only when the lock file changes |
+| `make ui-build` | Type-check and build into `internal/server/ui/dist/`; commit the result |
+| `make ui-test` | `tsc`, ESLint and Vitest |
+| `make ui-check` | `ui-build`, then fail if the committed build differs |
+| `make ui-dev` | Vite's dev server with hot reload, passing `/api` to `127.0.0.1:8484` |
+
+For UI work, run `ccluster server --no-browser` (or `go run ./cmd/ccluster server
+--no-browser`) against a development cluster in one terminal and `make ui-dev` in
+another, then open the address Vite prints. A change to Go needs the server restarted; a
+change under `ui/` reloads in the browser.
+
 ## License headers
 
 Every hand-written source file starts with the two SPDX lines, in the file's comment
@@ -297,7 +357,9 @@ SPDX-License-Identifier: Apache-2.0
 
 Go uses a `/* */` block before the package clause, Python, shell, YAML, TOML, Makefile
 and Dockerfile use `#` lines (after any shebang), and catalog Helm templates use a
-`{{- /* */ -}}` comment so nothing reaches the rendered output. Generated Go and Python
+`{{- /* */ -}}` comment so nothing reaches the rendered output. In `ui/`, TypeScript and
+JavaScript use `//` lines, CSS a `/* */` block and HTML a `<!-- -->` comment; the
+generated `internal/server/ui/dist/` is excluded. Generated Go and Python
 get the header from `hack/boilerplate.go.txt` and `hack/boilerplate.py.txt`; generated
 CRDs, cp RBAC and operator chart templates carry none and are excluded from the check.
 `make check-headers` runs `hack/check-headers.sh` over every tracked file and is a

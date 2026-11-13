@@ -206,8 +206,9 @@ SDK; Go programs can use [`pkg/cclclient`](pkg/cclclient/).
 The development setup runs the two operators in a pair of local
 [kind](https://kind.sigs.k8s.io/) clusters, `ccluster-cp` and `ccluster-ip`. You need Go
 1.21 or newer (`make` downloads the toolchain `go.mod` pins), Docker,
-[Helm](https://helm.sh/) and [uv](https://docs.astral.sh/uv/). `make` downloads its other
-tools into `bin/`.
+[Helm](https://helm.sh/) and [uv](https://docs.astral.sh/uv/). Changing the dashboard's UI in
+`ui/` also needs [Node.js](https://nodejs.org/) at the version in `ui/.nvmrc`. `make`
+downloads its other tools into `bin/`.
 
 **Make targets act on your current kubeconfig context without asking**, and kind changes
 the current context. If your kubeconfig holds other clusters, pin a dedicated one first:

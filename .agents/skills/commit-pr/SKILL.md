@@ -45,6 +45,7 @@ a group only if none of its inputs changed.
 | `api/`, any `+kubebuilder:` marker or doc comment on an API type | `make client-generate`, then `make manifests generate` |
 | `config/`, `api/`, RBAC markers | `make helm-generate && git status --short charts/` (must be clean) and `make helm-lint` |
 | `api/`, `config/crd/`, `catalogs/**/*.go`, `hack/pyschema/`, `python/` | `make python-generate && git status --short python/` (must be clean) and `make python-test` |
+| `ui/`, `internal/server/ui/` | `make ui-build ui-test`, and commit the rebuilt `internal/server/ui/dist/` (needs Node, see [Development](../../../docs/development.md#dashboard-ui)) |
 | `test/e2e/` | `make test-e2e` when feasible; say so in the PR if not run |
 | `go.mod` `toolchain` line, `Dockerfile` | `make check-go-version` (see [Go version](../../../docs/build-and-release.md#go-version)) |
 | any new file | `make check-headers` (SPDX license header, see [Development](../../../docs/development.md#license-headers)) |
@@ -165,7 +166,7 @@ Check the status once and report:
 gh pr checks <number>
 ```
 
-`lint`, `test`, `test-e2e` and `test-python` carry `paths:` filters and legitimately show
+`lint`, `test`, `test-e2e`, `test-python` and `test-ui` carry `paths:` filters and legitimately show
 as skipped for PRs that do not touch their inputs. `test-chart`, `dco` and `pr-title`
 always run. Fix a red check on the same branch with another signed-off commit; do not
 force-push over review history unless the user asks for a rebase.

@@ -316,6 +316,21 @@ ccluster get cs base -n tenant-a -o yaml
 `list -A` (`--all-namespaces`) lists across every control-plane namespace instead, with a
 `NAMESPACE` column, and so needs cluster-wide list permission on the CRDs.
 
+### Dashboard
+
+`ccluster server` shows the control plane in the browser: a read-only dashboard of its
+infra planes and component sets, with a summary and a table of each kind, refreshed every
+five seconds. It listens on `127.0.0.1:8484` and opens the page.
+
+```bash
+ccluster server               # every namespace; needs cluster-wide read of both kinds
+ccluster server -n tenant-a   # one namespace
+```
+
+It reads with the control-plane context's own credentials, so Kubernetes RBAC decides what
+it shows, and it changes nothing. It listens only on a loopback address (`--listen` picks
+another one) and answers only requests addressed to `localhost`, `127.0.0.1` or `::1`.
+
 ### Shell completion
 
 ```bash

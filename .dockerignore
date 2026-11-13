@@ -13,3 +13,6 @@
 # Re-include the license payload the image ships under /licenses
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+
+# The ccluster binary embeds the UI build (internal/server/ui).
+!internal/server/ui/dist/**

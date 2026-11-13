@@ -16,6 +16,8 @@ SPDX-License-Identifier: Apache-2.0
 // unregister reverses register on the control plane and leaves the infra plane alone.
 // list and get read the infra planes and component sets on the control plane and print
 // what they report.
+// server serves a read-only dashboard of the control plane to the browser on the same
+// machine, through internal/server.
 package cli
 
 import (
@@ -54,6 +56,6 @@ func NewRootCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 	}
 	root.AddCommand(newInitCommand(), newRegisterCommand(), newUnregisterCommand(),
-		newListCommand(), newGetCommand())
+		newListCommand(), newGetCommand(), newServerCommand())
 	return root
 }

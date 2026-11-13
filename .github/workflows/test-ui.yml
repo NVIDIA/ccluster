@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: UI
+
+on:
+  pull_request:
+    # Only when the UI or its committed build changes. Keep in sync with
+    # docs/build-and-release.md "CI checks".
+    paths:
+      - 'ui/**'
+      - 'internal/server/ui/**'
+      - 'Makefile'
+      - '.github/workflows/test-ui.yml'
+
+jobs:
+  ui:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Type-check, lint and test the UI
+        run: make ui-test
+
+      # The Go binary embeds internal/server/ui/dist, so a change to ui/ must ship with
+      # its rebuilt output. Rebuild and fail if the committed copy differs.
+      - name: Verify the committed UI build matches ui/
+        run: make ui-check

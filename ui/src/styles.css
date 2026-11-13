@@ -1,0 +1,290 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
+
+/* Kaizen UI's base and component styles, fetched at build time; see scripts/fetch-kui-styles.js. */
+@import "./generated/kui.css";
+
+/* Roboto, as the NVIDIA platform UI uses, bundled so nothing loads from elsewhere. */
+@import "@fontsource/roboto/latin-400.css";
+@import "@fontsource/roboto/latin-500.css";
+@import "@fontsource/roboto/latin-700.css";
+
+/* The page follows the NVIDIA platform UI's layout. Everything below uses Kaizen's
+   semantic tokens, which switch with the light and dark themes. */
+
+/* Kaizen's fonts: Roboto for text, as the platform UI uses, instead of NVIDIA Sans, which
+   only NVIDIA-licensed projects may ship; and the system's monospace font instead of
+   JetBrains Mono, which Kaizen loads from its CDN. :root:root outranks Kaizen's
+   :where(:root) and theme-class rules. Spacing is calc(var(--spacing) * n), Kaizen's
+   4px base unit. */
+:root:root {
+  --font-sans: "Roboto", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html,
+body,
+#root {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+body {
+  background-color: var(--background-color-surface-sunken);
+  color: var(--text-color-primary);
+  scrollbar-width: thin;
+  scrollbar-color: var(--nv-scrollbar-color);
+}
+
+.icon {
+  width: 20px;
+  height: 20px;
+}
+
+.icon-sm {
+  width: 16px;
+  height: 16px;
+}
+
+.muted {
+  color: var(--text-color-secondary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* Shell: AppBar on top, scrolling content below. */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--background-color-surface-sunken);
+}
+
+.shell-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--spacing) * 4);
+}
+
+.shell-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 80rem;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.shell-footer {
+  margin-top: auto;
+  padding-top: calc(var(--spacing) * 6);
+  text-align: center;
+}
+
+@media (max-width: 767px) {
+  .shell-main {
+    padding: calc(var(--spacing) * 1);
+  }
+}
+
+/* Page and sections. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 6);
+  padding: calc(var(--spacing) * 1);
+}
+
+.page-title,
+.section-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1.75rem;
+}
+
+.section-description {
+  margin: calc(var(--spacing) * 1) 0 0;
+  color: var(--text-color-secondary);
+  font-size: 0.875rem;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  scroll-margin-top: calc(var(--spacing) * 4);
+}
+
+.namespace-select {
+  min-width: 12rem;
+}
+
+/* Summary: one box per kind, active out of total. */
+
+.stat-strips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 4);
+}
+
+.stat-strip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1);
+  min-width: 12rem;
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
+  border: 1px solid var(--border-color-base);
+  border-radius: var(--radius-md);
+  background-color: var(--background-color-surface-base);
+}
+
+.stat-strip-title {
+  font-weight: 500;
+}
+
+.stat-value {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-total {
+  color: var(--text-color-secondary);
+  font-size: 1.125rem;
+  font-weight: 400;
+}
+
+
+/* Tables: bordered, with a gray header row. */
+
+.table-frame {
+  overflow-x: auto;
+  border: 1px solid var(--border-color-base);
+  border-radius: var(--radius-md);
+  background-color: var(--background-color-surface-base);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.data-table thead tr {
+  background-color: var(--background-color-accent-gray-subtle);
+}
+
+.data-table thead th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.data-table tbody tr {
+  border-top: 1px solid var(--border-color-base);
+}
+
+.data-table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.message {
+  display: block;
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+}
+
+.empty-table {
+  margin: 0;
+  padding: calc(var(--spacing) * 4);
+  border: 1px dashed var(--border-color-base);
+  border-radius: var(--radius-md);
+  color: var(--text-color-secondary);
+  font-size: 0.875rem;
+}
+
+.error-detail {
+  overflow-wrap: anywhere;
+}
+
+/* The component bar: one rounded segment per component of a set. */
+
+.component-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  white-space: nowrap;
+}
+
+.component-bar {
+  display: inline-flex;
+  gap: 2px;
+  width: 8rem;
+  height: 6px;
+}
+
+.segment {
+  flex: 1;
+  border-radius: var(--radius-round);
+}
+
+.segment-green {
+  background-color: var(--background-color-feedback-success);
+}
+
+.segment-red {
+  background-color: var(--background-color-feedback-danger);
+}
+
+.segment-yellow {
+  background-color: var(--background-color-feedback-warning);
+}
+
+.segment-blue {
+  background-color: var(--background-color-feedback-info);
+}
+
+.segment-gray {
+  background-color: var(--background-color-accent-gray-subtle);
+}
+
+/* A removed component: hatched, so it reads as leaving rather than as a health. */
+.segment-removing {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--background-color-accent-gray-subtle) 0 2px,
+    transparent 2px 4px
+  );
+  outline: 1px solid var(--background-color-accent-gray-subtle);
+  outline-offset: -1px;
+}
