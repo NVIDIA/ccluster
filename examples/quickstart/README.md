@@ -30,10 +30,19 @@ It is deployed as two component sets, each rolled out in order:
   [Installation: DNS](../../docs/installation.md#dns).
 - The infra-plane cluster supports LoadBalancer Services, as managed Kubernetes on any
   cloud does, and its ingress load balancer is reachable from the internet on ports 80 and
-  443, so that Let's Encrypt can issue the model server's certificate.
+  443, so that Let's Encrypt can issue the model server's certificate. A kind or
+  bare-metal cluster has no LoadBalancer implementation of its own: run
+  [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind) on kind,
+  or [MetalLB](https://metallb.io/). Without one, the ingress-nginx Service never gets an
+  address and the dependencies never finish.
 - The infra-plane cluster serves the resource metrics API, which the autoscalers of
   istiod and ingress-nginx read: `kubectl --context "$IP" top nodes` prints usage. GKE and
   AKS serve it; on EKS, kubeadm or kind, install metrics-server in step 2.
+- On GKE, the `istio` component needs `istio-cni.cni.cniBinDir: /home/kubernetes/bin`.
+  GKE's default Container-Optimized OS nodes mount the standard `/opt/cni/bin` read-only,
+  so istio-cni cannot install its plugin there and the dependencies never finish.
+  Uncomment the values in `helm/dependencies-values.yaml`, or set them where `deploy.py`
+  or `go/deploy` creates the istio component.
 - Kubeconfig contexts for both clusters. The commands below use them as `$CP` and `$IP`:
 
   ```bash
