@@ -64,8 +64,7 @@ istio-cni:
     repair:
       repairPods: false
       deletePods: true
-
-# In-chart DaemonSet patch for the istio-cni-node DaemonSet when Cilium
-# is the cluster CNI. Rendered by templates/cilium-patch.yaml.
-ciliumIstioPatch:
-  enabled: false
+  # tolerations is unset, so istio-cni-node keeps the upstream list, whose
+  # wildcards tolerate every NoSchedule and NoExecute taint. On Cilium,
+  # replace it so the pod waits for cilium-agent; see IstioCNI.Tolerations
+  # in component.go.

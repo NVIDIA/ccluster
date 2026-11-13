@@ -1101,7 +1101,10 @@ type HealthFunc func(ctx context.Context, entry v1alpha1.ComponentEntry, observe
 and registers one per chart in `healthregistry.Get()`. `TestGet` holds it to
 `components.All`. A chart without a function of its own registers `catalogs.DefaultHealth`:
 - It starts from the aggregate.
-- A Pod Argo CD reports `Degraded`, other than a Job's, makes the component `Degraded`.
+- A Pod Argo CD reports `Degraded`, other than a Job's, makes the component `Degraded`. So
+  does one whose status is an init container's crash loop, such as `Init:CrashLoopBackOff`:
+  Argo CD judges a running Pod by its app containers alone, and a native sidecar such as
+  `istio-proxy` is an init container.
 - The first Pod that is not running explains a `Progressing` component, such as
   `Unschedulable` with the scheduler's message.
 - A Pod whose owner Argo CD reports `Healthy` does neither. A ReplicaSet keeps an evicted
@@ -1124,7 +1127,7 @@ cache. A function reads a live object, or its events, through `observed.Reader` 
 object the tree singles out, because each such read is a request to the infra-plane
 cluster:
 - The default reads one Pod: its `PodScheduled` condition, or how a container last exited,
-  which is where `OOMKilled` shows. It reads that Pod's events only when the Pod says
+  init containers first, which is where `OOMKilled` shows. It reads that Pod's events only when the Pod says
   neither, such as `FailedMount` for one stuck in `ContainerCreating`.
 - `job_deployment` reads a failed Job for the reason Kubernetes gave up.
 - `dynamo_deployment` reads its graph.

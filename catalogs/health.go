@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -68,8 +69,8 @@ func DefaultHealth(ctx context.Context, _ v1alpha1.ComponentEntry, observed Obse
 	// Progressing until its progress deadline passes. The Pod also gives a better
 	// reason, such as OOMKilled. Unknown stays, because it ranks worse than Degraded.
 	if health.Status != v1alpha1.ComponentHealthUnknown {
-		if degraded := pods.WithHealth(v1alpha1.ComponentHealthDegraded); len(degraded) > 0 {
-			reason, message := ExplainPod(ctx, observed, degraded[0])
+		if i := slices.IndexFunc(pods, isDegraded); i >= 0 {
+			reason, message := ExplainPod(ctx, observed, pods[i])
 			return Health{Status: v1alpha1.ComponentHealthDegraded, Reason: reason, Message: message}
 		}
 	}
@@ -151,6 +152,18 @@ func ownerHealthy(resources ObservedResources, pod ObservedResource) bool {
 	return false
 }
 
+// isDegraded reports whether a Pod is Degraded, counting one that crash-loops in an init
+// container such as a native sidecar. Argo CD judges a running Pod by its app containers
+// alone and keeps such a Pod Progressing; the test is its test for an app container.
+func isDegraded(pod ObservedResource) bool {
+	if pod.Health == string(v1alpha1.ComponentHealthDegraded) {
+		return true
+	}
+	reason, ok := strings.CutPrefix(pod.Info[InfoStatusReason], "Init:")
+	return ok && (strings.HasPrefix(reason, "Err") || strings.HasSuffix(reason, "Error") ||
+		strings.HasSuffix(reason, "BackOff"))
+}
+
 // isWaiting reports whether a Pod has not started running.
 func isWaiting(pod ObservedResource) bool {
 	return pod.Health == string(v1alpha1.ComponentHealthProgressing) && pod.Info[InfoStatusReason] != "Running"
@@ -198,13 +211,15 @@ func readPod(ctx context.Context, observed Observation, ref ResourceRef) *corev1
 
 // podReason reads why a Pod is not running from the Pod itself. It checks the
 // PodScheduled condition first, then the last exit of each container that is not ready.
+// Init containers, native sidecars such as istio-proxy among them, go first; one that
+// finished is ready, so it is skipped.
 func podReason(pod *corev1.Pod) (reason, message string) {
 	for _, c := range pod.Status.Conditions {
 		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason != "" {
 			return c.Reason, c.Message
 		}
 	}
-	for _, c := range pod.Status.ContainerStatuses {
+	for _, c := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
 		last := c.LastTerminationState.Terminated
 		if c.Ready || last == nil {
 			continue
