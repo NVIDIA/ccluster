@@ -14,6 +14,7 @@ import (
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
+	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -68,6 +69,7 @@ func Get() *Registry {
 	r.Register(certmanager.Chart, noDrift)
 	r.Register(finalstack.Chart, noDrift)
 	r.Register(fluentbit.Chart, noDrift)
+	r.Register(gatewayapi.Chart, noDrift)
 	r.Register(gpuoperator.Chart, noDrift)
 	r.Register(ingressnginx.Chart, noDrift)
 	r.Register(istio.Chart, istio.Drift)

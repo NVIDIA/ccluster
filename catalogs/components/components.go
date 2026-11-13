@@ -30,6 +30,7 @@ import (
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
+	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -63,13 +64,15 @@ var NamespaceBase = []Component{
 	{namespacebase.Chart, namespacebase.Values{}},
 }
 
-// ClusterBase is the platform components every infra-plane cluster gets, sorted by
-// chart. The infra-plane operator's verifier registry must cover exactly these.
+// ClusterBase is the platform components an infra-plane cluster gets, some of them
+// optional, sorted by chart. The infra-plane operator's verifier registry must cover
+// exactly these.
 var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}},
 	{certmanager.Chart, certmanager.Values{}},
 	{finalstack.Chart, finalstack.Values{}},
 	{fluentbit.Chart, fluentbit.Values{}},
+	{gatewayapi.Chart, gatewayapi.Values{}},
 	{gpuoperator.Chart, gpuoperator.Values{}},
 	{ingressnginx.Chart, ingressnginx.Values{}},
 	{istio.Chart, istio.Values{}},
