@@ -251,6 +251,7 @@ dependencies = [
     { name = "kubernetes" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -264,6 +265,7 @@ requires-dist = [
     { name = "kubernetes", specifier = ">=30" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "urllib3" },
 ]
 
 [package.metadata.requires-dev]

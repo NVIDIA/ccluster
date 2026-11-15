@@ -30,6 +30,8 @@ from kubernetes import client as k8s
 from kubernetes import config as k8s_config
 from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
+from urllib3.exceptions import MaxRetryError
+from urllib3.util import Url
 
 from ccluster.client import CCLClient
 from ccluster.v1alpha1 import API_VERSION, CCLInfraPlane, Kind
@@ -239,13 +241,22 @@ def _save_control_plane(context: str) -> Path:
 
 @contextlib.contextmanager
 def _kube_errors() -> Iterator[None]:
-    """Turn kubeconfig and API errors into one-line click errors."""
+    """Turn Kubernetes configuration, API and connection errors into one-line Click errors."""
     try:
         yield
     except k8s_config.ConfigException as e:
         raise click.ClickException(f"Kubeconfig could not be loaded: {e}") from e
     except k8s.ApiException as e:
         raise click.ClickException(_api_error(e)) from e
+    except MaxRetryError as e:
+        message = "Could not reach Kubernetes API server"
+        if e.pool is not None:
+            host = e.pool.host
+            if ":" in host and not host.startswith("["):
+                host = f"[{host}]"
+            server = Url(scheme=e.pool.scheme, host=host, port=e.pool.port)
+            message += f" at {server.url}"
+        raise click.ClickException(message) from e
 
 
 def _cluster_admin_token(api_client: k8s.ApiClient) -> tuple[str, bytes]:

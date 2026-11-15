@@ -13,6 +13,8 @@ from click.testing import CliRunner
 from kubernetes.client import ApiException
 from kubernetes.config import ConfigException
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
+from urllib3 import HTTPSConnectionPool
+from urllib3.exceptions import MaxRetryError
 
 from ccluster import cli
 from ccluster.cli import main
@@ -207,6 +209,20 @@ def test_init_rejects_unknown_context(kubeconfig, config_file):
     result = invoke("init", "-cp", "nope")
     assert result.exit_code == 1
     assert "Kubeconfig could not be loaded" in result.output
+    assert not config_file.exists()
+
+
+def test_init_reports_unreachable_api_server(kubeconfig, config_file, monkeypatch):
+    def unreachable(self, api_version, kind):
+        pool = HTTPSConnectionPool("127.0.0.1", port=6443)
+        raise MaxRetryError(pool, "/version")
+
+    monkeypatch.setattr(FakeDynamicClient, "_get", unreachable)
+    result = invoke("init", "-cp", "cp")
+    assert result.exit_code == 1
+    assert result.output.splitlines() == [
+        "Error: Could not reach Kubernetes API server at https://127.0.0.1:6443"
+    ]
     assert not config_file.exists()
 
 
