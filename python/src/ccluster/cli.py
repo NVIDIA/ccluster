@@ -91,17 +91,11 @@ def init(control_plane: str) -> None:
     replaces the saved control plane. Only the context name is saved; credentials stay in
     the kubeconfig.
     """
-    with _kube_errors():
+    with _kube_errors(control_plane):
         api_client = k8s_config.new_client_from_config(context=control_plane)
-        try:
-            DynamicClient(api_client).resources.get(
-                api_version=API_VERSION, kind=Kind.CCL_INFRA_PLANE.value
-            )
-        except ResourceNotFoundError as e:
-            raise click.ClickException(
-                f"Control plane {control_plane} does not serve {Kind.CCL_INFRA_PLANE.value}; "
-                "is the ccluster-cp operator installed?"
-            ) from e
+        DynamicClient(api_client).resources.get(
+            api_version=API_VERSION, kind=Kind.CCL_INFRA_PLANE.value
+        )
     path = _save_control_plane(control_plane)
     click.echo(f"Initialized ccluster with control plane {control_plane} (saved to {path})")
 
@@ -154,7 +148,7 @@ def register(
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
     """
     control_plane = _load_control_plane()
-    with _kube_errors():
+    with _kube_errors(control_plane):
         infra_api = k8s_config.new_client_from_config(context=infra_plane)
         control_api = k8s_config.new_client_from_config(context=control_plane)
 
@@ -201,7 +195,7 @@ def unregister(name: str, namespace: str) -> None:
     the token.
     """
     control_plane = _load_control_plane()
-    with _kube_errors():
+    with _kube_errors(control_plane):
         control_api = k8s_config.new_client_from_config(context=control_plane)
         CCLClient(namespace, api_client=control_api).delete_infraplane(name=name)
     click.echo(f"Unregistered CCLInfraPlane {namespace}/{name}")
@@ -240,10 +234,19 @@ def _save_control_plane(context: str) -> Path:
 
 
 @contextlib.contextmanager
-def _kube_errors() -> Iterator[None]:
-    """Turn Kubernetes configuration, API and connection errors into one-line Click errors."""
+def _kube_errors(control_plane: str) -> Iterator[None]:
+    """Turn Kubernetes configuration, API and connection errors into one-line Click errors.
+
+    A ResourceNotFoundError comes from API discovery on the control plane, which does not
+    serve a ccluster kind when the ccluster-cp operator's CRDs are missing.
+    """
     try:
         yield
+    except ResourceNotFoundError as e:
+        raise click.ClickException(
+            f"Control plane {control_plane} does not serve the ccluster API; "
+            "is the ccluster-cp operator installed?"
+        ) from e
     except k8s_config.ConfigException as e:
         raise click.ClickException(f"Kubeconfig could not be loaded: {e}") from e
     except k8s.ApiException as e:

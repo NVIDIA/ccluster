@@ -245,7 +245,7 @@ def test_init_rejects_cluster_without_ccluster_api(kubeconfig, config_file):
     FakeDynamicClient.serves_ccluster = False
     result = invoke("init", "-cp", "cp")
     assert result.exit_code == 1
-    assert "Control plane cp does not serve CCLInfraPlane" in result.output
+    assert "Control plane cp does not serve the ccluster API" in result.output
     assert not config_file.exists()
 
 
@@ -441,6 +441,27 @@ def test_unregister_deletes_the_infraplane(infra):
     assert client.api_client.context == "cp"
     assert client.namespace == "tenant-a"
     assert client.deleted == "edge-1"
+    assert infra.created == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("register", "edge-1", "-n", "tenant-a", "-ip", "ip"),
+        ("unregister", "edge-1", "-n", "tenant-a"),
+    ],
+)
+def test_commands_report_a_control_plane_without_the_ccluster_api(infra, monkeypatch, args):
+    def not_served(self, namespace, *, api_client):
+        raise ResourceNotFoundError("No matches found for CCLComponentSet")
+
+    monkeypatch.setattr(FakeCCLClient, "__init__", not_served)
+    result = invoke(*args)
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: Control plane cp does not serve the ccluster API; "
+        "is the ccluster-cp operator installed?\n"
+    )
     assert infra.created == []
 
 
