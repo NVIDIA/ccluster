@@ -32,6 +32,18 @@ type ChartValues struct {
 	// Prometheus scraping is shipped off, because the ServiceMonitor CRD only
 	// exists once kube-prometheus-stack is deployed. Enable it after that.
 	Prometheus *PrometheusValues `json:"prometheus,omitempty"`
+
+	// Config is the controller's configuration file.
+	Config *ControllerConfig `json:"config,omitempty"`
+}
+
+// ControllerConfig configures the cert-manager controller.
+type ControllerConfig struct {
+	// GatewayAPI turns on cert-manager's Gateway API support, which the ACME HTTP-01
+	// gatewayHTTPRoute solver needs. The chart ships it off: turn it on only where the
+	// Gateway API CRDs exist, because without them the controller exits at startup and
+	// issues no certificate.
+	GatewayAPI *Toggle `json:"gatewayAPI,omitempty"`
 }
 
 // PrometheusValues configures cert-manager's metrics scraping.
@@ -43,7 +55,7 @@ type PrometheusValues struct {
 	ServiceMonitor *Toggle `json:"servicemonitor,omitempty"`
 }
 
-// Toggle is a subchart's enable flag.
+// Toggle is an enable flag.
 type Toggle struct {
 	// Enabled turns the feature on.
 	Enabled *bool `json:"enabled,omitempty"`
