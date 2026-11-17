@@ -10,6 +10,10 @@ dynamo-platform:
     # runs each DynamoGraphDeployment as Grove PodCliqueSets, and Grove rejects one
     # whose pods carry no kai.scheduler/queue label. Off, as on the legacy platform's
     # production clusters; set both to true to install and use it.
+    # Turning it on is one-way on a cluster that has run it: once install is false
+    # again, the grove.io CRDs stop rendering and Argo CD prunes them, which deletes
+    # every PodCliqueSet in the cluster and the pods of every DynamoGraphDeployment
+    # running on Grove.
     grove:
       install: false
       enabled: false

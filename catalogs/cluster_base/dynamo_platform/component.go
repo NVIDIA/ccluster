@@ -16,17 +16,25 @@ import (
 )
 
 const (
-	// Name is the component's name in a CCLComponentSet.
+	// Name is the component's name in a CCLComponentSet, and the key its values
+	// nest under.
 	Name = "dynamo-platform"
 	// Chart is the chart directory, relative to the repository root.
 	Chart = "catalogs/cluster_base/dynamo_platform"
 )
 
 // Values is the top-level values document for catalogs/cluster_base/dynamo_platform.
+type Values struct {
+	DynamoPlatform *ChartValues `json:"dynamo-platform,omitempty"`
+}
+
+// ChartValues are the upstream dynamo-platform values worth setting per cluster.
 //
-// It is empty: nothing needs setting per cluster yet, and the chart's values.yaml fixes
-// the upstream values the catalog relies on.
-type Values struct{}
+// It is empty: no per-cluster tunable has been identified yet, and the chart's
+// values.yaml fixes the upstream values the catalog relies on. It exists as a named
+// struct rather than an anonymous one so that adding the first field later is a
+// narrow change.
+type ChartValues struct{}
 
 // New returns the dynamo_platform chart entry, installed into namespace with values.
 // The zero Values means "chart defaults".

@@ -5,7 +5,25 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ChartValues(BaseModel):
+    """
+    ChartValues are the upstream dynamo-platform values worth setting per cluster.
+
+    It is empty: no per-cluster tunable has been identified yet, and the chart's
+    values.yaml fixes the upstream values the catalog relies on. It exists as a named
+    struct rather than an anonymous one so that adding the first field later is a
+    narrow change.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
 
 
 class Values(BaseModel):
@@ -16,6 +34,9 @@ class Values(BaseModel):
     model_config = ConfigDict(
         extra="allow",
         populate_by_name=True,
+    )
+    dynamo_platform: Annotated[ChartValues | None, Field(alias="dynamo-platform")] = (
+        None
     )
 
 
