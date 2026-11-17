@@ -1,2 +1,2 @@
 ### Fixed
-- Show a one-line CLI error when the Kubernetes API server is unreachable.
+- Show a one-line error with the cause when `ccluster-py` cannot connect to the Kubernetes API server.

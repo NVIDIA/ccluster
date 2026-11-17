@@ -249,13 +249,16 @@ def _kube_errors() -> Iterator[None]:
     except k8s.ApiException as e:
         raise click.ClickException(_api_error(e)) from e
     except MaxRetryError as e:
-        message = "Could not reach Kubernetes API server"
+        message = "Kubernetes API request failed"
         if e.pool is not None:
             host = e.pool.host
-            if ":" in host and not host.startswith("["):
+            if ":" in host:
                 host = f"[{host}]"
             server = Url(scheme=e.pool.scheme, host=host, port=e.pool.port)
             message += f" at {server.url}"
+        if e.reason is not None:
+            reason = " ".join(str(e.reason).splitlines())
+            message += f": {reason}"
         raise click.ClickException(message) from e
 
 
