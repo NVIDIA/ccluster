@@ -10,6 +10,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/rest"
 
 	"github.com/spf13/cobra"
 
@@ -39,11 +40,7 @@ or ~/.config.`,
 			if err != nil {
 				return err
 			}
-			client, err := discovery.NewDiscoveryClientForConfig(cfg)
-			if err != nil {
-				return err
-			}
-			if err := servesInfraPlanes(client, kubeContext); err != nil {
+			if err := servesInfraPlanes(cfg, kubeContext); err != nil {
 				return err
 			}
 
@@ -63,10 +60,14 @@ or ~/.config.`,
 
 // servesInfraPlanes returns an error unless the cluster serves CCLInfraPlane, which only
 // a cluster with the ccluster-cp operator's CRDs does.
-func servesInfraPlanes(client discovery.DiscoveryInterface, kubeContext string) error {
+func servesInfraPlanes(cfg *rest.Config, kubeContext string) error {
+	client, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return err
+	}
 	notServed := fmt.Errorf(
-		"control plane %s does not serve %s; is the ccluster-cp operator installed?",
-		kubeContext, kindCCLInfraPlane)
+		"control plane %s does not serve the ccluster API; is the ccluster-cp operator installed?",
+		kubeContext)
 
 	resources, err := client.ServerResourcesForGroupVersion(
 		cclusternvidiacomv1alpha1.GroupVersion.String())

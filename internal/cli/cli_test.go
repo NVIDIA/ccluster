@@ -160,7 +160,7 @@ func TestInitRejects(t *testing.T) {
 		{"an unknown context", []string{"init", "--control-plane", "nope"}, "kubeconfig could not be loaded"},
 		{
 			"a cluster without the ccluster API", []string{"init", "--control-plane", "bare"},
-			"control plane bare does not serve CCLInfraPlane; is the ccluster-cp operator installed?",
+			"control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
 		},
 		{"no control plane", []string{"init"}, `required flag(s) "control-plane" not set`},
 	}
@@ -332,6 +332,11 @@ func TestRegisterRejects(t *testing.T) {
 			want: "kubeconfig could not be loaded",
 		},
 		{
+			name: "a control plane without the ccluster API", config: "controlPlane:\n  context: bare\n",
+			args: []string{"--infra-plane", "ip"},
+			want: "control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+		},
+		{
 			name: "a missing init",
 			args: []string{"--infra-plane", "ip"},
 			want: "no control plane is configured; run ccluster init first",
@@ -357,6 +362,10 @@ func TestRegisterRejects(t *testing.T) {
 			}
 			expectError(t, test.want, append([]string{"register", "edge-1", "-n", newNamespaceName()},
 				test.args...)...)
+			if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(t.Context(),
+				serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Errorf("ServiceAccount after a refused register: %v, want NotFound", err)
+			}
 		})
 	}
 
@@ -411,21 +420,24 @@ func TestUnregisterDeletesTheInfraPlane(t *testing.T) {
 
 func TestUnregisterRejects(t *testing.T) {
 	tests := []struct {
-		name        string
-		initialized bool
-		args        []string
-		want        string
+		name         string
+		controlPlane string
+		args         []string
+		want         string
 	}{
-		{"a missing init", false, []string{"-n", "tenant-a"}, "run ccluster init first"},
-		{"no namespace", true, nil, `required flag(s) "namespace" not set`},
-		{"an infra plane", true, []string{"-n", "tenant-a", "--infra-plane", "ip"}, "unknown flag: --infra-plane"},
+		{"a missing init", "", []string{"-n", "tenant-a"}, "run ccluster init first"},
+		{
+			"a control plane without the ccluster API", "bare", []string{"-n", "tenant-a"},
+			"control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+		},
+		{"no namespace", "cp", nil, `required flag(s) "namespace" not set`},
+		{"an infra plane", "cp", []string{"-n", "tenant-a", "--infra-plane", "ip"}, "unknown flag: --infra-plane"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.initialized {
-				setUpInitialized(t)
-			} else {
-				setUp(t)
+			configFile := setUp(t)
+			if test.controlPlane != "" {
+				writeConfig(t, configFile, "controlPlane:\n  context: "+test.controlPlane+"\n")
 			}
 			expectError(t, test.want, append([]string{"unregister", "edge-1"}, test.args...)...)
 		})

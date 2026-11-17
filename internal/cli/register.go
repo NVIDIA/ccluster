@@ -104,15 +104,11 @@ example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 }
 
 func runRegister(ctx context.Context, out io.Writer, name string, opts registerOptions) error {
-	controlPlane, err := loadControlPlane()
+	client, err := controlPlaneClient(opts.namespace)
 	if err != nil {
 		return err
 	}
 	infraConfig, err := restConfig(opts.infraPlaneContext)
-	if err != nil {
-		return err
-	}
-	controlConfig, err := restConfig(controlPlane)
 	if err != nil {
 		return err
 	}
@@ -130,10 +126,6 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 		server = infraConfig.Host
 	}
 
-	client, err := cclclient.NewForConfig(opts.namespace, controlConfig)
-	if err != nil {
-		return err
-	}
 	if err := client.EnsureNamespace(ctx); err != nil {
 		return apiError(err)
 	}
