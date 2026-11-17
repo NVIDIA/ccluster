@@ -160,7 +160,7 @@ func TestInitRejects(t *testing.T) {
 		{"an unknown context", []string{"init", "--control-plane", "nope"}, "kubeconfig could not be loaded"},
 		{
 			"a cluster without the ccluster API", []string{"init", "--control-plane", "bare"},
-			"control plane bare does not serve CCLInfraPlane; is the ccluster-cp operator installed?",
+			notServed("bare"),
 		},
 		{"no control plane", []string{"init"}, `required flag(s) "control-plane" not set`},
 	}
@@ -409,6 +409,27 @@ func TestUnregisterDeletesTheInfraPlane(t *testing.T) {
 	}
 }
 
+// A saved control plane can later name a cluster without the ccluster API. Every command
+// that uses it says so, and register says so before it writes to the infra plane.
+func TestCommandsRejectAControlPlaneWithoutTheCclusterAPI(t *testing.T) {
+	for _, args := range [][]string{
+		{"register", "edge-1", "-n", "tenant-a", "--infra-plane", "ip"},
+		{"unregister", "edge-1", "-n", "tenant-a"},
+		{"list", "ip", "-n", "tenant-a"},
+		{"get", "ip", "edge-1", "-n", "tenant-a"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			writeConfig(t, setUp(t), "controlPlane:\n  context: bare\n")
+
+			expectError(t, notServed("bare"), args...)
+			if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(t.Context(),
+				serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Errorf("ServiceAccount after the refusal: %v, want NotFound", err)
+			}
+		})
+	}
+}
+
 func TestUnregisterRejects(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -641,6 +662,13 @@ func credentialsConfig(t *testing.T, namespace, plane string) credentials {
 		t.Fatal(err)
 	}
 	return credentials{server: string(secret.Data["server"]), config: config}
+}
+
+// notServed is the error for a control plane, named by its context, without the ccluster
+// API.
+func notServed(kubeContext string) string {
+	return "control plane " + kubeContext + " does not serve the ccluster API; " +
+		"is the ccluster-cp operator installed?"
 }
 
 // run executes ccluster with args and returns what it printed.

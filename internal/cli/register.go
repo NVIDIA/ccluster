@@ -104,15 +104,12 @@ example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
 }
 
 func runRegister(ctx context.Context, out io.Writer, name string, opts registerOptions) error {
-	controlPlane, err := loadControlPlane()
+	// Checked before anything is written to the infra plane.
+	controlConfig, err := controlPlaneRESTConfig()
 	if err != nil {
 		return err
 	}
 	infraConfig, err := restConfig(opts.infraPlaneContext)
-	if err != nil {
-		return err
-	}
-	controlConfig, err := restConfig(controlPlane)
 	if err != nil {
 		return err
 	}
