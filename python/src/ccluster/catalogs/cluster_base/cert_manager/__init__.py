@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class Toggle(BaseModel):
     """
-    Toggle is a subchart's enable flag.
+    Toggle is an enable flag.
     """
 
     model_config = ConfigDict(
@@ -22,6 +22,24 @@ class Toggle(BaseModel):
     enabled: bool | None = None
     """
     Enabled turns the feature on.
+    """
+
+
+class ControllerConfig(BaseModel):
+    """
+    ControllerConfig configures the cert-manager controller.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    gateway_api: Annotated[Toggle | None, Field(alias="gatewayAPI")] = None
+    """
+    GatewayAPI turns on cert-manager's Gateway API support, which the ACME HTTP-01
+    gatewayHTTPRoute solver needs. The chart ships it off: turn it on only where the
+    Gateway API CRDs exist, because without them the controller exits at startup and
+    issues no certificate.
     """
 
 
@@ -59,6 +77,10 @@ class ChartValues(BaseModel):
     """
     Prometheus scraping is shipped off, because the ServiceMonitor CRD only
     exists once kube-prometheus-stack is deployed. Enable it after that.
+    """
+    config: ControllerConfig | None = None
+    """
+    Config is the controller's configuration file.
     """
 
 

@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 cert-manager:
-  installCRDs: true
+  crds:
+    enabled: true
+    # The upstream default, pinned. The chart adds helm.sh/resource-policy: keep to the
+    # CRDs, which Argo CD treats as Delete=false: deleting this component leaves the CRDs,
+    # Certificates and Issuers.
+    keep: true
   replicaCount: 2
   webhook:
     replicaCount: 2
