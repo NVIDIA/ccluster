@@ -13,5 +13,8 @@ metadata:
     # while blocking dangerous operations (privileged containers, hostPath, host namespaces).
     # https://kubernetes.io/docs/tasks/configure-pod-container/enforce-standards-namespace-labels/
     pod-security.kubernetes.io/enforce: baseline
+    # Lets this namespace attach ListenerSets and routes to the shared Gateway
+    # (cluster_base/gateway_istio), which admits only namespaces with this label.
+    ccluster.nvidia.com/tenant: "true"
   name: {{ .Release.Namespace }}
 

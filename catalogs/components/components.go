@@ -32,6 +32,7 @@ import (
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
+	gatewayistio "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_istio"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -74,6 +75,7 @@ var ClusterBase = []Component{
 	{finalstack.Chart, finalstack.Values{}},
 	{fluentbit.Chart, fluentbit.Values{}},
 	{gatewayapi.Chart, gatewayapi.Values{}},
+	{gatewayistio.Chart, gatewayistio.Values{}},
 	{gpuoperator.Chart, gpuoperator.Values{}},
 	{ingressnginx.Chart, ingressnginx.Values{}},
 	{istio.Chart, istio.Values{}},
