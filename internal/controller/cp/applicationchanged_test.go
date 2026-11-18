@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 )
 
 var _ = Describe("applicationChanged", func() {

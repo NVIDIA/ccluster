@@ -14,6 +14,12 @@ components:
   - name: istio
     chart: catalogs/cluster_base/istio
     namespace: istio-system
+    # GKE's Container-Optimized OS nodes mount /opt/cni/bin read-only. On GKE, uncomment
+    # these values so that istio-cni installs its plugin where it can.
+    # values:
+    #   istio-cni:
+    #     cni:
+    #       cniBinDir: /home/kubernetes/bin
   - name: cert-manager
     chart: catalogs/cluster_base/cert_manager
     namespace: cert-manager

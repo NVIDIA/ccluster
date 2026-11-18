@@ -46,11 +46,12 @@ bundles none.
 | Component | Version | Upstream Helm repository | License |
 | --- | --- | --- | --- |
 | argo-rollouts | 2.37.7 | https://argoproj.github.io/argo-helm | Apache-2.0 |
-| istio (base) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (istiod) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (cni) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
-| istio (gateway) | 1.24.6 | https://istio-release.storage.googleapis.com/charts | Apache-2.0 |
+| istio (base) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (istiod) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (cni) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
+| istio (gateway) | 1.32.0 | https://blob.istio.io/istio-release/charts | Apache-2.0 |
 | cert-manager | v1.14.5 | https://charts.jetstack.io | Apache-2.0 |
+| dynamo-platform (with its grove-charts v0.1.0-alpha.13 and nats 1.3.2 subcharts) | 1.5.1 | https://helm.ngc.nvidia.com/nvidia/ai-dynamo | Apache-2.0 |
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
 | gateway-crds-helm (Envoy Gateway; bundles the Gateway API CRDs) | v1.10.0 | oci://docker.io/envoyproxy | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |

@@ -21,6 +21,8 @@ on:
       - 'charts/**'
       - 'catalogs/**'
       - 'test/**'
+      # The UI build ccluster server embeds; its tests check it is served.
+      - 'internal/server/ui/**'
       - '.github/workflows/test.yml'
 
 jobs:

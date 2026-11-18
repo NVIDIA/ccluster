@@ -739,7 +739,7 @@ declares the account and stores a token in the Secret. Argo CD checks an account
 against its live settings on every request, so neither case restarts Argo CD.
 
 The client mirrors only the parts of the API it uses, like
-`internal/argocd/v1alpha1`. It names the Application's namespace and project on every
+`internal/api/argocd/v1alpha1`. It names the Application's namespace and project on every
 request, so argocd-server answers a deleted Application with 404, not 403. It tells
 apart the few failures a caller can act on by status and message: an unauthorized
 token, a deleted Application, a tree not yet cached, and a node gone since the tree was
@@ -1101,7 +1101,10 @@ type HealthFunc func(ctx context.Context, entry v1alpha1.ComponentEntry, observe
 and registers one per chart in `healthregistry.Get()`. `TestGet` holds it to
 `components.All`. A chart without a function of its own registers `catalogs.DefaultHealth`:
 - It starts from the aggregate.
-- A Pod Argo CD reports `Degraded`, other than a Job's, makes the component `Degraded`.
+- A Pod Argo CD reports `Degraded`, other than a Job's, makes the component `Degraded`. So
+  does one whose status is an init container's crash loop, such as `Init:CrashLoopBackOff`:
+  Argo CD judges a running Pod by its app containers alone, and a native sidecar such as
+  `istio-proxy` is an init container.
 - The first Pod that is not running explains a `Progressing` component, such as
   `Unschedulable` with the scheduler's message.
 - A Pod whose owner Argo CD reports `Healthy` does neither. A ReplicaSet keeps an evicted
@@ -1124,7 +1127,7 @@ cache. A function reads a live object, or its events, through `observed.Reader` 
 object the tree singles out, because each such read is a request to the infra-plane
 cluster:
 - The default reads one Pod: its `PodScheduled` condition, or how a container last exited,
-  which is where `OOMKilled` shows. It reads that Pod's events only when the Pod says
+  init containers first, which is where `OOMKilled` shows. It reads that Pod's events only when the Pod says
   neither, such as `FailedMount` for one stuck in `ContainerCreating`.
 - `job_deployment` reads a failed Job for the reason Kubernetes gave up.
 - `dynamo_deployment` reads its graph.
@@ -1197,9 +1200,9 @@ runs one worker (§3).
 
 - **`dependsOn`.** Ordering is a straight line; there is no dependency graph and no
   parallelism between independent components. This has a concrete cost now that
-  `catalogs/cluster_base` ships a full 14-component order: the legacy Python catalog it was
+  `catalogs/cluster_base` ships a full 15-component order: the legacy Python catalog it was
   taken from gave four of them one sync wave, and those four could have installed
-  concurrently. Here they serialise, so installing the catalog is fourteen sequential
+  concurrently. Here they serialise, so installing the catalog is fifteen sequential
   convergence waits. Dependencies recorded by name on each Application would also order
   removal and teardown correctly after an update that stopped partway, which spec positions
   and wave labels cannot (§5).

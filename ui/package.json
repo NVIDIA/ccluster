@@ -1,0 +1,48 @@
+{
+  "name": "ccluster-ui",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The browser UI ccluster server embeds; see docs/development.md#dashboard-ui.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "fetch-styles": "node scripts/fetch-kui-styles.js",
+    "predev": "node scripts/fetch-kui-styles.js",
+    "dev": "vite",
+    "prebuild": "node scripts/fetch-kui-styles.js",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/roboto": "5.3.0",
+    "@nvidia/foundations-react-core": "1.21.0",
+    "@tanstack/react-query": "5.107.1",
+    "lucide-react": "1.70.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.9",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "jsdom": "31.0.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "vite": "8.3.7",
+    "vitest": "5.1.0"
+  }
+}

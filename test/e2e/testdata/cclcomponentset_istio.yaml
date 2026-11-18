@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# A single-component istio CCLComponentSet sized for the kind e2e cluster: one istiod
-# replica without autoscaling (the cluster has no metrics-server, and Argo CD reports an
-# HPA without metrics as Degraded), and small requests in place of istiod's 2Gi. The
-# chart's default CNI paths are kind's.
+# An istio CCLComponentSet sized for the kind e2e cluster: one istiod replica without
+# autoscaling (the cluster has no metrics-server, and Argo CD reports an HPA without metrics
+# as Degraded), and small requests in place of istiod's 2Gi. The chart's default CNI paths
+# are kind's.
+#
+# argo-rollouts follows as a meshed workload: MeshedNamespace is labelled for injection
+# before this applies, so its controller Pod gets istio-proxy. A non-empty ProxyImage points
+# that Pod's injected containers at it.
 apiVersion: ccluster.nvidia.com/v1alpha1
 kind: CCLComponentSet
 metadata:
@@ -26,3 +30,16 @@ spec:
               requests:
                 cpu: 100m
                 memory: 256Mi
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: {{ .MeshedNamespace }}
+      values:
+        argo-rollouts:
+          controller:
+            replicas: 1
+          {{- with .ProxyImage }}
+          podAnnotations:
+            sidecar.istio.io/proxyImage: "{{ . }}"
+          {{- end }}

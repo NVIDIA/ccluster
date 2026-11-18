@@ -13,9 +13,11 @@ SPDX-License-Identifier: Apache-2.0
 //     control plane (auto-mode).
 //  2. "qwen": the model server.
 //
-// The cluster must be registered, the control plane must publish DNS for it, and its
-// ingress load balancer must be reachable from the internet, for the Let's Encrypt
-// certificate. From the repository root, with the control plane's kubeconfig context:
+// The cluster must be registered, the control plane must publish DNS for it, its ingress
+// load balancer must be reachable from the internet, for the Let's Encrypt certificate,
+// and it must serve the resource metrics API, which the autoscalers of istiod and
+// ingress-nginx read. From the repository root, with the control plane's kubeconfig
+// context:
 //
 //	go run ./examples/quickstart/go/deploy -context <control-plane context> \
 //	    -namespace team-a -infra-plane edge-1
@@ -101,6 +103,7 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 	// to run the pods.
 	dependencyComponents, err := components(plane, []named{
 		{"kube-prometheus-stack", entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{}))},
+		// On GKE: istio.Values{IstioCNI: &istio.IstioCNI{CNI: &istio.CNI{CNIBinDir: new(istio.CNIBinDirGKE)}}}
 		{"istio", entry(istio.New("istio-system", istio.Values{}))},
 		{"cert-manager", entry(certmanager.New("cert-manager", certmanager.Values{}))},
 		{"ingress-nginx", entry(ingressnginx.New("ingress-nginx", ingressnginx.Values{}))},
@@ -131,7 +134,7 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 			Workload: deployments.Workload{
 				Name:         service,
 				DeploymentID: service,
-				ImageURL:     "ghcr.io/ggml-org/llama.cpp:server-b5350",
+				ImageURL:     "ghcr.io/ggml-org/llama.cpp:server-b11706",
 				Resources:    deployments.ResourceRequirements{Limits: size, Requests: size},
 				// The default scheduler: this example installs no kai-scheduler.
 				SchedulerName: new(""),

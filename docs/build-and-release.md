@@ -125,6 +125,15 @@ Every published artifact carries its license; keep it that way when changing a r
 | Python | `LICENSE` in the sdist and in the wheel's `dist-info/licenses` | `python/LICENSE`, `license-files` in `pyproject.toml` |
 | CLI tarballs | `LICENSE`, `THIRD_PARTY_NOTICES.md`, and under `licenses/go` the license and NOTICE files of every linked Go module and the Go standard library | `cli-package` (`go-licenses`, at the Dockerfile's `GO_LICENSES_VERSION`) |
 
+The CLI also embeds the UI's build, which carries the licenses of the npm packages it
+bundles: Vite writes them to `internal/server/ui/dist/THIRD_PARTY_LICENSES.md`, and
+`ccluster server` serves that file beside the UI. The bundled Kaizen UI stylesheets come
+from the same Apache-2.0 release as `@nvidia/foundations-react-core`, listed there,
+except the NVIDIA GUI Icons that `base-external.css` embeds, which are CC-BY-4.0. The
+minifier drops the stylesheets' own license comments, so `ui/scripts/fetch-kui-styles.js`
+keeps them and `ui/vite.config.ts` appends them to that file, failing the build if the
+icons' CC-BY-4.0 notice is missing.
+
 `go-licenses` fails the image build and `cli-package` when a newly linked module's
 license cannot be classified; resolve it rather than ignoring the module. `python/LICENSE` is a symlink to
 the root `LICENSE` because the package builds from `python/`; the build stores the
@@ -151,6 +160,9 @@ with each job's inputs when changing build or generation dependencies.
   `go.sum` are not tidy, when `make client-generate` changes `pkg/client/`, or when
   `make manifests generate` changes anything in the tree. `make test` regenerates CRDs, RBAC and deepcopy code itself, so
   without the last check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
+- `test-ui` covers `ui/` and the committed build in `internal/server/ui/`: it runs
+  `make ui-test`, then `make ui-check`, which rebuilds the UI and fails when the committed
+  build differs. `test` also runs on a change to the build, because the Go tests serve it.
 - `test-python` covers Python and schema-generator inputs, including API/catalog Go
   comments. `test-chart` checks generated chart drift and rendering.
 - `test-chart` also runs `make helm-lint-catalogs`, which lints and renders every chart

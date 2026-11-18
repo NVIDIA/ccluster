@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
-	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/argocd/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 )
 
 func secretWith(data map[string]string) *corev1.Secret {

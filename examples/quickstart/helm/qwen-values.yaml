@@ -13,7 +13,7 @@ components:
     values:
       name: qwen
       deploymentId: qwen
-      imageUrl: ghcr.io/ggml-org/llama.cpp:server-b5350
+      imageUrl: ghcr.io/ggml-org/llama.cpp:server-b11706
       args:
         - --hf-repo
         - Qwen/Qwen2.5-0.5B-Instruct-GGUF
