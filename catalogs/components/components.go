@@ -65,9 +65,8 @@ var NamespaceBase = []Component{
 	{namespacebase.Chart, namespacebase.Values{}},
 }
 
-// ClusterBase is the platform components an infra-plane cluster gets, some of them
-// optional, sorted by chart. The infra-plane operator's verifier registry must cover
-// exactly these.
+// ClusterBase is the platform components every infra-plane cluster gets, sorted by
+// chart. The infra-plane operator's verifier registry must cover exactly these.
 var ClusterBase = []Component{
 	{argorollouts.Chart, argorollouts.Values{}},
 	{certmanager.Chart, certmanager.Values{}},

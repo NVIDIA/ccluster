@@ -16,6 +16,7 @@ import (
 	dynamoplatform "github.com/NVIDIA/ccluster/catalogs/cluster_base/dynamo_platform"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
+	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -34,7 +35,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as fifteen error checks. None
+	// the catalog reads as the list it is rather than as sixteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -53,6 +54,14 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{})),
 		}, // wave -60
+		{
+			// Not in the legacy catalog. Before istio, whose Gateway controllers start
+			// once the CRDs exist, and before cert-manager, whose Gateway API support
+			// needs them at startup.
+			Name:           gatewayapi.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(gatewayapi.New("gateway-system", gatewayapi.Values{})),
+		},
 		{
 			Name:           "istio",
 			InfraPlaneRef:  ref,

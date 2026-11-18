@@ -5,9 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 // Package gatewayapi describes the values of catalogs/cluster_base/gateway_api.
 //
-// The component is optional, so cluster_base.Components leaves it out. A plane that uses
-// Gateway API adds it to its set before istio; a cluster that already has the CRDs,
-// installed by other means, does not. Where it is installed, it is the only installer of
+// cluster_base.Components installs it before istio. A cluster whose CRDs come from
+// elsewhere leaves it out of its set. Where it is installed, it is the only installer of
 // the CRDs: another chart that bundles them, such as Envoy Gateway's gateway-helm with
 // its default crds.enabled, has to leave them out, or Argo CD applies both copies on
 // every sync.
