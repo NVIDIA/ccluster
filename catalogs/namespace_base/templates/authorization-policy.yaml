@@ -22,5 +22,8 @@ spec:
     - source:
         # Nginx-ingress controller for proxying requests
         namespaces: ["ingress-nginx"]
+    - source:
+        # The shared Gateway (cluster_base/gateway_istio) for proxying requests
+        namespaces: ["gateway-system"]
 
 

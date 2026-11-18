@@ -17,6 +17,7 @@ import (
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
+	gatewayistio "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_istio"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -35,7 +36,7 @@ func Components(
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as sixteen error checks. None
+	// the catalog reads as the list it is rather than as seventeen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -67,6 +68,13 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(istio.New("istio-system", istio.Values{})),
 		}, // wave -50
+		{
+			// Not in the legacy catalog. After istio, whose istiod creates the Gateway's
+			// GatewayClass and serves it.
+			Name:           gatewayistio.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(gatewayistio.New("gateway-system", gatewayistio.Values{})),
+		},
 		{
 			Name:           "cert-manager",
 			InfraPlaneRef:  ref,

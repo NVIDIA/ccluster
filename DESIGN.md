@@ -80,7 +80,7 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
 | external-dns | Control-plane cluster only, optional. Publishes the `DNSEndpoint`s the operator writes into the DNS zones the user created (§3). Infra planes run no external-dns: Ingress hosts resolve through each plane's wildcard records, and a `compute_deployment`'s SSH Service gets no DNS name until #221. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 16 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 17 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -1200,9 +1200,9 @@ runs one worker (§3).
 
 - **`dependsOn`.** Ordering is a straight line; there is no dependency graph and no
   parallelism between independent components. This has a concrete cost now that
-  `catalogs/cluster_base` ships a full 16-component order: the legacy Python catalog it was
+  `catalogs/cluster_base` ships a full 17-component order: the legacy Python catalog it was
   taken from gave four of them one sync wave, and those four could have installed
-  concurrently. Here they serialise, so installing the catalog is sixteen sequential
+  concurrently. Here they serialise, so installing the catalog is seventeen sequential
   convergence waits. Dependencies recorded by name on each Application would also order
   removal and teardown correctly after an update that stopped partway, which spec positions
   and wave labels cannot (§5).

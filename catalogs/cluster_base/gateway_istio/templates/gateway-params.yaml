@@ -1,0 +1,55 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+# Settings istiod merges into the objects it generates for ccl-gateway. The numbers
+# are ingress_nginx's, the controller this Gateway replaces; production sizing for the
+# Gateway has not been measured.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ccl-gateway-params
+  namespace: gateway-system
+data:
+  horizontalPodAutoscaler: |
+    spec:
+      minReplicas: 4
+      maxReplicas: 180
+      metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 50
+        - type: Resource
+          resource:
+            name: memory
+            target:
+              type: Utilization
+              averageUtilization: 70
+  podDisruptionBudget: |
+    spec:
+      minAvailable: 50%
+  deployment: |
+    spec:
+      template:
+        spec:
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    topologyKey: kubernetes.io/hostname
+                    labelSelector:
+                      matchLabels:
+                        gateway.networking.k8s.io/gateway-name: ccl-gateway
+          containers:
+            - name: istio-proxy
+              resources:
+                requests:
+                  cpu: 300m
+                  memory: 350Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
