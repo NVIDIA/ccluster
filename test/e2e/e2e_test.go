@@ -581,8 +581,9 @@ var _ = Describe("Manager", Ordered, func() {
 		//
 		// ex-cluster is also registered before the ip chart is installed on it, the order
 		// a user who runs `ccluster register` first meets. Only a real API server proves
-		// that a missing CRD reads as CRDMissing, and that the remote watch, which cannot
-		// start without it, starts once it is installed and delivers the verdict.
+		// that a missing CRD reads as CRDMissing, that the remote watch, which cannot
+		// start without it, starts once it is installed and delivers the verdict, and
+		// that register, waiting meanwhile, then succeeds.
 		for _, t := range targets() {
 			It("should write the CCLClusterConfig on the "+t.name+" infra plane and sync its verification back", func() {
 				planeName := "e2e-cluster-config-" + t.name
@@ -598,17 +599,26 @@ var _ = Describe("Manager", Ordered, func() {
 				}
 
 				By("registering the " + t.name + " plane")
-				t.register(planeName)
-
 				if beforeIPChart {
+					// register waits for the CCLClusterConfig, which needs the ip chart's
+					// CRD installed below.
+					registered := startRegisterWithCLI(planeName)
+					// infraPlaneCondition fails the spec at once on a missing plane, so
+					// wait until register has applied it.
+					waitInfraPlaneAvailable(planeName)
+
 					By("reporting CRDMissing while the ip chart is not installed")
 					Eventually(func(g Gomega) {
-						g.Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
 						g.Expect(infraPlaneCondition(planeName, conditionClusterConfigApplied, "reason")).
 							To(Equal("CRDMissing"))
 					}, crossClusterTimeout).Should(Succeed())
 
 					deployIPOperator(t.cluster)
+
+					By("returning from ccluster register once the CCLClusterConfig is written")
+					registered()
+				} else {
+					t.register(planeName)
 				}
 
 				// After a late CRD install the operator notices it through its retry of
@@ -2100,10 +2110,15 @@ type: kubernetes.io/service-account-token
 			// Envtest only proves the operator writes the rules; this proves Argo CD,
 			// given them, reports the live Fail as Synced and leaves it in place. It runs
 			// last: istio-cni chains itself into the node's CNI configuration.
-			It("should report istio Synced while istiod owns its webhooks' failurePolicy", func() {
+			//
+			// The same set then runs a meshed workload while istio is up, the only time
+			// the suite can: istio-proxy is a native sidecar, an init container, which
+			// Argo CD's Pod health does not read.
+			It("should report istio Synced while istiod owns its webhooks' failurePolicy, and judge meshed Pods", func() {
 				const componentSetName = "e2e-istio"
 				const planeName = "e2e-istio-plane"
 				const credentialsName = "e2e-istio-plane-credentials"
+				const meshedNamespace = "e2e-meshed"
 				applicationName := componentSetName + "-istio"
 
 				// Argo CD's view of the Application says which resource is not Healthy;
@@ -2112,6 +2127,7 @@ type: kubernetes.io/service-account-token
 				DeferCleanup(func() {
 					if CurrentSpecReport().Failed() {
 						dumpNamespace("istio-system")
+						dumpNamespace(meshedNamespace)
 					}
 				})
 
@@ -2122,8 +2138,15 @@ type: kubernetes.io/service-account-token
 				applyCCLInfraPlane(planeName, credentialsName)
 				waitInfraPlaneAvailable(planeName)
 
-				By("creating a CCLComponentSet with the istio component")
-				applyIstioCCLComponentSet(componentSetName, planeName)
+				By("labelling the meshed workload's namespace for sidecar injection")
+				_, err = utils.Run(exec.Command("kubectl", "create", "namespace", meshedNamespace))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "label", "namespace", meshedNamespace,
+					"istio-injection=enabled"))
+				Expect(err).NotTo(HaveOccurred())
+
+				By("creating a CCLComponentSet with istio, then argo-rollouts as a meshed workload")
+				applyIstioCCLComponentSet(componentSetName, planeName, meshedNamespace, "")
 
 				By("verifying the operator wrote the chart's drift rules into the Application")
 				Eventually(func(g Gomega) {
@@ -2184,12 +2207,36 @@ type: kubernetes.io/service-account-token
 					g.Expect(strings.TrimSpace(sync)).To(Equal("Synced"))
 				}, time.Minute, 5*time.Second).Should(Succeed())
 
-				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the chart")
+				// RolloutComplete above already holds the meshed component Healthy.
+				By("verifying the meshed Pod runs istio-proxy as a native sidecar")
+				out, err := utils.Run(exec.Command("kubectl", "get", "pods", "-n", meshedNamespace, "-o",
+					`jsonpath={.items[*].spec.initContainers[?(@.name=="istio-proxy")].restartPolicy}`))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(strings.Fields(out)).To(ContainElement("Always"))
+
+				// A missing proxy image stops the new Pod in its init containers, where
+				// Argo CD sees a Pending Pod and calls it Progressing. The operator's
+				// health reads the Init: status and calls the component Degraded.
+				By("pointing the meshed Pod's injected containers at a missing proxy image")
+				applyIstioCCLComponentSet(componentSetName, planeName, meshedNamespace,
+					"docker.io/istio/proxyv2:does-not-exist")
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "cclcomponentset", componentSetName,
+						"-n", crNamespace, "-o",
+						`jsonpath={.status.componentHealthStatuses[?(@.name=="argo-rollouts")].health}`))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(out)).To(Equal("Degraded"))
+				}, 5*time.Minute, 5*time.Second).Should(Succeed())
+
+				By("deleting the CCLComponentSet and CCLInfraPlane, letting Argo CD uninstall the charts")
 				_, err = utils.Run(exec.Command("kubectl", "delete", "cclcomponentset", componentSetName,
 					"-n", crNamespace, "--ignore-not-found", "--wait=true", "--timeout=5m"))
 				Expect(err).NotTo(HaveOccurred())
 				_, err = utils.Run(exec.Command("kubectl", "delete", "cclinfraplane",
 					planeName, "-n", crNamespace, "--wait=true", "--timeout=2m"))
+				Expect(err).NotTo(HaveOccurred())
+				_, err = utils.Run(exec.Command("kubectl", "delete", "namespace", meshedNamespace,
+					"--wait=true", "--timeout=2m"))
 				Expect(err).NotTo(HaveOccurred())
 			})
 		})
@@ -2274,12 +2321,14 @@ func applyOrderedCCLComponentSet(name, planeName string) {
 	})
 }
 
-// applyIstioCCLComponentSet creates a single-component istio CCLComponentSet targeting
-// planeName, with values that fit the kind e2e cluster.
-func applyIstioCCLComponentSet(name, planeName string) {
+// applyIstioCCLComponentSet applies an istio CCLComponentSet targeting planeName, with
+// values that fit the kind e2e cluster, followed by argo-rollouts in meshedNamespace as a
+// meshed workload. A non-empty proxyImage replaces that workload's injected image.
+func applyIstioCCLComponentSet(name, planeName, meshedNamespace, proxyImage string) {
 	GinkgoHelper()
 	applyManifest("cclcomponentset_istio.yaml", map[string]string{
 		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
+		"MeshedNamespace": meshedNamespace, "ProxyImage": proxyImage,
 	})
 }
 

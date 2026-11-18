@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# metrics-server, for an infra-plane cluster that does not serve the resource metrics API
+# itself, such as EKS, kubeadm or kind. The autoscalers of istiod and ingress-nginx read
+# it; without it Argo CD reports them Degraded and the dependencies never finish.
+#
+#   helm install metrics-server ./componentset -n team-a -f metrics-server-values.yaml \
+#     --set infraPlane=edge-1
+components:
+  - name: metrics-server
+    chart: catalogs/cluster_base/metrics_server
+    namespace: kube-system
+    # kind's kubelets serve self-signed certificates. On kind, uncomment these values;
+    # args adds to the chart's default arguments.
+    # values:
+    #   metrics-server:
+    #     args:
+    #       - --kubelet-insecure-tls

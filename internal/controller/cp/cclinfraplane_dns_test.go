@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
-	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/externaldns/v1alpha1"
+	externaldnsv1alpha1 "github.com/NVIDIA/ccluster/internal/api/externaldns/v1alpha1"
 )
 
 func TestWildcardEndpointsRejectInvalidAddresses(t *testing.T) {

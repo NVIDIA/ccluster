@@ -12,8 +12,9 @@ deployed in two component sets, each rolled out in order:
 
 Prerequisites: the cluster is registered, with register.py or `ccluster register`; the
 control plane publishes DNS for it; its ingress load balancer is reachable from the
-internet, for the Let's Encrypt certificate; and `pip install ccluster-py`. Then, with the
-control plane's kubeconfig context:
+internet, for the Let's Encrypt certificate; it serves the resource metrics API, which
+the autoscalers of istiod and ingress-nginx read; and `pip install ccluster-py`. Then,
+with the control plane's kubeconfig context:
 
     python deploy.py --context <control-plane context> --namespace team-a --infra-plane edge-1
 
@@ -91,6 +92,8 @@ def deploy(client: CCLClient, plane: str) -> None:
             catalogs.component(name, plane, chart, namespace)
             for name, chart, namespace in [
                 ("kube-prometheus-stack", kube_prometheus_stack.CHART, "prometheus"),
+                # On GKE, give istio the values istio.Values(istio_cni=istio.IstioCNI(
+                #     cni=istio.CNI(cni_bin_dir="/home/kubernetes/bin"))).
                 ("istio", istio.CHART, "istio-system"),
                 ("cert-manager", cert_manager.CHART, "cert-manager"),
                 ("ingress-nginx", ingress_nginx.CHART, "ingress-nginx"),
@@ -117,7 +120,7 @@ def deploy(client: CCLClient, plane: str) -> None:
                 inference.Values(
                     name=SERVICE,
                     deployment_id=SERVICE,
-                    image_url="ghcr.io/ggml-org/llama.cpp:server-b5350",
+                    image_url="ghcr.io/ggml-org/llama.cpp:server-b11706",
                     args=[
                         "--hf-repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
                         "--hf-file", "qwen2.5-0.5b-instruct-q4_k_m.gguf",

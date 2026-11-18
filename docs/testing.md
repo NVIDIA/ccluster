@@ -15,6 +15,7 @@ by changed path. See [Development](development.md) for generation and cluster se
 | Full e2e | `make test-e2e-full` | Quick tier plus real Argo CD rollout, ordered release/teardown, drift repair, values updates, tenancy and istio's ignored webhook drift. |
 | Charts | `make helm-generate`, `make helm-lint`, `make helm-lint-catalogs` | Generated chart consistency and rendering, and that every catalog chart lints and renders. CI also checks the vendored Argo CD CRDs and server-side diff setting. |
 | Python | `make python-generate`, `make python-test` | Generated model consistency, example round-tripping and catalog value serialization. |
+| Dashboard | `go test ./internal/server/ ./internal/cli/`, `make ui-test`, `make ui-check` | The API's overview rules, errors, security headers and UI serving over a fake clientset; `ccluster server` against envtest; the UI's rendering with a mocked API; and that the committed build is current. |
 | Manual host manager | `make run-cp` | Fast iteration under your kubeconfig identity; does not prove operator RBAC. |
 
 Inspect generated diffs: expected output changes belong in the change, and regeneration

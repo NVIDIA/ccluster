@@ -160,7 +160,8 @@ raises `NotFoundError` for a missing set.
 conditions by type and drops the ones the operator computed from an older generation, so
 what is left is its verdict on the spec as it now stands — after a failed validation
 `ComponentsApplied` still carries the previous generation's. `get_component_set` and
-`get_infraplane` read one object and return it as its model, or raise `NotFoundError`.
+`get_infraplane` read one object and return it as its model, or raise `NotFoundError`;
+`list_component_sets` and `list_infraplanes` return every one in the client's namespace.
 
 ```python
 if not client.is_component_set_finished(name="local-base"):
@@ -236,6 +237,11 @@ it calls `apply_infraplane` with that token and the cluster CA. The control-plan
 read `<name>-credentials` there is cluster-admin on the infra plane, so keep read access to
 that namespace's Secrets tight. Running it again reuses the
 same token.
+
+`register` then waits until the CCLInfraPlane's `ClusterConfigApplied` condition is `True`,
+which means the control plane reached the cluster, and prints the domain. If it is not
+`True` within two minutes, `register` fails with the condition's reason and message; the
+CCLInfraPlane stays, so fix the cause and run `register` again.
 
 `--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
 the kubeconfig. Set it when that address is only reachable from your workstation, as with

@@ -50,6 +50,41 @@ func crashLooping(t *testing.T, lastReason string, exitCode int32) map[string]an
 	}})
 }
 
+func crashLoopingSidecar(t *testing.T) map[string]any {
+	return deploymentstest.Object(t, &corev1.Pod{Status: corev1.PodStatus{
+		InitContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "istio-proxy",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137},
+			},
+		}},
+		ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "main", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		}},
+	}})
+}
+
+func crashLoopingAfterInitRetry(t *testing.T) map[string]any {
+	return deploymentstest.Object(t, &corev1.Pod{Status: corev1.PodStatus{
+		InitContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "istio-validation",
+			Ready: true,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed"}},
+			LastTerminationState: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1},
+			},
+		}},
+		ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "main",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137},
+			},
+		}},
+	}})
+}
+
 func unschedulable(t *testing.T) map[string]any {
 	return deploymentstest.Object(t, &corev1.Pod{Status: corev1.PodStatus{
 		Phase: corev1.PodPending,
@@ -63,6 +98,8 @@ func unschedulable(t *testing.T) map[string]any {
 func TestDefaultHealth(t *testing.T) {
 	crashing := pod("web-1-a", replicaSet, "Degraded", "CrashLoopBackOff")
 	crashing.HealthMessage = "back-off 5m0s restarting failed container=main"
+	// Argo CD judges a running Pod by its app containers, so a crashing sidecar leaves it Progressing.
+	sidecarCrashing := pod("web-1-a", replicaSet, "Progressing", "Init:CrashLoopBackOff")
 	pending := pod("web-1-a", replicaSet, "Progressing", "Pending")
 	creating := pod("web-1-a", replicaSet, "Progressing", "ContainerCreating")
 	failedJobPod := pod("run-a", job, "Degraded", "Error")
@@ -115,6 +152,30 @@ func TestDefaultHealth(t *testing.T) {
 			resources: catalogs.ObservedResources{deployment, crashing},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
 				"Pod/web-1-a": crashLooping(t, "OOMKilled", 137),
+			}},
+			wantHealth:  v1alpha1.ComponentHealthDegraded,
+			wantReason:  "OOMKilled",
+			wantMessage: `Pod web-1-a: container "main" last exited with code 137 (OOMKilled), now CrashLoopBackOff`,
+			maxReads:    1,
+		},
+		{
+			name:      "a crashing native sidecar degrades the component, OOMKilled read from its init container",
+			aggregate: "Progressing",
+			resources: catalogs.ObservedResources{deployment, sidecarCrashing},
+			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
+				"Pod/web-1-a": crashLoopingSidecar(t),
+			}},
+			wantHealth:  v1alpha1.ComponentHealthDegraded,
+			wantReason:  "OOMKilled",
+			wantMessage: `Pod web-1-a: container "istio-proxy" last exited with code 137 (OOMKilled), now CrashLoopBackOff`,
+			maxReads:    1,
+		},
+		{
+			name:      "a finished init container does not explain a crashing app container",
+			aggregate: "Progressing",
+			resources: catalogs.ObservedResources{deployment, crashing},
+			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
+				"Pod/web-1-a": crashLoopingAfterInitRetry(t),
 			}},
 			wantHealth:  v1alpha1.ComponentHealthDegraded,
 			wantReason:  "OOMKilled",

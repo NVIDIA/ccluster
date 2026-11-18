@@ -237,8 +237,11 @@ pre-commit: ## Run every local check before a commit: tidy, generators, lint fix
 	go mod tidy
 	$(MAKE) client-generate
 	$(MAKE) helm-generate python-generate
+	@if command -v $(NPM) >/dev/null 2>&1; then $(MAKE) ui-build; \
+	else echo "$(NPM) not found: skipped ui-build and ui-test; CI runs them" >&2; fi
 	$(MAKE) lint-fix check-headers
 	$(MAKE) test helm-lint python-test
+	@if command -v $(NPM) >/dev/null 2>&1; then $(MAKE) ui-test; fi
 	@git status --short
 
 ##@ Build
@@ -856,6 +859,39 @@ python-generate: manifests uv ## Regenerate python/ from the CRDs and the catalo
 .PHONY: python-test
 python-test: uv ## Run the python/ package's tests.
 	cd python && "$(UV)" sync --quiet && "$(UV)" run pytest
+
+##@ UI
+
+# ui/ is the React app ccluster server serves. Its build is written into
+# internal/server/ui/dist, which the Go binary embeds, and is committed, so building Go
+# never needs Node. Node's version is in ui/.nvmrc.
+NPM ?= npm
+
+# npm ci rewrites node_modules/.package-lock.json, so it reruns only when the lock file
+# changes.
+ui/node_modules/.package-lock.json: ui/package.json ui/package-lock.json
+	cd ui && $(NPM) ci --no-audit --no-fund
+
+.PHONY: ui-install
+ui-install: ui/node_modules/.package-lock.json ## Install the UI's npm dependencies from ui/package-lock.json.
+
+.PHONY: ui-build
+ui-build: ui-install ## Rebuild the UI into internal/server/ui/dist, which ccluster server embeds. Commit the result.
+	cd ui && $(NPM) run build
+
+.PHONY: ui-test
+ui-test: ui-install ## Type-check, lint and test the UI.
+	cd ui && $(NPM) run typecheck && $(NPM) run lint && $(NPM) test
+
+.PHONY: ui-check
+ui-check: ui-build ## Fail if the committed UI build differs from a fresh one.
+	@git diff --exit-code -- internal/server/ui/dist && \
+	[ -z "$$(git status --porcelain --untracked-files=all -- internal/server/ui/dist)" ] || \
+	{ echo "internal/server/ui/dist is stale: run make ui-build and commit it" >&2; exit 1; }
+
+.PHONY: ui-dev
+ui-dev: ui-install ## Serve the UI with hot reload, passing /api to a ccluster server on 127.0.0.1:8484.
+	cd ui && $(NPM) run dev
 
 ##@ Dependencies
 

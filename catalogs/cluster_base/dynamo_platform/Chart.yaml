@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: cluster_base_dynamo_platform
+description: NVIDIA Dynamo platform - the Dynamo operator and its NATS event plane, which serve the DynamoGraphDeployments the dynamo_deployment chart creates, with the Grove gang scheduler available but off
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/dynamo_platform
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+dependencies:
+  # Bundles Grove v0.1.0-alpha.13 as its grove subchart, off by default. Dynamo pins the Grove release
+  # it works with, so the two are only ever bumped together, by bumping this.
+  - name: dynamo-platform
+    version: 1.5.1
+    repository: https://helm.ngc.nvidia.com/nvidia/ai-dynamo
