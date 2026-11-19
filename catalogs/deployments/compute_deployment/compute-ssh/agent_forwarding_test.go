@@ -238,7 +238,9 @@ func checkForwardedAgent(t *testing.T, socketPath string, publicKey gossh.Public
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	forwarded := agent.NewClient(conn)
+	// Keep ownership of conn so a failed agent request cannot close the socket
+	// before the test checks that the server closed its end.
+	forwarded := agent.NewClient(struct{ io.ReadWriter }{conn})
 	keys, err := forwarded.List()
 	if err != nil {
 		t.Fatal(err)
