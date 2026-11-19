@@ -1213,9 +1213,11 @@ runs one worker (§3).
   after it, and every removal, indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Only `metrics_server` has a check of its own; every other
-  cluster_base chart is still registered with `alwaysVerified`. The remaining checks
-  (workload readiness, issuer readiness, CRDs Established) are not written yet.
+- **Real Verifiers.** Not every cluster_base chart has a check of its own yet; the rest
+  are still registered with `alwaysVerified` in `verifierregistry.Get()`. The checks that
+  exist look for what a component provides, such as a CRD, a Service with a ready
+  endpoint or an `Available` APIService. None yet checks that a component's own
+  workloads are ready, or that a CRD is Established.
 - **Per-component verification results.** The `CCLClusterConfig` status reaches the
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.
