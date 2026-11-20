@@ -313,9 +313,38 @@ func TestRegisterFailsWhenTokenNeverArrives(t *testing.T) {
 
 	expectError(t, "secret kube-system/ccluster-manager-token was not given a token within 50ms",
 		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
-	if _, err := kubeClient.CoreV1().Namespaces().Get(t.Context(), namespace,
+	if _, err := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace).Get(t.Context(), "edge-1",
 		metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("namespace %s: error = %v, want the control plane left alone", namespace, err)
+		t.Errorf("CCLInfraPlane after token timeout: %v, want NotFound", err)
+	}
+}
+
+// The API server refuses a NAME that is not a DNS label; that must fail register before
+// the cluster-admin ServiceAccount, binding and token exist on the infra plane.
+func TestRegisterCreatesNothingOnTheInfraPlaneForARefusedPlane(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+
+	expectError(t, "name must be a DNS label",
+		"register", "edge.1", "-n", namespace, "--infra-plane", "ip")
+
+	ctx := t.Context()
+	if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(ctx,
+		serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("ServiceAccount after a refused register: %v, want NotFound", err)
+	}
+	if _, err := kubeClient.RbacV1().ClusterRoleBindings().Get(ctx,
+		clusterRoleBindingName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("ClusterRoleBinding after a refused register: %v, want NotFound", err)
+	}
+	if _, err := kubeClient.CoreV1().Secrets(serviceAccountNamespace).Get(ctx,
+		tokenSecretName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("token Secret after a refused register: %v, want NotFound", err)
+	}
+	if _, err := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace).Get(ctx,
+		"edge.1", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("CCLInfraPlane after a refused register: %v, want NotFound", err)
 	}
 }
 

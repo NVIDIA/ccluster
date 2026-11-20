@@ -179,9 +179,7 @@ func (c *Client) ApplyInfraPlane(
 	secretName := CredentialsSecretName(opts.Name)
 
 	plane, err := c.ccl.CclusterV1alpha1().CCLInfraPlanes(c.namespace).Apply(ctx,
-		cclusterac.CCLInfraPlane(opts.Name, c.namespace).
-			WithSpec(cclusterac.CCLInfraPlaneSpec().
-				WithClusterCredentialsRef(cclusterac.LocalObjectReference().WithName(secretName))),
+		c.infraPlane(opts.Name),
 		applyOptions())
 	if err != nil {
 		return nil, err
@@ -197,6 +195,21 @@ func (c *Client) ApplyInfraPlane(
 		return nil, err
 	}
 	return plane, nil
+}
+
+// CheckInfraPlane reports whether the API server would refuse the CCLInfraPlane that
+// ApplyInfraPlane writes for name.
+//
+// It dry-runs the server-side apply of the plane, so the API server checks it against the
+// CRD's own rules, such as name being a DNS label, and writes nothing. Call it before
+// creating anything the plane needs, such as the infra plane's credentials. Like
+// ApplyInfraPlane, it needs the namespace to exist already.
+func (c *Client) CheckInfraPlane(ctx context.Context, name string) error {
+	opts := applyOptions()
+	opts.DryRun = []string{metav1.DryRunAll}
+	_, err := c.ccl.CclusterV1alpha1().CCLInfraPlanes(c.namespace).Apply(ctx,
+		c.infraPlane(name), opts)
+	return err
 }
 
 // DeleteInfraPlane removes the CCLInfraPlane called name and its credentials Secret.
@@ -345,6 +358,14 @@ func ComponentSetCurrentConditions(
 		}
 	}
 	return conditions
+}
+
+// infraPlane is the CCLInfraPlane called name, pointing at its "<name>-credentials"
+// Secret, as an apply configuration.
+func (c *Client) infraPlane(name string) *cclusterac.CCLInfraPlaneApplyConfiguration {
+	return cclusterac.CCLInfraPlane(name, c.namespace).
+		WithSpec(cclusterac.CCLInfraPlaneSpec().
+			WithClusterCredentialsRef(cclusterac.LocalObjectReference().WithName(CredentialsSecretName(name))))
 }
 
 // componentSpec is component as an apply configuration. Every field of ComponentSpec is
