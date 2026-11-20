@@ -289,6 +289,65 @@ func TestGetComponentSetMarksSyncsOfAnOlderSpecStale(t *testing.T) {
 	)
 }
 
+func TestGetComponentSetPrefersHealthMessageAndListsRemovedComponents(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	client := newTestClient(t, namespace)
+	applyComponentSet(t, client)
+
+	const generation = 1
+	status := cclusterac.CCLComponentSetStatus().WithObservedGeneration(generation).
+		WithComponentSyncStatuses(
+			cclusterac.ComponentSyncStatus().WithName("keda").WithComparedToMatchesSpec(true).
+				WithSync("Synced").WithMessage("sync finished"),
+			// db is in the spec, so a stale removal entry must not list it as removed.
+			cclusterac.ComponentSyncStatus().WithName("db").WithComparedToMatchesSpec(true).
+				WithSync("Synced").WithMessage("sync message").
+				WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
+			cclusterac.ComponentSyncStatus().WithName("old-pending").WithComparedToMatchesSpec(false).
+				WithSync("Synced").WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
+			cclusterac.ComponentSyncStatus().WithName("old-deleting").WithComparedToMatchesSpec(false).
+				WithSync("Synced").WithMessage("deleting\nresources").
+				WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeleting),
+		).
+		WithComponentHealthStatuses(
+			cclusterac.ComponentHealthStatus().WithName("keda").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthDegraded).
+				WithReason("CrashLoopBackOff").
+				WithMessage("Pod keda-0:\nback-off").
+				WithLastTransitionTime(metav1.Now()),
+			cclusterac.ComponentHealthStatus().WithName("db").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthHealthy).
+				WithLastTransitionTime(metav1.Now()),
+			cclusterac.ComponentHealthStatus().WithName("old-pending").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthProgressing).
+				WithMessage("waiting to delete").
+				WithLastTransitionTime(metav1.Now()),
+		)
+	if _, err := clientset.CclusterV1alpha1().CCLComponentSets(namespace).ApplyStatus(t.Context(),
+		cclusterac.CCLComponentSet("base", namespace).WithStatus(status),
+		metav1.ApplyOptions{FieldManager: "operator-test", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "get", "cs", "base", "-n", namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectLines(t, out,
+		"1 keda catalogs/cluster_base/keda edge-1 keda Synced Degraded Pod keda-0: back-off",
+		"2 db catalogs/deployments/db edge-1 db Synced Healthy sync message",
+		"3 queue catalogs/resources/queue edge-1 queue - -",
+		"- old-pending - - - DeletePending Progressing waiting to delete",
+		"- old-deleting - - - Deleting - deleting resources",
+	)
+	for line := range strings.Lines(out) {
+		if strings.HasPrefix(strings.Join(strings.Fields(line), " "), "- db ") {
+			t.Errorf("printed\n%s\ndb is in the spec and must not appear as a removed component", out)
+		}
+	}
+}
+
 func TestGetPrintsTheObject(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()

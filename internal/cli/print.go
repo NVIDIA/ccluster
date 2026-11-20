@@ -207,16 +207,18 @@ func describeComponentSet(out io.Writer, set *cclusternvidiacomv1alpha1.CCLCompo
 	for _, sync := range set.Status.ComponentSyncStatuses {
 		syncs[sync.Name] = sync
 	}
-	healths := map[string]cclusternvidiacomv1alpha1.ComponentHealth{}
+	healths := map[string]cclusternvidiacomv1alpha1.ComponentHealthStatus{}
 	for _, health := range set.Status.ComponentHealthStatuses {
-		healths[health.Name] = health.Health
+		healths[health.Name] = health
 	}
 	w = newTable(out)
 	_, _ = fmt.Fprintln(w, "  #\tNAME\tCHART\tINFRAPLANE\tNAMESPACE\tSYNC\tHEALTH\tMESSAGE")
+	inSpec := make(map[string]bool, len(set.Spec.Components))
 	for i, component := range set.Spec.Components {
-		syncStatus, message := "-", ""
+		inSpec[component.Name] = true
+		syncStatus, syncMessage := "-", ""
 		if sync, ok := syncs[component.Name]; ok {
-			syncStatus, message = orDash(sync.Sync), oneLine(sync.Message)
+			syncStatus, syncMessage = orDash(sync.Sync), sync.Message
 			// The sync status describes the spec at status.observedGeneration, as Argo CD
 			// last compared it. The row shows the spec as it now stands, so the two
 			// differ until the operator has written the current spec and Argo CD has
@@ -226,12 +228,31 @@ func describeComponentSet(out io.Writer, set *cclusternvidiacomv1alpha1.CCLCompo
 				syncStatus += " (stale)"
 			}
 		}
-		health := orDash(string(healths[component.Name]))
+		health := healths[component.Name]
 		_, _ = fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			i+1, component.Name, component.Chart, component.InfraPlaneRef.Name, component.Namespace,
-			syncStatus, health, message)
+			syncStatus, orDash(string(health.Health)), componentMessage(health.Message, syncMessage))
+	}
+	// Removed components stay in status until their Application is gone. Check !inSpec so
+	// a component re-added before the operator catches up is not listed a second time.
+	for _, sync := range set.Status.ComponentSyncStatuses {
+		if sync.Removal == "" || inSpec[sync.Name] {
+			continue
+		}
+		health := healths[sync.Name]
+		_, _ = fmt.Fprintf(w, "  -\t%s\t-\t-\t-\t%s\t%s\t%s\n",
+			sync.Name, sync.Removal, orDash(string(health.Health)), componentMessage(health.Message, sync.Message))
 	}
 	return w.Flush()
+}
+
+// componentMessage returns the health message on one line when present, falling back to
+// Argo CD's operation message when it is empty.
+func componentMessage(healthMessage, syncMessage string) string {
+	if msg := oneLine(healthMessage); msg != "" {
+		return msg
+	}
+	return oneLine(syncMessage)
 }
 
 // printConditions prints a titled table of conditions, after a blank line. A condition
