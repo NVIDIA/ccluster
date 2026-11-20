@@ -79,10 +79,10 @@ var _ = Describe("IP operator", Ordered, func() {
 		Eventually(verifyControllerUp).Should(Succeed())
 	})
 
-	// argo_rollouts, cert_manager, final_stack, kai_scheduler, metrics_server and
+	// argo_rollouts, cert_manager, final_stack, kai_scheduler, keda, metrics_server and
 	// kube_prometheus_stack are the cluster_base components with a check of their own,
-	// and kind ships no Rollout CRD, cert-manager, ClusterIssuer, KAI, metrics server or
-	// Prometheus, so the condition starts False naming them, and stops naming them once
+	// and kind ships no Rollout CRD, cert-manager, ClusterIssuer, KAI, KEDA, metrics
+	// server or Prometheus, so the condition starts False naming them, and stops naming them once
 	// they are installed - which proves the chart's CRD and RBAC let a real manager
 	// reconcile the singleton, read CustomResourceDefinitions,
 	// ValidatingWebhookConfigurations, ClusterIssuers, KAI Configs, APIServices, Services
