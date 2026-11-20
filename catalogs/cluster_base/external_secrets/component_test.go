@@ -115,8 +115,8 @@ func TestVerify(t *testing.T) {
 			},
 		},
 		{
-			// ESO is optional: a plane that does not install it passes.
 			name: "not installed",
+			want: "ValidatingWebhookConfiguration externalsecret-validate not found",
 		},
 		{
 			// An ESO before v0.16.0 has the same webhook configuration, but serves only

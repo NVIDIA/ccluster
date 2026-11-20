@@ -236,22 +236,20 @@ func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
 }
 
-// expectBaseComponentsFailing asserts that a Verified message names metrics_server and
-// kube_prometheus_stack among the failing cluster_base components, for want of what they
-// provide on a bare kind cluster: the APIService and the Prometheus Service. "Not found"
-// rather than a read error proves the ip chart's ClusterRole lets the manager read
-// APIServices and Services. Other failing components are not asserted on, so a
+// expectBaseComponentsFailing asserts that a Verified message names metrics_server,
+// kube_prometheus_stack and external_secrets among the failing cluster_base components,
+// for want of what they provide on a bare kind cluster: the APIService, the Prometheus
+// Service and ESO's webhook configuration. "Not found" rather than a read error proves
+// the ip chart's ClusterRole lets the manager read APIServices, Services and
+// ValidatingWebhookConfigurations. Other failing components are not asserted on, so a
 // cluster_base chart gaining a check of its own does not break the suite.
-//
-// external_secrets is optional and kind runs no ESO, so it passes, which proves the
-// ClusterRole lets the manager read ValidatingWebhookConfigurations: without that, the
-// cached read times out and the message names the chart.
 func expectBaseComponentsFailing(g Gomega, message string) {
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/metrics_server (APIService v1beta1.metrics.k8s.io not found"))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/kube_prometheus_stack (no Service prometheus/prometheus-op-kube-prometh-prometheus found"))
-	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/external_secrets"))
+	g.Expect(message).To(ContainSubstring(
+		"catalogs/cluster_base/external_secrets (ValidatingWebhookConfiguration externalsecret-validate not found"))
 }
 
 // expectBaseComponentsVerified asserts that a Verified message no longer names

@@ -3,9 +3,8 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package clusterbase assembles the cluster_base catalog: the platform components an
-// infra-plane cluster gets, in the order they have to be installed, except the optional
-// ones.
+// Package clusterbase assembles the cluster_base catalog: the platform components every
+// infra-plane cluster gets, in the order they have to be installed.
 package clusterbase
 
 import (
@@ -15,6 +14,7 @@ import (
 	argorollouts "github.com/NVIDIA/ccluster/catalogs/cluster_base/argo_rollouts"
 	certmanager "github.com/NVIDIA/ccluster/catalogs/cluster_base/cert_manager"
 	dynamoplatform "github.com/NVIDIA/ccluster/catalogs/cluster_base/dynamo_platform"
+	externalsecrets "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_secrets"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
@@ -30,16 +30,13 @@ import (
 )
 
 // Components returns the cluster_base components for infraPlane, in install order.
-// It leaves out external_secrets, which is optional because a cluster may already run
-// ESO installed by other means. See DESIGN.md §3a, "Checks live with the catalog,
-// registration with the operator".
 func Components(
 	infraPlane string,
 ) ([]cclusternvidiacomv1alpha1.ComponentSpec, error) {
 	ref := cclusternvidiacomv1alpha1.LocalObjectReference{Name: infraPlane}
 
 	// entry adapts a component package's New to a field of the literal below, so that
-	// the catalog reads as the list it is rather than as fifteen error checks. None
+	// the catalog reads as the list it is rather than as sixteen error checks. None
 	// of these components has required values, so every error is nil today; the error
 	// return stays so that adding one which does is not a signature change, and
 	// catalogs.Entry names the chart an error came from.
@@ -125,6 +122,11 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(metricsserver.New("kube-system", metricsserver.Values{})),
 		}, // wave  47
+		{
+			Name:           externalsecrets.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(externalsecrets.New("external-secrets", externalsecrets.Values{})),
+		},
 		{
 			// Not in the legacy catalog, which left it to infrastructure code. After
 			// longhorn, which provides the default StorageClass the NATS volume needs,

@@ -8,8 +8,8 @@
 # it did not create until that one is deleted.
 #
 # The operator runs every catalogs/cluster_base component's Verifier against it and
-# reports the outcome as the Verified condition (every Verifier is a placeholder
-# reporting true for now):
+# reports the outcome as the Verified condition, whose message names each chart that
+# fails and why:
 #
 #   kubectl get cclclusterconfig cluster
 #   kubectl get cclclusterconfig cluster -o jsonpath='{.status.conditions[0].message}'

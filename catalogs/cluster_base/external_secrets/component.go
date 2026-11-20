@@ -78,18 +78,16 @@ const WebhookConfiguration = "externalsecret-validate"
 // webhook is the entry of WebhookConfiguration that validates ExternalSecrets.
 const webhook = "validate.externalsecret.external-secrets.io"
 
-// externalSecrets is the API the catalog's ExternalSecrets are written in, which ESO
-// serves from v0.16.0.
+// externalSecrets is the API the ExternalSecrets planned in #125 will be written in,
+// which ESO serves from v0.16.0.
 var externalSecrets = schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecretList"}
 
-// Verify checks that ESO, when installed, serves what the catalog's ExternalSecrets need:
-// the external-secrets.io/v1 API, and a webhook with a ready endpoint, because the API
-// server rejects an ExternalSecret write the webhook does not answer.
+// Verify checks that ESO serves what ExternalSecrets need: the external-secrets.io/v1
+// API, and a webhook with a ready endpoint, because the API server rejects an
+// ExternalSecret write the webhook does not answer.
 //
-// ESO is optional, so a cluster without WebhookConfiguration passes. That configuration,
-// not the API, marks ESO as installed: the cache keeps answering for a kind after its
-// CRD is deleted, but sees a deleted configuration. An ESO run without its webhook
-// therefore passes unchecked.
+// It starts from WebhookConfiguration rather than the API because the cache keeps
+// answering for a kind after its CRD is deleted, but sees a deleted configuration.
 //
 // Like metrics_server's check, it checks what ESO provides rather than this chart's
 // objects, so an ESO installed by other means passes too. Nothing in the chart depends
@@ -102,7 +100,7 @@ func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CC
 	var cfg admissionregistrationv1.ValidatingWebhookConfiguration
 	if err := r.Get(ctx, client.ObjectKey{Name: WebhookConfiguration}, &cfg); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return fmt.Errorf("ValidatingWebhookConfiguration %s not found", WebhookConfiguration)
 		}
 		return fmt.Errorf("reading ValidatingWebhookConfiguration %s: %w", WebhookConfiguration, err)
 	}

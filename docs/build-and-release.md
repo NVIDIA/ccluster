@@ -155,8 +155,9 @@ with each job's inputs when changing build or generation dependencies.
   limits first. Dependabot updates neither: bump both together, taking the image and its
   digest from the kind release's notes.
 - `test` and `test-e2e` also cover `catalogs/**`: catalog tests read `Chart.yaml`,
-  values and templates, and the e2e suite installs `metrics_server` to turn the ip
-  operator's `Verified` condition True. Before the suite, `test` fails when `go.mod` and
+  values and templates, and the e2e suite installs `metrics_server` and
+  `kube_prometheus_stack` and checks that the ip operator's `Verified` condition stops
+  naming them. Before the suite, `test` fails when `go.mod` and
   `go.sum` are not tidy, when `make client-generate` changes `pkg/client/`, or when
   `make manifests generate` changes anything in the tree. `make test` regenerates CRDs, RBAC and deepcopy code itself, so
   without the last check a stale CRD, RBAC role or `zz_generated.deepcopy.go` passes CI.
