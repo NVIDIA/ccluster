@@ -51,6 +51,13 @@ rules:
   - patch
   - update
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+- apiGroups:
   - discovery.k8s.io
   resources:
   - endpointslices

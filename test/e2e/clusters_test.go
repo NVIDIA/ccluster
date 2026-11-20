@@ -206,7 +206,8 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 }
 
 // installClusterBase installs the cluster_base charts that have a Verifier of their own,
-// which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD, metrics_server,
+// which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD and its
+// controller's Lease, metrics_server,
 // for the resource metrics API, and kube_prometheus_stack, for the Prometheus Service the
 // catalog's consumers address.
 func installClusterBase(c utils.Cluster) {
@@ -244,10 +245,11 @@ var argoRolloutsCRDs = []string{
 
 // uninstallClusterBase removes what installClusterBase installed from c. The CRDs the
 // Prometheus chart installed stay, as Helm leaves them, and go with the cluster. The
-// Argo Rollouts CRDs are deleted by name, because the argo_rollouts Verifier checks only
-// that the Rollout CRD exists: left behind, they would verify argo_rollouts for the
-// next spec on the cluster, which expects it to fail. By name, not by group, so the
-// control-plane cluster keeps Argo CD's argoproj.io CRDs.
+// Argo Rollouts CRDs are deleted by name. The controller's Lease, which the argo_rollouts
+// Verifier also checks, stays behind and goes stale only once its duration and the
+// Verifier's skew allowance pass; until then the CRDs left behind would verify
+// argo_rollouts for the next spec on the cluster, which expects it to fail at once. By
+// name, not by group, so the control-plane cluster keeps Argo CD's argoproj.io CRDs.
 func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
