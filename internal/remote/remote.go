@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,7 +36,8 @@ const RequestTimeout = 30 * time.Second
 // the binaries nor the cloud identity to do the same.
 var ErrUnsupportedCredentials = errors.New("unsupported cluster credentials")
 
-// ErrInvalidCredentials reports a Secret whose "config" is not valid JSON.
+// ErrInvalidCredentials reports a Secret whose "config" is not valid JSON or carries an
+// invalid proxyUrl.
 var ErrInvalidCredentials = errors.New("invalid cluster credentials")
 
 // clusterConfig is the part of Argo CD's "config" key the operator understands. []byte
@@ -43,6 +46,7 @@ type clusterConfig struct {
 	Username        string          `json:"username,omitempty"`
 	Password        string          `json:"password,omitempty"`
 	BearerToken     string          `json:"bearerToken,omitempty"`
+	ProxyURL        string          `json:"proxyUrl,omitempty"`
 	TLSClientConfig tlsClientConfig `json:"tlsClientConfig,omitzero"`
 
 	// Present only to be refused.
@@ -91,7 +95,7 @@ func RESTConfig(secret *corev1.Secret, local *rest.Config) (*rest.Config, error)
 		return restConfig, nil
 	}
 
-	return &rest.Config{
+	restConfig := &rest.Config{
 		Host:        server,
 		Username:    cfg.Username,
 		Password:    cfg.Password,
@@ -104,7 +108,17 @@ func RESTConfig(secret *corev1.Secret, local *rest.Config) (*rest.Config, error)
 			KeyData:    cfg.TLSClientConfig.KeyData,
 		},
 		Timeout: RequestTimeout,
-	}, nil
+	}
+	if cfg.ProxyURL != "" {
+		proxyURL, err := url.Parse(cfg.ProxyURL)
+		if err != nil {
+			// Not wrapped: the URL can carry proxy credentials.
+			return nil, fmt.Errorf("%w: proxyUrl of Secret %s/%s is not a valid URL",
+				ErrInvalidCredentials, secret.Namespace, secret.Name)
+		}
+		restConfig.Proxy = http.ProxyURL(proxyURL)
+	}
+	return restConfig, nil
 }
 
 // ClientFactory returns a client for the infra-plane cluster a credentials Secret

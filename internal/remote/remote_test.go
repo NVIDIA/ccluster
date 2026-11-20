@@ -7,6 +7,9 @@ package remote
 
 import (
 	"errors"
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +73,19 @@ func TestRESTConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "remote cluster with proxyUrl",
+			data: map[string]string{
+				"server": "https://gpu-a.example.com:6443",
+				"config": `{"bearerToken":"remote-token","proxyUrl":"http://proxy.example.com:8080"}`,
+			},
+			want: &rest.Config{
+				Host:        "https://gpu-a.example.com:6443",
+				BearerToken: "remote-token",
+				Proxy:       http.ProxyURL(&url.URL{Scheme: "http", Host: "proxy.example.com:8080"}),
+				Timeout:     RequestTimeout,
+			},
+		},
+		{
 			name: "no server is the local cluster",
 			data: map[string]string{},
 			want: &rest.Config{Host: local.Host, BearerToken: local.BearerToken, Timeout: RequestTimeout},
@@ -121,8 +137,28 @@ func TestRESTConfig(t *testing.T) {
 				string(got.KeyData) != string(tt.want.KeyData) {
 				t.Errorf("RESTConfig() = %+v, want %+v", got, tt.want)
 			}
+			if !sameProxy(t, got.Proxy, tt.want.Proxy) {
+				t.Errorf("RESTConfig().Proxy did not match want")
+			}
 		})
 	}
+}
+
+func sameProxy(t *testing.T, got, want func(*http.Request) (*url.URL, error)) bool {
+	t.Helper()
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://gpu-a.example.com:6443/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotURL, gotErr := got(req)
+	wantURL, wantErr := want(req)
+	if gotErr != nil || wantErr != nil {
+		t.Fatalf("Proxy() errors: got=%v want=%v", gotErr, wantErr)
+	}
+	return gotURL.String() == wantURL.String()
 }
 
 func TestRESTConfigDoesNotModifyLocal(t *testing.T) {
@@ -139,5 +175,21 @@ func TestRESTConfigRejectsMalformedConfig(t *testing.T) {
 	_, err := RESTConfig(secretWith(map[string]string{"server": "https://x", "config": "{"}), &rest.Config{})
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("RESTConfig() error = %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func TestRESTConfigRejectsInvalidProxyURL(t *testing.T) {
+	_, err := RESTConfig(secretWith(map[string]string{
+		"server": "https://gpu-a.example.com",
+		"config": "{\"proxyUrl\":\"http://user:secret-pass@proxy\u007f.example.com:8080\"}",
+	}), &rest.Config{})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("RESTConfig() error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if !strings.Contains(err.Error(), "proxyUrl") {
+		t.Errorf("RESTConfig() error = %q, want it to name proxyUrl", err)
+	}
+	if strings.Contains(err.Error(), "secret-pass") || strings.Contains(err.Error(), "proxy\u007f.example.com") {
+		t.Errorf("RESTConfig() error = %q, must not quote the proxyUrl value", err)
 	}
 }
