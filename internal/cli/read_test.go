@@ -357,6 +357,14 @@ func TestListAndGetReject(t *testing.T) {
 		expectError(t, "run ccluster init first", "list", "ip", "-n", namespace)
 		expectError(t, "run ccluster init first", "list", "ip", "-A")
 	})
+
+	t.Run("a control plane without the ccluster API", func(t *testing.T) {
+		writeConfig(t, setUp(t), "controlPlane:\n  context: bare\n")
+		const want = "control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?"
+		expectError(t, want, "list", "ip", "-n", namespace)
+		expectError(t, want, "list", "ip", "-A")
+		expectError(t, want, "get", "ip", "edge-1", "-n", namespace)
+	})
 }
 
 func newTestClient(t *testing.T, namespace string) *cclclient.Client {
