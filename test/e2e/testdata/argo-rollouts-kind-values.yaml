@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# One controller replica is plenty on kind. The argo_rollouts Verifier also wants the
+# controller's leader Lease renewed: the chart passes --leader-elect only above one
+# replica, but the controller defaults to it, so a single replica still holds the Lease.
+argo-rollouts:
+  controller:
+    replicas: 1

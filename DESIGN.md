@@ -522,6 +522,12 @@ exception to not watching: every API server serves them, so the labelled ones ar
 without a predicate, and an address the cloud provider assigns reaches
 `status.loadBalancers` at once. The manager's cache is not scoped: it holds every Service,
 as it holds every object of each kind read, so a Verifier reading a Service sees them all.
+Leases are the exception to caching: every node renews one every few seconds, as does
+every leader-elected controller, so the client reads Leases from the API server, listed
+by name, once per pass. A Verifier checks a controller this way when the controller
+runs leader election under a fixed Lease name, as Argo Rollouts' does: a Lease renewed
+within its duration means a replica is running and leading, while an uninstalled
+controller leaves its Lease behind, stale.
 
 Deleting the singleton uninstalls nothing, because the operator installs nothing. The
 control plane writes this object's spec and watches it, copying its status into the
@@ -1213,9 +1219,11 @@ runs one worker (§3).
   after it, and every removal, indefinitely.
 - **One catalog per operator.** `--catalog-repo-url` and `--catalog-revision` are global, so
   a single control plane cannot mix catalogs or revisions.
-- **Real Verifiers.** Only `metrics_server` has a check of its own; every other
-  cluster_base chart is still registered with `alwaysVerified`. The remaining checks
-  (workload readiness, issuer readiness, CRDs Established) are not written yet.
+- **Real Verifiers.** Not every cluster_base chart has a check of its own yet; the rest
+  are still registered with `alwaysVerified` in `verifierregistry.Get()`. The checks that
+  exist look for what a component provides: a CRD, a Service with a ready endpoint, an
+  `Available` APIService, or a controller Lease renewed lately. The last three also show
+  that the component's pods run. None checks that a CRD is Established.
 - **Per-component verification results.** The `CCLClusterConfig` status reaches the
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.

@@ -9,9 +9,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -130,6 +133,217 @@ func TestVerifyServiceReadyReturnsReadErrors(t *testing.T) {
 	}).Build()
 
 	if err := VerifyServiceReady(context.Background(), r, "ns", "web"); !apierrors.IsForbidden(err) {
+		t.Fatalf("want the Forbidden error wrapped, got %v", err)
+	}
+}
+
+func crd(name string) *apiextensionsv1.CustomResourceDefinition {
+	return &apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+func crdScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return scheme
+}
+
+func TestVerifyCRDExists(t *testing.T) {
+	tests := []struct {
+		name    string
+		objects []client.Object
+		want    string // "" means "expect nil"
+	}{
+		{
+			name:    "exists",
+			objects: []client.Object{crd("widgets.example.com"), crd("gadgets.example.com")},
+		},
+		{
+			name: "no CRDs",
+			want: "CustomResourceDefinition widgets.example.com not found",
+		},
+		{
+			// The same kind in another group is not the API the consumers render.
+			name:    "another group",
+			objects: []client.Object{crd("widgets.example.org")},
+			want:    "CustomResourceDefinition widgets.example.com not found",
+		},
+		{
+			// Another kind of the same group does not stand in for it either.
+			name:    "another kind in the group",
+			objects: []client.Object{crd("gadgets.example.com")},
+			want:    "CustomResourceDefinition widgets.example.com not found",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := fake.NewClientBuilder().WithScheme(crdScheme(t)).WithObjects(tt.objects...).Build()
+			err := VerifyCRDExists(context.Background(), r, "widgets.example.com")
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("want nil, got %v", err)
+			case tt.want != "" && (err == nil || err.Error() != tt.want):
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestVerifyCRDExistsReadsMetadataOnly pins the read as metadata-only, so that the ip
+// operator's cache never holds CRD schemas.
+func TestVerifyCRDExistsReadsMetadataOnly(t *testing.T) {
+	var got client.Object
+	r := fake.NewClientBuilder().WithScheme(crdScheme(t)).WithObjects(crd("widgets.example.com")).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(
+				ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption,
+			) error {
+				got = obj
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).Build()
+
+	if err := VerifyCRDExists(context.Background(), r, "widgets.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.(*metav1.PartialObjectMetadata); !ok {
+		t.Fatalf("want a *metav1.PartialObjectMetadata read, got %T", got)
+	}
+}
+
+// TestVerifyCRDExistsReturnsReadErrors: a CRD the operator cannot read is not reported
+// as missing.
+func TestVerifyCRDExistsReturnsReadErrors(t *testing.T) {
+	forbidden := apierrors.NewForbidden(schema.GroupResource{
+		Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"}, "widgets.example.com", errors.New("no RBAC"))
+	r := fake.NewClientBuilder().WithScheme(crdScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return forbidden
+		},
+	}).Build()
+
+	if err := VerifyCRDExists(context.Background(), r, "widgets.example.com"); !apierrors.IsForbidden(err) {
+		t.Fatalf("want the Forbidden error wrapped, got %v", err)
+	}
+}
+
+// lease returns a Lease named name in namespace, held by holder ("" for none), with a
+// 15-second duration, renewed age ago; a negative age leaves renewTime unset.
+func lease(namespace, name, holder string, age time.Duration) *coordinationv1.Lease {
+	l := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       coordinationv1.LeaseSpec{LeaseDurationSeconds: new(int32(15))},
+	}
+	if holder != "" {
+		l.Spec.HolderIdentity = new(holder)
+	}
+	if age >= 0 {
+		l.Spec.RenewTime = &metav1.MicroTime{Time: time.Now().Add(-age)}
+	}
+	return l
+}
+
+// leaseClient serves objects as the API server does for VerifyLeaseRenewed's list: the
+// fake client needs an index to filter by metadata.name.
+func leaseClient(t *testing.T, objects ...client.Object) client.WithWatch {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
+		WithIndex(&coordinationv1.Lease{}, "metadata.name", func(o client.Object) []string {
+			return []string{o.GetName()}
+		}).Build()
+}
+
+func TestVerifyLeaseRenewed(t *testing.T) {
+	const stale = 10 * time.Minute
+	staleAt := func(l *coordinationv1.Lease) string {
+		return l.Spec.RenewTime.UTC().Format(time.RFC3339)
+	}
+	staleA := lease("a", "lock", "pod-a", stale)
+	staleB := lease("b", "lock", "pod-b", stale)
+	tests := []struct {
+		name    string
+		objects []client.Object
+		want    string // "" means "expect nil"
+	}{
+		{
+			name:    "renewed",
+			objects: []client.Object{lease("a", "lock", "pod-a", time.Second)},
+		},
+		{
+			name:    "within the duration plus skew",
+			objects: []client.Object{lease("a", "lock", "pod-a", 40*time.Second)},
+		},
+		{
+			name: "no Lease",
+			want: "no Lease lock found in any namespace",
+		},
+		{
+			name:    "another name",
+			objects: []client.Object{lease("a", "other-lock", "pod-a", time.Second)},
+			want:    "no Lease lock found in any namespace",
+		},
+		{
+			name:    "stale",
+			objects: []client.Object{staleA},
+			want:    "no controller holds Lease lock: Lease a/lock last renewed at " + staleAt(staleA),
+		},
+		{
+			name:    "no holder",
+			objects: []client.Object{lease("a", "lock", "", time.Second)},
+			want:    "no controller holds Lease lock: Lease a/lock has no holder",
+		},
+		{
+			name:    "never renewed",
+			objects: []client.Object{lease("a", "lock", "pod-a", -1)},
+			want:    "no controller holds Lease lock: Lease a/lock was never renewed",
+		},
+		{
+			// A reinstall into another namespace leaves the old Lease behind.
+			name:    "stale in one namespace, renewed in another",
+			objects: []client.Object{staleA, lease("b", "lock", "pod-b", time.Second)},
+		},
+		{
+			name:    "stale in every namespace",
+			objects: []client.Object{staleA, staleB},
+			want: "no controller holds Lease lock: Lease a/lock last renewed at " + staleAt(staleA) +
+				"; Lease b/lock last renewed at " + staleAt(staleB),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := VerifyLeaseRenewed(context.Background(), leaseClient(t, tt.objects...), "lock")
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("want nil, got %v", err)
+			case tt.want != "" && (err == nil || err.Error() != tt.want):
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestVerifyLeaseRenewedReturnsReadErrors: Leases the operator cannot list are not
+// reported as missing.
+func TestVerifyLeaseRenewedReturnsReadErrors(t *testing.T) {
+	forbidden := apierrors.NewForbidden(schema.GroupResource{
+		Group: "coordination.k8s.io", Resource: "leases"}, "", errors.New("no RBAC"))
+	scheme := runtime.NewScheme()
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	r := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return forbidden
+		},
+	}).Build()
+
+	if err := VerifyLeaseRenewed(context.Background(), r, "lock"); !apierrors.IsForbidden(err) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }
