@@ -8,7 +8,10 @@ package catalogs
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -38,6 +41,62 @@ func VerifyCRDExists(ctx context.Context, r client.Reader, name string) error {
 		return fmt.Errorf("reading CustomResourceDefinition %s: %w", name, err)
 	}
 	return nil
+}
+
+// LeaseSkew is how much older than its lease duration a Lease's renewTime may be and
+// still count as renewed in VerifyLeaseRenewed. It allows for clock skew between the
+// holder's node and the operator's, and for the time between a renewal and the read.
+const LeaseSkew = 30 * time.Second
+
+// VerifyLeaseRenewed is a building block for a chart's Verify function: it returns nil
+// when a coordination.k8s.io Lease named name, in any namespace, is held and was renewed
+// within its leaseDurationSeconds plus LeaseSkew, and otherwise an error naming each
+// Lease found and why it does not count. Use it for a component whose controller runs
+// leader election under a fixed Lease name: a held, renewed Lease means one of its
+// replicas is running and leading. A controller that stopped without releasing its
+// Lease leaves it behind with an old renewTime, so a Lease that merely exists proves
+// nothing. Check the component's source before relying on it: leader election must be
+// on by default, and the name must not depend on how it was installed.
+//
+// It searches every namespace because the Lease lives in the controller's, which
+// follows the installation. r must serve Leases from the API server, not a cache: the
+// read is a list filtered by metadata.name, which the API server answers but an
+// informer cache cannot without an index, and caching Leases would mean watching every
+// node's heartbeat. The ip operator's client reads Leases uncached and its ClusterRole
+// grants get and list. A read that fails is returned wrapped, not reported as missing.
+func VerifyLeaseRenewed(ctx context.Context, r client.Reader, name string) error {
+	var leases coordinationv1.LeaseList
+	if err := r.List(ctx, &leases, client.MatchingFields{"metadata.name": name}); err != nil {
+		return fmt.Errorf("listing Leases %s: %w", name, err)
+	}
+	if len(leases.Items) == 0 {
+		return fmt.Errorf("no Lease %s found in any namespace", name)
+	}
+	now := time.Now()
+	reasons := make([]string, 0, len(leases.Items))
+	for _, l := range leases.Items {
+		key := l.Namespace + "/" + l.Name
+		switch {
+		case l.Spec.HolderIdentity == nil || *l.Spec.HolderIdentity == "":
+			reasons = append(reasons, fmt.Sprintf("Lease %s has no holder", key))
+		case l.Spec.RenewTime == nil:
+			reasons = append(reasons, fmt.Sprintf("Lease %s was never renewed", key))
+		default:
+			var duration time.Duration
+			if l.Spec.LeaseDurationSeconds != nil {
+				duration = time.Duration(*l.Spec.LeaseDurationSeconds) * time.Second
+			}
+			renewed := l.Spec.RenewTime.Time
+			if now.Sub(renewed) <= duration+LeaseSkew {
+				return nil
+			}
+			// The absolute time, not an age, so the message, and with it the status,
+			// does not change on every pass while the Lease stays stale.
+			reasons = append(reasons, fmt.Sprintf("Lease %s last renewed at %s",
+				key, renewed.UTC().Format(time.RFC3339)))
+		}
+	}
+	return fmt.Errorf("no controller holds Lease %s: %s", name, strings.Join(reasons, "; "))
 }
 
 // VerifyServiceReady is a building block for a chart's Verify function: it returns nil

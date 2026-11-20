@@ -14,11 +14,13 @@ import (
 	"fmt"
 	"os"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/controller/ip"
@@ -40,6 +42,9 @@ func main() {
 		Name:             "ccluster-ip-operator",
 		LeaderElectionID: "ip.ccluster.nvidia.com",
 		Scheme:           scheme,
+		// Leases, which argo_rollouts' Verifier lists by name. Caching them would watch
+		// every node's heartbeat Lease and every controller's leader Lease.
+		UncachedObjects:  []client.Object{&coordinationv1.Lease{}},
 		SetupControllers: setupControllers,
 	})
 	if err != nil {

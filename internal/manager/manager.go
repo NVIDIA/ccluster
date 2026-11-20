@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -45,6 +46,12 @@ type Options struct {
 	// manager connects to a cluster, so a bad flag fails fast with its own error. May be
 	// nil.
 	ValidateFlags func() error
+
+	// UncachedObjects are the kinds the manager's client reads from the API server rather
+	// than its cache, so the manager never lists or watches all of them. For a kind read
+	// rarely and selectively, by a field selector the cache cannot serve without an
+	// index, and too numerous or too busy to cache cluster-wide. May be nil.
+	UncachedObjects []client.Object
 
 	// SetupControllers registers the operator's controllers with the manager.
 	// May be nil for an operator that has no controllers yet.
@@ -164,6 +171,7 @@ func Run(opts Options) error {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 opts.Scheme,
+		Client:                 client.Options{Cache: &client.CacheOptions{DisableFor: opts.UncachedObjects}},
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
