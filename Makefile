@@ -159,8 +159,6 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
 # The two clusters the e2e targets create, use and then destroy: a control plane and a
 # separate infra plane, the same pair `make init` creates for development as
 # KIND_CLUSTER_CP / KIND_CLUSTER_IP (below, in the Build section), but never those
