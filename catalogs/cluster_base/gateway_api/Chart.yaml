@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: cluster_base_gateway_api
+description: Gateway API - the standard-channel CRDs that Gateway API implementations such as istiod serve
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/NVIDIA/ccluster
+sources:
+  - https://github.com/NVIDIA/ccluster/tree/main/catalogs/cluster_base/gateway_api
+maintainers:
+  - name: CCluster maintainers
+    url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+dependencies:
+  # Envoy Gateway's CRD-only chart; Gateway API publishes none. v1.10.0 carries the
+  # Gateway API v1.6.1 release manifests unmodified, the version istiod 1.32 is built
+  # against. Bump it only to a release whose bundled version (sigs.k8s.io/gateway-api
+  # in Envoy Gateway's go.mod) still matches istiod's.
+  - name: gateway-crds-helm
+    version: v1.10.0
+    repository: oci://docker.io/envoyproxy

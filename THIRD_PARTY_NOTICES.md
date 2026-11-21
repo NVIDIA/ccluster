@@ -54,6 +54,7 @@ bundles none.
 | dynamo-platform (with its grove-charts v0.1.0-alpha.13 and nats 1.3.2 subcharts) | 1.5.1 | https://helm.ngc.nvidia.com/nvidia/ai-dynamo | Apache-2.0 |
 | external-secrets | 2.15.0 | https://charts.external-secrets.io | Apache-2.0 |
 | fluent-bit | 0.48.5 | https://fluent.github.io/helm-charts | Apache-2.0 |
+| gateway-crds-helm (Envoy Gateway; bundles the Gateway API CRDs) | v1.10.0 | oci://docker.io/envoyproxy | Apache-2.0 |
 | gpu-operator | v25.3.4 | https://helm.ngc.nvidia.com/nvidia | Apache-2.0 |
 | ingress-nginx | 4.11.5 | https://kubernetes.github.io/ingress-nginx | Apache-2.0 |
 | kai-scheduler | v0.15.3 | oci://ghcr.io/kai-scheduler/kai-scheduler | Apache-2.0 |

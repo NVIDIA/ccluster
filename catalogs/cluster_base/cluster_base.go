@@ -17,6 +17,7 @@ import (
 	externalsecrets "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_secrets"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
+	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -55,6 +56,14 @@ func Components(
 			InfraPlaneRef:  ref,
 			ComponentEntry: entry(kubeprometheusstack.New("prometheus", kubeprometheusstack.Values{})),
 		}, // wave -60
+		{
+			// Not in the legacy catalog. Before istio, whose Gateway controllers start
+			// once the CRDs exist, and before cert-manager, whose Gateway API support
+			// needs them at startup.
+			Name:           gatewayapi.Name,
+			InfraPlaneRef:  ref,
+			ComponentEntry: entry(gatewayapi.New("gateway-system", gatewayapi.Values{})),
+		},
 		{
 			Name:           "istio",
 			InfraPlaneRef:  ref,

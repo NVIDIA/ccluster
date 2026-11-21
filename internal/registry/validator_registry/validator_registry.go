@@ -24,6 +24,7 @@ import (
 	externalsecrets "github.com/NVIDIA/ccluster/catalogs/cluster_base/external_secrets"
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
+	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -103,6 +104,7 @@ func Get() *Registry {
 	r.Register(externalsecrets.Chart, Values[externalsecrets.Values]())
 	r.Register(finalstack.Chart, Values[finalstack.Values]())
 	r.Register(fluentbit.Chart, Values[fluentbit.Values]())
+	r.Register(gatewayapi.Chart, Values[gatewayapi.Values]())
 	r.Register(gpuoperator.Chart, Values[gpuoperator.Values]())
 	r.Register(ingressnginx.Chart, Values[ingressnginx.Values]())
 	r.Register(istio.Chart, Values[istio.Values]())

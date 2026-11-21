@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+gateway-crds-helm:
+  crds:
+    gatewayAPI:
+      enabled: true
+      # The upstream chart defaults to experimental. The safe-upgrades
+      # ValidatingAdmissionPolicy installed with the CRDs rejects experimental CRDs
+      # over standard ones, so changing this on an installed cluster fails.
+      channel: standard
+    # Envoy Gateway's own CRDs. Off: no Envoy Gateway controller runs.
+    envoyGateway:
+      enabled: false
