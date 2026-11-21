@@ -1114,7 +1114,16 @@ Three charts have their own:
 - **`job_deployment`:** `Healthy` while a Pod runs, `Succeeded` or `Failed` once the Job
   finishes. A failed Pod the Job retries is not a failed job.
 - **`dynamo_deployment`:** also reads the DynamoGraphDeployment's `status.state` and
-  `Ready` condition. The worse of that and the default wins.
+  `Ready` condition. The worse of that and the default wins. The graph is `Progressing`
+  until the larger of `status.observedGeneration` and `Ready`'s `observedGeneration`
+  reaches `metadata.generation`; a failed reconcile moves only the latter. So a failed
+  update reads `Degraded` until a reconcile succeeds, also when Dynamo retries it. A known
+  gap, from reading Dynamo v1.5.1 and v1.6.2 and not yet observed: on the Grove path Dynamo
+  judges each PodClique, or a multinode component's PodCliqueScalingGroup, by its own
+  generation, not the PodCliqueSet's. In the window after Dynamo writes a new PodCliqueSet
+  template and before Grove updates its children, the graph can report `successful` for
+  the new generation, so the rollout can move on to the next component while the graph
+  still runs the previous spec's Pods.
 - **`compute_deployment`:** names the wait for the SSH Service's load balancer address
   `LoadBalancerPending`.
 

@@ -83,10 +83,17 @@ func judgeGraph(
 		return catalogs.Health{}, err
 	}
 
-	// A status from before the latest spec change can say successful for the old spec.
-	// Wait until the operator has seen the current spec. An operator that does not set
-	// observedGeneration leaves it at 0, and then the check is skipped.
-	if status.ObservedGeneration > 0 && status.ObservedGeneration < obj.GetGeneration() {
+	ready := apimeta.FindStatusCondition(status.Conditions, "Ready")
+
+	// A status from before the latest spec change can say successful for the old spec, so
+	// wait until the operator has seen the current spec. A failed reconcile moves only the
+	// Ready condition's observedGeneration, and 0 in both means an operator that sets
+	// neither. See DESIGN.md §7, "Component health".
+	observedGeneration := status.ObservedGeneration
+	if ready != nil {
+		observedGeneration = max(observedGeneration, ready.ObservedGeneration)
+	}
+	if observedGeneration > 0 && observedGeneration < obj.GetGeneration() {
 		return catalogs.Health{
 			Status: v1alpha1.ComponentHealthProgressing,
 			Message: fmt.Sprintf("DynamoGraphDeployment %s: waiting for the Dynamo operator to see "+
@@ -96,7 +103,7 @@ func judgeGraph(
 
 	// The Ready condition explains the state. Its reason is in snake case.
 	reason, message := "", "state "+status.State
-	if ready := apimeta.FindStatusCondition(status.Conditions, "Ready"); ready != nil {
+	if ready != nil {
 		reason = camelCase(ready.Reason)
 		if ready.Message != "" {
 			message = ready.Message
