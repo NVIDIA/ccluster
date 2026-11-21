@@ -85,11 +85,10 @@ func judgeGraph(
 
 	ready := apimeta.FindStatusCondition(status.Conditions, "Ready")
 
-	// A status from before the latest spec change can say successful for the old spec.
-	// Wait until the operator has seen the current spec. A failed reconcile sets state
-	// and the Ready condition's observedGeneration but leaves status.observedGeneration
-	// behind, so the larger of the two counts. An operator that sets neither leaves both
-	// at 0, and then the check is skipped.
+	// A status from before the latest spec change can say successful for the old spec, so
+	// wait until the operator has seen the current spec. A failed reconcile moves only the
+	// Ready condition's observedGeneration, and 0 in both means an operator that sets
+	// neither. See DESIGN.md §7, "Component health".
 	observedGeneration := status.ObservedGeneration
 	if ready != nil {
 		observedGeneration = max(observedGeneration, ready.ObservedGeneration)

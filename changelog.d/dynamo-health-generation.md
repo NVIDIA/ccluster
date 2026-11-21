@@ -1,5 +1,5 @@
 ### Fixed
 - `dynamo_deployment` health reports a DynamoGraphDeployment whose current spec failed to
-  reconcile as `Degraded`, with the `Ready` condition's reason. The Dynamo operator records
-  such a failure only in the `Ready` condition's `observedGeneration`, so the graph stayed
-  `Progressing`, and a failure the operator does not retry held the rollout forever.
+  reconcile as `Degraded`, with the `Ready` condition's reason. A failed reconcile moves the
+  `Ready` condition's `observedGeneration` but not `status.observedGeneration`, so the graph
+  stayed `Progressing` with no reason. The rollout still waits on a `Degraded` graph.
