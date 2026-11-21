@@ -22,19 +22,22 @@ import (
 
 // fakeArgoCD is an ArgoCDServer over a fixed tree, objects and events. Objects and
 // events are keyed by "Kind/name". treeErr fails ResourceTree; readErr fails the other
-// reads. It records each Application it read from, one entry per request, and the
-// deadline of each tree read.
+// reads; deleteErr fails DeleteResource. It records each Application it read from, one
+// entry per request, the deadline of each tree read, and each object it was asked to
+// delete.
 type fakeArgoCD struct {
-	tree    apiclient.ResourceTree
-	objects map[string]*unstructured.Unstructured
-	events  map[string][]corev1.Event
-	treeErr error
-	readErr error
+	tree      apiclient.ResourceTree
+	objects   map[string]*unstructured.Unstructured
+	events    map[string][]corev1.Event
+	treeErr   error
+	readErr   error
+	deleteErr error
 
 	mu        sync.Mutex
 	trees     []apiclient.ApplicationRef
 	deadlines []time.Time
 	reads     []apiclient.ApplicationRef
+	deletes   []apiclient.ResourceRef
 }
 
 func (f *fakeArgoCD) ResourceTree(ctx context.Context, app apiclient.ApplicationRef) (*apiclient.ResourceTree, error) {
@@ -74,6 +77,26 @@ func (f *fakeArgoCD) ResourceEvents(
 		return nil, f.readErr
 	}
 	return f.events[ref.Kind+"/"+ref.Name], nil
+}
+
+func (f *fakeArgoCD) DeleteResource(
+	_ context.Context, _ apiclient.ApplicationRef, ref apiclient.ResourceRef,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletes = append(f.deletes, ref)
+	return f.deleteErr
+}
+
+// deleted returns each object DeleteResource was called for, as "Kind/name".
+func (f *fakeArgoCD) deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.deletes))
+	for _, ref := range f.deletes {
+		names = append(names, ref.Kind+"/"+ref.Name)
+	}
+	return names
 }
 
 // treesRead returns the Applications whose tree was read.

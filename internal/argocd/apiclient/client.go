@@ -3,15 +3,16 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */
 
-// Package apiclient reads an Application's deployed objects through argocd-server's
-// REST API: its resource tree, the live manifest of an object in it, and that object's
-// events.
+// Package apiclient reaches an Application's deployed objects through argocd-server's
+// REST API: it reads the resource tree, the live manifest of an object in it and that
+// object's events, and deletes an object the chart no longer renders.
 //
-// None of these is in the Application object, which records only the objects the chart
-// rendered and their aggregate health. argocd-server answers them on the operator's
+// None of the reads is in the Application object, which records only the objects the
+// chart rendered and their aggregate health. argocd-server answers on the operator's
 // behalf with Argo CD's own credentials for the destination cluster, so the operator
-// never holds those itself, and what it can read is bounded by the Argo CD account its
-// token belongs to: a read-only account the cp chart declares.
+// never holds those itself, and what it can do is bounded by the Argo CD account its
+// token belongs to: an account the cp chart declares, which may read every Application
+// and delete only the kinds of object listed in its policy.
 //
 // Like internal/api/argocd/v1alpha1, the client mirrors only the parts of the API it uses
 // rather than importing Argo CD's Go client, whose dependency tree is most of Argo CD.
@@ -90,7 +91,7 @@ type Options struct {
 	Timeout time.Duration
 }
 
-// Client is a read-only client of argocd-server. It is safe for concurrent use.
+// Client is a client of argocd-server. It is safe for concurrent use.
 type Client struct {
 	server *url.URL
 	token  SecretKey
@@ -148,15 +149,8 @@ func (c *Client) ResourceTree(ctx context.Context, app ApplicationRef) (*Resourc
 
 // Resource returns the live object ref names, one of the nodes of app's resource tree.
 func (c *Client) Resource(ctx context.Context, app ApplicationRef, ref ResourceRef) (*unstructured.Unstructured, error) {
-	query := url.Values{
-		"namespace":    {ref.Namespace},
-		"resourceName": {ref.Name},
-		"group":        {ref.Group},
-		"version":      {ref.Version},
-		"kind":         {ref.Kind},
-	}
 	var response resourceResponse
-	if err := c.get(ctx, app, opResource, query, &response); err != nil {
+	if err := c.get(ctx, app, opResource, objectQuery(ref), &response); err != nil {
 		return nil, err
 	}
 	if response.Manifest == nil {
@@ -185,8 +179,34 @@ func (c *Client) ResourceEvents(ctx context.Context, app ApplicationRef, ref Res
 	return events.Items, nil
 }
 
+// DeleteResource deletes ref, one of the objects of app, through argocd-server, with
+// foreground propagation: the object goes once the objects it owns are gone. It returns
+// once argocd-server has asked the cluster to delete it, without waiting. An object that
+// is already gone fails with ErrResourceGone.
+func (c *Client) DeleteResource(ctx context.Context, app ApplicationRef, ref ResourceRef) error {
+	return c.do(ctx, http.MethodDelete, app, opResource, objectQuery(ref), &struct{}{})
+}
+
+// objectQuery is the query that names ref to the resource endpoint.
+func objectQuery(ref ResourceRef) url.Values {
+	return url.Values{
+		"namespace":    {ref.Namespace},
+		"resourceName": {ref.Name},
+		"group":        {ref.Group},
+		"version":      {ref.Version},
+		"kind":         {ref.Kind},
+	}
+}
+
 // get sends GET /api/v1/applications/{app.Name}/{op} and decodes a 200 answer into out.
 func (c *Client) get(ctx context.Context, app ApplicationRef, op string, query url.Values, out any) error {
+	return c.do(ctx, http.MethodGet, app, op, query, out)
+}
+
+// do sends method /api/v1/applications/{app.Name}/{op} and decodes a 200 answer into out.
+func (c *Client) do(
+	ctx context.Context, method string, app ApplicationRef, op string, query url.Values, out any,
+) error {
 	if app.Namespace == "" || app.Name == "" || app.Project == "" {
 		return fmt.Errorf("argocd-server %s: ApplicationRef needs a namespace, name and project, got %+v", op, app)
 	}
@@ -203,13 +223,17 @@ func (c *Client) get(ctx context.Context, app ApplicationRef, op string, query u
 	endpoint := c.server.JoinPath("api", "v1", "applications", app.Name, op)
 	endpoint.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), nil)
 	if err != nil {
 		return err
 	}
 	// A Secret created from a file usually ends in a newline.
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 	req.Header.Set("Accept", "application/json")
+	// argocd-server answers a request other than GET with 415 unless it names a type in
+	// its --api-content-types, which is application/json by default. A delete has no body
+	// but needs it all the same.
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {

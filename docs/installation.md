@@ -78,7 +78,7 @@ argocd-server Service (default `argocd-server`):
   --set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=<argocd-server-service>
 ```
 
-The operator then needs a read-only Argo CD account and an API token; see
+The operator then needs an Argo CD account and an API token; see
 [Development: Argo CD API token](development.md#argo-cd-api-token) for the steps.
 
 ### DNS

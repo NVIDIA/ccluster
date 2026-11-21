@@ -13,18 +13,20 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/NVIDIA/ccluster/catalogs"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 )
 
 // ArgoCDServer is the part of argocd-server's API that the controllers read to judge
-// component health. *apiclient.Client implements it. It is an interface so that tests
-// can use a fake.
+// component health, and that the rollout deletes old objects through.
+// *apiclient.Client implements it. It is an interface so that tests can use a fake.
 type ArgoCDServer interface {
 	ResourceTree(ctx context.Context, app apiclient.ApplicationRef) (*apiclient.ResourceTree, error)
 	Resource(
 		ctx context.Context, app apiclient.ApplicationRef, ref apiclient.ResourceRef,
 	) (*unstructured.Unstructured, error)
 	ResourceEvents(ctx context.Context, app apiclient.ApplicationRef, ref apiclient.ResourceRef) ([]corev1.Event, error)
+	DeleteResource(ctx context.Context, app apiclient.ApplicationRef, ref apiclient.ResourceRef) error
 }
 
 // applicationReader is the catalogs.ResourceReader for one Application. argocd-server
@@ -80,6 +82,12 @@ func observedResource(node apiclient.ResourceNode) catalogs.ObservedResource {
 		}
 	}
 	return resource
+}
+
+func applicationRef(application *argocdv1alpha1.Application) apiclient.ApplicationRef {
+	return apiclient.ApplicationRef{
+		Namespace: application.Namespace, Name: application.Name, Project: application.Spec.Project,
+	}
 }
 
 func catalogRef(r apiclient.ResourceRef) catalogs.ResourceRef {

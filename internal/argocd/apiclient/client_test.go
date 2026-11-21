@@ -37,16 +37,24 @@ var (
 
 // request is what the fake argocd-server received.
 type request struct {
-	path  string
-	query url.Values
-	auth  string
+	method string
+	path   string
+	query  url.Values
+	auth   string
 }
 
-// fakeServer answers every request with status and body, recording what it received.
+// fakeServer answers every request with status and body, recording what it received. Like
+// argocd-server, it refuses a request other than GET whose Content-Type is not JSON.
 func fakeServer(t *testing.T, status int, body string, received *[]request) *httptest.Server {
 	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*received = append(*received, request{path: r.URL.Path, query: r.URL.Query(), auth: r.Header.Get("Authorization")})
+		*received = append(*received, request{
+			method: r.Method, path: r.URL.Path, query: r.URL.Query(), auth: r.Header.Get("Authorization"),
+		})
+		if r.Method != http.MethodGet && r.Header.Get("Content-Type") != "application/json" {
+			http.Error(w, "Invalid content type", http.StatusUnsupportedMediaType)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -160,6 +168,46 @@ func TestResource(t *testing.T) {
 	}
 	if phase := obj.Object["status"].(map[string]any)["phase"]; phase != "Pending" {
 		t.Errorf("status.phase = %v", phase)
+	}
+}
+
+func TestDeleteResource(t *testing.T) {
+	secretRef := ResourceRef{
+		Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret", Namespace: "team-a", Name: "web-env-abc",
+	}
+	var received []request
+	server := fakeServer(t, http.StatusOK, `{}`, &received)
+	c, _ := newClient(t, server, secret(tokenKey, testToken))
+
+	if err := c.DeleteResource(context.Background(), testApp, secretRef); err != nil {
+		t.Fatalf("DeleteResource: %v", err)
+	}
+
+	got := received[0]
+	if got.method != http.MethodDelete || got.path != "/api/v1/applications/web/resource" {
+		t.Errorf("request = %s %s, want DELETE /api/v1/applications/web/resource", got.method, got.path)
+	}
+	for key, want := range map[string]string{
+		"namespace": "team-a", "resourceName": "web-env-abc", "group": "external-secrets.io", "version": "v1",
+		"kind": "ExternalSecret", "appNamespace": "team-a", "project": "team-a",
+	} {
+		if values, ok := got.query[key]; !ok || values[0] != want {
+			t.Errorf("query %s = %v, want %q", key, values, want)
+		}
+	}
+}
+
+// TestDeleteResourceGone: argocd-server refuses to delete an object its cached tree no
+// longer holds, which means it is already gone.
+func TestDeleteResourceGone(t *testing.T) {
+	var received []request
+	server := fakeServer(t, http.StatusBadRequest,
+		`{"message":"ExternalSecret team-a/web-env-abc not found as part of application web"}`, &received)
+	c, _ := newClient(t, server, secret(tokenKey, testToken))
+
+	err := c.DeleteResource(context.Background(), testApp, ResourceRef{Kind: "ExternalSecret", Name: "web-env-abc"})
+	if !errors.Is(err, ErrResourceGone) {
+		t.Fatalf("DeleteResource = %v, want ErrResourceGone", err)
 	}
 }
 

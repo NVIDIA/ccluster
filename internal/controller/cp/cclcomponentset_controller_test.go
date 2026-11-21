@@ -2069,6 +2069,61 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Expect(argoCD.treesRead()).To(Equal([]apiclient.ApplicationRef{ref(firstComponent)}))
 			})
 
+			It("should delete a finished component's old objects of the deletable kinds", func() {
+				argoCD := &fakeArgoCD{}
+				judgeWith(argoCD)
+
+				// Argo CD lists every object of the comparison; requiresPruning marks those the
+				// chart no longer renders.
+				resource := func(group, kind, name string, old bool) map[string]any {
+					return map[string]any{"group": group, "version": "v1", "kind": kind,
+						"namespace": "argo-rollouts", "name": name, "requiresPruning": old}
+				}
+				encoded, err := json.Marshal(map[string]any{"status": map[string]any{"resources": []any{
+					resource("apps", "Deployment", "web", false),
+					resource("external-secrets.io", "ExternalSecret", "web-env-1", true),
+					resource("", "ConfigMap", "web-r1", true),
+					resource("policy", "PodDisruptionBudget", "web", true),
+				}}})
+				Expect(err).NotTo(HaveOccurred())
+				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+					argocdv1alpha1.SyncStatusSynced)
+				Expect(k8sClient.Patch(ctx, getApplication(firstComponent),
+					client.RawPatch(types.MergePatchType, encoded))).To(Succeed())
+
+				secondApplication := func() error {
+					return k8sClient.Get(ctx, appKey(secondComponent), &argocdv1alpha1.Application{})
+				}
+
+				By("keeping them while the component has not finished")
+				reconcileAndGet()
+				Expect(argoCD.deleted()).To(BeEmpty())
+				Expect(apierrors.IsNotFound(secondApplication())).To(BeTrue())
+
+				// The deletes fail in the pass that finds the component finished, the one that
+				// releases the next component, so a failure that held it back would show.
+				By("releasing the next component once it has, even when its deletes fail")
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}
+				argoCD.deleteErr = errors.New("argocd-server unavailable")
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).To(MatchError(argoCD.deleteErr))
+				Expect(secondApplication()).To(Succeed())
+
+				By("deleting them on the next pass, except a kind it does not delete")
+				argoCD.deleteErr = nil
+				reconcileAndGet()
+				Expect(argoCD.deleted()).To(Equal([]string{
+					"ExternalSecret/web-env-1", "ConfigMap/web-r1", // the failed pass
+					"ExternalSecret/web-env-1", "ConfigMap/web-r1",
+				}))
+
+				By("only logging a delete Argo CD refuses, and trying it again on the next pass")
+				argoCD.deleteErr = apiclient.ErrUnauthorized
+				_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: componentSetKey})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(argoCD.deleted()).To(HaveLen(6), "both old objects were tried again")
+			})
+
 			It("should judge by Argo CD's aggregate health when the resource tree cannot be read, and come back", func() {
 				judgeWith(&fakeArgoCD{treeErr: errors.New("argocd-server unavailable")})
 				release(firstComponent)
