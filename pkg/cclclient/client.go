@@ -46,6 +46,9 @@ type TLSClientConfig struct {
 	// CAData is the API server's CA certificate, PEM. encoding/json base64-encodes it,
 	// which is the form Argo CD reads.
 	CAData []byte `json:"caData,omitempty"`
+	// ServerName is the name the API server's certificate is checked against, when it
+	// differs from the host in the server URL (kubeconfig's tls-server-name).
+	ServerName string `json:"serverName,omitempty"`
 }
 
 // ClusterConfig is the config key of an Argo CD cluster Secret: how Argo CD reaches the
@@ -67,6 +70,10 @@ type InfraPlaneOptions struct {
 	BearerToken string
 	// CACert is the API server's CA certificate, PEM. Optional.
 	CACert []byte
+	// ServerName is the name to check the API server's certificate against, when Server
+	// reaches it by an address the certificate does not name (kubeconfig's
+	// tls-server-name). Optional.
+	ServerName string
 }
 
 // CredentialsSecretName is the name of the Secret a CCLInfraPlane called name points at.
@@ -154,7 +161,7 @@ func (c *Client) EnsureNamespace(ctx context.Context) error {
 // namespace. The call returns as soon as both objects are applied; it does not wait for the operator to
 // report Available.
 //
-// Server, BearerToken and CACert are all optional. With none given, this registers the
+// Server, BearerToken, CACert and ServerName are all optional. With none given, this registers the
 // cluster the operator itself runs in: Server defaults to https://kubernetes.default.svc,
 // and the token and CA stay unset, which Argo CD accepts for that address by connecting
 // with its own ServiceAccount instead.
@@ -171,7 +178,7 @@ func (c *Client) ApplyInfraPlane(
 	}
 	config, err := json.Marshal(ClusterConfig{
 		BearerToken:     opts.BearerToken,
-		TLSClientConfig: TLSClientConfig{CAData: opts.CACert},
+		TLSClientConfig: TLSClientConfig{CAData: opts.CACert, ServerName: opts.ServerName},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshalling cluster config: %w", err)

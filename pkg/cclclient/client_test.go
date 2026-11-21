@@ -154,6 +154,31 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 	}
 }
 
+// ServerName is written as tlsClientConfig.serverName, the field Argo CD and the operator
+// check the API server's certificate against.
+func TestApplyInfraPlaneWritesServerName(t *testing.T) {
+	ctx := t.Context()
+	client := newClient(t)
+
+	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
+		Name: "gpu-a", Server: server, BearerToken: token, CACert: caCert, ServerName: "kubernetes.default.svc",
+	}); err != nil {
+		t.Fatalf("ApplyInfraPlane() error = %v", err)
+	}
+
+	wantConfig := map[string]any{
+		"bearerToken": token,
+		"tlsClientConfig": map[string]any{
+			"insecure":   false,
+			"caData":     base64.StdEncoding.EncodeToString(caCert),
+			"serverName": "kubernetes.default.svc",
+		},
+	}
+	if got := clusterConfig(t, credentialsSecret(t, client, "gpu-a")); !reflect.DeepEqual(got, wantConfig) {
+		t.Errorf("config = %v, want %v", got, wantConfig)
+	}
+}
+
 // Re-registering rotates the token in place: the same field manager owns every field, so
 // the second apply updates rather than conflicts.
 func TestApplyInfraPlaneAgainUpdatesTheCredentials(t *testing.T) {
