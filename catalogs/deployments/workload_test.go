@@ -13,6 +13,7 @@ import (
 
 func TestValidateSecretReferences(t *testing.T) {
 	ref := SecretKeyRef{SecretName: "app-env", Key: "api-key"}
+	store := SecretStoreRef{Name: "vault", Kind: ClusterSecretStore}
 	for _, tt := range []struct {
 		name    string
 		mutate  func(*Workload)
@@ -59,6 +60,36 @@ func TestValidateSecretReferences(t *testing.T) {
 			},
 			wantErr: ErrInvalidValue,
 			wantKey: "secretEnvVars.API_KEY",
+		},
+		{
+			name: "external secret also in secretEnvVars",
+			mutate: func(w *Workload) {
+				w.SecretEnvVars = map[string]SecretKeyRef{"API_KEY": ref}
+				w.ExternalSecrets = &ExternalSecrets{
+					SecretStoreRef: store,
+					Env:            map[string]RemoteRef{"API_KEY": {Key: "tenants/42/api"}},
+				}
+			},
+			wantErr: ErrInvalidValue,
+			wantKey: "externalSecrets.env.API_KEY",
+		},
+		{
+			// Kubernetes accepts neither as a Secret key, so the sync would fail.
+			name: "external secret named ..",
+			mutate: func(w *Workload) {
+				w.ExternalSecrets = &ExternalSecrets{
+					SecretStoreRef: store,
+					Env:            map[string]RemoteRef{"..": {Key: "tenants/42/api"}},
+				}
+			},
+			wantErr: ErrInvalidValue,
+			wantKey: "externalSecrets.env...",
+		},
+		{
+			name:    "external secrets with nothing to create",
+			mutate:  func(w *Workload) { w.ExternalSecrets = &ExternalSecrets{SecretStoreRef: store} },
+			wantErr: ErrMissingValue,
+			wantKey: "externalSecrets.env or externalSecrets.imagePull",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

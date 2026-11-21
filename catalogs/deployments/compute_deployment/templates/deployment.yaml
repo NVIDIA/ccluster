@@ -107,6 +107,9 @@ spec:
                 name: {{ $ref.secretName | quote }}
                 key: {{ $ref.key | quote }}
           {{- end }}
+          {{- with include "externalSecrets.env" .Values | trim }}
+          {{- . | nindent 10 }}
+          {{- end }}
 
           # if the customer has provided a private key, we need to mount it into the container
           # and point to it from this env var
@@ -163,7 +166,7 @@ spec:
               subPath: authorized_keys
               name: authorized-keys
           {{- end }}
-      {{- with include "imagePullSecrets" .Values | trim }}
+      {{- with include "workload.imagePullSecrets" .Values | trim }}
       imagePullSecrets:
         {{- . | nindent 8 }}
       {{- end }}

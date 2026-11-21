@@ -178,6 +178,55 @@ When adding or changing a component:
   archives. List any image source subdirectory too. This is separate from the generated
   operator-chart ignore files.
 - Run `make python-generate` after changing values types or their doc comments.
+- An object that pods read by name and whose content changes with the revision, such as
+  a config ConfigMap, is named from its content or the revision, and carries
+  `ccluster.deleteAfterRollout` from the library below: the old one then stays until
+  the component has finished rolling out, and the cp operator deletes it. Only
+  ExternalSecret, ConfigMap and ResourceClaimTemplate are deleted this way; adding a
+  kind means adding it to `deletableKinds` and to the cp chart's Argo CD policy. Every
+  other object keeps a stable name and is updated in place. See
+  [objects deleted after rollout](../DESIGN.md#objects-deleted-after-rollout).
+
+### Library charts
+
+`catalogs/library/` holds Helm library charts: templates several catalog charts share,
+with no Go package and never a component. A chart uses one through a `file://`
+dependency in its `Chart.yaml` and a relative symlink to it under `charts/`, named
+after the library, so neither Helm nor Argo CD's repo-server runs
+`helm dependency build`. `make helm-lint-catalogs` lints the charts that use a library,
+not the library alone.
+
+`catalogs/library/workload` renders a workload's ExternalSecrets and its pod
+`imagePullSecrets` (`workload.imagePullSecrets`), and defines
+`ccluster.deleteAfterRollout`.
+
+### Secrets in workload charts
+
+The workload charts take a secret in three ways. Only the first puts the value in the
+values, and so in the CCLComponentSet and the Argo CD Application.
+
+- `hfToken`, `imagePullSecret` and `envVars` carry the value itself.
+- `secretEnvVars` and `imagePullSecretNames` name Secrets in the release namespace that
+  something else creates. The charts never create or read them.
+- `externalSecrets` (`deployments.ExternalSecrets`) has the External Secrets Operator
+  (ESO) create the Secrets from references into a secret store: `secretStoreRef`, `env`
+  (variable name to `{key, property, version}`) and `imagePull` (`server`, `username`,
+  and `password` as a reference). The infra plane needs ESO serving
+  `external-secrets.io/v1` and the store; without the ExternalSecret CRD, Argo CD
+  rejects the component's whole sync.
+
+For `externalSecrets`, the chart renders up to two ExternalSecrets and wires the pod to
+them:
+
+- They are named `<name>-env-<hash>` and `<name>-pull-<hash>`, the hash covering the
+  store and that Secret's references. Callers never name them. A new reference or
+  `version` is a new Secret, which the pods roll onto, and the old one is deleted after
+  the rollout.
+- ESO fills each Secret once (`refreshPolicy: CreatedOnce`) into an immutable Secret.
+  With `version` unset it keeps the value it read then, so a value rotated in the store
+  reaches the pods only when a reference or `version` changes.
+- A reference ESO cannot resolve fails the sync at wave -1, before the workload changes:
+  the old pods keep running until the caller fixes or reverts it.
 
 ### Images built beside a chart
 

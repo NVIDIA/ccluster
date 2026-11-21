@@ -56,6 +56,10 @@ type Workload struct {
 	// itself.
 	SecretEnvVars map[string]SecretKeyRef `json:"secretEnvVars,omitempty"`
 
+	// ExternalSecrets has ESO create Secrets for the container's variables and image
+	// pull from references into a secret store. See ExternalSecrets.
+	ExternalSecrets *ExternalSecrets `json:"externalSecrets,omitempty"`
+
 	// DevShmSize is the size of the /dev/shm tmpfs, as a Kubernetes quantity. The
 	// chart ships 512Mi.
 	DevShmSize *string `json:"devShmSize,omitempty"`
@@ -104,6 +108,7 @@ func (w Workload) Validate() error {
 		w.ImagePullSecret.Validate(),
 		ValidateImagePullSecretNames(w.ImagePullSecretNames),
 		ValidateSecretEnvVars(w.SecretEnvVars, w.EnvVars),
+		w.ExternalSecrets.Validate(w.EnvVars, w.SecretEnvVars),
 	)
 }
 
@@ -252,11 +257,15 @@ func ValidateSecretEnvVars(refs map[string]SecretKeyRef, envVars map[string]stri
 // variables a chart sets itself. The container would list the variable twice, and the
 // Application's server-side apply rejects a list with a repeated name.
 func ValidateChartEnv(refs map[string]SecretKeyRef, chartEnv []string) error {
+	return setByChart("secretEnvVars", refs, chartEnv)
+}
+
+// setByChart reports the variables of env, the value field, that are in chartEnv.
+func setByChart[V any](field string, env map[string]V, chartEnv []string) error {
 	var errs []error
-	for _, name := range slices.Sorted(maps.Keys(refs)) {
+	for _, name := range slices.Sorted(maps.Keys(env)) {
 		if slices.Contains(chartEnv, name) {
-			errs = append(errs, fmt.Errorf("%w: secretEnvVars.%s is set by the chart",
-				ErrInvalidValue, name))
+			errs = append(errs, fmt.Errorf("%w: %s.%s is set by the chart", ErrInvalidValue, field, name))
 		}
 	}
 	return errors.Join(errs...)

@@ -42,17 +42,23 @@ retry() {
 # `helm dependency build` resolves a locked dependency through the local repo list, so
 # every repository a catalog chart names is registered first. Matching is by URL. OCI
 # registries are not chart repositories: helm pulls from them directly, and repo add
-# refuses them.
+# refuses them. A file:// dependency is a library chart in this repository, linked
+# under the chart's charts/ directory, so it needs neither.
 n=0
 while IFS= read -r url; do
   n=$((n + 1))
   retry "$HELM" repo add "catalog-$n" "$url"
-done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | grep -v '^oci://' | sort -u)
+done < <(find catalogs -name Chart.yaml -exec "$YQ" --no-doc '.dependencies[]?.repository' {} + | grep -v -e '^oci://' -e '^file://' | sort -u)
 
 failed=()
 while IFS= read -r chart; do
   dir="$work/$chart"
-  if [ "$("$YQ" '.dependencies | length' "$dir/Chart.yaml")" -gt 0 ] && ! retry "$HELM" dependency build "$dir"; then
+  # A library chart renders nothing on its own; the charts that use it render it.
+  if [ "$("$YQ" '.type' "$dir/Chart.yaml")" = library ]; then
+    continue
+  fi
+  if [ "$("$YQ" '[.dependencies[]? | select(.repository | test("^file://") | not)] | length' "$dir/Chart.yaml")" -gt 0 ] &&
+    ! retry "$HELM" dependency build "$dir"; then
     failed+=("$chart (dependency build)")
     continue
   fi

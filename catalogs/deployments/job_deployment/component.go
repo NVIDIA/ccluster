@@ -70,6 +70,7 @@ func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
 		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
+		v.ExternalSecrets.ValidateChartEnv(chartEnv),
 		v.ConfigFile.Validate(),
 		deployments.ValidateVolumeMounts(v.VolumeMounts),
 	}
