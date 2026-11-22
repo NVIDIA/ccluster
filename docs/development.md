@@ -443,17 +443,21 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
 
    ```yaml
    # dns-values.yaml
+   # txtOwnerId is unique per control plane: with policy sync, two external-dns sharing
+   # one treat each other's records as their own and delete them.
    external-dns:
      provider:
        name: aws
      domainFilters:
        - planes.example.com
+     txtOwnerId: ccluster-cp-<cluster>
      serviceAccount:
        annotations:
          eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
    ```
 
-3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`):
+3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`;
+   `EXTERNAL_DNS_TXT_OWNER_ID`, default `ccluster-cp`, sets its TXT owner ID):
 
    ```bash
    make deploy-cp KUBE_CONTEXT_CP=<context> BASE_DOMAIN=planes.example.com DNS=true \

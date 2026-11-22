@@ -358,6 +358,18 @@ argo-cd:
 ##     ClusterRole;
 ##   - `sources` is the DNSEndpoint CRD alone, so no Service or Ingress is published;
 ##   - `txtOwnerId` limits deletions to the records it created itself.
+##
+## `txtOwnerId` is required when external-dns is enabled: the schema below rejects a render
+## without one. It must be unique among every external-dns that writes a zone this one
+## reads, in particular unique per control plane. With `policy: sync`, external-dns deletes
+## any record carrying its own owner ID that its sources no longer produce, so two control
+## planes that share an owner ID - dev and prod both filtering `example.com`, say - treat
+## each other's records as their own and delete them on every sync. This chart takes no
+## default: a default would be shared with every other install of it, which is how that
+## collision happens. `make deploy-cp` sets it to `EXTERNAL_DNS_TXT_OWNER_ID` (default
+## `ccluster-cp`) for its single control plane; a released chart needs it in your values.
+## Records published under a previous owner ID are orphaned by a change: reclaim them by
+## editing each TXT ownership record's value to the new ID, or delete them.
 ## The DNSEndpoint CRD comes with this chart and is shared with any other external-dns:
 ## Helm installs it only with the release, and only if it is missing, and never upgrades
 ## or deletes it.
@@ -368,6 +380,7 @@ argo-cd:
 ##     name: aws
 ##   domainFilters:
 ##     - planes.example.com
+##   txtOwnerId: ccluster-cp-<cluster>
 ##   serviceAccount:
 ##     annotations:
 ##       eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<role>
@@ -380,7 +393,8 @@ external-dns:
   namespaced: true
   policy: sync
   registry: txt
-  txtOwnerId: ccluster-cp
+  ## Unique per control plane, and required once `enabled` is true; see above.
+  txtOwnerId: ""
   interval: 1m
 
   extraArgs:

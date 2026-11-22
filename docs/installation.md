@@ -100,12 +100,21 @@ external-dns:
     name: <provider>        # such as aws, azure, google or cloudflare
   domainFilters:
     - planes.example.com    # the base domain
+  txtOwnerId: <unique per control plane>
   # Credentials, in the form the provider's tutorial gives: for example a ServiceAccount
   # annotation for workload identity, or environment variables from a Secret.
   serviceAccount:
     annotations: {}
   env: []
 ```
+
+`txtOwnerId` is required when external-dns is enabled - Helm rejects the install without
+one - and must be unique among every external-dns that writes one of its zones, in
+particular unique per control plane: with `policy: sync` two external-dns sharing an
+owner ID delete each other's records on every sync. Nothing tracks that the value you
+choose is unique, so pick one that names this control plane, such as
+`ccluster-cp-<cluster>`. Changing it orphans the records published under the old ID:
+reclaim them by editing each TXT ownership record's value to the new ID, or delete them.
 
 The chart bundles external-dns chart 1.19.0, which runs external-dns v0.19.0. external-dns's
 [tutorials](https://github.com/kubernetes-sigs/external-dns/tree/v0.19.0/docs/tutorials)
@@ -115,9 +124,9 @@ section maps them to chart values. Put those values under `external-dns:`, and a
 `provider.name`, which defaults to `aws`. external-dns runs as the ServiceAccount
 `ccluster-cp-external-dns` in the release namespace; a provider that trusts a ServiceAccount
 by name must trust this one. [Development: DNS and external-dns](development.md#dns-and-external-dns)
-has a Route53 example with IRSA and its IAM policy. The chart already sets `sources`,
-`namespaced` and `txtOwnerId`, so that external-dns publishes only the operator's
-DNSEndpoints and deletes only records it created.
+has a Route53 example with IRSA and its IAM policy. The chart already sets `sources` and
+`namespaced`, so that external-dns publishes only the operator's DNSEndpoints; set
+`txtOwnerId`, which limits deletions to the records it created itself.
 
 **New install.** Add the values file to the `helm install` above:
 
