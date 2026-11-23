@@ -65,6 +65,7 @@ type InfraPlaneRow struct {
 	Namespace            string     `json:"namespace"`
 	Name                 string     `json:"name"`
 	Domain               string     `json:"domain,omitempty"`
+	Ready                *Condition `json:"ready"`
 	Available            *Condition `json:"available"`
 	ClusterConfigApplied *Condition `json:"clusterConfigApplied"`
 	Verified             *Condition `json:"verified"`
@@ -189,6 +190,7 @@ func infraPlaneRow(plane *cclusternvidiacomv1alpha1.CCLInfraPlane) InfraPlaneRow
 		Namespace:            plane.Namespace,
 		Name:                 plane.Name,
 		Domain:               plane.Status.Domain,
+		Ready:                current[cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady],
 		Available:            current[cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable],
 		ClusterConfigApplied: current[cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied],
 		DNSReady:             current[cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady],

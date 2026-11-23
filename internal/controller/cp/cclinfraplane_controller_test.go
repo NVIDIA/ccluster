@@ -266,14 +266,15 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, componentSet))).To(Succeed())
 		}
 
-		// deleting returns the plane's Deleting condition, or nil.
+		// deleting returns the plane's Ready condition, which a plane being deleted
+		// reports False with reason Deleting, or nil.
 		deleting := func(key types.NamespacedName) *metav1.Condition {
 			GinkgoHelper()
 
 			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
 			Expect(k8sClient.Get(ctx, key, infraPlane)).To(Succeed())
 			return apimeta.FindStatusCondition(infraPlane.Status.Conditions,
-				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting)
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady)
 		}
 
 		infraPlaneGone := func(key types.NamespacedName) bool {
@@ -672,8 +673,8 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			By("reporting the set it waits for")
 			condition := deleting(typeNamespacedName)
 			Expect(condition).NotTo(BeNil())
-			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonComponentSetsRemaining))
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDeleting))
 			Expect(condition.Message).To(ContainSubstring(`workloads`))
 			Expect(condition.ObservedGeneration).To(Equal(infraPlane.Generation))
 
@@ -1359,6 +1360,65 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			By("keeping the CCLInfraPlane's own conditions separate")
 			Expect(apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)).To(BeNil())
 			Expect(apimeta.FindStatusCondition(copied.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeNil())
+		})
+
+		// Ready summarizes what patchStatus writes, so every status write moves it with
+		// the conditions and the copy it is computed from.
+		It("should report Ready once the infra-plane operator verifies the cluster, and withdraw it when that fails", func() {
+			readyOf := func(infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane) *metav1.Condition {
+				GinkgoHelper()
+
+				ready := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+					cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady)
+				Expect(ready).NotTo(BeNil())
+				Expect(ready.ObservedGeneration).To(Equal(infraPlane.Generation))
+				return ready
+			}
+			verify := func(status metav1.ConditionStatus, configDomain string) {
+				GinkgoHelper()
+
+				config := getClusterConfig()
+				config.Status.ObservedGeneration = config.Generation
+				config.Status.Domain = configDomain
+				reason := cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsVerified
+				if status != metav1.ConditionTrue {
+					reason = cclusternvidiacomv1alpha1.CCLClusterConfigReasonComponentsNotVerified
+				}
+				apimeta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+					Type: cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified, Status: status,
+					Reason: reason, Message: "keda: operator not ready",
+				})
+				Expect(k8sClient.Status().Update(ctx, config)).To(Succeed())
+			}
+
+			By("holding back a plane without credentials")
+			ready := readyOf(settle())
+			Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable))
+			Expect(ready.Message).To(ContainSubstring(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound))
+
+			By("holding back a registered plane the infra-plane operator has not verified")
+			createSecret(credentials)
+			ready = readyOf(reconcileAndGet())
+			Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotVerified))
+
+			By("holding back a plane verified against another domain")
+			verify(metav1.ConditionTrue, "old."+domain)
+			Expect(readyOf(reconcileAndGet()).Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotVerified))
+
+			By("reporting Ready once verified against the plane's domain")
+			verify(metav1.ConditionTrue, domain)
+			ready = readyOf(reconcileAndGet())
+			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+			Expect(ready.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonReady))
+
+			By("withdrawing Ready when verification fails, naming the failure")
+			verify(metav1.ConditionFalse, domain)
+			ready = readyOf(reconcileAndGet())
+			Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+			Expect(ready.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotVerified))
+			Expect(ready.Message).To(ContainSubstring("keda: operator not ready"))
 		})
 
 		It("should keep the last copied status when the CCLClusterConfig can no longer be written", func() {

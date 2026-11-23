@@ -227,7 +227,7 @@ on delete — and only if the ownership check still agrees they are ours.
 The finalizer first lists the CCLComponentSets in the plane's namespace. While any of them,
 Terminating ones included, has a component whose `infraPlaneRef` names the plane, it touches
 nothing — not the DNSEndpoint, the `CCLClusterConfig`, the mirrored Secret nor the project —
-keeps its finalizer, and reports `Deleting=True/ComponentSetsRemaining` naming the sets. A
+keeps its finalizer, and reports `Ready=False/Deleting` naming the sets. A
 set's teardown deletes each Application with Argo CD's cascade finalizer, and Argo CD reaches
 the cluster to uninstall the chart through the mirrored Secret; removed first, it would leave
 the Application, and so the set, Terminating, and the components running unmanaged. The plane
@@ -443,6 +443,19 @@ that the records are kept but not updated.
 watch exists only if external-dns's CRD did when the operator started (§7), so after
 installing external-dns the operator is restarted; otherwise `Pending` turns `Published`
 only on a later resync, and never with `--infraplane-resync-period=0`.
+
+`Ready` — the summary, written by every status patch from what that patch writes, so it
+never disagrees with the rest. `True/Ready` once `Available` and `ClusterConfigApplied`
+are `True` for the current generation and the copy in `status.clusterConfig` says
+`Verified=True` for the plane's own domain. Otherwise `False`, its reason naming the first
+of those that is not, in that order — `NotAvailable`, `ClusterConfigNotApplied` or
+`NotVerified` — and its message carrying that condition's status, reason and message.
+`False/Deleting` once the plane is being deleted, naming the sets it waits for. `DNSReady`
+does not count: a control plane without external-dns, or a cluster with no LoadBalancer,
+never publishes records and is no less usable for it. Nothing waits for `Ready`. A
+CCLComponentSet waits for `Available` only (§4), and `ccluster register` for
+`ClusterConfigApplied`, since `Verified` needs the `cluster_base` components, which are
+themselves deployed onto the plane by a CCLComponentSet.
 
 An error that is retried with backoff, such as a failed read of the credentials Secret or
 write of the mirror or the AppProject, writes no status, so the conditions keep what they
@@ -1057,7 +1070,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `Deleting` | Set only on a plane being deleted: `True` while CCLComponentSets, named in the message, still reference it, so the finalizer waits (§3). Reason: `ComponentSetsRemaining`. |
+| `CCLInfraPlane` | `Ready` | The summary: `Available` and `ClusterConfigApplied` are `True` for the current generation and the infra-plane operator has verified the cluster against the plane's domain; `False/Deleting` while the plane is being deleted, naming the CCLComponentSets it waits for (§3). Nothing waits for it. Reasons: `Ready`, `NotAvailable`, `ClusterConfigNotApplied`, `NotVerified`, `Deleting`. |
 | `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation and not being deleted. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`, `InfraPlaneDeleting`. |
 | `CCLComponentSet` | `ComponentsApplied` | The current spec has been written for the components the rollout has reached; the message counts them (§5). Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
@@ -1068,8 +1081,9 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 be installed yet (`make deploy-cp ARGOCD=false`, or the operator started first), and no
 amount of retrying fixes it.
 
-Printer columns: `Domain` and `Verified` (both from `status.clusterConfig`), `Available`,
-`ClusterConfig`, `DNS` and `Deleting` (the condition's reason) on `CCLInfraPlane`; `Applied` and `Progress` on
+Printer columns: `Ready` (the condition's reason), `Domain` (from `status.domain`) and
+`DNS` on `CCLInfraPlane`, with `Available`, `ClusterConfig` and `Verified` (from
+`status.clusterConfig`) added by `-o wide`; `Applied` and `Progress` on
 `CCLComponentSet`; `Verified` and `Domain` on `CCLClusterConfig`. No column shows the
 LoadBalancers: a printer column shows only the first JSONPath match, and naming one
 would give a label value a meaning.

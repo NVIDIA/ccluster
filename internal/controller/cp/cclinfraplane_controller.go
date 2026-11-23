@@ -326,8 +326,8 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 // While a CCLComponentSet references the plane, Terminating ones included, nothing is
 // touched: the mirrored Secret is what lets Argo CD reach the cluster to uninstall the
 // set's components, and the set's teardown runs through it. The plane reports
-// Deleting=True and waits; the CCLComponentSet watch brings it back when a set goes. It
-// never deletes the sets itself.
+// Ready=False/Deleting and waits; the CCLComponentSet watch brings it back when a set
+// goes. It never deletes the sets itself.
 //
 // The watch on the cluster stops first, so deleting the CCLClusterConfig does not
 // reconcile a CCLInfraPlane that is going away. The DNSEndpoint goes next, then the
@@ -388,11 +388,12 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
-// maxListedComponentSets caps how many CCLComponentSets the Deleting condition names.
+// maxListedComponentSets caps how many CCLComponentSets a deleting plane's Ready message
+// names.
 const maxListedComponentSets = 10
 
-// waitForComponentSets reports Deleting=True on a CCLInfraPlane being deleted, naming the
-// CCLComponentSets, sorted, that still reference it.
+// waitForComponentSets reports Ready=False/Deleting on a CCLInfraPlane being deleted,
+// naming the CCLComponentSets, sorted, that still reference it.
 //
 // It deletes nothing, but it puts back the namespace's AppProject if it has gone: the
 // sets' Applications live in it while they tear down, and the plane stays Available,
@@ -435,19 +436,19 @@ func (r *CCLInfraPlaneReconciler) waitForComponentSets(
 		message += fmt.Sprintf(" and %d more", more)
 	}
 
-	// Logged only when the condition changes: every update of a referencing
+	// Logged only when the message changes: every update of a referencing
 	// CCLComponentSet brings the plane back here.
-	deleting := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
-		cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting)
-	if deleting == nil || deleting.Message != message {
+	ready := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+		cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady)
+	if ready == nil || ready.Message != message {
 		log.Info("Kept CCLInfraPlane while CCLComponentSets reference it",
 			"componentSets", componentSets)
 	}
 
 	conditions := []metav1.Condition{{
-		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting,
-		Status:  metav1.ConditionTrue,
-		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonComponentSetsRemaining,
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady,
+		Status:  metav1.ConditionFalse,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDeleting,
 		Message: message,
 	}}
 	if available := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
@@ -572,7 +573,9 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 
 // patchStatus sets conditions, each stamped with the current generation, the observed
 // generation, the plane's domain and, unless it is nil, the copy of the infra-plane cluster's
-// CCLClusterConfig status, then writes the status subresource in one patch.
+// CCLClusterConfig status, then writes the status subresource in one patch. On a plane
+// that is not being deleted it also sets Ready, summarizing the rest of what it writes, so
+// that every status write keeps the two in step.
 //
 // This is a merge patch, not an update, because r.Get reads through the informer cache:
 // on a CCLInfraPlane that was just written the cached copy can carry a stale resource
@@ -599,6 +602,11 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 	}
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
 	infraPlane.Status.Domain = r.domainOf(infraPlane)
+	if infraPlane.DeletionTimestamp.IsZero() {
+		ready := readyCondition(infraPlane)
+		ready.ObservedGeneration = infraPlane.Generation
+		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, ready)
+	}
 
 	if equality.Semantic.DeepEqual(infraPlane.Status, base.Status) {
 		return nil

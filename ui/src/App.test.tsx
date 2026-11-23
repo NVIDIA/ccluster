@@ -24,6 +24,7 @@ function overview(selected = ""): Overview {
         namespace: "team-a",
         name: "gpu",
         domain: "gpu.team-a.example.com",
+        ready: { status: "False", reason: "NotVerified", message: "The infra-plane operator has not reported Verified yet" },
         available: { status: "True", reason: "ClusterSecretCreated" },
         clusterConfigApplied: { status: "True" },
         verified: null,
@@ -90,6 +91,10 @@ describe("App", () => {
     const planes = await screen.findByRole("region", { name: /Infra planes/ });
     const planeRow = within(planes).getByRole("row", { name: /gpu/ });
     expect(within(planeRow).getByText("gpu.team-a.example.com")).toBeInTheDocument();
+    expect(within(planeRow).getByText("NotVerified")).toHaveAttribute(
+      "title",
+      "NotVerified: The infra-plane operator has not reported Verified yet",
+    );
     expect(within(planeRow).getByText("Pending")).toBeInTheDocument();
     expect(within(planeRow).getByText("False")).toHaveAttribute("title", "LoadBalancerPending: waiting");
     // All namespaces: a Namespace column.

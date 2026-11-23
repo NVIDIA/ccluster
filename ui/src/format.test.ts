@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { age, conditionDetail, conditionLook, healthLook, setStatusLook } from "./format";
+import { age, conditionDetail, conditionLook, healthLook, readyLook, setStatusLook } from "./format";
 
 describe("badge looks", () => {
   it("maps condition statuses to a Kaizen badge color and a text label", () => {
@@ -10,6 +10,13 @@ describe("badge looks", () => {
     expect(conditionLook({ status: "False" })).toEqual({ color: "red", label: "False" });
     expect(conditionLook({ status: "Unknown" })).toEqual({ color: "yellow", label: "Unknown" });
     expect(conditionLook(null)).toEqual({ color: "gray", label: "Pending" });
+  });
+
+  it("labels an infra plane's Ready condition with its reason", () => {
+    expect(readyLook({ status: "True", reason: "Ready" })).toEqual({ color: "green", label: "Ready" });
+    expect(readyLook({ status: "False", reason: "NotVerified" })).toEqual({ color: "yellow", label: "NotVerified" });
+    expect(readyLook({ status: "False", reason: "Deleting" })).toEqual({ color: "gray", label: "Deleting" });
+    expect(readyLook(null)).toEqual({ color: "gray", label: "Pending" });
   });
 
   it("maps component set statuses", () => {

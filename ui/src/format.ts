@@ -25,6 +25,18 @@ export function conditionLook(condition: Condition | null): StatusLook {
   }
 }
 
+/** The look of an infra plane's Ready condition, labelled with its reason. */
+export function readyLook(condition: Condition | null): StatusLook {
+  if (!condition) {
+    return { color: "gray", label: "Pending" };
+  }
+  if (condition.status === "True") {
+    return { color: "green", label: "Ready" };
+  }
+  const label = condition.reason || condition.status;
+  return { color: condition.reason === "Deleting" ? "gray" : "yellow", label };
+}
+
 const setStatusLooks: Record<SetStatus, StatusLook> = {
   Finished: { color: "green", label: "Finished" },
   RollingOut: { color: "blue", label: "Rolling out" },

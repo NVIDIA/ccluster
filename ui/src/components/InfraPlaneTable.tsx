@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Condition, InfraPlaneRow } from "../api";
-import { age, conditionDetail, conditionLook } from "../format";
+import { age, conditionDetail, conditionLook, readyLook } from "../format";
 import { DataTable, EmptyTable, Section, type Column } from "./DataTable";
 import { StatusBadge } from "./StatusBadge";
 
@@ -14,6 +14,10 @@ export function InfraPlaneTable({ rows, showNamespace }: { rows: InfraPlaneRow[]
   const columns: Column<InfraPlaneRow>[] = [
     ...(showNamespace ? [{ header: "Namespace", cell: (row: InfraPlaneRow) => row.namespace }] : []),
     { header: "Name", cell: (row) => row.name, rowHeader: true },
+    {
+      header: "Ready",
+      cell: (row) => <StatusBadge look={readyLook(row.ready)} title={conditionDetail(row.ready)} />,
+    },
     { header: "Domain", cell: (row) => <span className="mono">{row.domain || "—"}</span> },
     { header: "Available", cell: (row) => condition(row.available) },
     { header: "Cluster config", cell: (row) => condition(row.clusterConfigApplied) },

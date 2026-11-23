@@ -104,7 +104,7 @@ The Python and Go programs wait until the control plane has reached the cluster.
 Helm, check it yourself:
 
 ```bash
-kubectl --context "$CP" -n team-a get cclinfraplane edge-1   # wait for CLUSTERCONFIG True
+kubectl --context "$CP" -n team-a get cclinfraplane edge-1 -o wide   # wait for CLUSTERCONFIG True
 ```
 
 `CLUSTERCONFIG` turns `True` once the control plane has connected to the cluster and

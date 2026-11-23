@@ -38,8 +38,8 @@ func TestListInfraPlanesPrintsThePrintColumns(t *testing.T) {
 		}
 		rows := tableRows(out)
 		want := [][]string{
-			{"NAME", "DOMAIN", "AVAILABLE", "CLUSTERCONFIG", "VERIFIED", "DNS", "AGE"},
-			{"edge-1", "edge-1." + namespace + ".example.com", "True", "False", "True", "True"},
+			{"NAME", "READY", "DOMAIN", "DNS", "AGE"},
+			{"edge-1", "ClusterConfigNotApplied", "edge-1." + namespace + ".example.com", "True"},
 			// No status: the domain and condition columns are empty.
 			{"edge-2"},
 		}
@@ -91,7 +91,7 @@ func TestListAllNamespacesAddsTheNamespaceColumn(t *testing.T) {
 		header string
 		name   string
 	}{
-		{"ip", "NAMESPACE NAME DOMAIN AVAILABLE CLUSTERCONFIG VERIFIED DNS AGE", "edge-1"},
+		{"ip", "NAMESPACE NAME READY DOMAIN DNS AGE", "edge-1"},
 		{"cs", "NAMESPACE NAME APPLIED PROGRESS AGE", "base"},
 	} {
 		for _, flag := range []string{"-A", "--all-namespaces"} {
@@ -212,6 +212,7 @@ func TestGetInfraPlaneDescribesIt(t *testing.T) {
 		"Available True (stale) Test Argo CD can reach it",
 		"ClusterConfigApplied False (stale) Test first line second line",
 		"DNSReady True (stale) Test",
+		"Ready False (stale) ClusterConfigNotApplied ClusterConfigApplied is False",
 		"Cluster:",
 		"Verified True Test",
 		"Load balancers:",
@@ -390,6 +391,9 @@ func writeInfraPlaneStatus(t *testing.T, client *cclclient.Client, name string, 
 			"Test", "first line\nsecond line", generation),
 		condition(cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady, metav1.ConditionTrue,
 			"Test", "", generation),
+		condition(cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady, metav1.ConditionFalse,
+			cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterConfigNotApplied,
+			"ClusterConfigApplied is False", generation),
 	)
 	status.WithClusterConfig(cclusterac.CCLClusterConfigStatus().
 		WithConditions(condition(cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified,

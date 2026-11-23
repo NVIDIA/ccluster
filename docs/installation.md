@@ -280,8 +280,8 @@ infra plane is the control-plane cluster itself, and
 `https://<kind cluster name>-control-plane:6443` for another kind cluster.
 
 `register` then waits until the control plane has connected to the cluster and written its
-domain there, which `kubectl get cclinfraplane -n team-a` shows as `CLUSTERCONFIG True`, and
-prints the domain. `AVAILABLE` alone does not mean it can connect. If `CLUSTERCONFIG` is not
+domain there, which `kubectl get cclinfraplane -n team-a -o wide` shows as
+`CLUSTERCONFIG True`, and prints the domain. `AVAILABLE` alone does not mean it can connect. If `CLUSTERCONFIG` is not
 `True` within two minutes, `register` fails with the reason, such as `ClusterUnreachable`
 for a `--server` the control plane cannot reach, or `CRDMissing` when the infra-plane chart
 is not installed. The registration stays in place: fix the cause and run `register` again.

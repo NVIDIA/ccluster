@@ -28,9 +28,15 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// external-dns marks the records read before it writes them, so True does not
 	// mean they were published: the provider may reject them, or external-dns may
 	// skip them.
-	// - "Deleting": set only on a CCLInfraPlane being deleted, True while
-	// CCLComponentSets still reference it. The plane keeps its registration until
-	// they are gone, so that their teardown can still reach the cluster.
+	// - "Ready": the summary of the others. True when Available and
+	// ClusterConfigApplied are True for the current generation and the infra-plane
+	// operator has verified the cluster against the plane's domain. Otherwise False,
+	// its reason naming the first of those that is not, or Deleting while the plane is
+	// being deleted: it then keeps its registration until no CCLComponentSet
+	// references it, so that their teardown can still reach the cluster. DNSReady
+	// does not count. Nothing waits for Ready: a CCLComponentSet needs only
+	// Available, since the components that the cluster is verified for are
+	// themselves deployed by one.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`

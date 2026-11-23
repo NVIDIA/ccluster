@@ -93,22 +93,22 @@ func printComponentSetList(out io.Writer, list *cclusternvidiacomv1alpha1.CCLCom
 }
 
 // printInfraPlaneTable prints the columns of kubectl get cclinfraplanes, the CRD's
-// printcolumns, after a NAMESPACE column when withNamespace is set.
+// printcolumns other than the -o wide ones, after a NAMESPACE column when withNamespace
+// is set. ccluster get shows every condition.
 func printInfraPlaneTable(out io.Writer, planes []cclusternvidiacomv1alpha1.CCLInfraPlane, withNamespace bool) error {
 	w := newTable(out)
-	_, _ = fmt.Fprintln(w, namespaceCell("NAMESPACE", withNamespace)+"NAME\tDOMAIN\tAVAILABLE\tCLUSTERCONFIG\tVERIFIED\tDNS\tAGE")
+	_, _ = fmt.Fprintln(w, namespaceCell("NAMESPACE", withNamespace)+"NAME\tREADY\tDOMAIN\tDNS\tAGE")
 	for _, plane := range planes {
 		_, _ = fmt.Fprint(w, namespaceCell(plane.Namespace, withNamespace))
-		verified := ""
-		if plane.Status.ClusterConfig != nil {
-			verified = conditionStatus(plane.Status.ClusterConfig.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
+		ready := ""
+		if c := meta.FindStatusCondition(plane.Status.Conditions,
+			cclusternvidiacomv1alpha1.CCLInfraPlaneConditionReady); c != nil {
+			ready = c.Reason
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			plane.Name,
+			ready,
 			plane.Status.Domain,
-			conditionStatus(plane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable),
-			conditionStatus(plane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied),
-			verified,
 			conditionStatus(plane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady),
 			age(plane.CreationTimestamp))
 	}

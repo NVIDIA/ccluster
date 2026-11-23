@@ -244,10 +244,23 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 
 func TestInfraPlaneConditionsOfAnOlderGenerationArePending(t *testing.T) {
 	plane := infraPlane("ns", "p", 2,
-		cond(v1alpha1.CCLInfraPlaneConditionAvailable, metav1.ConditionFalse, v1alpha1.CCLInfraPlaneReasonSecretNotFound, 1))
+		cond(v1alpha1.CCLInfraPlaneConditionAvailable, metav1.ConditionFalse, v1alpha1.CCLInfraPlaneReasonSecretNotFound, 1),
+		cond(v1alpha1.CCLInfraPlaneConditionReady, metav1.ConditionFalse, v1alpha1.CCLInfraPlaneReasonNotAvailable, 1))
 	row := infraPlaneRow(&plane)
 	if row.Available != nil {
 		t.Errorf("Available = %+v, want nil for a condition of generation 1 on generation 2", row.Available)
+	}
+	if row.Ready != nil {
+		t.Errorf("Ready = %+v, want nil for a condition of generation 1 on generation 2", row.Ready)
+	}
+}
+
+func TestInfraPlaneRowShowsReady(t *testing.T) {
+	plane := infraPlane("ns", "p", 2,
+		cond(v1alpha1.CCLInfraPlaneConditionReady, metav1.ConditionFalse, v1alpha1.CCLInfraPlaneReasonDeleting, 2))
+	row := infraPlaneRow(&plane)
+	if row.Ready == nil || row.Ready.Reason != v1alpha1.CCLInfraPlaneReasonDeleting {
+		t.Errorf("Ready = %+v, want reason %s", row.Ready, v1alpha1.CCLInfraPlaneReasonDeleting)
 	}
 }
 

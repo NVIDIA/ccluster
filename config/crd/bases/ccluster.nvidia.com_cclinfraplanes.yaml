@@ -15,23 +15,26 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Ready
+      type: string
     - jsonPath: .status.domain
       name: Domain
       type: string
     - jsonPath: .status.conditions[?(@.type=="Available")].status
       name: Available
+      priority: 1
       type: string
     - jsonPath: .status.conditions[?(@.type=="ClusterConfigApplied")].status
       name: ClusterConfig
+      priority: 1
       type: string
     - jsonPath: .status.clusterConfig.conditions[?(@.type=="Verified")].status
       name: Verified
+      priority: 1
       type: string
     - jsonPath: .status.conditions[?(@.type=="DNSReady")].status
       name: DNS
-      type: string
-    - jsonPath: .status.conditions[?(@.type=="Deleting")].reason
-      name: Deleting
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -253,9 +256,15 @@ spec:
                       external-dns marks the records read before it writes them, so True does not
                       mean they were published: the provider may reject them, or external-dns may
                       skip them.
-                    - "Deleting": set only on a CCLInfraPlane being deleted, True while
-                      CCLComponentSets still reference it. The plane keeps its registration until
-                      they are gone, so that their teardown can still reach the cluster.
+                    - "Ready": the summary of the others. True when Available and
+                      ClusterConfigApplied are True for the current generation and the infra-plane
+                      operator has verified the cluster against the plane's domain. Otherwise False,
+                      its reason naming the first of those that is not, or Deleting while the plane is
+                      being deleted: it then keeps its registration until no CCLComponentSet
+                      references it, so that their teardown can still reach the cluster. DNSReady
+                      does not count. Nothing waits for Ready: a CCLComponentSet needs only
+                      Available, since the components that the cluster is verified for are
+                      themselves deployed by one.
 
                   The status of each condition is one of True, False, or Unknown.
                 items:

@@ -596,9 +596,9 @@ var _ = Describe("Manager", Ordered, func() {
 				"-n", crNamespace, "--wait=false"))
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func(g Gomega) {
-				g.Expect(infraPlaneCondition(planeName, conditionDeleting, "reason")).
-					To(Equal("ComponentSetsRemaining"))
-				g.Expect(infraPlaneCondition(planeName, conditionDeleting, "message")).
+				g.Expect(infraPlaneCondition(planeName, conditionReady, "reason")).
+					To(Equal("Deleting"))
+				g.Expect(infraPlaneCondition(planeName, conditionReady, "message")).
 					To(ContainSubstring(componentSetName))
 			}, 2*time.Minute).Should(Succeed())
 			Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
@@ -692,11 +692,12 @@ var _ = Describe("Manager", Ordered, func() {
 					g.Expect(clusterConfigField(planeName, ".domain")).To(Equal(infraPlaneDomain(planeName)))
 				}, crossClusterTimeout).Should(Succeed())
 
-				By("copying the infra-plane operator's verdict onto the CCLInfraPlane")
+				By("copying the infra-plane operator's verdict onto the CCLInfraPlane, and into Ready")
 				Eventually(func(g Gomega) {
 					g.Expect(clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].status`)).To(Equal("False"))
 					expectBaseComponentsFailing(g,
 						clusterConfigField(planeName, `.conditions[?(@.type=="Verified")].message`))
+					g.Expect(infraPlaneCondition(planeName, conditionReady, "reason")).To(Equal("NotVerified"))
 				}, crossClusterTimeout).Should(Succeed())
 
 				// Registered first, so a failed install is removed too.
@@ -2358,7 +2359,7 @@ const (
 	conditionAvailable            = "Available"
 	conditionClusterConfigApplied = "ClusterConfigApplied"
 	conditionDNSReady             = "DNSReady"
-	conditionDeleting             = "Deleting"
+	conditionReady                = "Ready"
 )
 
 // applyManifest renders one of the Go-templated manifests under test/e2e/testdata with data

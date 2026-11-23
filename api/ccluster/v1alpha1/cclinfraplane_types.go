@@ -47,9 +47,15 @@ type CCLInfraPlaneStatus struct {
 	//     external-dns marks the records read before it writes them, so True does not
 	//     mean they were published: the provider may reject them, or external-dns may
 	//     skip them.
-	//   - "Deleting": set only on a CCLInfraPlane being deleted, True while
-	//     CCLComponentSets still reference it. The plane keeps its registration until
-	//     they are gone, so that their teardown can still reach the cluster.
+	//   - "Ready": the summary of the others. True when Available and
+	//     ClusterConfigApplied are True for the current generation and the infra-plane
+	//     operator has verified the cluster against the plane's domain. Otherwise False,
+	//     its reason naming the first of those that is not, or Deleting while the plane is
+	//     being deleted: it then keeps its registration until no CCLComponentSet
+	//     references it, so that their teardown can still reach the cluster. DNSReady
+	//     does not count. Nothing waits for Ready: a CCLComponentSet needs only
+	//     Available, since the components that the cluster is verified for are
+	//     themselves deployed by one.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
@@ -92,10 +98,10 @@ const (
 	// CCLInfraPlaneConditionDNSReady reports on the DNSEndpoint that has external-dns
 	// publish the plane's wildcard records.
 	CCLInfraPlaneConditionDNSReady = "DNSReady"
-	// CCLInfraPlaneConditionDeleting reports, on a CCLInfraPlane being deleted, the
-	// CCLComponentSets that still reference it. The plane keeps its registration until
-	// they are gone, so that their teardown can still reach the cluster.
-	CCLInfraPlaneConditionDeleting = "Deleting"
+	// CCLInfraPlaneConditionReady summarizes the others: whether the cluster is
+	// registered, carries the plane's domain and passes verification, or, while the
+	// plane is being deleted, that it is.
+	CCLInfraPlaneConditionReady = "Ready"
 )
 
 // The reasons of the CCLInfraPlane conditions.
@@ -125,19 +131,23 @@ const (
 	CCLInfraPlaneReasonDNSEndpointConflict   = "DNSEndpointConflict"
 	CCLInfraPlaneReasonDNSEndpointError      = "DNSEndpointError"
 
-	// Deleting.
-	CCLInfraPlaneReasonComponentSetsRemaining = "ComponentSetsRemaining"
+	// Ready. A False Ready reason names what holds the plane back; NotAvailable, above,
+	// is one of them.
+	CCLInfraPlaneReasonReady                   = "Ready"
+	CCLInfraPlaneReasonClusterConfigNotApplied = "ClusterConfigNotApplied"
+	CCLInfraPlaneReasonNotVerified             = "NotVerified"
+	CCLInfraPlaneReasonDeleting                = "Deleting"
 )
 
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.status.domain`
-// +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
-// +kubebuilder:printcolumn:name="ClusterConfig",type=string,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
-// +kubebuilder:printcolumn:name="Verified",type=string,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
+// +kubebuilder:printcolumn:name="Available",type=string,priority=1,JSONPath=`.status.conditions[?(@.type=="Available")].status`
+// +kubebuilder:printcolumn:name="ClusterConfig",type=string,priority=1,JSONPath=`.status.conditions[?(@.type=="ClusterConfigApplied")].status`
+// +kubebuilder:printcolumn:name="Verified",type=string,priority=1,JSONPath=`.status.clusterConfig.conditions[?(@.type=="Verified")].status`
 // +kubebuilder:printcolumn:name="DNS",type=string,JSONPath=`.status.conditions[?(@.type=="DNSReady")].status`
-// +kubebuilder:printcolumn:name="Deleting",type=string,JSONPath=`.status.conditions[?(@.type=="Deleting")].reason`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63 && self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')",message="name must be a DNS label: at most 63 lowercase letters, digits and '-', starting and ending with a letter or digit"
 

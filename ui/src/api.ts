@@ -43,6 +43,8 @@ export interface InfraPlaneRow {
   namespace: string;
   name: string;
   domain?: string;
+  /** The summary: its reason says what holds the plane back, or Deleting. */
+  ready: Condition | null;
   available: Condition | null;
   clusterConfigApplied: Condition | null;
   verified: Condition | null;
