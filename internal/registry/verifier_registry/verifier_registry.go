@@ -40,9 +40,15 @@ import (
 // component is installed and configured for that cluster. It never consults Argo CD or
 // Helm release state, so it holds whichever of the two installed the chart: the control
 // plane through a CCLComponentSet, or a user with helm. ctx is the reconcile context
-// every controller-runtime read needs; r is a cached, read-only client; cfg is the
-// cluster's declared configuration, for checks that compare a component against the
-// cluster's domain.
+// every controller-runtime read needs; r is a read-only client; cfg is the cluster's
+// declared configuration, for checks that compare a component against the cluster's
+// domain.
+//
+// r reads from the manager's cache, except for the kinds the ip operator lists in
+// manager.Options.UncachedObjects, which it reads from the API server. Leases are the
+// only such kind: caching them would watch every node's heartbeat Lease, and
+// catalogs.VerifyLeaseRenewed lists them by name, which the cache cannot serve. A check
+// that needs a kind read uncached adds it there; a cached kind is watched cluster-wide.
 //
 // A check returns nil when the component is installed and configured, and otherwise an
 // error saying why not. The error text is shown to users in the CCLClusterConfig's

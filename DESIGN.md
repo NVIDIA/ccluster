@@ -521,7 +521,8 @@ changes, so the operator's own status writes do not rerun every Verifier. Servic
 exception to not watching: every API server serves them, so the labelled ones are watched,
 without a predicate, and an address the cloud provider assigns reaches
 `status.loadBalancers` at once. The manager's cache is not scoped: it holds every Service,
-as it holds every object of each kind read, so a Verifier reading a Service sees them all.
+as it holds every object of each cached kind read, so a Verifier reading a Service sees
+them all.
 Leases are the exception to caching: every node renews one every few seconds, as does
 every leader-elected controller, so the client reads Leases from the API server, listed
 by name, once per pass. A Verifier checks a controller this way when the controller
