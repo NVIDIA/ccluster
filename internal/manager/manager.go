@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -52,6 +53,10 @@ type Options struct {
 	// rarely and selectively, by a field selector the cache cannot serve without an
 	// index, and too numerous or too busy to cache cluster-wide. May be nil.
 	UncachedObjects []client.Object
+
+	// Cache configures the manager's cache, such as a transform that trims objects before
+	// they are stored. The zero value caches every object of each watched kind in full.
+	Cache cache.Options
 
 	// SetupControllers registers the operator's controllers with the manager.
 	// May be nil for an operator that has no controllers yet.
@@ -171,6 +176,7 @@ func Run(opts Options) error {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 opts.Scheme,
+		Cache:                  opts.Cache,
 		Client:                 client.Options{Cache: &client.CacheOptions{DisableFor: opts.UncachedObjects}},
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,

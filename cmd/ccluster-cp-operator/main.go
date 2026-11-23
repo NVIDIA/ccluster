@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
@@ -161,6 +162,8 @@ func main() {
 		LeaderElectionID: "cp.ccluster.nvidia.com",
 		Scheme:           scheme,
 		ValidateFlags:    validateFlags,
+		// The operator never reads managedFields, so the cache does not keep them.
+		Cache:            cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
 		SetupControllers: setupControllers,
 	})
 	if err != nil {
