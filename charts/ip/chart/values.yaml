@@ -60,6 +60,7 @@ manager:
 
   ## Resource limits and requests
   ##
+  ## The operator sets the Go runtime's memory limit to 90% of the container's.
   resources:
     limits:
       cpu: 500m

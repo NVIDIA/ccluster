@@ -105,15 +105,7 @@ manager:
 
   ## Full EnvVar entries, rendered before envOverrides, for variables that need more
   ## than a value, such as one read from a Secret.
-  ##
-  ## GOMEMLIMIT tells the Go runtime the container's memory limit, in bytes, so the
-  ## garbage collector runs more often as memory nears the limit. Setting env replaces
-  ## this whole list: keep the entry.
-  env:
-    - name: GOMEMLIMIT
-      valueFrom:
-        resourceFieldRef:
-          resource: limits.memory
+  env: []
 
   ## Arguments. Only the operator-agnostic flags, which have no variable. Setting args
   ## replaces this whole list.
@@ -147,7 +139,9 @@ manager:
   ## Resource limits and requests
   ##
   ## The manager caches every Secret and Application in the cluster, so its memory
-  ## grows with the cluster, not only with ccluster's own objects.
+  ## grows with the cluster, not only with ccluster's own objects. The operator sets
+  ## the Go runtime's memory limit to 90% of the container's; a GOMEMLIMIT in
+  ## envOverrides, such as 400MiB, replaces it.
   resources:
     limits:
       cpu: 500m
