@@ -93,11 +93,7 @@ func runServer(ctx context.Context, out, errOut io.Writer, opts serverOptions) e
 	if err := checkLoopback(opts.listen); err != nil {
 		return err
 	}
-	kubeContext, err := loadControlPlane()
-	if err != nil {
-		return err
-	}
-	cfg, err := restConfig(kubeContext)
+	kubeContext, cfg, err := controlPlaneRESTConfig()
 	if err != nil {
 		return err
 	}

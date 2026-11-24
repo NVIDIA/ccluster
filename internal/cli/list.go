@@ -60,7 +60,7 @@ With --output yaml or json, prints the CCLInfraPlaneList or CCLComponentSetList 
 			}
 			cmd.SilenceUsage = true
 
-			cfg, err := controlPlaneRESTConfig()
+			_, cfg, err := controlPlaneRESTConfig()
 			if err != nil {
 				return err
 			}

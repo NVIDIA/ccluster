@@ -142,4 +142,11 @@ func TestServerRejects(t *testing.T) {
 		setUp(t)
 		expectError(t, "run ccluster init first", "server", "--no-browser")
 	})
+
+	t.Run("a control plane without the ccluster API", func(t *testing.T) {
+		writeConfig(t, setUp(t), "controlPlane:\n  context: bare\n")
+		expectError(t,
+			"control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+			"server", "--no-browser", "--listen", "127.0.0.1:0")
+	})
 }
