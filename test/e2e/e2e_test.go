@@ -963,7 +963,7 @@ type: kubernetes.io/service-account-token
 			cmd.Stdin = strings.NewReader(argoCDCRDs)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to install the Argo CD CRDs")
-			// No DeferCleanup for the CRDs here: the pruning spec that follows needs
+			// No DeferCleanup for the CRDs here: the removal spec that follows needs
 			// them and the watches this restart registers, and a second restart would
 			// double the cost. That spec removes them; a run that fails here skips it
 			// (Ordered), and the e2e cluster is deleted afterwards regardless.
@@ -1120,11 +1120,11 @@ type: kubernetes.io/service-account-token
 		// hand-written Application status - the Application CRD has no status
 		// subresource, so a plain merge patch sets it - which is what makes the two
 		// spec-change paths reachable cheaply: a second component released after the
-		// first converges, then pruned when it is removed from the spec.
-		It("should prune the Application of a component removed from the spec", func() {
-			const componentSetName = "e2e-prune"
-			const planeName = "e2e-prune-plane"
-			const credentialsName = "e2e-prune-plane-credentials"
+		// first converges, then deleted when it is removed from the spec.
+		It("should delete the Application of a component removed from the spec", func() {
+			const componentSetName = "e2e-removal"
+			const planeName = "e2e-removal-plane"
+			const credentialsName = "e2e-removal-plane-credentials"
 			rolloutsApp := componentSetName + "-argo-rollouts"
 			kedaApp := componentSetName + "-keda"
 
@@ -1186,8 +1186,8 @@ type: kubernetes.io/service-account-token
 				g.Expect(err).NotTo(HaveOccurred())
 			}, 2*time.Minute).Should(Succeed())
 			Eventually(func(g Gomega) {
-				g.Expect(applicationExists(kedaApp)).To(BeFalse(), "keda Application not pruned")
-				g.Expect(applicationExists(rolloutsApp)).To(BeTrue(), "argo-rollouts Application pruned too")
+				g.Expect(applicationExists(kedaApp)).To(BeFalse(), "keda Application not deleted")
+				g.Expect(applicationExists(rolloutsApp)).To(BeTrue(), "argo-rollouts Application deleted too")
 				g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
 					To(Equal("RolloutComplete"))
 			}, 2*time.Minute).Should(Succeed())

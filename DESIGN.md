@@ -892,7 +892,7 @@ operator writes nothing; Argo CD autosync handles that repository change.
 
 Terminating Applications are excluded from this reasoning (`liveApplications`): one still
 holds its cascade finalizer while Argo CD uninstalls the chart, and counting it would let a
-pruned component hold the rollout open, or make a re-added one look already deployed.
+removed component hold the rollout open, or make a re-added one look already deployed.
 
 ### Removed components go last, in reverse
 
@@ -901,10 +901,10 @@ an ExternalSecret producer replaced by a renamed one, `[secrets-v1, workload]` �
 `[secrets-v2, workload']`. Deleting `secrets-v1`'s Application at once would delete its
 ExternalSecret through the cascade finalizer, and the Secret with it, while `workload` pods
 still on the old spec need that Secret to restart (`CreateContainerConfigError`). So
-`pruneNext` deletes a removed component's Application only after every component in the
-spec is released and `finished`. This is Argo CD's `PruneLast` applied to whole
-Applications. It also means a rename never leaves the cluster with neither the old nor the
-new Application.
+`deleteNextRemoved` deletes a removed component's Application only after every component in
+the spec is released and `finished`. This is the idea of Argo CD's `PruneLast` one level up:
+Argo CD prunes the objects a chart no longer renders, here whole Applications go. It also
+means a rename never leaves the cluster with neither the old nor the new Application.
 
 Removed components then go one at a time, like teardown below: the highest
 `ccluster.nvidia.com/wave` label first, and the next only once no removed Application is
@@ -943,9 +943,25 @@ and `Deleting` once the operator has deleted the Application; `comparedToMatches
 as there is no desired spec to compare with. `componentHealthStatuses` lists it too, in the
 same order, until its Application is gone. It is judged by `catalogs.DefaultHealth`: a
 chart's own function is looked up by the component's spec entry, which a removed component
-no longer has. A pass that fails validation deletes nothing, as it writes
-nothing; `Progressing` then carries the `Validated` reason for a removal the operator has
-not started.
+no longer has.
+
+Removal does not wait for validation. A pass that fails it writes no Application, but once
+every component has finished it deletes the next removed component's Application as usual:
+a delete releases nothing onto a cluster, and waiting would keep removed components
+installed for as long as a referenced CCLInfraPlane is not `Available`. `Progressing`
+reports `ComponentRemoving` for these removals; it carries the `Validated` reason only for a
+component the operator cannot write.
+
+The wait for every component to finish still holds, so removal still stops while
+validation fails whenever a component has not finished. That includes a component the
+operator cannot write until validation passes: one not yet released, or one whose spec
+changed and is not yet written. Neither can finish, so the removal waits for the
+validation, not only for the component. It also includes a component whose plane cannot be
+reached, which Argo CD does not report `Synced`. Lifting the wait would delete what pods
+still on an old spec may use, the ExternalSecret case above, at the very time the new spec
+cannot be written. Three things end it: the CCLInfraPlane becoming `Available` again, an
+edit that drops the components referencing it, or deleting the CCLComponentSet, whose
+teardown does not wait for any component to finish.
 
 A removed component added back before its Application is deleted is in the spec again:
 nothing is deleted, and its Application is written in order like any other. One added back
@@ -1018,7 +1034,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The current spec has been written for the components the rollout has reached; the message counts them (§5). Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
-| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True/ComponentRemoving` once every component has finished and the Applications of removed components are being deleted, naming the one being waited on; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write or delete its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy, and no removed component's Application is left. |
+| `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True/ComponentRemoving` once every component has finished and the Applications of removed components are being deleted, naming the one being waited on; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy, and no removed component's Application is left. |
 | `CCLClusterConfig` | `Verified` | Every `catalogs/cluster_base` component is installed in the infra-plane cluster and configured for it, and no two LoadBalancers share a name (§3a). Reasons: `ComponentsVerified`, `ComponentsNotVerified`, `LoadBalancerConflict`. |
 
 `ApplicationCRDMissing` is reported rather than returned as an error: Argo CD may simply not

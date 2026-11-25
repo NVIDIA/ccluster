@@ -183,12 +183,13 @@ While rollout continues, the reason is `WaveSyncing`, or `WaveSyncFailed` when t
 sync of a component's current spec failed. The operator does not retry a failed sync; a
 later successful sync of that Application in Argo CD clears `WaveSyncFailed` and resumes
 the rollout. When validation failed and the component being waited on needs the operator
-to write or delete its Application, the reason is the `Validated` condition's, such as
-`InfraPlaneNotFound`: the operator writes and deletes nothing until validation passes.
+to write its Application, the reason is the `Validated` condition's, such as
+`InfraPlaneNotFound`: the operator writes nothing until validation passes.
 Updates follow list order like the first rollout: a component's new spec is written only
 after every component before it has finished on its own current spec. The Applications of
 components removed from the spec are deleted last, after every remaining component has
-finished, one at a time in reverse order; the reason is `ComponentRemoving` meanwhile.
+finished, one at a time in reverse order, whether validation passed or not; the reason is
+`ComponentRemoving` meanwhile.
 
 `delete_component_set` returns as soon as the delete is accepted. The operator's finalizer
 then uninstalls the set's charts in reverse order, one at a time, so the object stays in

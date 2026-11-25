@@ -81,11 +81,11 @@ func (r *ComponentHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// removed component's objects run until Argo CD has uninstalled them, so it is judged
 	// while its Application is terminating too.
 	applications := ownedApplications(&componentSet, liveApplications(all))
-	prunable := prunableApplications(&componentSet, all)
-	maps.Copy(applications, prunable)
+	removed := removedApplications(&componentSet, all)
+	maps.Copy(applications, removed)
 	healths := judgeAll(ctx, r.ArgoCD, r.Health, &componentSet, applications)
 
-	statuses := r.healthStatuses(&componentSet, healths, prunable)
+	statuses := r.healthStatuses(&componentSet, healths, removed)
 	if !sameHealthStatuses(statuses, componentSet.Status.ComponentHealthStatuses) {
 		base := componentSet.DeepCopy()
 		componentSet.Status.ComponentHealthStatuses = statuses
@@ -100,12 +100,12 @@ func (r *ComponentHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // healthStatuses builds status.componentHealthStatuses from this pass's healths, in the
 // order of componentSyncStatuses: the components in the spec in spec order, then the
-// removed ones in pruneOrder. A component whose health is unchanged keeps its
+// removed ones in removalOrder. A component whose health is unchanged keeps its
 // lastTransitionTime.
 func (r *ComponentHealthReconciler) healthStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	healths componentHealths,
-	prunable map[string]*argocdv1alpha1.Application,
+	removed map[string]*argocdv1alpha1.Application,
 ) []cclusternvidiacomv1alpha1.ComponentHealthStatus {
 	previous := make(map[string]cclusternvidiacomv1alpha1.ComponentHealthStatus,
 		len(componentSet.Status.ComponentHealthStatuses))
@@ -113,11 +113,11 @@ func (r *ComponentHealthReconciler) healthStatuses(
 		previous[status.Name] = status
 	}
 
-	names := make([]string, 0, len(componentSet.Spec.Components)+len(prunable))
+	names := make([]string, 0, len(componentSet.Spec.Components)+len(removed))
 	for _, component := range componentSet.Spec.Components {
 		names = append(names, component.Name)
 	}
-	for _, name := range pruneOrder(prunable) {
+	for _, name := range removalOrder(removed) {
 		names = append(names, componentName(componentSet.Name, name))
 	}
 

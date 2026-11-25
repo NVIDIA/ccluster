@@ -169,9 +169,9 @@ func applications(byComponent map[string]*argocdv1alpha1.Application) map[string
 	return out
 }
 
-// prunableApp builds the Application of a component no longer in the spec, carrying the wave
+// removedApp builds the Application of a component no longer in the spec, carrying the wave
 // label it was last written with.
-func prunableApp(component, wave string, terminating bool) *argocdv1alpha1.Application {
+func removedApp(component, wave string, terminating bool) *argocdv1alpha1.Application {
 	application := &argocdv1alpha1.Application{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   applicationName(testComponentSetName, component),
@@ -185,10 +185,10 @@ func prunableApp(component, wave string, terminating bool) *argocdv1alpha1.Appli
 	return application
 }
 
-// prunableApps keys prunable Applications by name.
-func prunableApps(prunable ...*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
-	out := make(map[string]*argocdv1alpha1.Application, len(prunable))
-	for _, application := range prunable {
+// removedApps keys removed Applications by name.
+func removedApps(removed ...*argocdv1alpha1.Application) map[string]*argocdv1alpha1.Application {
+	out := make(map[string]*argocdv1alpha1.Application, len(removed))
+	for _, application := range removed {
 		out[application.Name] = application
 	}
 	return out
@@ -400,8 +400,8 @@ func TestRolloutStatus(t *testing.T) {
 		name       string
 		components []string
 		existing   map[string]*argocdv1alpha1.Application
-		// prunable holds the Applications of components no longer in the spec.
-		prunable map[string]*argocdv1alpha1.Application
+		// removed holds the Applications of components no longer in the spec.
+		removed map[string]*argocdv1alpha1.Application
 		// invalid is the reason validation failed with on this pass, empty if it passed.
 		invalid     string
 		wantStatus  metav1.ConditionStatus
@@ -551,7 +551,7 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": app(argocdv1alpha1.HealthStatusDegraded, argocdv1alpha1.SyncStatusSynced),
 			}),
-			prunable:    prunableApps(prunableApp("x", "2", false)),
+			removed:     removedApps(removedApp("x", "2", false)),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Wave 1 (component "a") has health "Degraded"`,
@@ -562,7 +562,7 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}),
-			prunable:    prunableApps(prunableApp("x", "2", false), prunableApp("y", "3", false)),
+			removed:     removedApps(removedApp("x", "2", false), removedApp("y", "3", false)),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
 			wantMessage: `Waiting to delete Application "test-componentset-y"`,
@@ -574,24 +574,23 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}),
-			prunable:    prunableApps(prunableApp("x", "2", true), prunableApp("y", "3", false)),
+			removed:     removedApps(removedApp("x", "2", true), removedApp("y", "3", false)),
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
 			wantMessage: `Waiting for Argo CD to delete Application "test-componentset-x"`,
 		},
 		{
-			// The operator deletes nothing on a pass that failed validation.
-			name:       "names a failed validation for a removal the operator has not started",
+			// The operator deletes on a pass that failed validation too (DESIGN.md §5).
+			name:       "names the next removal when validation failed",
 			components: []string{"a"},
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}),
-			prunable:   prunableApps(prunableApp("x", "2", false)),
-			invalid:    cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
-			wantStatus: metav1.ConditionTrue,
-			wantReason: cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
-			wantMessage: `Application "test-componentset-x", whose component is no longer in the spec, ` +
-				`cannot be deleted until validation passes: ` + invalidMessage,
+			removed:     removedApps(removedApp("x", "2", false)),
+			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
+			wantMessage: `Waiting to delete Application "test-componentset-x"`,
 		},
 		{
 			// Argo CD keeps deleting what the operator already deleted.
@@ -600,7 +599,7 @@ func TestRolloutStatus(t *testing.T) {
 			existing: applications(map[string]*argocdv1alpha1.Application{
 				"a": healthyApp(),
 			}),
-			prunable:    prunableApps(prunableApp("x", "2", true)),
+			removed:     removedApps(removedApp("x", "2", true)),
 			invalid:     cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotFound,
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
@@ -629,7 +628,7 @@ func TestRolloutStatus(t *testing.T) {
 				validation = invalidMessage
 			}
 			status, reason, message := reconciler.rolloutStatus(
-				set, test.existing, test.prunable, test.invalid, validation, nil)
+				set, test.existing, test.removed, test.invalid, validation, nil)
 
 			if status != test.wantStatus {
 				t.Errorf("status = %q, want %q", status, test.wantStatus)

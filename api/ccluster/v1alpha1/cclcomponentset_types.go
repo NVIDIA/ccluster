@@ -220,8 +220,8 @@ const (
 	CCLComponentSetReasonInfraPlaneNotFound = "InfraPlaneNotFound"
 	CCLComponentSetReasonInfraPlaneNotReady = "InfraPlaneNotReady"
 
-	// Progressing. When validation failed and the component being waited on needs an
-	// Application written or deleted, Progressing carries the Validated reason instead.
+	// Progressing. When validation failed and the component being waited on needs its
+	// Application written, Progressing carries the Validated reason instead.
 	CCLComponentSetReasonWaveSyncing     = "WaveSyncing"
 	CCLComponentSetReasonWaveSyncFailed  = "WaveSyncFailed"
 	CCLComponentSetReasonRolloutComplete = "RolloutComplete"

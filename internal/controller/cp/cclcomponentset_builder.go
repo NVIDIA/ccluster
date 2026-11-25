@@ -188,6 +188,22 @@ func (r *CCLComponentSetReconciler) finished(
 		healthy(healths.of(component.Name, application).Status)
 }
 
+// everyComponentFinished reports whether every component in the spec has finished on
+// applications, the Applications read before the pass.
+func (r *CCLComponentSetReconciler) everyComponentFinished(
+	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
+	applications map[string]*argocdv1alpha1.Application,
+	healths componentHealths,
+) bool {
+	for _, component := range componentSet.Spec.Components {
+		application := applications[applicationName(componentSet.Name, component.Name)]
+		if !r.finished(componentSet, component, application, healths) {
+			return false
+		}
+	}
+	return true
+}
+
 // currentSpecSynced reports whether Argo CD has synced the current spec, not only
 // whether sync status is Synced. That means four things: the Application has the spec
 // the operator writes, Argo CD compared that spec, no operation runs, and the last sync
@@ -256,7 +272,7 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 		application.Labels[labelComponentSetName] = componentSet.Name
 
 		// The rollout position, which kubectl shows with -L. Once the component leaves the
-		// spec, this is the only record of where it was, and pruneOrder orders by it.
+		// spec, this is the only record of where it was, and removalOrder orders by it.
 		application.Labels[labelWave] = strconv.Itoa(wave)
 
 		// Deleting the Application must also uninstall its chart.
@@ -272,61 +288,62 @@ func (r *CCLComponentSetReconciler) createOrPatchApplication(
 	return result, err
 }
 
-// pruneNext deletes one of the prunable Applications, and reports whether it deleted
-// one. prunable is what prunableApplications returns, terminating ones included.
-// applyComponents calls it only once every component in the spec has finished;
-// teardownNext calls it before it deletes any of them.
+// deleteNextRemoved deletes the Application of one removed component, and reports whether
+// it deleted one. removed is what removedApplications returns, terminating ones included.
+// applyComponents, and Reconcile on a pass that failed validation, call it only once
+// every component in the spec has finished; teardownNext calls it before it deletes any
+// of them.
 //
 // Removal waits for that because a removed component can still serve one that remains:
 // an ExternalSecret producer replaced by a new one keeps the old Secret in place for pods
 // that have not restarted on the new one yet. Removed components then go in reverse, one at
 // a time, for the reason teardownNext gives. Their spec positions are gone, so the wave
 // label they were last written with orders them.
-func (r *CCLComponentSetReconciler) pruneNext(
+func (r *CCLComponentSetReconciler) deleteNextRemoved(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
-	prunable map[string]*argocdv1alpha1.Application,
+	removed map[string]*argocdv1alpha1.Application,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
 
-	if len(prunable) == 0 {
+	if len(removed) == 0 {
 		return false, nil
 	}
-	if terminating := terminatingName(prunable); terminating != "" {
+	if terminating := terminatingName(removed); terminating != "" {
 		log.V(1).Info("Skipped deleting the next Application while one is terminating",
 			"application", terminating, "namespace", componentSet.Namespace)
 		return false, nil
 	}
 
-	name := pruneOrder(prunable)[0]
-	if err := r.Delete(ctx, prunable[name]); client.IgnoreNotFound(err) != nil {
+	name := removalOrder(removed)[0]
+	if err := r.Delete(ctx, removed[name]); client.IgnoreNotFound(err) != nil {
 		return false, err
 	}
 	log.Info("Deleted Argo CD Application for a removed component", "application", name,
-		"namespace", componentSet.Namespace, "wave", prunable[name].Labels[labelWave])
+		"namespace", componentSet.Namespace, "wave", removed[name].Labels[labelWave])
 	return true, nil
 }
 
-// prunableApplications returns componentSet's own Applications whose component is no longer
+// removedApplications returns componentSet's own Applications whose component is no longer
 // in the spec, terminating ones included.
-func prunableApplications(
+func removedApplications(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
 ) map[string]*argocdv1alpha1.Application {
-	prunable := ownedApplications(componentSet, applications)
+	removed := ownedApplications(componentSet, applications)
 	for _, component := range componentSet.Spec.Components {
-		delete(prunable, applicationName(componentSet.Name, component.Name))
+		delete(removed, applicationName(componentSet.Name, component.Name))
 	}
-	return prunable
+	return removed
 }
 
-// pruneOrder lists the Applications of removed components in the order they are deleted:
+// removalOrder lists the Applications of removed components in the order they are deleted:
 // the highest wave label first. One whose label is missing or not a position goes after
 // every labelled one. Equal waves, and unlabelled Applications, go in name order.
-func pruneOrder(prunable map[string]*argocdv1alpha1.Application) []string {
-	names := sortedNames(prunable)
+func removalOrder(removed map[string]*argocdv1alpha1.Application) []string {
+	names := sortedNames(removed)
 	sort.SliceStable(names, func(i, j int) bool {
-		return labelledWave(prunable[names[i]]) > labelledWave(prunable[names[j]])
+		return labelledWave(removed[names[i]]) > labelledWave(removed[names[j]])
 	})
 	return names
 }
@@ -343,7 +360,7 @@ func labelledWave(application *argocdv1alpha1.Application) int {
 
 // teardownNext removes one Application and reports how many of componentSet's
 // Applications are still present. Those of removed components go first, in the order
-// pruneNext uses; then the rest, highest position first.
+// deleteNextRemoved uses; then the rest, highest position first.
 //
 // Components are deployed in order because a later one may depend on an earlier one, so
 // they have to come down the other way round: a component that owns CRDs must outlive
@@ -386,8 +403,8 @@ func (r *CCLComponentSetReconciler) teardownNext(
 	// A removal still waiting, or one from a spec edited during the delete, finishes first:
 	// a removed component depending on a remaining one is the more common case. DESIGN.md
 	// §5 gives the case this order gets wrong.
-	pruned, err := r.pruneNext(ctx, componentSet, prunableApplications(componentSet, owned))
-	if err != nil || pruned {
+	deleted, err := r.deleteNextRemoved(ctx, componentSet, removedApplications(componentSet, owned))
+	if err != nil || deleted {
 		return len(owned), err
 	}
 
@@ -461,7 +478,7 @@ func listApplications(
 // liveApplications drops the Applications that are terminating.
 //
 // One of those is not a live release: its cascade finalizer keeps the object around while
-// Argo CD uninstalls the chart, and counting it would let a pruned component hold the
+// Argo CD uninstalls the chart, and counting it would let a removed component hold the
 // rollout open, or make a re-added one look already deployed.
 func liveApplications(
 	applications map[string]*argocdv1alpha1.Application,
@@ -523,15 +540,15 @@ func (r *CCLComponentSetReconciler) applicationsCondition(
 
 // componentSyncStatuses builds status.componentSyncStatuses from observed Applications:
 // one entry per component in the spec that has a live Application, in spec order, then
-// one per prunable Application, in pruneOrder. Callers replace the field with the result,
-// which drops stale observations and Applications that are gone.
+// one per Application of a removed component, in removalOrder. Callers replace the field
+// with the result, which drops stale observations and Applications that are gone.
 func (r *CCLComponentSetReconciler) componentSyncStatuses(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
-	prunable map[string]*argocdv1alpha1.Application,
+	removed map[string]*argocdv1alpha1.Application,
 ) []cclusternvidiacomv1alpha1.ComponentSyncStatus {
 	statuses := make([]cclusternvidiacomv1alpha1.ComponentSyncStatus, 0,
-		len(componentSet.Spec.Components)+len(prunable))
+		len(componentSet.Spec.Components)+len(removed))
 	for _, component := range componentSet.Spec.Components {
 		application := applications[applicationName(componentSet.Name, component.Name)]
 		if application == nil {
@@ -545,8 +562,8 @@ func (r *CCLComponentSetReconciler) componentSyncStatuses(
 			Message:               application.OperationMessage(),
 		})
 	}
-	for _, name := range pruneOrder(prunable) {
-		application := prunable[name]
+	for _, name := range removalOrder(removed) {
+		application := removed[name]
 		removal := cclusternvidiacomv1alpha1.ComponentRemovalDeletePending
 		if !application.DeletionTimestamp.IsZero() {
 			removal = cclusternvidiacomv1alpha1.ComponentRemovalDeleting
@@ -584,17 +601,18 @@ func currentSyncFailed(app *argocdv1alpha1.Application, desired argocdv1alpha1.A
 // rolloutStatus reports how far through the components the rollout has got: the first
 // component that has not finished holds up everything after it, and once every component
 // has finished, the Applications of removed components hold up completion (see
-// pruneNext). There is no timeout on these waits, so naming what holds the rollout up is
-// the only way a stuck rollout is visible.
+// deleteNextRemoved). There is no timeout on these waits, so naming what holds the
+// rollout up is the only way a stuck rollout is visible.
 //
 // invalidReason and invalidMessage are this pass's validation failure, empty when it
-// passed. The operator writes and deletes no Application on such a pass, so a wait for
-// the operator is reported under that reason, which names what actually holds it up.
-// Waits on Argo CD are reported as usual: Argo CD keeps working on what was written.
+// passed. The operator writes no Application on such a pass, so a wait for a write is
+// reported under that reason, which names what actually holds it up. Removal and the
+// waits on Argo CD are reported as usual: the operator deletes on such a pass too, and
+// Argo CD keeps working on what was written.
 func (r *CCLComponentSetReconciler) rolloutStatus(
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
 	applications map[string]*argocdv1alpha1.Application,
-	prunable map[string]*argocdv1alpha1.Application,
+	removed map[string]*argocdv1alpha1.Application,
 	invalidReason, invalidMessage string,
 	healths componentHealths,
 ) (status metav1.ConditionStatus, reason, message string) {
@@ -607,9 +625,9 @@ func (r *CCLComponentSetReconciler) rolloutStatus(
 			healths, invalidReason, invalidMessage)
 		return metav1.ConditionTrue, reason, message
 	}
-	if len(prunable) > 0 {
-		reason, message := pruneWaitReason(prunable, invalidReason, invalidMessage)
-		return metav1.ConditionTrue, reason, message
+	if len(removed) > 0 {
+		return metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving,
+			removalWaitMessage(removed)
 	}
 	return metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLComponentSetReasonRolloutComplete, fmt.Sprintf(
 		"All %d components have synced the current spec and are healthy",
@@ -689,28 +707,18 @@ func (r *CCLComponentSetReconciler) componentWaitReason(
 	}
 }
 
-// pruneWaitReason returns the Progressing reason and message while the Applications in
-// prunable are not all gone. They go one at a time (see pruneNext), so a terminating one
-// is the one being waited on; otherwise it is the next to delete.
-func pruneWaitReason(
-	prunable map[string]*argocdv1alpha1.Application,
-	invalidReason, invalidMessage string,
-) (reason, message string) {
-	if terminating := terminatingName(prunable); terminating != "" {
-		return cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving, fmt.Sprintf(
-			"Waiting for Argo CD to delete Application %q, whose component is no longer "+
-				"in the spec", terminating)
-	}
-	name := pruneOrder(prunable)[0]
-	if invalidReason != "" {
-		return invalidReason, fmt.Sprintf(
-			"Application %q, whose component is no longer in the spec, cannot be deleted "+
-				"until validation passes: %s", name, invalidMessage)
+// removalWaitMessage returns the Progressing message while the Applications of removed
+// components are not all gone. They go one at a time (see deleteNextRemoved), so a
+// terminating one is the one being waited on; otherwise it is the next to delete.
+func removalWaitMessage(removed map[string]*argocdv1alpha1.Application) string {
+	if terminating := terminatingName(removed); terminating != "" {
+		return fmt.Sprintf("Waiting for Argo CD to delete Application %q, whose component "+
+			"is no longer in the spec", terminating)
 	}
 	// The list behind this report predates this reconcile's delete. The delete's own
 	// event brings the CCLComponentSet back.
-	return cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving, fmt.Sprintf(
-		"Waiting to delete Application %q, whose component is no longer in the spec", name)
+	return fmt.Sprintf("Waiting to delete Application %q, whose component is no longer in "+
+		"the spec", removalOrder(removed)[0])
 }
 
 // withRunningOperationMessage appends the message of the operation Argo CD is running.

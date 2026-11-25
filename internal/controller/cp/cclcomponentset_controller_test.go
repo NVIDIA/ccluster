@@ -882,7 +882,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(progressing.Message).To(ContainSubstring(secondComponent))
 		})
 
-		It("should prune the Application of a component removed from the spec", func() {
+		It("should delete the Application of a component removed from the spec", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)
 			createComponentSet(components())
@@ -901,13 +901,99 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			// Argo CD is not running here, so its cascade finalizer holds the object
 			// in the cluster while it would be uninstalling the chart. Deletion
 			// having been requested is what the operator is responsible for.
-			pruned := &argocdv1alpha1.Application{}
-			Expect(k8sClient.Get(ctx, appKey(secondComponent), pruned)).To(Succeed())
-			Expect(pruned.DeletionTimestamp).NotTo(BeNil())
-			Expect(pruned.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
+			deleted := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, appKey(secondComponent), deleted)).To(Succeed())
+			Expect(deleted.DeletionTimestamp).NotTo(BeNil())
+			Expect(deleted.Finalizers).To(ContainElement(argocdv1alpha1.ResourcesFinalizer))
 
 			By("leaving the surviving component alone")
 			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
+		})
+
+		// Removal waits for the remaining components, not for validation (DESIGN.md §5).
+		It("should delete a removed component's Application on a pass that fails validation", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
+
+			By("removing the second component while the first one's plane is not Available")
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			componentSet.Spec.Components = componentSet.Spec.Components[:1]
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Name: planeA, Namespace: namespace}, infraPlane)).To(Succeed())
+			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
+				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
+				Status:             metav1.ConditionFalse,
+				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound,
+				Message:            "set by the test",
+				ObservedGeneration: infraPlane.Generation,
+			})
+			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
+
+			By("waiting while the remaining component has not finished")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusDegraded,
+				argocdv1alpha1.SyncStatusSynced)
+			componentSet = reconcileAndGet()
+			validated := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady))
+			Expect(terminating(secondComponent)).To(BeFalse(),
+				"removed while the remaining component had not finished")
+
+			By("deleting once it has finished, though validation still fails")
+			reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusHealthy,
+				argocdv1alpha1.SyncStatusSynced)
+			componentSet = reconcileAndGet()
+			Expect(conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Reason).
+				To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady))
+			Expect(terminating(secondComponent)).To(BeTrue())
+			Expect(getApplication(firstComponent).DeletionTimestamp).To(BeNil())
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonComponentRemoving))
+			Expect(progressing.Message).To(ContainSubstring(secondComponent))
+		})
+
+		// A remaining component whose new spec cannot be written until validation passes
+		// cannot finish, so it still holds removal up (DESIGN.md §5).
+		It("should keep a removed component while a remaining one's changed spec waits for validation", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			settle()
+			release(firstComponent)
+			Expect(applicationExists(secondComponent)).To(BeTrue())
+
+			By("making the first component's plane not Available")
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Name: planeA, Namespace: namespace}, infraPlane)).To(Succeed())
+			apimeta.SetStatusCondition(&infraPlane.Status.Conditions, metav1.Condition{
+				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
+				Status:             metav1.ConditionFalse,
+				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound,
+				Message:            "set by the test",
+				ObservedGeneration: infraPlane.Generation,
+			})
+			Expect(k8sClient.Status().Update(ctx, infraPlane)).To(Succeed())
+
+			By("changing the first component and removing the second in one edit")
+			updated := components()[:1]
+			updated[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":3}`)}
+			setComponents(updated)
+
+			// The first one is still Healthy and Synced, on its previous spec.
+			componentSet := reconcileAndGet()
+			Expect(terminating(secondComponent)).To(BeFalse(),
+				"removed while the remaining component's new spec was not written")
+			progressing := conditionOf(componentSet, cclusternvidiacomv1alpha1.CCLComponentSetConditionProgressing)
+			Expect(progressing.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneNotReady))
+			Expect(progressing.Message).To(ContainSubstring(firstComponent))
 		})
 
 		It("should write a later component's changed spec only after the components before it finish", func() {

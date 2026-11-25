@@ -126,9 +126,10 @@ the `ApplicationCRDMissing` path and verifies starting the operator before Argo 
 
 The quick tier renders and applies the Argo CD CRDs from the vendored dependency, then
 restarts the manager so it registers argoproj watches. With no Argo CD controller present,
-specs can prove Application/AppProject writes, drift repair and pruning under the real
-operator's RBAC. These CRDs are removed before the full tier installs the dependency, so
-Helm does not encounter ownership conflicts. Preserve this lifecycle when changing tests.
+specs can prove Application/AppProject writes, drift repair and the deletion of removed
+components' Applications under the real operator's RBAC. These CRDs are removed before the
+full tier installs the dependency, so Helm does not encounter ownership conflicts. Preserve
+this lifecycle when changing tests.
 
 The nested `Context("with real Argo CD", Label("full"), Ordered)` upgrades the same Helm
 release to add Argo CD and restarts the manager. The quick command excludes `full`; the
