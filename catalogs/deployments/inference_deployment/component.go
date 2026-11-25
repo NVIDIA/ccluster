@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
@@ -64,7 +65,8 @@ type Values struct {
 	Args []string `json:"args,omitempty"`
 
 	// HFToken is rendered as the HF_TOKEN environment variable, after EnvVars, so it
-	// wins over a token set there. SecretEnvVars may not also set HF_TOKEN.
+	// wins over a token set there. SecretEnvVars and ExternalSecrets may not also set
+	// HF_TOKEN.
 	HFToken *string `json:"hfToken,omitempty"`
 
 	// EnableNodeModelCache mounts the namespace's node-model-cache-pvc at /tmp and
@@ -141,16 +143,21 @@ func New(
 	return catalogs.Entry(Chart, namespace, values)
 }
 
-// chartEnv are the variables templates/rollout.yaml can set in the container. HF_TOKEN
-// is not one: secretEnvVars may supply it when hfToken is unset.
+// chartEnv are the variables templates/rollout.yaml always sets in the container. It sets
+// HF_TOKEN too, but only from hfToken; unset, a secret may supply it.
 var chartEnv = []string{"OMP_NUM_THREADS", "HF_HUB_CACHE"}
 
 // Validate implements catalogs.Validator: the required values that are unset, and the
 // optional ones that are malformed.
 func (v Values) Validate() error {
+	env := chartEnv
+	if v.HFToken != nil && *v.HFToken != "" {
+		env = append(slices.Clone(chartEnv), "HF_TOKEN")
+	}
 	errs := []error{
 		v.Workload.Validate(),
-		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
+		deployments.ValidateChartEnv(v.SecretEnvVars, env),
+		v.ExternalSecrets.ValidateChartEnv(env),
 		deployments.MissingError(deployments.Missing(
 			deployments.Field{Name: "domain", Value: v.Domain},
 		)),
@@ -166,10 +173,6 @@ func (v Values) Validate() error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, v.BackendProtocol.Validate())
-	if _, ok := v.SecretEnvVars["HF_TOKEN"]; ok && v.HFToken != nil && *v.HFToken != "" {
-		errs = append(errs, fmt.Errorf("%w: secretEnvVars.HF_TOKEN is also set by hfToken",
-			deployments.ErrInvalidValue))
-	}
 	if v.RevisionNumber != nil && *v.RevisionNumber < 0 {
 		errs = append(errs, fmt.Errorf("%w: revisionNumber %d is negative",
 			deployments.ErrInvalidValue, *v.RevisionNumber))

@@ -124,6 +124,31 @@ class Metrics(BaseModel):
     """
 
 
+class RemoteRef(BaseModel):
+    """
+    RemoteRef selects one value in the store, as an ExternalSecret's remoteRef does.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    key: str
+    """
+    Key is the secret's key in the store. Required.
+    """
+    property: str | None = None
+    """
+    Property selects one field of a structured secret, such as a JSON key.
+    """
+    version: str | None = None
+    """
+    Version selects a version of the secret. Unset, ESO reads the version that is
+    current when it creates the Secret, and the Secret keeps it: a value rotated in the
+    store reaches the pods only when a reference or version changes.
+    """
+
+
 class Resources(BaseModel):
     """
     Resources are one side of a container's resource requirements. CPU and memory are
@@ -195,6 +220,34 @@ class SecretKeyRef(BaseModel):
     """
 
 
+class SecretStoreKind(Enum):
+    """
+    Kind is SecretStore or ClusterSecretStore.
+    """
+
+    secret_store = "SecretStore"
+    cluster_secret_store = "ClusterSecretStore"
+
+
+class SecretStoreRef(BaseModel):
+    """
+    SecretStoreRef names an ESO store. Both fields are required.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    name: str
+    """
+    Name is the store's name.
+    """
+    kind: Annotated[SecretStoreKind, Field(title="SecretStoreKind")]
+    """
+    Kind is SecretStore or ClusterSecretStore.
+    """
+
+
 class VolumeMount(BaseModel):
     """
     VolumeMount mounts an existing PersistentVolumeClaim into the container. The chart
@@ -216,6 +269,65 @@ class VolumeMount(BaseModel):
     read_only: Annotated[bool | None, Field(alias="readOnly")] = None
     """
     ReadOnly mounts it read-only in this container. The chart ships false.
+    """
+
+
+class ExternalImagePull(BaseModel):
+    """
+    ExternalImagePull is a registry credential whose password comes from the store. ESO
+    builds the dockerconfigjson when it creates the Secret. All three fields are required.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    server: str
+    """
+    Server is the registry host, as it appears in the image URL.
+    """
+    username: str
+    """
+    Username is the registry user.
+    """
+    password: RemoteRef
+    """
+    Password is the registry password or token in the store.
+    """
+
+
+class ExternalSecrets(BaseModel):
+    """
+    ExternalSecrets has the External Secrets Operator create the workload's Secrets from
+    references into a secret store, so secret values never enter the values, the
+    CCLComponentSet or the Application. The infra plane must run ESO serving
+    external-secrets.io/v1.
+
+    The chart names each Secret from the store and the references, as
+    <name>-env-<hash> and <name>-pull-<hash>. A new reference or version is a new
+    Secret, which the pods roll onto, and the old one stays until the rollout ends. The
+    templates live in catalogs/library/workload.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+    )
+    secret_store_ref: Annotated[SecretStoreRef, Field(alias="secretStoreRef")]
+    """
+    SecretStoreRef is the store the references resolve in. Required.
+    """
+    env: dict[str, RemoteRef] | None = None
+    """
+    Env sets variables in the container, each from the value its reference reads.
+    Each name is also the key in the Secret, so it must be a valid variable name and
+    Secret key. It may not also be in envVars, secretEnvVars or the chart's own
+    variables.
+    """
+    image_pull: Annotated[ExternalImagePull | None, Field(alias="imagePull")] = None
+    """
+    ImagePull is a registry credential whose password comes from the store, added to
+    the pod's imagePullSecrets.
     """
 
 
@@ -297,6 +409,13 @@ class Values(BaseModel):
     container does not start until each Secret has its key, and keeps the values it
     started with. A variable may not also be in EnvVars, or be one the chart sets
     itself.
+    """
+    external_secrets: Annotated[
+        ExternalSecrets | None, Field(alias="externalSecrets")
+    ] = None
+    """
+    ExternalSecrets has ESO create Secrets for the container's variables and image
+    pull from references into a secret store. See ExternalSecrets.
     """
     dev_shm_size: Annotated[str | None, Field(alias="devShmSize")] = None
     """
@@ -396,7 +515,8 @@ class Values(BaseModel):
     hf_token: Annotated[str | None, Field(alias="hfToken")] = None
     """
     HFToken is rendered as the HF_TOKEN environment variable, after EnvVars, so it
-    wins over a token set there. SecretEnvVars may not also set HF_TOKEN.
+    wins over a token set there. SecretEnvVars and ExternalSecrets may not also set
+    HF_TOKEN.
     """
     enable_node_model_cache: Annotated[
         bool | None, Field(alias="enableNodeModelCache")

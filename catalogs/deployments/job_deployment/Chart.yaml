@@ -12,3 +12,10 @@ sources:
 maintainers:
   - name: CCluster maintainers
     url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+# The library is also linked at charts/library_workload, so neither Helm nor
+# Argo CD runs helm dependency build for it.
+dependencies:
+  - name: library_workload
+    version: 0.1.0
+    repository: file://../../library/workload

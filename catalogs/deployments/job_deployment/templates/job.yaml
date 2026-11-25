@@ -110,6 +110,9 @@ spec:
                   name: {{ $ref.secretName | quote }}
                   key: {{ $ref.key | quote }}
             {{- end }}
+            {{- with include "externalSecrets.env" .Values | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
           resources:
             limits:
               cpu: {{ .Values.resources.limits.cpu | quote }}
@@ -145,7 +148,7 @@ spec:
               subPath: {{ .volumeMountSubPath | quote }}
               mountPath: {{ .volumeMountMountPath | quote }}
             {{- end }}
-      {{- with include "imagePullSecrets" .Values | trim }}
+      {{- with include "workload.imagePullSecrets" .Values | trim }}
       imagePullSecrets:
         {{- . | nindent 8 }}
       {{- end }}

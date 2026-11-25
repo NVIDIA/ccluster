@@ -30,15 +30,3 @@ SPDX-License-Identifier: Apache-2.0
 {{- toYaml $merged -}}
 {{- end -}}
 
-{{/* The pod's imagePullSecrets entries: the Secret imagePullSecret creates, then each
-     of imagePullSecretNames not already listed; empty when neither is set. A repeated
-     name can fail server-side apply, which keys imagePullSecrets by name. */}}
-{{- define "imagePullSecrets" -}}
-{{- $names := list -}}
-{{- if .imagePullSecret -}}
-{{- $names = append $names (printf "%s-image-pull-secret" .name) -}}
-{{- end -}}
-{{- range uniq (concat $names (.imagePullSecretNames | default list)) }}
-- name: {{ . | quote }}
-{{- end }}
-{{- end -}}

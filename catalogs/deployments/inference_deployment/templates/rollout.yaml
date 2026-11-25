@@ -127,6 +127,9 @@ spec:
                   name: {{ $ref.secretName | quote }}
                   key: {{ $ref.key | quote }}
             {{- end }}
+            {{- with include "externalSecrets.env" .Values | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- if .Values.hfToken }}
             - name: HF_TOKEN
               value: {{ .Values.hfToken | quote }}
@@ -190,7 +193,7 @@ spec:
               readOnly: {{ $mount.readOnly | default false }}
             {{- end }}
       enableServiceLinks: false
-      {{- with include "imagePullSecrets" .Values | trim }}
+      {{- with include "workload.imagePullSecrets" .Values | trim }}
       imagePullSecrets:
         {{- . | nindent 8 }}
       {{- end }}

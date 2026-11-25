@@ -45,7 +45,7 @@ func TestValidateHFTokenFromOneSource(t *testing.T) {
 
 // TestChartEnvMatchesTemplates keeps chartEnv in step with the templates, so
 // secretEnvVars cannot repeat a variable the chart sets. HF_TOKEN is left out: the
-// template sets it only from hfToken, which Validate checks on its own.
+// template sets it only from hfToken, and Validate adds it when hfToken is set.
 func TestChartEnvMatchesTemplates(t *testing.T) {
 	got := slices.Sorted(slices.Values(chartEnv))
 	want := slices.DeleteFunc(deploymentstest.TemplateEnv(t, "."), func(name string) bool {

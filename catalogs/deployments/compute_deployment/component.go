@@ -82,6 +82,7 @@ func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
 		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
+		v.ExternalSecrets.ValidateChartEnv(chartEnv),
 		deployments.MissingError(deployments.Missing(
 			deployments.Field{Name: "storageClassName", Value: v.StorageClassName},
 			deployments.Field{Name: "sshPublicKey", Value: v.SSHPublicKey},

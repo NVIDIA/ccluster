@@ -3,7 +3,8 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 */ -}}
 {{- /* One exclusive EFA NIC per disaggregated worker, allocated by DRA through the DRANet
-       driver. Named per revision; dgd.yaml validates kvTransfer.efa. */ -}}
+       driver. Named per revision; dgd.yaml validates kvTransfer.efa. The old revision's
+       is kept for the old workers until the rollout ends. */ -}}
 {{- if hasKey (.Values.kvTransfer | default dict) "efa" }}
 {{- $efa := .Values.kvTransfer.efa | default dict }}
 apiVersion: resource.k8s.io/v1
@@ -11,6 +12,8 @@ kind: ResourceClaimTemplate
 metadata:
   name: {{ include "dynamo.efaClaimTemplateName" . | quote }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "ccluster.deleteAfterRollout" . | nindent 4 }}
 spec:
   spec:
     devices:
