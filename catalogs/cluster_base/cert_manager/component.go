@@ -73,34 +73,24 @@ const Webhook = "webhook.cert-manager.io"
 // chart's two controller replicas need it.
 const ControllerLease = "cert-manager-controller"
 
-// crds are the CustomResourceDefinitions of the kinds the catalog applies: final_stack's
-// ClusterIssuer, and the Issuers and Certificates ingress_nginx creates for its
-// admission webhook.
+// crds are the CustomResourceDefinitions of the kinds Verify names.
 var crds = []string{
 	"certificates.cert-manager.io",
 	"clusterissuers.cert-manager.io",
 	"issuers.cert-manager.io",
 }
 
-// Verify checks that cert-manager accepts the resources the catalog applies: final_stack's
-// acme-ca ClusterIssuer, and the Issuers and Certificates ingress_nginx creates for its
-// admission webhook. The API server sends every cert-manager.io write to cert-manager's
-// webhook and rejects it while the webhook is unreachable, so Verify checks that every
-// registration of the webhook Webhook has the CA bundle cainjector injects and a Service
-// with a ready endpoint behind it. It then checks that the CRD of each of those kinds
-// exists. The webhook runs without them, and the upstream chart installs them only
-// with installCRDs set, which is off by default. Last, it checks that a controller holds
-// ControllerLease and has renewed it lately, since without one no Certificate is
-// issued. A ClusterIssuer's Ready condition cannot show that: it is stored status, and
-// stays True after the controller stops.
+// Verify checks that cert-manager accepts and acts on the resources the catalog applies:
+// final_stack's acme-ca ClusterIssuer, and the Issuers and Certificates ingress_nginx
+// creates for its admission webhook. The API server rejects every cert-manager.io write
+// the webhook Webhook does not answer, so the webhook must be served. The CRDs of those
+// kinds must exist: the webhook runs without them, and the upstream chart installs them
+// only with installCRDs set, which is off by default. A controller must hold
+// ControllerLease, since without one no Certificate is issued; a ClusterIssuer's Ready
+// condition cannot show that, because it stays True after the controller stops.
 //
-// A controller that stops cleanly releases the Lease, and one that crashes leaves it to
-// go stale; both fail here, as does a controller started with leader election off,
-// which holds no Lease.
-//
-// It finds the webhook by its entry name and follows it to its Service, and the CRDs
-// and the Lease by their names, so cert-manager passes under any release name, in any
-// namespace, however it was installed. Nothing here depends on the cluster's domain, so
+// The webhook, CRDs and Lease are found by name, not by release, so a cert-manager
+// installed by other means passes too. Nothing here depends on the cluster's domain, so
 // the CCLClusterConfig spec is not consulted.
 func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	if err := catalogs.VerifyValidatingWebhookServed(ctx, r, Webhook); err != nil {

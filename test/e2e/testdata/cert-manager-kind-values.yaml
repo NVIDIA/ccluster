@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The cert_manager Verifier checks that the webhook is registered, has its CA bundle and
-# is served, and that a controller holds its leader Lease, which one replica of each
-# component shows as well as two.
+# is served, that the CRDs exist, and that a controller holds its leader Lease. One
+# replica of each component shows all of that as well as two.
 cert-manager:
   replicaCount: 1
   webhook:
