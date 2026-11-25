@@ -50,11 +50,12 @@ const ClusterIssuer = "acme-ca"
 
 // Verify checks that the ClusterIssuer the catalog's Ingresses request can issue: it
 // exists under the name they hardcode, and cert-manager reports it Ready. For this
-// chart's ACME issuer, cert-manager sets Ready once it has registered the issuer's
-// account with Let's Encrypt, so Ready also means the cert-manager controller runs and
-// reaches the ACME server. It does not mean HTTP-01 challenges will succeed, which needs
-// the Ingress hosts to resolve publicly and port 80 of the ingress LoadBalancer to be
-// reachable from the internet.
+// chart's ACME issuer, cert-manager sets Ready once it has accepted the issuer and
+// registered its account with Let's Encrypt. Ready is stored status: it stays True after
+// the cert-manager controller stops, so it does not show that the controller runs now;
+// cert_manager's Verifier checks that. Nor does it mean HTTP-01 challenges will succeed,
+// which needs the Ingress hosts to resolve publicly and port 80 of the ingress
+// LoadBalancer to be reachable from the internet.
 //
 // Any issuer named ClusterIssuer passes, so a cluster that brings its own, such as a
 // platform-managed DNS-01 issuer of that name, verifies too. A cluster without
