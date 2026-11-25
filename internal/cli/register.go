@@ -142,7 +142,7 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 		Server:      server,
 		BearerToken: token,
 		CACert:      caCert,
-		ServerName:  infraConfig.TLSClientConfig.ServerName,
+		ServerName:  infraConfig.ServerName,
 	})
 	if err != nil {
 		return apiError(err)
