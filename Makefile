@@ -521,6 +521,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
 		--set external-dns.enabled=$(DNS) \
+		$(if $(filter true,$(DNS)),--set-string external-dns.txtOwnerId=$(EXTERNAL_DNS_TXT_OWNER_ID)) \
 		--set-string manager.envOverrides.CCLUSTER_CATALOG_REPO_URL=$(CATALOG_REPO_URL) \
 		--set-string manager.envOverrides.CCLUSTER_CATALOG_REVISION=$(CATALOG_REVISION) \
 		--set-string manager.envOverrides.CCLUSTER_BASE_DOMAIN=$(BASE_DOMAIN) \
@@ -591,6 +592,10 @@ ARGOCD_SERVER_OVERRIDE = $(if $(filter true,$(ARGOCD)),,--set manager.envOverrid
 # wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
 # `-f dns-values.yaml` (docs/development.md).
 DNS ?= false
+# external-dns's TXT owner ID, which the chart requires when DNS=true and which must be
+# unique among every external-dns writing one of its zones: two control planes sharing
+# it delete each other's records. The default suits the single control plane make deploys.
+EXTERNAL_DNS_TXT_OWNER_ID ?= ccluster-cp
 # The cp operator's required base domain, which every CCLInfraPlane's domain is derived
 # under: <name>.<namespace>.<BASE_DOMAIN>. deploy-cp sets it as the chart's
 # CCLUSTER_BASE_DOMAIN, and run-cp as --base-domain. With DNS=true, the

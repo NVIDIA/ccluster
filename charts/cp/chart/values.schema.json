@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Hand-written; make helm-generate preserves it. Constrains only what the generated templates cannot express, and leaves every other value unchecked.",
+  "type": "object",
+  "properties": {},
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "external-dns": {
+            "properties": {
+              "enabled": { "const": true }
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["external-dns"]
+      },
+      "then": {
+        "properties": {
+          "external-dns": {
+            "required": ["txtOwnerId"],
+            "properties": {
+              "txtOwnerId": {
+                "$comment": "external-dns with policy sync deletes any record its owner ID owns, so two control planes sharing a zone must not share it: the chart takes no default that they could.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
