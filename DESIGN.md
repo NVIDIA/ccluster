@@ -618,9 +618,21 @@ bought API-server rejection at the cost of putting every chart's schema into the
 changing one becomes a schema migration. Given §6's experience with a 600KB CRD, that trade
 was not worth making yet.
 
-CEL validation enforces unique component names, at most 50 components, and
-`metadata.name` ≤ 63 characters — the name is used as a label value on the generated
-Applications.
+CEL validation enforces unique component names and at most 50 components.
+
+It also caps each Application name, `{componentSet}-{component}`, at 53 characters. The
+builder sets no `releaseName`, so Argo CD uses that name as the Helm release name, and Helm
+rejects a longer one: Argo CD reports `ComparisonError` and the `CCLComponentSet` never
+becomes healthy. A set has at least one component, so the cap also keeps `metadata.name`
+at most 51 characters, within the 63 of a label value; the name is a label on the generated
+Applications. A root rule runs on every write, including the operator's finalizer and
+status patches, so a rule that judged every component would leave a `CCLComponentSet`
+created before it unable to drop its finalizer. Create therefore checks every component,
+and update only the component names the old object does not have; an Application name
+depends on nothing else, and `metadata.name` is immutable. These are two rules because a
+single one under `optionalOldSelf` would read `oldSelf.value()`, which loses the schema's
+`maxItems`, and its estimated CEL cost exceeds the budget. The message formats its number
+with `format()` because `string()` of an int has no size bound either.
 
 Ordering is **positional** rather than a `dependsOn` graph because nothing yet needs to
 express one. If that changes, the existing list order remains a valid topological order, so

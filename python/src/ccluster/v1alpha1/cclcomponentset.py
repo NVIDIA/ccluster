@@ -59,7 +59,9 @@ class ComponentSpec(BaseModel):
     ]
     """
     name identifies the component within this CCLComponentSet. It is templated into
-    the generated Argo CD Application's name, so it has to be DNS-1123.
+    the generated Argo CD Application's name, so it has to be DNS-1123. That name,
+    <CCLComponentSet name>-<name>, is also the Helm release name, so it must be at
+    most 53 characters.
     """
     namespace: Annotated[
         str,

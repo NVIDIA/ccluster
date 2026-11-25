@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -221,6 +222,12 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			}
 		}
 
+		// paddedComponentName returns prefix padded with x so that the CCLComponentSet's
+		// Application name for it is applicationNameLength characters long.
+		paddedComponentName := func(prefix string, applicationNameLength int) string {
+			return prefix + strings.Repeat("x", applicationNameLength-len(applicationName(componentSetName, prefix)))
+		}
+
 		// setComponents replaces the CCLComponentSet's components.
 		setComponents := func(specComponents []cclusternvidiacomv1alpha1.ComponentSpec) {
 			GinkgoHelper()
@@ -343,6 +350,73 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			condition := apimeta.FindStatusCondition(componentSet.Status.Conditions, name)
 			Expect(condition).NotTo(BeNil(), "expected a %q condition", name)
 			return condition
+		}
+
+		// withoutApplicationNameRules runs create while the CCLComponentSet CRD lacks the
+		// Application name rules, to stage an object created before they existed. It then
+		// puts them back and waits until the API server enforces them again.
+		withoutApplicationNameRules := func(create func()) {
+			GinkgoHelper()
+
+			isApplicationNameRule := func(rule apiextensionsv1.ValidationRule) bool {
+				return strings.Contains(rule.Rule, "<= 53")
+			}
+			editRootRules := func(edit func([]apiextensionsv1.ValidationRule) []apiextensionsv1.ValidationRule) {
+				GinkgoHelper()
+
+				Eventually(func() error {
+					crd := &apiextensionsv1.CustomResourceDefinition{}
+					if err := k8sClient.Get(ctx, types.NamespacedName{
+						Name: "cclcomponentsets.ccluster.nvidia.com",
+					}, crd); err != nil {
+						return err
+					}
+					root := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+					root.XValidations = edit(root.XValidations)
+					return k8sClient.Update(ctx, crd)
+				}).Should(Succeed())
+			}
+
+			var removed []apiextensionsv1.ValidationRule
+			restore := func() {
+				GinkgoHelper()
+
+				editRootRules(func(rules []apiextensionsv1.ValidationRule) []apiextensionsv1.ValidationRule {
+					if slices.ContainsFunc(rules, isApplicationNameRule) {
+						return rules
+					}
+					return append(rules, removed...)
+				})
+				// The probe's name leaves no room for any component name. The schema change
+				// reaches the API server's handler asynchronously, so wait until it rejects
+				// the probe.
+				probe := &cclusternvidiacomv1alpha1.CCLComponentSet{
+					ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("a", 52), Namespace: namespace},
+					Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
+						Components: []cclusternvidiacomv1alpha1.ComponentSpec{onPlaneA("k")},
+					},
+				}
+				Eventually(func() error {
+					return k8sClient.Create(ctx, probe.DeepCopy(), client.DryRunAll)
+				}).Should(MatchError(ContainSubstring("must be at most 53 characters")))
+			}
+
+			editRootRules(func(rules []apiextensionsv1.ValidationRule) []apiextensionsv1.ValidationRule {
+				removed = nil
+				var kept []apiextensionsv1.ValidationRule
+				for _, rule := range rules {
+					if isApplicationNameRule(rule) {
+						removed = append(removed, rule)
+					} else {
+						kept = append(kept, rule)
+					}
+				}
+				Expect(removed).NotTo(BeEmpty(), "the CRD has no Application name rule")
+				return kept
+			})
+			DeferCleanup(restore)
+			create()
+			restore()
 		}
 
 		BeforeEach(func() {
@@ -634,16 +708,81 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			Expect(err.Error()).To(ContainSubstring("component names must be unique"))
 		})
 
-		It("should reject a name too long to be a label value", func() {
-			err := k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      strings.Repeat("a", 64),
-					Namespace: namespace,
-				},
-				Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{Components: components()},
-			})
+		It("should reject a component whose Application name is longer than a Helm release name", func() {
+			createWith := func(name, component string) error {
+				return k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+					Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
+						Components: []cclusternvidiacomv1alpha1.ComponentSpec{onPlaneA(component)},
+					},
+				})
+			}
+
+			By("rejecting 54 characters, and giving the longest component name that fits")
+			err := createWith(componentSetName, paddedComponentName("k", 54))
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("at most 63 characters"))
+			Expect(err.Error()).To(ContainSubstring("must be at most 53 characters"))
+			Expect(err.Error()).To(ContainSubstring(
+				"the maximum component name length for this CCLComponentSet is 35"))
+
+			By("asking for a shorter CCLComponentSet name when no component name fits")
+			err = createWith(strings.Repeat("a", 52), "k")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("the CCLComponentSet name must be at most 51 characters"))
+
+			By("accepting 53 characters")
+			Expect(createWith(componentSetName, paddedComponentName("k", 53))).To(Succeed())
+		})
+
+		It("should keep a CCLComponentSet created before the Application name limit writable and deletable", func() {
+			createInfraPlane(planeA, true)
+			old := paddedComponentName("old", 54)
+
+			By("creating it while the CRD does not have the rules")
+			withoutApplicationNameRules(func() {
+				Eventually(func() error {
+					return k8sClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLComponentSet{
+						ObjectMeta: metav1.ObjectMeta{Name: componentSetName, Namespace: namespace},
+						Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
+							Components: []cclusternvidiacomv1alpha1.ComponentSpec{onPlaneA(old)},
+						},
+					})
+				}).Should(Succeed())
+			})
+
+			By("writing the finalizer and the status")
+			componentSet := settle()
+			Expect(controllerutil.ContainsFinalizer(componentSet, componentSetFinalizerName)).To(BeTrue())
+			Expect(conditionOf(componentSet,
+				cclusternvidiacomv1alpha1.CCLComponentSetConditionComponentsApplied).Status).
+				To(Equal(metav1.ConditionTrue))
+
+			By("accepting a change to the component")
+			componentSet.Spec.Components[0].Values = &apiextensionsv1.JSON{Raw: []byte(`{"replicas":2}`)}
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+			By("accepting a new component whose Application name is 53 characters")
+			componentSet.Spec.Components = append(componentSet.Spec.Components,
+				onPlaneA(paddedComponentName("new", 53)))
+			Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+
+			By("rejecting a new component whose Application name is 54 characters")
+			componentSet.Spec.Components = append(componentSet.Spec.Components,
+				onPlaneA(paddedComponentName("new", 54)))
+			err := k8sClient.Update(ctx, componentSet)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				"the maximum component name length for this CCLComponentSet is 35"))
+
+			By("dropping the finalizer once its components are gone")
+			Expect(k8sClient.Get(ctx, componentSetKey, componentSet)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, componentSet)).To(Succeed())
+			reconcileOnly()
+			finishTeardown(old)
+			reconcileOnly()
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, componentSetKey, componentSet))
+			}).Should(BeTrue())
 		})
 
 		// The controller survives an empty spec too, since it writes at most as many

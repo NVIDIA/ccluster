@@ -102,7 +102,9 @@ spec:
                     name:
                       description: |-
                         name identifies the component within this CCLComponentSet. It is templated into
-                        the generated Argo CD Application's name, so it has to be DNS-1123.
+                        the generated Argo CD Application's name, so it has to be DNS-1123. That name,
+                        <CCLComponentSet name>-<name>, is also the Helm release name, so it must be at
+                        most 53 characters.
                       maxLength: 63
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -329,9 +331,31 @@ spec:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: name must be at most 63 characters, because it is used as a label
-            value on the generated Argo CD Applications
-          rule: self.metadata.name.size() <= 63
+        - fieldPath: .spec.components
+          message: each Argo CD Application name, <CCLComponentSet name>-<component
+            name>, is a Helm release name and must be at most 53 characters
+          messageExpression: 'self.metadata.name.size() < 52 ? ''each Argo CD Application
+            name, <CCLComponentSet name>-<component name>, is a Helm release name
+            and must be at most 53 characters; the maximum component name length for
+            this CCLComponentSet is %d''.format([52 - self.metadata.name.size()])
+            : ''each Argo CD Application name, <CCLComponentSet name>-<component name>,
+            is a Helm release name and must be at most 53 characters; the CCLComponentSet
+            name must be at most 51 characters'''
+          optionalOldSelf: true
+          rule: oldSelf.hasValue() || self.spec.components.all(c, self.metadata.name.size()
+            + 1 + c.name.size() <= 53)
+        - fieldPath: .spec.components
+          message: each Argo CD Application name, <CCLComponentSet name>-<component
+            name>, is a Helm release name and must be at most 53 characters
+          messageExpression: 'self.metadata.name.size() < 52 ? ''each Argo CD Application
+            name, <CCLComponentSet name>-<component name>, is a Helm release name
+            and must be at most 53 characters; the maximum component name length for
+            this CCLComponentSet is %d''.format([52 - self.metadata.name.size()])
+            : ''each Argo CD Application name, <CCLComponentSet name>-<component name>,
+            is a Helm release name and must be at most 53 characters; the CCLComponentSet
+            name must be at most 51 characters'''
+          rule: self.spec.components.all(c, self.metadata.name.size() + 1 + c.name.size()
+            <= 53 || oldSelf.spec.components.exists(o, o.name == c.name))
     served: true
     storage: true
     subresources:

@@ -16,7 +16,9 @@ import (
 // ComponentSpec is one Helm chart deployed onto one infra-plane cluster.
 type ComponentSpecApplyConfiguration struct {
 	// name identifies the component within this CCLComponentSet. It is templated into
-	// the generated Argo CD Application's name, so it has to be DNS-1123.
+	// the generated Argo CD Application's name, so it has to be DNS-1123. That name,
+	// <CCLComponentSet name>-<name>, is also the Helm release name, so it must be at
+	// most 53 characters.
 	Name *string `json:"name,omitempty"`
 	// infraPlaneRef names the CCLInfraPlane this component is deployed to. It must be
 	// in the same namespace as this CCLComponentSet, and must already be Available -
