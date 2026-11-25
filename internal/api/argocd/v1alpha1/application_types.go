@@ -109,6 +109,20 @@ func (a *Application) OperationInProgress() bool {
 	return a.Operation != nil || (a.OperationPhase() != "" && !OperationCompleted(a.OperationPhase()))
 }
 
+// PrunableObjects returns the objects Argo CD tracks that the chart no longer renders.
+func (a *Application) PrunableObjects() []ResourceStatus {
+	if a.Status == nil {
+		return nil
+	}
+	var prunable []ResourceStatus
+	for _, r := range a.Status.Resources {
+		if r.RequiresPruning {
+			prunable = append(prunable, r)
+		}
+	}
+	return prunable
+}
+
 // ApplicationSpec is the desired state of an Argo CD Application.
 type ApplicationSpec struct {
 	// project is the Argo CD AppProject the Application belongs to.
@@ -331,6 +345,25 @@ type ApplicationStatus struct {
 	// operationState is the last sync Argo CD ran, and the operation that asked for it.
 	// Nil until one has run.
 	OperationState *OperationState `json:"operationState,omitempty"`
+
+	// resources are the objects of the last comparison: every object the chart renders,
+	// and every object Argo CD still tracks that it no longer renders.
+	Resources []ResourceStatus `json:"resources,omitempty"`
+}
+
+// ResourceStatus is one object of status.resources. Only the fields that name it and
+// requiresPruning are modelled, so a change to an object's sync or health status is not a
+// change to the Application the operator sees.
+type ResourceStatus struct {
+	Group     string `json:"group,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+
+	// requiresPruning is set on an object Argo CD tracks that the chart no longer
+	// renders. Argo CD keeps one through a sync only if it carries Prune=false.
+	RequiresPruning bool `json:"requiresPruning,omitempty"`
 }
 
 // OperationState is how the sync an Operation asked for is going.

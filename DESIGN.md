@@ -733,10 +733,16 @@ reads them: an Application's resource tree, the live manifest of one node, and t
 node's events. argocd-server answers with Argo CD's own credentials for the destination
 cluster, so the cp operator still never connects to an infra-plane itself.
 
+The client also deletes one kind of object: one a finished component's chart no longer
+renders, which the operator prunes ("Pruning after rollout" below).
+
 The client authenticates as `ccluster-cp`, an Argo CD account the cp chart declares with
-`apiKey` only (no password, no UI login) and one RBAC line, `applications, get, */*`.
-That one grant covers the three reads, for every project and namespace. The token is a
-bearer credential to that read access. It lives in a Secret in the Argo CD namespace,
+`apiKey` only (no password, no UI login) and four RBAC lines. `applications, get, */*`
+covers the three reads, for every project and namespace. Three
+`applications, delete/<group>/<kind>/*, */*` lines let it delete one object of an
+Application, of the three kinds the operator deletes and no other; Argo CD's glob spans
+`/`, so `*` matches any namespace and name. The token is a bearer credential to that
+access. It lives in a Secret in the Argo CD namespace,
 which the operator already reads, and is reread on every request, so it can be replaced
 in place. It does not expire and is created once. When the cp chart installs Argo CD, a
 post-install hook Job of its `argocd-token` dependency creates it, logging in as admin
@@ -953,6 +959,58 @@ while its Application is terminating is not released yet (`liveApplications` abo
 has no entry in `componentSyncStatuses` or `componentHealthStatuses`; a new Application is
 created once the old one is gone.
 
+### Pruning after rollout
+
+Some objects are read by pods under a name that changes with each revision: a workload's
+ExternalSecrets, named from their references (`<name>-env-<hash>`), inference's config
+ConfigMap and Dynamo's EFA ResourceClaimTemplate, named per `revisionNumber`. A new
+revision renders new ones, and the old ones must outlive the rollout: a pod still on the
+old spec that restarts, or a Rollout that aborts, reads them again. Argo CD's automated
+prune would delete them at the start of the sync, before a new pod runs.
+
+A chart gives such an object three annotations:
+
+| Annotation | Effect |
+| --- | --- |
+| `argocd.argoproj.io/sync-wave: "-1"` | Applied before the workload. An ExternalSecret must be Ready before wave 0; Ready=False fails the sync before the workload changes |
+| `argocd.argoproj.io/sync-options: Prune=false` | Kept when a later revision stops rendering it. `status.resources` marks it `requiresPruning` |
+| `argocd.argoproj.io/compare-options: IgnoreExtraneous` | The kept object does not make the Application OutOfSync, so `currentSpecSynced` and automated sync are unaffected |
+
+An object `requiresPruning` marks is prunable, and the operator prunes it in place of Argo
+CD, later. Once a component is finished, `applyComponents` prunes its prunable objects of
+`prunableKinds` (ExternalSecret, ConfigMap, ResourceClaimTemplate) by deleting them
+through argocd-server (`pruneFinished`), in the same pass, and does not wait for them to
+go: Argo CD drops them from `status.resources`, and that Application event brings the next
+pass. Prunable objects of other kinds stay, since a chart that marks one `Prune=false`
+means to keep it; the allowlisted kinds can no longer mean that. The timing is per
+component, not per set: only the component's own pods read these objects, and once it is
+finished they all run the current spec.
+
+- **Already going.** One still listed while it is being deleted, such as an
+  ExternalSecret waiting for its Secret, is deleted again on each pass, which changes
+  nothing.
+- **Failure.** A failed delete fails the pass, which logs and retries it; it holds back
+  no component. A refused one (401 or 403) is only logged, and the next pass tries it
+  again. A refusal lasts until the account's policy changes. As an error it would back
+  off every pass of the set, up to controller-runtime's 1000s cap, in place of the 30s
+  retry of a pass that could not read a resource tree.
+- **Health.** Argo CD's aggregate health counts prunable objects, so a prunable
+  ExternalSecret that never became Ready, or any prunable object being deleted
+  (`Progressing`), would keep the component from finishing, and so from pruning it.
+  `withoutPrunableObjects` drops them, and what they own, from what a chart's health
+  function sees. Where the aggregate is worse than every rendered object that remains, it
+  becomes the worst of those.
+- **Removal and teardown.** Deleting an Application deletes its prunable objects too: Argo
+  CD's cascade ignores `Prune=false`.
+
+The costs: an existing Argo CD needs the account's three delete lines added by hand
+([Development: Argo CD API token](docs/development.md#argo-cd-api-token)), and without
+them every delete fails with 403 and the prunable objects stay, shown only in the
+operator's log. Once the lines are added, the set's next pass prunes them. A prunable
+object whose finalizer never finishes is deleted again, and logged, on every pass. And while ESO's
+controller is down, an ExternalSecret in wave -1 gets no status, so the sync operation
+stays open and the Application's next spec waits behind it.
+
 ### Teardown runs in reverse, one at a time
 
 Components are deployed in order because a later one may depend on an earlier one, so they
@@ -1096,7 +1154,9 @@ Argo CD's aggregate health alone falls short in three ways:
 
 The resource tree carries each object's health, Pods included. It comes from the same Argo
 CD function as the aggregate, so the tree alone corrects none of an object's verdicts. A
-chart's health function does.
+chart's health function does. When the tree is read, neither the function nor the
+aggregate it starts from counts the prunable objects, those a chart no longer renders
+("Pruning after rollout", §5).
 
 A chart package may export a `Health` function beside `New`.
 `internal/registry/health_registry` owns its signature,
@@ -1150,7 +1210,11 @@ cluster:
 
 The reads of one component run under a 10-second deadline, which `ctx` carries. When the
 tree cannot be read, because argocd-server is down, the token is missing or the tree isn't
-cached yet, health is Argo CD's aggregate with reason `ResourceTreeUnavailable`. A function
+cached yet, health is Argo CD's aggregate with reason `ResourceTreeUnavailable`. That
+aggregate still counts prunable objects: without the tree the operator has no health of
+the rendered objects to correct it with. So a prunable object in worse health than every
+rendered one holds the component back, and keeps itself from being pruned, until the tree
+can be read. A function
 that panics, or reports a health the CRD refuses, also falls back to the aggregate, with
 `HealthFuncPanicked` or `InvalidHealth`. A component is never judged worse than Argo CD judges it because the
 operator could not do better.

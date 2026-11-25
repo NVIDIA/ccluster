@@ -53,9 +53,9 @@ var (
 	catalogRevision string
 )
 
-// The argocd-server Service the operator reads Application trees through, and the
-// Secret holding its token, both in argoCDNamespace. Set by flags, for the same reason
-// as argoCDNamespace.
+// The argocd-server Service the operator reads Application trees and prunes objects
+// through, and the Secret holding its token, both in argoCDNamespace. Set by flags, for
+// the same reason as argoCDNamespace.
 var (
 	argoCDServerService string
 	argoCDTokenSecret   string
@@ -137,7 +137,7 @@ func main() {
 			"CCLClusterConfig, so changes to it arrive as events. 0 disables it.")
 	flag.StringVar(&argoCDTokenSecret, "argocd-token-secret", "ccluster-cp-argocd-token",
 		"The Secret in --argocd-namespace whose \""+argoCDTokenKey+"\" key holds the token "+
-			"of the Argo CD account the operator reads argocd-server's API as.")
+			"of the Argo CD account the operator uses argocd-server's API as.")
 	flag.StringVar(&dnsEndpointNamespace, "dns-endpoint-namespace", "",
 		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
 			"*.<lb>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+

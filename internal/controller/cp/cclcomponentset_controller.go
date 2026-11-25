@@ -7,6 +7,7 @@ package cp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,8 +97,9 @@ type CCLComponentSetReconciler struct {
 	// normally driftregistry.Get(). Nil diffs every chart in full.
 	Drift *driftregistry.Registry
 
-	// ArgoCD reads what the charts' health functions judge health from. Nil judges every
-	// component by Argo CD's health of its Application.
+	// ArgoCD reads what the charts' health functions judge health from, and prunes a
+	// finished component's prunable objects. Nil judges every component by Argo CD's health
+	// of its Application and prunes nothing.
 	ArgoCD ArgoCDServer
 
 	// Health is the registry of charts' health functions, normally healthregistry.Get().
@@ -243,7 +245,8 @@ func (r *CCLComponentSetReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // applyComponents writes each component's current spec in list order and stops after
 // the first one that has not finished on the Applications read before the pass. If none
-// stopped it, it deletes one Application of a removed component (DESIGN.md §5).
+// stopped it, it deletes one Application of a removed component (DESIGN.md §5). Either
+// way it prunes the objects of the components that finished.
 func (r *CCLComponentSetReconciler) applyComponents(
 	ctx context.Context,
 	componentSet *cclusternvidiacomv1alpha1.CCLComponentSet,
@@ -256,6 +259,7 @@ func (r *CCLComponentSetReconciler) applyComponents(
 
 	written, allFinished, changed := 0, true, false
 	var applyErr error
+	var finished []*argocdv1alpha1.Application
 	for i, component := range componentSet.Spec.Components {
 		op, err := r.createOrPatchApplication(ctx, componentSet, component, i+1)
 		if err != nil {
@@ -269,6 +273,7 @@ func (r *CCLComponentSetReconciler) applyComponents(
 			allFinished = false
 			break
 		}
+		finished = append(finished, application)
 	}
 	if applyErr == nil && allFinished {
 		// Every component had finished on its current spec before the writes, so none of
@@ -278,6 +283,10 @@ func (r *CCLComponentSetReconciler) applyComponents(
 		changed = changed || pruned
 	}
 	status, reason, message, retryErr := r.applicationsCondition(componentSet, written, applyErr)
+
+	// A finished component's pods all run its current spec, so none reads its prunable
+	// objects any more. A failure here holds back nothing: it is logged and retried.
+	retryErr = errors.Join(retryErr, r.pruneFinished(ctx, finished))
 
 	if applyErr == nil && changed {
 		log.Info("Applied Argo CD Applications", "namespace", componentSet.Namespace,

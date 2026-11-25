@@ -16,7 +16,6 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
-	"github.com/NVIDIA/ccluster/internal/argocd/apiclient"
 	healthregistry "github.com/NVIDIA/ccluster/internal/registry/health_registry"
 )
 
@@ -87,11 +86,7 @@ func judge(
 
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	app := apiclient.ApplicationRef{
-		Namespace: application.Namespace,
-		Name:      application.Name,
-		Project:   application.Spec.Project,
-	}
+	app := applicationRef(application)
 	tree, err := argoCD.ResourceTree(ctx, app)
 	if err != nil {
 		logf.FromContext(ctx).Info("Did not read resource tree of Application",
@@ -106,11 +101,13 @@ func judge(
 			healthFunc = f
 		}
 	}
-	return callHealthFunc(ctx, healthFunc, entry, catalogs.Observation{
+	// The objects the chart no longer renders are on their way out: they are judged
+	// neither by the chart's function nor in the aggregate it starts from.
+	return callHealthFunc(ctx, healthFunc, entry, withoutPrunableObjects(catalogs.Observation{
 		ApplicationHealth: aggregate,
 		Resources:         observedResources(tree),
 		Reader:            applicationReader{argoCD: argoCD, app: app},
-	})
+	}, application))
 }
 
 // callHealthFunc calls a chart's health function. If the function panics, or returns a

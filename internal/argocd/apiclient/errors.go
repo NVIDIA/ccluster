@@ -17,7 +17,7 @@ import (
 // returns an *APIError that wraps none of them.
 var (
 	// ErrUnauthorized: argocd-server rejected the token, or the account it belongs to
-	// may not read the Application.
+	// may not read the Application or delete the object.
 	ErrUnauthorized = errors.New("not authorized by argocd-server")
 
 	// ErrApplicationNotFound: the Application does not exist, for instance because it
@@ -29,8 +29,9 @@ var (
 	// Application is created. Retrying later succeeds.
 	ErrTreeUnavailable = errors.New("resource tree not cached yet")
 
-	// ErrResourceGone: the object is in the cached tree but no longer in the cluster,
-	// typically a Pod replaced since the tree was read.
+	// ErrResourceGone: the object is gone from the cluster, or from argocd-server's cached
+	// tree, since the caller saw it: typically a Pod replaced since the tree was read, or
+	// an object already pruned.
 	ErrResourceGone = errors.New("resource no longer exists")
 )
 
@@ -40,7 +41,7 @@ var (
 const (
 	// The resource tree read when the application controller's cache has no entry.
 	treeCacheMissMessage = "cache: key is missing"
-	// A resource read for an object the cached tree lists but the cluster no longer has.
+	// A request for one object that argocd-server's cached tree no longer lists.
 	staleTreeMessage = "not found as part of application"
 	// The Kubernetes NotFound for the Application itself, as opposed to a child object.
 	applicationNotFoundMessage = "applications.argoproj.io"
@@ -71,17 +72,18 @@ func (e *APIError) Unwrap() error {
 }
 
 // classify returns the case a failed op falls under, or nil for one a caller has nothing
-// to do about but report. Only a read of one object can find that object gone.
+// to do about but report. Only a request for one object, a read or a delete, can find
+// that object gone.
 func classify(op string, statusCode int, message string) error {
-	objectRead := op == opResource || op == opEvents
+	oneObject := op == opResource || op == opEvents
 	switch {
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case statusCode == http.StatusNotFound && strings.Contains(message, applicationNotFoundMessage):
 		return ErrApplicationNotFound
-	case objectRead && statusCode == http.StatusNotFound:
+	case oneObject && statusCode == http.StatusNotFound:
 		return ErrResourceGone
-	case objectRead && statusCode == http.StatusBadRequest && strings.Contains(message, staleTreeMessage):
+	case oneObject && statusCode == http.StatusBadRequest && strings.Contains(message, staleTreeMessage):
 		return ErrResourceGone
 	case statusCode == http.StatusInternalServerError && strings.Contains(message, treeCacheMissMessage):
 		return ErrTreeUnavailable
