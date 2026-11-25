@@ -49,6 +49,16 @@ func ready(status metav1.ConditionStatus, reason, message string) certmanagerv1.
 	}
 }
 
+func observed(c certmanagerv1.IssuerCondition, generation int64) certmanagerv1.IssuerCondition {
+	c.ObservedGeneration = generation
+	return c
+}
+
+func withGeneration(i *certmanagerv1.ClusterIssuer, generation int64) *certmanagerv1.ClusterIssuer {
+	i.Generation = generation
+	return i
+}
+
 // TestVerify pins the issuer to the name the catalog's Ingresses request, and passes only
 // once cert-manager reports it Ready.
 func TestVerify(t *testing.T) {
@@ -84,6 +94,20 @@ func TestVerify(t *testing.T) {
 			name:    "no conditions",
 			objects: []client.Object{issuer("acme-ca")},
 			want:    "ClusterIssuer acme-ca not ready",
+		},
+		{
+			// The spec changed and cert-manager has not reconciled it, say its controller
+			// is down after a catalog upgrade: the True is for the old spec.
+			name: "ready for an older generation",
+			objects: []client.Object{withGeneration(issuer("acme-ca", observed(
+				ready(metav1.ConditionTrue, "ACMEAccountRegistered", ""), 1)), 2)},
+			want: "ClusterIssuer acme-ca not ready: cert-manager has not observed generation 2, " +
+				"Ready is for generation 1",
+		},
+		{
+			name: "ready for the current generation",
+			objects: []client.Object{withGeneration(issuer("acme-ca", observed(
+				ready(metav1.ConditionTrue, "ACMEAccountRegistered", ""), 2)), 2)},
 		},
 		{
 			name: "only other conditions",

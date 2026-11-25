@@ -57,6 +57,10 @@ const ClusterIssuer = "acme-ca"
 // which needs the Ingress hosts to resolve publicly and port 80 of the ingress
 // LoadBalancer to be reachable from the internet.
 //
+// A Ready condition whose observedGeneration is behind the issuer's generation was set
+// for an earlier spec, such as before a catalog upgrade the controller has not yet
+// reconciled, and counts as not ready whatever its status.
+//
 // Any issuer named ClusterIssuer passes, so a cluster that brings its own, such as a
 // platform-managed DNS-01 issuer of that name, verifies too. A cluster without
 // cert-manager has no ClusterIssuer kind, and that is reported as such rather than as a
@@ -79,6 +83,10 @@ func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CC
 	for _, c := range issuer.Status.Conditions {
 		if c.Type != certmanagerv1.IssuerConditionReady {
 			continue
+		}
+		if c.ObservedGeneration != 0 && c.ObservedGeneration < issuer.Generation {
+			return fmt.Errorf("ClusterIssuer %s not ready: cert-manager has not observed generation %d, "+
+				"Ready is for generation %d", ClusterIssuer, issuer.Generation, c.ObservedGeneration)
 		}
 		if c.Status == metav1.ConditionTrue {
 			return nil

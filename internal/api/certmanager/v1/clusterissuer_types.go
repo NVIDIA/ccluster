@@ -47,7 +47,8 @@ type IssuerCondition struct {
 	Reason string `json:"reason,omitempty"`
 	// message is a human-readable explanation of the status.
 	Message string `json:"message,omitempty"`
-	// observedGeneration is the .metadata.generation the condition was set for.
+	// observedGeneration is the .metadata.generation the condition was set for. One lower
+	// than the issuer's current generation means cert-manager has not seen its spec yet.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
