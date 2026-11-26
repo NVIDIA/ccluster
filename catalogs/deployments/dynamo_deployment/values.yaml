@@ -16,6 +16,9 @@ containerPort: 8000
 kserveGrpcMetricsPort: 8788
 # Frontend protocol, HTTP or GRPC.
 backendProtocol: HTTP
+# Gateway API implementation behind the cluster's shared Gateway; selects its templates
+# in catalogs/deployments/edge. Must match the cluster. Only istio is supported.
+gatewayImplementation: istio
 # Dynamo event plane, pinned so upstream default changes do not move it.
 eventPlane: nats
 # Frontend to worker request plane. Only tcp is viable: worker responses stream back over

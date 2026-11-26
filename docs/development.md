@@ -88,8 +88,9 @@ in Argo CD; [DESIGN.md](../DESIGN.md#6-why-serversideapply-is-mandatory) explain
 
 ## Catalog components
 
-Each chart directory under `catalogs/` is both a Helm chart and a Go package covered by
-module-wide builds, tests and lint. A compile error here also breaks controller-gen.
+Each component chart directory under `catalogs/` is both a Helm chart and a Go package
+covered by module-wide builds, tests and lint; the `deployments/edge` library chart below
+has no Go package. A compile error here also breaks controller-gen.
 See [the catalog design](../DESIGN.md#the-typed-catalog-and-what-it-does-not-guarantee)
 for validation boundaries and why deployment choices belong to callers.
 
@@ -98,7 +99,8 @@ upstream platform charts, so each `Values` nests the upstream values under the c
 key. `catalogs/deployments/` holds the tenant workload charts written here
 (`inference_deployment`, `compute_deployment`, `job_deployment`, `dynamo_deployment`);
 their `Values` is the chart's own top-level document with camelCase keys, the pod-level
-fields most of them share come from embedding `deployments.Workload`, the autoscaling
+fields most of them share come from embedding `deployments.Workload`, the inference and
+dynamo charts' Gateway fields from embedding `deployments.Endpoint`, the autoscaling
 and rollout types live in the `deployments` package, and every `Values` implements
 `Validate()`. `catalogs/resources/` holds the resources those workloads reference:
 `kai_gpu_queues` (the KAI scheduler quota tree the `kaiQueue` value joins) and
@@ -108,6 +110,18 @@ no values. These charts derive everything namespace-scoped from
 the release namespace, which Argo CD sets to the component's `namespace`; they take no
 tenant identifier. Render one locally with
 `helm template <name> catalogs/<path> -n <namespace> -f <values>`.
+
+`catalogs/deployments/edge` is a library chart, not a component: it has no Go package and
+renders nothing itself. `inference_deployment` and `dynamo_deployment` depend on it through
+`file://../edge` and include its templates for the shared Gateway (Certificate,
+ListenerSet, HTTPRoute, bearer token Secret) and for the Gateway implementation their
+`gatewayImplementation` value selects, one `templates/<implementation>/` directory each.
+Argo CD builds the dependency before rendering; locally, run
+`helm dependency build catalogs/deployments/<chart>` first, and delete the `charts/` and
+`Chart.lock` it writes afterwards. `make helm-lint-catalogs` and the Go render tests build
+it in a copy. A new implementation is a new directory defining the same templates as
+`templates/istio/`, plus its name in `edge.gatewayImplementation` and in
+`deployments.GatewayImplementation`.
 
 When adding or changing a component:
 
@@ -432,7 +446,7 @@ moves every plane's domain (DESIGN.md §3).
 The operator always writes a DNSEndpoint per CCLInfraPlane; without
 external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
 `*.<lb>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
-`ccluster.nvidia.com/loadbalancer: <lb>` (`*.nginx.<domain>` at its ingress; DESIGN.md §3):
+`ccluster.nvidia.com/loadbalancer: <lb>` (`*.gateway.<domain>` at its shared Gateway; DESIGN.md §3):
 
 1. Create the DNS zone for the base domain, say `planes.example.com`, and delegate it from
    its parent. It covers every plane. external-dns writes each record into the most

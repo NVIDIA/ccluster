@@ -122,7 +122,7 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 	}
 
 	// The cluster's domain, <plane>.<namespace>.<base domain>; the model is served at
-	// qwen.nginx.<domain>.
+	// qwen.gateway.<domain>.
 	infraPlane, err := client.GetInfraPlane(ctx, plane)
 	if err != nil {
 		return err
@@ -145,9 +145,9 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 				"--host", "0.0.0.0",
 				"--port", "8080",
 			},
+			Endpoint:      deployments.Endpoint{Domain: domain},
 			ContainerPort: 8080,
 			Healthcheck:   new("/health"),
-			Domain:        domain,
 		}))},
 	})
 	if err != nil {
@@ -160,7 +160,7 @@ func deploy(ctx context.Context, client *cclclient.Client, plane string) error {
 		return err
 	}
 
-	host := fmt.Sprintf("%s.nginx.%s", service, domain)
+	host := fmt.Sprintf("%s.gateway.%s", service, domain)
 	fmt.Printf("\n%s is running at https://%s. Try:\n\n", service, host)
 	fmt.Printf("  curl https://%s/v1/chat/completions -H 'Content-Type: application/json' \\\n", host)
 	fmt.Printf("    -d '{\"messages\": [{\"role\": \"user\", \"content\": \"What is Kubernetes, in one sentence?\"}]}'\n")

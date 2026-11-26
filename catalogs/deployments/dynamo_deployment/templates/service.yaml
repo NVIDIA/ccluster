@@ -2,19 +2,28 @@
 SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */ -}}
-{{/*
-The Dynamo operator auto-creates per-component Services (e.g. `${name}-frontend`)
-in the same namespace as the DynamoGraphDeployment. We expose the Frontend service
-to nginx-ingress via an istio-friendly ExternalName service so the same
-ingress + envoy sidecar pattern as inference_deployment works unchanged.
-*/}}
+{{- /*
+The HTTPRoute's backend: the Frontend pods, selected by the labels this chart puts on
+them. The Dynamo operator's own `<name>-frontend` Service names its port `http`, which
+Istio reads as HTTP/1.1, so the Gateway could not speak gRPC to it. This Service declares
+the protocol in appProtocol instead, in the form the Gateway implementation reads (see
+catalogs/deployments/edge). The Frontend has no sidecar, so the
+Gateway connects to it in plaintext.
+*/ -}}
 apiVersion: v1
 kind: Service
 metadata:
     labels:
         platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
-    name: "{{ .Values.name }}-istio-friendly"
+    name: {{ .Values.name | quote }}
     namespace: {{ .Release.Namespace }}
 spec:
-    type: ExternalName
-    externalName: "{{ include "dynamo.frontendServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local"
+    type: ClusterIP
+    selector:
+        platform.centml.ai/deployment-id: "{{ .Values.deploymentId }}"
+        ccluster.nvidia.com/component-type: frontend
+    ports:
+        - name: http
+          port: {{ .Values.containerPort | int }}
+          targetPort: http
+          appProtocol: {{ include "edge.appProtocol" . }}

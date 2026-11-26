@@ -106,7 +106,7 @@ def deploy(client: CCLClient, plane: str) -> None:
     wait_finished(client, DEPENDENCIES)
 
     # The cluster's domain, <plane>.<namespace>.<base domain>; the model is served at
-    # qwen.nginx.<domain>.
+    # qwen.gateway.<domain>.
     domain = client.get_infraplane(name=plane).status.domain
     size = inference.Resources(cpu="2", memory="2Gi")
     client.apply_component_set(
@@ -139,9 +139,9 @@ def deploy(client: CCLClient, plane: str) -> None:
     )
     wait_finished(client, SERVICE)
 
-    print(f"\n{SERVICE} is running at https://{SERVICE}.nginx.{domain}. Try:\n")
+    print(f"\n{SERVICE} is running at https://{SERVICE}.gateway.{domain}. Try:\n")
     print(
-        f"  curl https://{SERVICE}.nginx.{domain}/v1/chat/completions"
+        f"  curl https://{SERVICE}.gateway.{domain}/v1/chat/completions"
         " -H 'Content-Type: application/json' \\\n"
         "    -d '{\"messages\": [{\"role\": \"user\","
         " \"content\": \"What is Kubernetes, in one sentence?\"}]}'"

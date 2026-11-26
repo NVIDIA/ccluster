@@ -11,10 +11,21 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class GatewayImplementation(Enum):
+    """
+    GatewayImplementation is the Gateway API implementation behind the cluster's
+    shared Gateway, and selects its templates in catalogs/deployments/edge. It must
+    match what the cluster runs: the chart cannot read the cluster. The chart ships
+    istio, the only one supported.
+    """
+
+    istio = "istio"
+
+
 class BackendProtocol(Enum):
     """
-    BackendProtocol is the protocol nginx speaks to the container. The chart
-    ships HTTP.
+    BackendProtocol is the protocol the container speaks, declared on the Service so
+    the Gateway and the sidecar speak it too. The chart ships HTTP.
     """
 
     http = "HTTP"
@@ -59,8 +70,9 @@ class HPA(BaseModel):
     min_replicas: Annotated[int | None, Field(alias="minReplicas")] = None
     """
     MinReplicas is the lower bound. The chart ships 1. For inference_deployment, 0
-    enables scale-to-zero, which needs the cluster's Prometheus to scrape nginx
-    ingress controller metrics; dynamo_deployment does not support 0.
+    enables scale-to-zero, which needs the cluster's Prometheus to scrape
+    istio_requests_total from the shared Gateway's pods; dynamo_deployment does not
+    support 0.
     """
     max_replicas: Annotated[int | None, Field(alias="maxReplicas")] = None
     """
@@ -347,34 +359,46 @@ class Values(BaseModel):
     domain: str
     """
     Domain is the infra plane's domain, <plane>.<namespace>.<base domain>, which its
-    CCLInfraPlane shows as status.domain. The Ingress host is
-    <name>.nginx.<domain>, under the *.nginx.<domain> record the control-plane
-    operator publishes for the cluster's ingress, unless DeploymentURL overrides it. The
-    host does not include the namespace, so deployment names must be unique across the
+    CCLInfraPlane shows as status.domain. The host is <name>.gateway.<domain>, under
+    the *.gateway.<domain> record the control-plane operator publishes for the shared
+    Gateway gateway-system/ccl-gateway, unless DeploymentURL overrides it. The host
+    does not include the namespace, so deployment names must be unique across the
     plane. Required.
     """
     deployment_url: Annotated[str | None, Field(alias="deploymentUrl")] = None
     """
-    DeploymentURL replaces the derived Ingress host with a full hostname.
-    """
-    container_port: Annotated[int, Field(alias="containerPort")]
-    """
-    ContainerPort is the port the container serves on, and the port the Service,
-    Ingress and readiness probe target. Required; it may not be an Istio port.
+    DeploymentURL replaces the derived host with a full hostname.
     """
     endpoint_certificate_authority: Annotated[
         str | None, Field(alias="endpointCertificateAuthority")
     ] = None
     """
-    EndpointCertificateAuthority is a PEM CA bundle. When set, nginx requires
-    clients to present a certificate it signed.
+    EndpointCertificateAuthority is no longer supported: the Gateway does not ask
+    clients for certificates. Validate rejects a non-empty value, and the chart fails
+    to render with one, rather than serve the deployment without the check.
     """
     endpoint_bearer_token: Annotated[str | None, Field(alias="endpointBearerToken")] = (
         None
     )
     """
-    EndpointBearerToken, when set, makes nginx reject requests whose Authorization
-    header is not "Bearer <token>".
+    EndpointBearerToken, when set, is stored in the Secret <name>-bearer-token, from
+    which the Gateway's authorization service rejects requests to the host whose
+    Authorization header is not "Bearer <token>". Unset, the host needs no token.
+    """
+    gateway_implementation: Annotated[
+        GatewayImplementation | None,
+        Field(alias="gatewayImplementation", title="GatewayImplementation"),
+    ] = None
+    """
+    GatewayImplementation is the Gateway API implementation behind the cluster's
+    shared Gateway, and selects its templates in catalogs/deployments/edge. It must
+    match what the cluster runs: the chart cannot read the cluster. The chart ships
+    istio, the only one supported.
+    """
+    container_port: Annotated[int, Field(alias="containerPort")]
+    """
+    ContainerPort is the port the container serves on, and the port the Service,
+    HTTPRoute and readiness probe target. Required; it may not be an Istio port.
     """
     hpa: HPA | None = None
     """
@@ -424,8 +448,8 @@ class Values(BaseModel):
         BackendProtocol | None, Field(alias="backendProtocol", title="BackendProtocol")
     ] = None
     """
-    BackendProtocol is the protocol nginx speaks to the container. The chart
-    ships HTTP.
+    BackendProtocol is the protocol the container speaks, declared on the Service so
+    the Gateway and the sidecar speak it too. The chart ships HTTP.
     """
     session_affinity: Annotated[bool | None, Field(alias="sessionAffinity")] = None
     """

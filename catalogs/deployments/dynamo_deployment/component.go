@@ -11,8 +11,9 @@ SPDX-License-Identifier: Apache-2.0
 // router and the vLLM backend.
 //
 // Dynamo pods are outside the Istio mesh: worker responses stream back to the Frontend
-// over raw TCP on ephemeral ports, which STRICT mTLS cannot enrol. The chart's own
-// NetworkPolicy opens what the namespace baseline would otherwise block.
+// over raw TCP on ephemeral ports, which STRICT mTLS cannot enrol. The shared Gateway
+// reaches the Frontend in plaintext, since the Frontend has no sidecar to require mTLS.
+// The chart's own NetworkPolicy opens what the namespace baseline would otherwise block.
 package dynamodeployment
 
 import (
@@ -77,29 +78,13 @@ type Values struct {
 	// Secret refreshed in place needs no pod restart.
 	ImagePullSecretNames []string `json:"imagePullSecretNames,omitempty"`
 
-	// Domain is the infra plane's domain, <plane>.<namespace>.<base domain>, which its
-	// CCLInfraPlane shows as status.domain. The Ingress host is
-	// <name>.nginx.<domain>, under the *.nginx.<domain> record the control-plane
-	// operator publishes for the cluster's ingress, unless DeploymentURL overrides it. The
-	// host does not include the namespace, so deployment names must be unique across the
-	// plane. Required.
-	Domain string `json:"domain"`
-
-	// DeploymentURL replaces the derived Ingress host with a full hostname.
-	DeploymentURL *string `json:"deploymentUrl,omitempty"`
+	deployments.Endpoint
 
 	// ContainerPort is the port the Frontend listens on, from 1024 to 65535 and not
-	// KServeGRPCMetricsPort in GRPC mode. The Dynamo operator's Service exposes 8000
-	// and forwards to it. The chart ships 8000.
+	// KServeGRPCMetricsPort in GRPC mode. The chart's Service <name>, which the
+	// HTTPRoute targets, exposes it on the same port; the Dynamo operator's Service
+	// exposes 8000 and forwards to it. The chart ships 8000.
 	ContainerPort *int32 `json:"containerPort,omitempty"`
-
-	// EndpointCertificateAuthority is a PEM CA bundle. When set, nginx requires
-	// clients to present a certificate it signed.
-	EndpointCertificateAuthority *string `json:"endpointCertificateAuthority,omitempty"`
-
-	// EndpointBearerToken, when set, makes nginx reject requests whose Authorization
-	// header is not "Bearer <token>".
-	EndpointBearerToken *string `json:"endpointBearerToken,omitempty"`
 
 	// Model is the Hugging Face model identifier passed to dynamo.vllm, for example
 	// Qwen/Qwen3-0.6B. Required.
@@ -159,7 +144,8 @@ type Values struct {
 
 	// BackendProtocol is the Frontend's protocol. HTTP keeps the OpenAI HTTP
 	// frontend; GRPC starts Dynamo's KServe gRPC server and moves metrics to
-	// KServeGRPCMetricsPort. The chart ships HTTP.
+	// KServeGRPCMetricsPort. The chart declares it on the Service the Gateway routes to.
+	// The chart ships HTTP.
 	//nolint:lll // A struct tag cannot wrap.
 	BackendProtocol *deployments.BackendProtocol `json:"backendProtocol,omitempty" jsonschema:"title=BackendProtocol,enum=HTTP,enum=GRPC"`
 
@@ -342,8 +328,7 @@ func (e *EFA) validate() error {
 }
 
 // New returns the dynamo_deployment chart entry, installed into namespace with values.
-// The chart's objects are all created in that namespace, and its Ingress host is
-// derived from it.
+// The chart's objects are all created in that namespace.
 func New(
 	namespace string,
 	values Values,
@@ -377,7 +362,6 @@ func (v Values) Validate() error {
 			deployments.Field{Name: "name", Value: v.Name},
 			deployments.Field{Name: "deploymentId", Value: v.DeploymentID},
 			deployments.Field{Name: "imageUrl", Value: v.ImageURL},
-			deployments.Field{Name: "domain", Value: v.Domain},
 			deployments.Field{Name: "model", Value: strings.TrimSpace(v.Model)},
 		)),
 		v.ImagePullSecret.Validate(),
@@ -391,6 +375,7 @@ func (v Values) Validate() error {
 		v.validateKVTransfer(),
 		v.validateExtraArgv(),
 		deployments.ValidateVolumeMounts(v.VolumeMounts),
+		v.Endpoint.Validate(),
 	}
 
 	if minReplicas, _ := v.HPA.Bounds(); minReplicas < 1 {

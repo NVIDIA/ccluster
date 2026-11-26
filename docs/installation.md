@@ -85,7 +85,7 @@ The operator then needs a read-only Argo CD account and an API token; see
 
 The operator writes a DNSEndpoint for each registered cluster. It asks for
 `*.<lb>.<cluster domain>` to point at each of the cluster's LoadBalancer Services labelled
-`ccluster.nvidia.com/loadbalancer: <lb>`, such as `*.nginx.<cluster domain>` at its ingress.
+`ccluster.nvidia.com/loadbalancer: <lb>`, such as `*.gateway.<cluster domain>` at its shared Gateway.
 The chart's bundled [external-dns](https://github.com/kubernetes-sigs/external-dns)
 publishes these records. It is disabled by default, and without it nothing is published.
 
@@ -179,7 +179,7 @@ only in its logs ([#174](https://github.com/NVIDIA/ccluster/issues/174)). Resolv
 under the record, and read the logs if it does not resolve:
 
 ```bash
-dig +short test.nginx.edge-1.team-a.planes.example.com
+dig +short test.gateway.edge-1.team-a.planes.example.com
 kubectl -n ccluster-cp-system logs deploy/ccluster-cp-external-dns
 ```
 

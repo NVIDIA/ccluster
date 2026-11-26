@@ -191,7 +191,7 @@ client.apply_component_set(name="qwen", components=[
 **3. Ask it something:**
 
 ```bash
-curl https://qwen.nginx.<domain>/v1/chat/completions -H 'Content-Type: application/json' \
+curl https://qwen.gateway.<domain>/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```
 

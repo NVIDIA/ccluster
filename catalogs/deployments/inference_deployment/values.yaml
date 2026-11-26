@@ -12,8 +12,11 @@ devShmSize: 512Mi
 enableLogging: true
 # Path of the HTTP readiness probe on containerPort; "" switches to a TCP probe.
 healthcheck: /
-# Ingress backend protocol, HTTP or GRPC.
+# Protocol the container serves, HTTP or GRPC; the Service declares it to Istio.
 backendProtocol: HTTP
+# Gateway API implementation behind the cluster's shared Gateway; selects its templates
+# in catalogs/deployments/edge. Must match the cluster. Only istio is supported.
+gatewayImplementation: istio
 # Revision of this deployment; a change restarts the Rollout with a fresh ConfigMap.
 revisionNumber: 1
 rolloutPaused: false

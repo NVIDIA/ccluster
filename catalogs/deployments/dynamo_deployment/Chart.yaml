@@ -12,3 +12,11 @@ sources:
 maintainers:
   - name: CCluster maintainers
     url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+# catalogs/deployments/edge: the Certificate, ListenerSet, HTTPRoute and bearer token
+# Secret, and what the Gateway implementation needs beyond them. Helm and Argo CD build it
+# into charts/ before rendering.
+dependencies:
+  - name: deployments_edge
+    version: 0.1.0
+    repository: file://../edge

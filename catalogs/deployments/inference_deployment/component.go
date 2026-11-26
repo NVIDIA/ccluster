@@ -5,8 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 // Package inferencedeployment describes the values of
 // catalogs/deployments/inference_deployment: an inference service run as an Argo
-// Rollout behind an nginx Ingress, autoscaled by KEDA on in-flight requests, and scraped
-// by Prometheus through the Istio sidecar.
+// Rollout behind the cluster's shared Gateway, autoscaled by KEDA on in-flight requests,
+// and scraped by Prometheus through the Istio sidecar.
 package inferencedeployment
 
 import (
@@ -26,29 +26,11 @@ const Chart = "catalogs/deployments/inference_deployment"
 // catalogs/deployments/inference_deployment.
 type Values struct {
 	deployments.Workload
-
-	// Domain is the infra plane's domain, <plane>.<namespace>.<base domain>, which its
-	// CCLInfraPlane shows as status.domain. The Ingress host is
-	// <name>.nginx.<domain>, under the *.nginx.<domain> record the control-plane
-	// operator publishes for the cluster's ingress, unless DeploymentURL overrides it. The
-	// host does not include the namespace, so deployment names must be unique across the
-	// plane. Required.
-	Domain string `json:"domain"`
-
-	// DeploymentURL replaces the derived Ingress host with a full hostname.
-	DeploymentURL *string `json:"deploymentUrl,omitempty"`
+	deployments.Endpoint
 
 	// ContainerPort is the port the container serves on, and the port the Service,
-	// Ingress and readiness probe target. Required; it may not be an Istio port.
+	// HTTPRoute and readiness probe target. Required; it may not be an Istio port.
 	ContainerPort int32 `json:"containerPort"`
-
-	// EndpointCertificateAuthority is a PEM CA bundle. When set, nginx requires
-	// clients to present a certificate it signed.
-	EndpointCertificateAuthority *string `json:"endpointCertificateAuthority,omitempty"`
-
-	// EndpointBearerToken, when set, makes nginx reject requests whose Authorization
-	// header is not "Bearer <token>".
-	EndpointBearerToken *string `json:"endpointBearerToken,omitempty"`
 
 	// HPA bounds the KEDA ScaledObject. The chart ships one fixed replica.
 	HPA *deployments.HPA `json:"hpa,omitempty"`
@@ -81,8 +63,8 @@ type Values struct {
 	// RolloutPaused pauses the Rollout. The chart ships false.
 	RolloutPaused *bool `json:"rolloutPaused,omitempty"`
 
-	// BackendProtocol is the protocol nginx speaks to the container. The chart
-	// ships HTTP.
+	// BackendProtocol is the protocol the container speaks, declared on the Service so
+	// the Gateway and the sidecar speak it too. The chart ships HTTP.
 	//nolint:lll // A struct tag cannot wrap.
 	BackendProtocol *deployments.BackendProtocol `json:"backendProtocol,omitempty" jsonschema:"title=BackendProtocol,enum=HTTP,enum=GRPC"`
 
@@ -132,8 +114,7 @@ func (m *Metrics) Validate() error {
 }
 
 // New returns the inference_deployment chart entry, installed into namespace with
-// values. The chart's objects are all created in that namespace, and its Ingress host
-// is derived from it.
+// values. The chart's objects are all created in that namespace.
 func New(
 	namespace string,
 	values Values,
@@ -151,9 +132,7 @@ func (v Values) Validate() error {
 	errs := []error{
 		v.Workload.Validate(),
 		deployments.ValidateChartEnv(v.SecretEnvVars, chartEnv),
-		deployments.MissingError(deployments.Missing(
-			deployments.Field{Name: "domain", Value: v.Domain},
-		)),
+		v.Endpoint.Validate(),
 		v.HPA.Validate(),
 		v.RolloutStrategy.Validate(),
 		v.ConfigFile.Validate(),

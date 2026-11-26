@@ -30,9 +30,11 @@ const (
 	DefaultMaxSurge       int32 = 0
 )
 
-// BackendProtocol is the protocol nginx speaks to the serving container. Fields of
-// this type carry the enum and a title in their jsonschema tag: the schema reflector
-// inlines named string types, and the title is what names the generated Python enum.
+// BackendProtocol is the protocol the serving container speaks. The charts declare it as
+// the appProtocol of the Service the Gateway routes to, so Istio speaks HTTP/1.1 or gRPC
+// to the container. Fields of this type carry the enum and a title in their jsonschema
+// tag: the schema reflector inlines named string types, and the title is what names the
+// generated Python enum.
 type BackendProtocol string
 
 const (
@@ -51,8 +53,9 @@ func (p *BackendProtocol) Validate() error {
 // HPA bounds the KEDA ScaledObject that scales the workers.
 type HPA struct {
 	// MinReplicas is the lower bound. The chart ships 1. For inference_deployment, 0
-	// enables scale-to-zero, which needs the cluster's Prometheus to scrape nginx
-	// ingress controller metrics; dynamo_deployment does not support 0.
+	// enables scale-to-zero, which needs the cluster's Prometheus to scrape
+	// istio_requests_total from the shared Gateway's pods; dynamo_deployment does not
+	// support 0.
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
 	// MaxReplicas is the upper bound, at least MinReplicas. The chart ships 1.

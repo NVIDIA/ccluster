@@ -55,28 +55,22 @@ spec:
           }
         ) or on() vector(0)
   # Handle 0→1 scaling. When scaled to zero, there is no envoy sidecar to report metrics,
-  # so we fall back to the nginx ingress controller request rate. Any non-zero RPS over the
-  # last 5 minutes triggers activation (activationThreshold: "0").
+  # so we fall back to the request rate the shared Gateway reports for the Service:
+  # edge.activationQuery in catalogs/deployments/edge.
+  # Any request the Gateway let through in the last 5 minutes triggers activation
+  # (activationThreshold: "0"); requests its authorization service denied do not.
   #
-  # PREREQUISITE: The cluster's Prometheus must scrape nginx ingress controller metrics.
-  # If nginx_ingress_controller_requests is absent, the `or on() vector(0)` fallback
-  # always returns 0, which never exceeds activationThreshold, so the deployment
-  # can never wake up from zero replicas.
+  # PREREQUISITE: The cluster's Prometheus must scrape the Gateway's metrics. If the query
+  # finds no series, the `or on() vector(0)` fallback always returns 0, which never exceeds
+  # activationThreshold, so the deployment can never wake up from zero replicas.
   - type: prometheus
     metadata:
       serverAddress: 'http://prometheus-op-kube-prometh-prometheus.prometheus.svc.cluster.local:9090'
-      metricName: "{{ .Values.name }}-istio-rps"
+      metricName: "{{ .Values.name }}-gateway-rps"
       threshold: "1"
       activationThreshold: "0"
       query: >-
         clamp_max(
-          sum(
-            rate(
-              nginx_ingress_controller_requests{
-                exported_namespace="{{ .Release.Namespace }}",
-                ingress="{{ .Values.name }}",
-              }[5m]
-            )
-          ),
+          {{- include "edge.activationQuery" . | nindent 10 }},
           1
         ) or on() vector(0)

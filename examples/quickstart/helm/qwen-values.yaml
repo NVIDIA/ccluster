@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # A small LLM: Qwen2.5-0.5B-Instruct served by llama.cpp on CPU, at
-# https://qwen.nginx.<domain>. Deploy it once the dependencies have rolled out:
+# https://qwen.gateway.<domain>. Deploy it once the dependencies have rolled out:
 #
 #   helm install qwen ./componentset -n team-a -f qwen-values.yaml \
 #     --set infraPlane=edge-1 \

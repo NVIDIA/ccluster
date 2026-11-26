@@ -147,28 +147,29 @@ helm --kube-context "$CP" install qwen helm/componentset -n team-a \
 kubectl --context "$CP" -n team-a get cclcomponentset qwen -w   # Ctrl-C at RolloutComplete
 ```
 
-cert-manager requests the model server's certificate after the set has rolled out.
-`kubectl --context "$IP" -n qwen get certificate` shows `READY True` once HTTPS works.
+The set finishes only once cert-manager has issued the model server's certificate, since
+the Gateway serves the host over HTTPS only with it.
+`kubectl --context "$IP" -n qwen get certificate` shows whether it is `READY`.
 
 ## 4. Ask it something
 
-The model is served at `https://qwen.nginx.<domain>`, with an OpenAI-compatible API:
+The model is served at `https://qwen.gateway.<domain>`, with an OpenAI-compatible API:
 
 ```bash
 DOMAIN=$(kubectl --context "$CP" -n team-a get cclinfraplane edge-1 -o jsonpath='{.status.domain}')
-curl "https://qwen.nginx.$DOMAIN/v1/chat/completions" -H 'Content-Type: application/json' \
+curl "https://qwen.gateway.$DOMAIN/v1/chat/completions" -H 'Content-Type: application/json' \
   -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```
 
-Without published DNS, as on a local cluster, the certificate cannot be issued. Call the
-model through the ingress load balancer's address instead, accepting the ingress's
-default certificate:
+Without published DNS, as on a local cluster, the certificate cannot be issued, so the
+Gateway serves no HTTPS listener for the host and the `qwen` set never reaches
+`RolloutComplete`. Stop waiting once the model server's Pod is ready
+(`kubectl --context "$IP" -n qwen get pods`): press Ctrl-C, as the Python and Go programs
+give up only after 30 minutes. Then call the model server's Service directly:
 
 ```bash
-INGRESS=$(kubectl --context "$IP" -n ingress-nginx get svc \
-  -l ccluster.nvidia.com/loadbalancer=nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}')
-curl -k "https://qwen.nginx.$DOMAIN/v1/chat/completions" --resolve "qwen.nginx.$DOMAIN:443:$INGRESS" \
-  -H 'Content-Type: application/json' \
+kubectl --context "$IP" -n qwen port-forward svc/qwen 8080:8080 &
+curl "http://localhost:8080/v1/chat/completions" -H 'Content-Type: application/json' \
   -d '{"messages": [{"role": "user", "content": "What is Kubernetes, in one sentence?"}]}'
 ```
 
@@ -183,6 +184,9 @@ kubectl --context "$CP" -n team-a get cclcomponentset
 kubectl --context "$CP" -n team-a get applications
 kubectl --context "$CP" -n team-a get application dependencies-istio -o jsonpath='{.status.conditions}'
 ```
+
+The `qwen` set also waits for the model server's certificate;
+`kubectl --context "$IP" -n qwen describe certificate qwen-tls` says why it is not issued.
 
 ## Clean up
 

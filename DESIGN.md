@@ -79,8 +79,8 @@ Infra-plane clusters run no Argo CD of their own. The ip chart has no dependenci
 | `ccluster-cp-operator` | Runs in the control-plane cluster. Owns both controllers and all real logic. Writes each infra-plane cluster's `CCLClusterConfig` with that cluster's registered credentials, and the `DNSEndpoint` for each plane's wildcard record (§3). |
 | `ccluster-ip-operator` | Runs in each infra-plane cluster. Runs every `catalogs/cluster_base` component's Verifier against the `CCLClusterConfig` singleton (§3a). Installs nothing. |
 | Argo CD | Control-plane cluster only. Does every install, upgrade and uninstall. |
-| external-dns | Control-plane cluster only, optional. Publishes the `DNSEndpoint`s the operator writes into the DNS zones the user created (§3). Infra planes run no external-dns: Ingress hosts resolve through each plane's wildcard records, and a `compute_deployment`'s SSH Service gets no DNS name until #221. |
-| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 16 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
+| external-dns | Control-plane cluster only, optional. Publishes the `DNSEndpoint`s the operator writes into the DNS zones the user created (§3). Infra planes run no external-dns: deployment hosts resolve through each plane's wildcard records, and a `compute_deployment`'s SSH Service gets no DNS name until #221. |
+| `catalogs/` | The Helm chart catalog, in this Git repository. `catalogs/cluster_base/<component>` holds the 16 platform components, `catalogs/deployments/<chart>` the four tenant workload charts, `catalogs/resources/<chart>` the GPU quota queues and tenant volumes they use, and `catalogs/namespace_base` the tenant namespace baseline, each paired with a Go package describing that chart's values (§4). `catalogs/deployments/edge` is a library chart two of the workload charts include, with no Go package. `catalogs/deployments/compute_deployment` also holds the source of the compute-ssh launcher image its pods run. |
 | `charts/{cp,ip}/chart` | How the operators themselves are deployed. Unrelated to `catalogs/`. |
 
 The two operators are separate binaries from one Go module because they run in **different
@@ -309,11 +309,21 @@ therefore retried every minute, and a written one is reconciled again every
 `*.<lb>.<domain>` points at each LoadBalancer the plane reports, `<lb>` being its
 `ccluster.nvidia.com/loadbalancer` label value (§3a) and `<domain>` the plane's
 `<name>.<namespace>.<base domain>`, which the operator copies without
-treating any value specially (`cclinfraplane_dns.go`). The catalog's `ingress_nginx` chart
-chose `nginx`, so `*.nginx.<domain>` is the cluster's ingress and every Ingress host
-under it resolves to it. The `inference_deployment` and
-`dynamo_deployment` charts, given the plane's domain, put their Ingress at
-`<name>.nginx.<domain>`. The host leaves out the namespace, so deployments on one plane
+treating any value specially (`cclinfraplane_dns.go`). The plane must run a shared Gateway
+`gateway-system/ccl-gateway` whose `infrastructure.labels` put `gateway` on the Service
+istiod generates for it, so
+`*.gateway.<domain>` is the cluster's ingress and every host under it resolves to it. The
+`inference_deployment` and `dynamo_deployment` charts, given the plane's domain, serve at
+`<name>.gateway.<domain>`: each renders a Certificate for the host, a ListenerSet that adds
+an HTTPS listener for it to that Gateway, and an HTTPRoute on the listener to its Service.
+These are Gateway API objects any implementation serves. Both charts take them from the
+library chart `catalogs/deployments/edge`, a `file://` dependency. What one implementation
+needs beyond them, such as Istio's DestinationRule, the Service's `appProtocol` and the
+scale-from-zero query, lives in the library's `templates/<implementation>/`, selected by
+the `gatewayImplementation` value; `istio` is the only one so far, and the charts refuse to
+render for any other. The Gateway's name, namespace and `http` listener stay the same for
+every implementation, so the common objects and the `acme-ca` solver do not change.
+The host leaves out the namespace, so deployments on one plane
 need distinct names; nothing yet enforces it. Naming the record after the label, rather
 than claiming all of `*.<domain>` for one LoadBalancer, lets any chart expose another under
 its own name with no operator change. The work is split three ways:
@@ -591,7 +601,7 @@ from a typed, per-chart values struct.
 
 ### The typed catalog, and what it does not guarantee
 
-Each chart under `catalogs/` has a Go package
+Each component chart under `catalogs/` has a Go package
 alongside it declaring its values as typed structs, plus a `New(namespace, values)` that
 builds a `v1alpha1.ComponentEntry` from them — the API type itself, not a catalog-side
 mirror of it. A caller building a `CCLComponentSet` in Go gets compile-time checking of the
@@ -1133,6 +1143,11 @@ Three charts have their own:
   still runs the previous spec's Pods.
 - **`compute_deployment`:** names the wait for the SSH Service's load balancer address
   `LoadBalancerPending`.
+
+`inference_deployment` and `dynamo_deployment` render their host's Certificate themselves,
+so it counts in the aggregate: the component stays `Progressing` until cert-manager issues
+it, and is `Degraded` while an issuance has failed. Neither chart leaves it out, because the
+Gateway serves the host no HTTPS listener without the certificate.
 
 A health function must keep judging what the previous catalog revision renders, because
 the operator can see an Application deployed from it.

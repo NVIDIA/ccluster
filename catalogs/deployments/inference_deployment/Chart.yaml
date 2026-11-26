@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: v2
 name: deployments_inference_deployment
-description: An inference service - an Argo Rollout behind an nginx Ingress, autoscaled by KEDA, scraped by Prometheus
+description: An inference service - an Argo Rollout behind the cluster's shared Gateway, autoscaled by KEDA, scraped by Prometheus
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
@@ -12,3 +12,11 @@ sources:
 maintainers:
   - name: CCluster maintainers
     url: https://github.com/NVIDIA/ccluster/blob/main/MAINTAINERS.md
+
+# catalogs/deployments/edge: the Certificate, ListenerSet, HTTPRoute and bearer token
+# Secret, and what the Gateway implementation needs beyond them. Helm and Argo CD build it
+# into charts/ before rendering.
+dependencies:
+  - name: deployments_edge
+    version: 0.1.0
+    repository: file://../edge

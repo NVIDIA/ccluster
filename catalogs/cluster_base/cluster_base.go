@@ -70,9 +70,15 @@ func Components(
 			ComponentEntry: entry(istio.New("istio-system", istio.Values{})),
 		}, // wave -50
 		{
-			Name:           "cert-manager",
-			InfraPlaneRef:  ref,
-			ComponentEntry: entry(certmanager.New("cert-manager", certmanager.Values{})),
+			// Gateway API support on: final-stack's acme-ca solves HTTP-01 through the shared
+			// Gateway. gateway-api, above, installs the CRDs it needs at startup.
+			Name:          "cert-manager",
+			InfraPlaneRef: ref,
+			ComponentEntry: entry(certmanager.New("cert-manager", certmanager.Values{
+				CertManager: &certmanager.ChartValues{Config: &certmanager.ControllerConfig{
+					GatewayAPI: &certmanager.Toggle{Enabled: new(true)},
+				}},
+			})),
 		}, // wave -45
 		{
 			Name:           "ingress-nginx",
