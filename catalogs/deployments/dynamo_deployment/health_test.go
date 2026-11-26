@@ -15,16 +15,30 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/deployments/deploymentstest"
 )
 
+// The health Argo CD reports for a resource, as catalogs.ObservedResource.Health holds it.
+const (
+	healthy  = string(v1alpha1.ComponentHealthHealthy)
+	degraded = string(v1alpha1.ComponentHealthDegraded)
+)
+
+const (
+	// graphKey is how the reader addresses the DynamoGraphDeployment llm.
+	graphKey = "DynamoGraphDeployment/llm"
+
+	crashLoopBackOff = "CrashLoopBackOff"
+)
+
 func TestHealth(t *testing.T) {
 	graph := catalogs.ObservedResource{ResourceRef: catalogs.ResourceRef{
 		Group: "nvidia.com", Version: "v1beta1", Kind: "DynamoGraphDeployment", Name: "llm", UID: "g1"}}
 	worker := catalogs.ObservedResource{
 		ResourceRef: catalogs.ResourceRef{Version: "v1", Kind: "Pod", Name: "llm-worker-0", UID: "p1"},
 		Parents:     []catalogs.ResourceRef{{Group: "apps", Kind: "ReplicaSet", Name: "llm-worker-1"}},
-		Health:      "Degraded",
-		Info:        map[string]string{catalogs.InfoStatusReason: "CrashLoopBackOff"},
+		Health:      degraded,
+		Info:        map[string]string{catalogs.InfoStatusReason: crashLoopBackOff},
 	}
 	dgdWithStatus := func(generation int64, status map[string]any) map[string]any {
+		//nolint:goconst // the DynamoGraphDeployment's JSON field names read best as written
 		return map[string]any{
 			"apiVersion": "nvidia.com/v1beta1", "kind": "DynamoGraphDeployment",
 			"metadata": map[string]any{"name": "llm", "generation": generation},
@@ -32,6 +46,7 @@ func TestHealth(t *testing.T) {
 		}
 	}
 	dgd := func(generation, observed int64, state, readyReason, readyMessage string) map[string]any {
+		//nolint:goconst // the status's JSON field names read best as written
 		status := map[string]any{"observedGeneration": observed, "state": state}
 		if readyReason != "" {
 			status["conditions"] = []any{map[string]any{
@@ -64,19 +79,19 @@ func TestHealth(t *testing.T) {
 	}{
 		{
 			name:      "successful",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 2, "successful", "", ""),
+				graphKey: dgd(2, 2, "successful", "", ""),
 			}},
 			wantHealth: v1alpha1.ComponentHealthHealthy,
 		},
 		{
 			name:      "pending while Argo CD, which leaves the graph out, reports Healthy",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 2, "pending", "insufficient_capacity", "worker: 0/1 scheduled"),
+				graphKey: dgd(2, 2, "pending", "insufficient_capacity", "worker: 0/1 scheduled"),
 			}},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantReason:  "InsufficientCapacity",
@@ -84,29 +99,29 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:      "failed",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 2, "failed", "pods_not_ready", "frontend: 0/1 ready"),
+				graphKey: dgd(2, 2, "failed", "pods_not_ready", "frontend: 0/1 ready"),
 			}},
 			wantHealth: v1alpha1.ComponentHealthDegraded,
 			wantReason: "PodsNotReady",
 		},
 		{
 			name:      "the operator has not seen the current spec",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(3, 2, "successful", "", ""),
+				graphKey: dgd(3, 2, "successful", "", ""),
 			}},
 			wantHealth: v1alpha1.ComponentHealthProgressing,
 		},
 		{
 			name:      "the current spec failed, which only the Ready condition records",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": failedUpdate(2, 3),
+				graphKey: failedUpdate(2, 3),
 			}},
 			wantHealth:  v1alpha1.ComponentHealthDegraded,
 			wantReason:  "FailedToReconcileTheResources",
@@ -114,37 +129,37 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:      "an earlier spec failed and the operator has not seen the current one",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": failedUpdate(2, 2),
+				graphKey: failedUpdate(2, 2),
 			}},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantMessage: "DynamoGraphDeployment llm: waiting for the Dynamo operator to see the current spec",
 		},
 		{
 			name:      "no spec has reconciled yet and the operator has not seen the current one",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": failedUpdate(0, 2),
+				graphKey: failedUpdate(0, 2),
 			}},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantMessage: "DynamoGraphDeployment llm: waiting for the Dynamo operator to see the current spec",
 		},
 		{
 			name:      "a crashing worker is worse than a pending graph",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph, worker},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 2, "pending", "pods_not_ready", ""),
+				graphKey: dgd(2, 2, "pending", "pods_not_ready", ""),
 			}},
 			wantHealth: v1alpha1.ComponentHealthDegraded,
-			wantReason: "CrashLoopBackOff",
+			wantReason: crashLoopBackOff,
 		},
 		{
 			name:        "an unreadable graph keeps the default health",
-			aggregate:   "Healthy",
+			aggregate:   healthy,
 			resources:   catalogs.ObservedResources{graph},
 			reader:      &deploymentstest.Reader{Err: errors.New("unreachable")},
 			wantHealth:  v1alpha1.ComponentHealthHealthy,
@@ -153,35 +168,35 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:      "an unreadable graph leaves a Pod's reason",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph, worker},
 			reader:    &deploymentstest.Reader{Err: errors.New("unreachable")},
 			// The worker Pod cannot be read either, so its reason comes from the tree.
 			wantHealth: v1alpha1.ComponentHealthDegraded,
-			wantReason: "CrashLoopBackOff",
+			wantReason: crashLoopBackOff,
 		},
 		{
 			name:      "an operator that does not set observedGeneration",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 0, "successful", "", ""),
+				graphKey: dgd(2, 0, "successful", "", ""),
 			}},
 			wantHealth: v1alpha1.ComponentHealthHealthy,
 		},
 		{
 			name:      "an operator that sets observedGeneration on neither the status nor Ready",
-			aggregate: "Healthy",
+			aggregate: healthy,
 			resources: catalogs.ObservedResources{graph},
 			reader: &deploymentstest.Reader{Objects: map[string]map[string]any{
-				"DynamoGraphDeployment/llm": dgd(2, 0, "failed", "pods_not_ready", ""),
+				graphKey: dgd(2, 0, "failed", "pods_not_ready", ""),
 			}},
 			wantHealth: v1alpha1.ComponentHealthDegraded,
 			wantReason: "PodsNotReady",
 		},
 		{
 			name:        "a graph gone since the tree was cached keeps the default health",
-			aggregate:   "Healthy",
+			aggregate:   healthy,
 			resources:   catalogs.ObservedResources{graph},
 			reader:      &deploymentstest.Reader{},
 			wantHealth:  v1alpha1.ComponentHealthHealthy,

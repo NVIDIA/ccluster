@@ -352,7 +352,7 @@ func newShellTestClient(t *testing.T, shell string) (*gossh.Client, <-chan struc
 		t.Fatal(err)
 	}
 	sshConn, channels, requests, err := gossh.NewClientConn(conn, listener.Addr().String(), &gossh.ClientConfig{
-		User: "root", Auth: []gossh.AuthMethod{gossh.PublicKeys(loginKey)},
+		User: sshUser, Auth: []gossh.AuthMethod{gossh.PublicKeys(loginKey)},
 		HostKeyCallback: gossh.FixedHostKey(hostKey.PublicKey()),
 	})
 	if err != nil {

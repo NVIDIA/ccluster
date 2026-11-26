@@ -34,7 +34,7 @@ func TestAgentForwarding(t *testing.T) {
 	}
 	server := newSSHServer(config{
 		workingDir:      t.TempDir(),
-		shellCandidates: []shellSpec{{path: "/bin/sh", name: "sh"}},
+		shellCandidates: []shellSpec{{path: binSh, name: "sh"}},
 	}, [][]byte{loginKey.PublicKey().Marshal()}, newTestSigner(t))
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(listener) }()
@@ -73,7 +73,7 @@ func TestAgentForwarding(t *testing.T) {
 				t.Fatal(err)
 			}
 			sshConn, channels, requests, err := gossh.NewClientConn(conn, listener.Addr().String(), &gossh.ClientConfig{
-				User:            "root",
+				User:            sshUser,
 				Auth:            []gossh.AuthMethod{gossh.PublicKeys(loginKey)},
 				HostKeyCallback: gossh.InsecureIgnoreHostKey(),
 			})

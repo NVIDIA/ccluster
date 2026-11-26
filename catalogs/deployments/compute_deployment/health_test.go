@@ -16,11 +16,17 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/deployments/deploymentstest"
 )
 
+// The health Argo CD reports for a resource, as catalogs.ObservedResource.Health holds it.
+const (
+	healthy     = string(v1alpha1.ComponentHealthHealthy)
+	progressing = string(v1alpha1.ComponentHealthProgressing)
+)
+
 func TestHealth(t *testing.T) {
 	replicaSet := catalogs.ResourceRef{Group: "apps", Kind: "ReplicaSet", Name: "box-1", UID: "r1"}
+	deploymentRef := catalogs.ResourceRef{Group: "apps", Kind: "Deployment", Name: "box"}
 	deployment := func(health string) catalogs.ObservedResource {
-		return catalogs.ObservedResource{ResourceRef: catalogs.ResourceRef{Group: "apps", Kind: "Deployment", Name: "box"},
-			Health: health}
+		return catalogs.ObservedResource{ResourceRef: deploymentRef, Health: health}
 	}
 	service := func(health string) catalogs.ObservedResource {
 		return catalogs.ObservedResource{ResourceRef: catalogs.ResourceRef{Version: "v1", Kind: "Service", Name: "box"},
@@ -46,31 +52,31 @@ func TestHealth(t *testing.T) {
 	}{
 		{
 			name:        "waiting for a load balancer",
-			aggregate:   "Progressing",
-			resources:   catalogs.ObservedResources{deployment("Healthy"), service("Progressing"), pod("Healthy", "Running")},
+			aggregate:   progressing,
+			resources:   catalogs.ObservedResources{deployment(healthy), service(progressing), pod(healthy, "Running")},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantReason:  ReasonLoadBalancerPending,
 			wantMessage: "Service box is waiting for a load balancer address",
 		},
 		{
 			name:      "a Deployment that is not ready keeps its own message",
-			aggregate: "Progressing",
+			aggregate: progressing,
 			resources: catalogs.ObservedResources{
 				{
-					ResourceRef:   catalogs.ResourceRef{Group: "apps", Kind: "Deployment", Name: "box"},
-					Health:        "Progressing",
+					ResourceRef:   deploymentRef,
+					Health:        progressing,
 					HealthMessage: "Waiting for rollout to finish: 0 of 1 updated replicas are available...",
 				},
-				service("Progressing"), pod("Progressing", "Running"),
+				service(progressing), pod(progressing, "Running"),
 			},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantMessage: "Deployment box: Waiting for rollout to finish",
 		},
 		{
 			name:      "a Pod that is not running explains it first",
-			aggregate: "Progressing",
+			aggregate: progressing,
 			resources: catalogs.ObservedResources{
-				deployment("Progressing"), service("Progressing"), pod("Progressing", "Pending"),
+				deployment(progressing), service(progressing), pod(progressing, "Pending"),
 			},
 			objects: map[string]map[string]any{"Pod/box-1-a": deploymentstest.Object(t, &corev1.Pod{Status: corev1.PodStatus{
 				Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
@@ -81,8 +87,8 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:       "ready to SSH to",
-			aggregate:  "Healthy",
-			resources:  catalogs.ObservedResources{deployment("Healthy"), service("Healthy"), pod("Healthy", "Running")},
+			aggregate:  healthy,
+			resources:  catalogs.ObservedResources{deployment(healthy), service(healthy), pod(healthy, "Running")},
 			wantHealth: v1alpha1.ComponentHealthHealthy,
 		},
 	} {

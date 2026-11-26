@@ -17,6 +17,13 @@ import (
 	"github.com/NVIDIA/ccluster/catalogs/deployments/deploymentstest"
 )
 
+// The health Argo CD reports for a resource, as catalogs.ObservedResource.Health holds it.
+const (
+	healthy     = string(v1alpha1.ComponentHealthHealthy)
+	progressing = string(v1alpha1.ComponentHealthProgressing)
+	degraded    = string(v1alpha1.ComponentHealthDegraded)
+)
+
 func TestHealth(t *testing.T) {
 	jobRef := catalogs.ResourceRef{Group: "batch", Version: "v1", Kind: "Job", Name: "train", UID: "j1"}
 	job := func(health, message string) catalogs.ObservedResource {
@@ -48,22 +55,22 @@ func TestHealth(t *testing.T) {
 	}{
 		{
 			name:       "running while Argo CD reports Progressing",
-			aggregate:  "Progressing",
-			resources:  catalogs.ObservedResources{job("Progressing", ""), pod("train-a", "Progressing", "Running")},
+			aggregate:  progressing,
+			resources:  catalogs.ObservedResources{job(progressing, ""), pod("train-a", progressing, "Running")},
 			wantHealth: v1alpha1.ComponentHealthHealthy,
 			wantReason: ReasonRunning,
 		},
 		{
 			name:       "complete",
-			aggregate:  "Healthy",
-			resources:  catalogs.ObservedResources{job("Healthy", ""), pod("train-a", "Healthy", "Completed")},
+			aggregate:  healthy,
+			resources:  catalogs.ObservedResources{job(healthy, ""), pod("train-a", healthy, "Completed")},
 			wantHealth: v1alpha1.ComponentHealthSucceeded,
 			wantReason: ReasonComplete,
 		},
 		{
 			name:        "given up",
-			aggregate:   "Degraded",
-			resources:   catalogs.ObservedResources{job("Degraded", "Job has reached the specified backoff limit")},
+			aggregate:   degraded,
+			resources:   catalogs.ObservedResources{job(degraded, "Job has reached the specified backoff limit")},
 			objects:     map[string]map[string]any{"Job/train": failedJob},
 			wantHealth:  v1alpha1.ComponentHealthFailed,
 			wantReason:  "BackoffLimitExceeded",
@@ -71,8 +78,8 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:        "waiting for a node",
-			aggregate:   "Progressing",
-			resources:   catalogs.ObservedResources{job("Progressing", ""), pod("train-a", "Progressing", "Pending")},
+			aggregate:   progressing,
+			resources:   catalogs.ObservedResources{job(progressing, ""), pod("train-a", progressing, "Pending")},
 			objects:     map[string]map[string]any{"Pod/train-a": unschedulable},
 			wantHealth:  v1alpha1.ComponentHealthProgressing,
 			wantReason:  "Unschedulable",
@@ -80,8 +87,8 @@ func TestHealth(t *testing.T) {
 		},
 		{
 			name:      "retrying after a failed Pod is not a failed job",
-			aggregate: "Progressing",
-			resources: catalogs.ObservedResources{job("Progressing", ""), pod("train-a", "Degraded", "Error")},
+			aggregate: progressing,
+			resources: catalogs.ObservedResources{job(progressing, ""), pod("train-a", degraded, "Error")},
 			objects:   map[string]map[string]any{"Pod/train-a": deploymentstest.Object(t, &corev1.Pod{})},
 			// The Pod itself says no more than the tree did.
 			wantHealth: v1alpha1.ComponentHealthProgressing,

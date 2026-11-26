@@ -8,6 +8,8 @@ package catalogs
 import (
 	"slices"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
 )
 
 func names(resources ObservedResources) []string {
@@ -19,19 +21,26 @@ func names(resources ObservedResources) []string {
 }
 
 func TestObservedResources(t *testing.T) {
-	deployment := ResourceRef{Group: "apps", Version: "v1", Kind: "Deployment", Namespace: "ns", Name: "web", UID: "d1"}
-	replicaSet := ResourceRef{Group: "apps", Version: "v1", Kind: "ReplicaSet", Namespace: "ns", Name: "web-1", UID: "r1"}
+	deployment := ResourceRef{
+		Group: appsv1.GroupName, Version: "v1", Kind: "Deployment", Namespace: "ns", Name: "web", UID: "d1",
+	}
+	replicaSet := ResourceRef{
+		Group: appsv1.GroupName, Version: "v1", Kind: "ReplicaSet", Namespace: "ns", Name: "web-1", UID: "r1",
+	}
 	// Argo CD gives a parent without its UID when it has not seen the parent itself.
-	byName := ResourceRef{Group: "apps", Kind: "ReplicaSet", Namespace: "ns", Name: "web-1"}
+	byName := replicaSet
+	byName.Version, byName.UID = "", ""
+	pod := func(name string) ResourceRef {
+		return ResourceRef{Version: "v1", Kind: "Pod", Namespace: "ns", Name: name}
+	}
+	podA, podB, other := pod("web-1-a"), pod("web-1-b"), pod("other")
+	otherReplicaSet := ResourceRef{Group: appsv1.GroupName, Kind: "ReplicaSet", Namespace: "ns", Name: "other", UID: "r2"}
 	resources := ObservedResources{
 		{ResourceRef: deployment},
 		{ResourceRef: replicaSet, Parents: []ResourceRef{deployment}},
-		{ResourceRef: ResourceRef{Version: "v1", Kind: "Pod", Namespace: "ns", Name: "web-1-a"},
-			Parents: []ResourceRef{replicaSet}},
-		{ResourceRef: ResourceRef{Version: "v1", Kind: "Pod", Namespace: "ns", Name: "web-1-b"},
-			Parents: []ResourceRef{byName}},
-		{ResourceRef: ResourceRef{Version: "v1", Kind: "Pod", Namespace: "ns", Name: "other"},
-			Parents: []ResourceRef{{Group: "apps", Kind: "ReplicaSet", Namespace: "ns", Name: "other", UID: "r2"}}},
+		{ResourceRef: podA, Parents: []ResourceRef{replicaSet}},
+		{ResourceRef: podB, Parents: []ResourceRef{byName}},
+		{ResourceRef: other, Parents: []ResourceRef{otherReplicaSet}},
 	}
 
 	for _, tc := range []struct {
@@ -39,11 +48,11 @@ func TestObservedResources(t *testing.T) {
 		got  ObservedResources
 		want []string
 	}{
-		{"pods", resources.OfKind("", "Pod"), []string{"web-1-a", "web-1-b", "other"}},
+		{"pods", resources.OfKind("", "Pod"), []string{podA.Name, podB.Name, other.Name}},
 		{"kind in another group", resources.OfKind("", "Deployment"), []string{}},
-		{"children by UID or by name", resources.ChildrenOf(replicaSet), []string{"web-1-a", "web-1-b"}},
+		{"children by UID or by name", resources.ChildrenOf(replicaSet), []string{podA.Name, podB.Name}},
 		{"only direct children", resources.ChildrenOf(deployment), []string{"web-1"}},
-		{"leaf", resources.ChildrenOf(resources[2].ResourceRef), []string{}},
+		{"leaf", resources.ChildrenOf(podA), []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := names(tc.got); !slices.Equal(got, tc.want) {

@@ -28,6 +28,15 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+const (
+	binSh    = "/bin/sh"
+	bashName = "bash"
+
+	// pathEnv and shellEnv are entries of the environment a session starts from.
+	pathEnv  = "PATH=/bin"
+	shellEnv = "SHELL=/bin/false"
+)
+
 func TestLoadAuthorizedKeys(t *testing.T) {
 	signer := newTestSigner(t)
 
@@ -56,7 +65,7 @@ func TestPublicKeyHandlerOnlyAllowsRoot(t *testing.T) {
 		user string
 		want bool
 	}{
-		{user: "root", want: true},
+		{user: sshUser, want: true},
 		{user: "jovyan", want: false},
 	}
 
@@ -162,8 +171,8 @@ func TestLoadConfigUsesCclusterEnv(t *testing.T) {
 }
 
 func TestNewRemoteCommandUsesNonLoginShell(t *testing.T) {
-	cmd := newRemoteCommand(shellSpec{path: "/bin/sh", name: "sh"}, "printf ok")
-	want := []string{"/bin/sh", "-c", "printf ok"}
+	cmd := newRemoteCommand(shellSpec{path: binSh, name: "sh"}, "printf ok")
+	want := []string{binSh, "-c", "printf ok"}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Fatalf("expected args %#v, got %#v", want, cmd.Args)
 	}
@@ -177,15 +186,15 @@ func TestBuildEnvSetsRootSessionIdentity(t *testing.T) {
 	}{
 		{
 			name:    "shell is absent",
-			baseEnv: []string{"PATH=/bin"},
+			baseEnv: []string{pathEnv},
 		},
 		{
 			name:    "base environment has a different shell",
-			baseEnv: []string{"PATH=/bin", "SHELL=/bin/false"},
+			baseEnv: []string{pathEnv, shellEnv},
 		},
 		{
 			name:       "client requests a different shell",
-			baseEnv:    []string{"PATH=/bin", "SHELL=/bin/false", "HOME=/home/jovyan", "USER=jovyan"},
+			baseEnv:    []string{pathEnv, shellEnv, "HOME=/home/jovyan", "USER=jovyan"},
 			requestEnv: []string{"LANG=C", "SHELL=/usr/bin/false", "LOGNAME=jovyan"},
 		},
 	}
@@ -195,13 +204,13 @@ func TestBuildEnvSetsRootSessionIdentity(t *testing.T) {
 			session := newBlockingInputSession()
 			session.environ = tt.requestEnv
 
-			env := buildEnv(session, shellSpec{path: "/bin/sh", name: "sh"}, "", tt.baseEnv...)
+			env := buildEnv(session, shellSpec{path: binSh, name: "sh"}, "", tt.baseEnv...)
 
 			want := map[string]string{
-				"SHELL":   "/bin/sh",
+				"SHELL":   binSh,
 				"HOME":    "/root",
-				"USER":    "root",
-				"LOGNAME": "root",
+				"USER":    sshUser,
+				"LOGNAME": sshUser,
 			}
 			for key, value := range want {
 				var values []string
@@ -221,20 +230,20 @@ func TestBuildEnvSetsRootSessionIdentity(t *testing.T) {
 func TestRunRemoteCommandExportsSelectedShell(t *testing.T) {
 	session := newBlockingInputSession()
 	defer session.closeRead()
-	session.environ = []string{"SHELL=/bin/false"}
+	session.environ = []string{shellEnv}
 	session.rawCommand = `printf %s "$SHELL"`
 
 	runRemoteCommand(
 		config{
 			workingDir:      t.TempDir(),
-			shellCandidates: []shellSpec{{path: "/bin/sh", name: "sh"}},
+			shellCandidates: []shellSpec{{path: binSh, name: "sh"}},
 		},
 		session,
 		"",
 	)
 
-	if got := session.stdout.String(); got != "/bin/sh" {
-		t.Fatalf("expected exported SHELL %q, got %q", "/bin/sh", got)
+	if got := session.stdout.String(); got != binSh {
+		t.Fatalf("expected exported SHELL %q, got %q", binSh, got)
 	}
 }
 
@@ -275,7 +284,7 @@ func TestSFTPWorksWhenNoShellIsAvailable(t *testing.T) {
 	}()
 
 	client, err := gossh.Dial("tcp", listener.Addr().String(), &gossh.ClientConfig{
-		User:            "root",
+		User:            sshUser,
 		Auth:            []gossh.AuthMethod{gossh.PublicKeys(clientSigner)},
 		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
@@ -334,7 +343,7 @@ func TestSFTPWorksWhenNoShellIsAvailable(t *testing.T) {
 
 func TestChooseShellFrom(t *testing.T) {
 	dir := t.TempDir()
-	bashPath := writeShellCandidate(t, dir, "bash", 0o755)
+	bashPath := writeShellCandidate(t, dir, bashName, 0o755)
 	shPath := writeShellCandidate(t, dir, "sh", 0o755)
 	nonExecutablePath := writeShellCandidate(t, dir, "not-executable", 0o644)
 	directoryPath := filepath.Join(dir, "directory")
@@ -352,15 +361,15 @@ func TestChooseShellFrom(t *testing.T) {
 		{
 			name: "prefers first executable bash candidate",
 			candidates: []shellSpec{
-				{path: bashPath, name: "bash"},
+				{path: bashPath, name: bashName},
 				{path: shPath, name: "sh"},
 			},
-			want: shellSpec{path: bashPath, name: "bash"},
+			want: shellSpec{path: bashPath, name: bashName},
 		},
 		{
 			name: "falls back to executable sh candidate",
 			candidates: []shellSpec{
-				{path: missingPath, name: "bash"},
+				{path: missingPath, name: bashName},
 				{path: shPath, name: "sh"},
 			},
 			want: shellSpec{path: shPath, name: "sh"},
@@ -422,7 +431,7 @@ func TestRunCommandWithSessionIOReturnsBeforeSessionInputEOF(t *testing.T) {
 
 	result := make(chan int, 1)
 	go func() {
-		cmd := exec.Command("/bin/sh", "-c", "printf done")
+		cmd := exec.Command(binSh, "-c", "printf done")
 		result <- runCommandWithSessionIO(session.Context(), session, cmd)
 	}()
 

@@ -11,8 +11,17 @@ import (
 	"testing"
 )
 
+// The Secret the tests read an environment variable from, its key, the variable, and the
+// image pull Secret they set.
+const (
+	secretName   = "app-env"
+	secretKey    = "api-key"
+	secretEnvVar = "API_KEY"
+	pullSecret   = "registry-pull"
+)
+
 func TestValidateSecretReferences(t *testing.T) {
-	ref := SecretKeyRef{SecretName: "app-env", Key: "api-key"}
+	ref := SecretKeyRef{SecretName: secretName, Key: secretKey}
 	for _, tt := range []struct {
 		name    string
 		mutate  func(*Workload)
@@ -24,21 +33,21 @@ func TestValidateSecretReferences(t *testing.T) {
 		{
 			name: "references",
 			mutate: func(w *Workload) {
-				w.ImagePullSecretNames = []string{"registry-pull", "registry-pull"}
+				w.ImagePullSecretNames = []string{pullSecret, pullSecret}
 				w.EnvVars = map[string]string{"FOO": "bar"}
-				w.SecretEnvVars = map[string]SecretKeyRef{"API_KEY": ref}
+				w.SecretEnvVars = map[string]SecretKeyRef{secretEnvVar: ref}
 			},
 		},
 		{
 			name:    "empty pull secret name",
-			mutate:  func(w *Workload) { w.ImagePullSecretNames = []string{"registry-pull", ""} },
+			mutate:  func(w *Workload) { w.ImagePullSecretNames = []string{pullSecret, ""} },
 			wantErr: ErrMissingValue,
 			wantKey: "imagePullSecretNames[1]",
 		},
 		{
 			name: "missing secret name",
 			mutate: func(w *Workload) {
-				w.SecretEnvVars = map[string]SecretKeyRef{"API_KEY": {Key: "api-key"}}
+				w.SecretEnvVars = map[string]SecretKeyRef{secretEnvVar: {Key: secretKey}}
 			},
 			wantErr: ErrMissingValue,
 			wantKey: "secretEnvVars.API_KEY.secretName",
@@ -46,7 +55,7 @@ func TestValidateSecretReferences(t *testing.T) {
 		{
 			name: "missing key",
 			mutate: func(w *Workload) {
-				w.SecretEnvVars = map[string]SecretKeyRef{"API_KEY": {SecretName: "app-env"}}
+				w.SecretEnvVars = map[string]SecretKeyRef{secretEnvVar: {SecretName: secretName}}
 			},
 			wantErr: ErrMissingValue,
 			wantKey: "secretEnvVars.API_KEY.key",
@@ -54,8 +63,8 @@ func TestValidateSecretReferences(t *testing.T) {
 		{
 			name: "variable also in envVars",
 			mutate: func(w *Workload) {
-				w.EnvVars = map[string]string{"API_KEY": "plain"}
-				w.SecretEnvVars = map[string]SecretKeyRef{"API_KEY": ref}
+				w.EnvVars = map[string]string{secretEnvVar: "plain"}
+				w.SecretEnvVars = map[string]SecretKeyRef{secretEnvVar: ref}
 			},
 			wantErr: ErrInvalidValue,
 			wantKey: "secretEnvVars.API_KEY",
@@ -88,13 +97,13 @@ func TestValidateSecretReferences(t *testing.T) {
 
 func TestValidateChartEnv(t *testing.T) {
 	chartEnv := []string{"CHART_VAR"}
-	ref := SecretKeyRef{SecretName: "app-env", Key: "api-key"}
-	if err := ValidateChartEnv(map[string]SecretKeyRef{"API_KEY": ref}, chartEnv); err != nil {
+	ref := SecretKeyRef{SecretName: secretName, Key: secretKey}
+	if err := ValidateChartEnv(map[string]SecretKeyRef{secretEnvVar: ref}, chartEnv); err != nil {
 		t.Fatalf("ValidateChartEnv() = %v, want nil", err)
 	}
-	err := ValidateChartEnv(map[string]SecretKeyRef{"API_KEY": ref, "CHART_VAR": ref}, chartEnv)
+	err := ValidateChartEnv(map[string]SecretKeyRef{secretEnvVar: ref, "CHART_VAR": ref}, chartEnv)
 	if !errors.Is(err, ErrInvalidValue) || !strings.Contains(err.Error(), "secretEnvVars.CHART_VAR") ||
-		strings.Contains(err.Error(), "API_KEY") {
+		strings.Contains(err.Error(), secretEnvVar) {
 		t.Fatalf("ValidateChartEnv() = %v, want %v naming only secretEnvVars.CHART_VAR", err, ErrInvalidValue)
 	}
 }

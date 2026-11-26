@@ -25,6 +25,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+const (
+	// serviceName is the Service whose readiness the tests check.
+	serviceName = "web"
+
+	noReadyEndpoints  = "no ready endpoints for Service ns/web"
+	widgetCRDNotFound = "CustomResourceDefinition widgets.example.com not found"
+)
+
 func verifyScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -38,7 +46,7 @@ func verifyScheme(t *testing.T) *runtime.Scheme {
 }
 
 func svc(namespace string) *corev1.Service {
-	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "web"}}
+	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: serviceName}}
 }
 
 // slice returns an EndpointSlice of Service namespace/name with one endpoint per entry
@@ -66,15 +74,15 @@ func TestVerifyServiceReady(t *testing.T) {
 	}{
 		{
 			name:    "ready",
-			objects: []client.Object{svc("ns"), slice("ns", "web", new(true))},
+			objects: []client.Object{svc("ns"), slice("ns", serviceName, new(true))},
 		},
 		{
 			name:    "readiness unknown counts as ready",
-			objects: []client.Object{svc("ns"), slice("ns", "web", nil)},
+			objects: []client.Object{svc("ns"), slice("ns", serviceName, nil)},
 		},
 		{
 			name:    "one of two endpoints ready",
-			objects: []client.Object{svc("ns"), slice("ns", "web", new(false), new(true))},
+			objects: []client.Object{svc("ns"), slice("ns", serviceName, new(false), new(true))},
 		},
 		{
 			name: "no Service",
@@ -82,36 +90,36 @@ func TestVerifyServiceReady(t *testing.T) {
 		},
 		{
 			name:    "Service in another namespace",
-			objects: []client.Object{svc("other"), slice("other", "web", new(true))},
+			objects: []client.Object{svc("other"), slice("other", serviceName, new(true))},
 			want:    "no Service ns/web found",
 		},
 		{
 			// The workload behind the Service is not created yet, or not scheduled.
 			name:    "no endpoints",
 			objects: []client.Object{svc("ns")},
-			want:    "no ready endpoints for Service ns/web",
+			want:    noReadyEndpoints,
 		},
 		{
 			name:    "endpoint not ready",
-			objects: []client.Object{svc("ns"), slice("ns", "web", new(false))},
-			want:    "no ready endpoints for Service ns/web",
+			objects: []client.Object{svc("ns"), slice("ns", serviceName, new(false))},
+			want:    noReadyEndpoints,
 		},
 		{
 			// Another namespace's endpoints must not vouch for this Service.
 			name:    "endpoints of another namespace",
-			objects: []client.Object{svc("ns"), slice("other", "web", new(true))},
-			want:    "no ready endpoints for Service ns/web",
+			objects: []client.Object{svc("ns"), slice("other", serviceName, new(true))},
+			want:    noReadyEndpoints,
 		},
 		{
 			name:    "endpoints of another Service",
 			objects: []client.Object{svc("ns"), slice("ns", "db", new(true))},
-			want:    "no ready endpoints for Service ns/web",
+			want:    noReadyEndpoints,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := fake.NewClientBuilder().WithScheme(verifyScheme(t)).WithObjects(tt.objects...).Build()
-			err := VerifyServiceReady(context.Background(), r, "ns", "web")
+			err := VerifyServiceReady(context.Background(), r, "ns", serviceName)
 			switch {
 			case tt.want == "" && err != nil:
 				t.Fatalf("want nil, got %v", err)
@@ -126,14 +134,14 @@ func TestVerifyServiceReady(t *testing.T) {
 // reported as a missing Service, which would send a user looking for an install problem
 // that is really RBAC or the API server.
 func TestVerifyServiceReadyReturnsReadErrors(t *testing.T) {
-	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "services"}, "web", errors.New("no RBAC"))
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "services"}, serviceName, errors.New("no RBAC"))
 	r := fake.NewClientBuilder().WithScheme(verifyScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
 		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
 			return forbidden
 		},
 	}).Build()
 
-	if err := VerifyServiceReady(context.Background(), r, "ns", "web"); !apierrors.IsForbidden(err) {
+	if err := VerifyServiceReady(context.Background(), r, "ns", serviceName); !apierrors.IsForbidden(err) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }
@@ -163,19 +171,19 @@ func TestVerifyCRDExists(t *testing.T) {
 		},
 		{
 			name: "no CRDs",
-			want: "CustomResourceDefinition widgets.example.com not found",
+			want: widgetCRDNotFound,
 		},
 		{
 			// The same kind in another group is not the API the consumers render.
 			name:    "another group",
 			objects: []client.Object{crd("widgets.example.org")},
-			want:    "CustomResourceDefinition widgets.example.com not found",
+			want:    widgetCRDNotFound,
 		},
 		{
 			// Another kind of the same group does not stand in for it either.
 			name:    "another kind in the group",
 			objects: []client.Object{crd("gadgets.example.com")},
-			want:    "CustomResourceDefinition widgets.example.com not found",
+			want:    widgetCRDNotFound,
 		},
 	}
 	for _, tt := range tests {
@@ -255,7 +263,7 @@ func entry(name string, injected bool) admissionregistrationv1.ValidatingWebhook
 	w := admissionregistrationv1.ValidatingWebhook{
 		Name: name,
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
-			Service: &admissionregistrationv1.ServiceReference{Namespace: "ns", Name: "web"},
+			Service: &admissionregistrationv1.ServiceReference{Namespace: "ns", Name: serviceName},
 		},
 	}
 	if injected {
@@ -266,7 +274,7 @@ func entry(name string, injected bool) admissionregistrationv1.ValidatingWebhook
 
 func TestVerifyValidatingWebhookServed(t *testing.T) {
 	const hook = "check.example.com"
-	served := []client.Object{svc("ns"), slice("ns", "web", new(true))}
+	served := []client.Object{svc("ns"), slice("ns", serviceName, new(true))}
 	url := "https://hooks.example.com/validate"
 	byURL := admissionregistrationv1.ValidatingWebhook{
 		Name:         hook,
@@ -279,7 +287,7 @@ func TestVerifyValidatingWebhookServed(t *testing.T) {
 	// Left by an earlier installation whose namespace was deleted: webhook
 	// configurations are cluster-scoped and outlive it.
 	stale := entry(hook, true)
-	stale.ClientConfig.Service = &admissionregistrationv1.ServiceReference{Namespace: "old", Name: "web"}
+	stale.ClientConfig.Service = &admissionregistrationv1.ServiceReference{Namespace: "old", Name: serviceName}
 
 	tests := []struct {
 		name    string
@@ -320,7 +328,7 @@ func TestVerifyValidatingWebhookServed(t *testing.T) {
 			name:    "not served",
 			objects: []client.Object{webhookConfig("release-a", entry(hook, true)), svc("ns")},
 			want: "webhook check.example.com in ValidatingWebhookConfiguration release-a: " +
-				"no ready endpoints for Service ns/web",
+				noReadyEndpoints,
 		},
 		{
 			// No Service to read endpoints of: the CA bundle is all there is to check.

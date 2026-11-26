@@ -16,6 +16,9 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 )
 
+// stubChartKey is the key the stub chart's values are marshalled under.
+const stubChartKey = "stub-chart"
+
 // stubValues mirrors the shape every per-chart Values type has: one key named for the
 // chart, holding the upstream chart's own values.
 type stubValues struct {
@@ -68,14 +71,14 @@ func TestEntry(t *testing.T) {
 			name:   "set values are marshalled under the chart key",
 			values: stubValues{Chart: &stubChartValues{Replicas: &replicas}},
 			want: map[string]any{
-				"stub-chart": map[string]any{"replicas": float64(3)},
+				stubChartKey: map[string]any{"replicas": float64(3)},
 			},
 		},
 		{
 			name:   "an explicit true survives",
 			values: stubValues{Chart: &stubChartValues{Enabled: &enabled}},
 			want: map[string]any{
-				"stub-chart": map[string]any{"enabled": true},
+				stubChartKey: map[string]any{"enabled": true},
 			},
 		},
 		{
@@ -85,7 +88,7 @@ func TestEntry(t *testing.T) {
 			name:   "an explicit false survives",
 			values: stubValues{Chart: &stubChartValues{Enabled: &disabled}},
 			want: map[string]any{
-				"stub-chart": map[string]any{"enabled": false},
+				stubChartKey: map[string]any{"enabled": false},
 			},
 		},
 	}

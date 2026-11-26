@@ -19,6 +19,9 @@ import (
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 )
 
+// noPrometheusService is the error while the Prometheus Service does not exist.
+const noPrometheusService = "no Service prometheus/prometheus-op-kube-prometh-prometheus found"
+
 // prometheusAt returns a ready Prometheus Service and endpoint at namespace/name.
 func prometheusAt(namespace, name string) []client.Object {
 	return []client.Object{
@@ -51,18 +54,18 @@ func TestVerify(t *testing.T) {
 		},
 		{
 			name: "not installed",
-			want: "no Service prometheus/prometheus-op-kube-prometh-prometheus found",
+			want: noPrometheusService,
 		},
 		{
 			name:    "another namespace",
 			objects: prometheusAt("monitoring", "prometheus-op-kube-prometh-prometheus"),
-			want:    "no Service prometheus/prometheus-op-kube-prometh-prometheus found",
+			want:    noPrometheusService,
 		},
 		{
 			// kube-prometheus-stack's default naming, without the chart's fullnameOverride.
 			name:    "another name",
 			objects: prometheusAt("prometheus", "kube-prometheus-stack-prometheus"),
-			want:    "no Service prometheus/prometheus-op-kube-prometh-prometheus found",
+			want:    noPrometheusService,
 		},
 		{
 			name: "no ready endpoint",
