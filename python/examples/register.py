@@ -48,23 +48,27 @@ def main() -> None:
         return
 
     client.ensure_namespace()
-    client.apply_infraplane(
+    _, credentials_version = client.apply_infraplane_with_credentials_version(
         name=args.name,
         server=args.server,
         bearer_token=args.token_file.read_text().strip() if args.token_file else None,
         ca_cert=args.ca_file.read_bytes() if args.ca_file else None,
     )
+    if not credentials_version:
+        raise RuntimeError("the credentials Secret apply returned no resourceVersion")
 
-    # ClusterConfigApplied turns True once the control plane has reached the cluster and
-    # written its domain there. Available only means the credentials were handed to Argo CD.
-    # A False is not final: after a change of server it can still describe the old one.
+    # Wait for the control plane to confirm the credentials this call applied.
     print(f"registered {args.namespace}/{args.name}; waiting for the control plane to reach it")
     deadline = time.monotonic() + 5 * 60
     while True:
         plane = client.get_infraplane(name=args.name)
         conditions = {c.type: c for c in (plane.status.conditions or [])} if plane.status else {}
         applied = conditions.get("ClusterConfigApplied")
-        if applied is not None and applied.status.value == "True":
+        current = (
+            plane.status is not None
+            and plane.status.observed_credentials_resource_version == credentials_version
+        )
+        if current and applied is not None and applied.status.value == "True":
             print(f"{args.name} is registered; its domain is {plane.status.domain}")
             return
         if time.monotonic() >= deadline:
@@ -73,6 +77,11 @@ def main() -> None:
     if applied is None:
         raise TimeoutError(
             f"{args.name} has no ClusterConfigApplied condition; is the operator running?"
+        )
+    if not current:
+        raise TimeoutError(
+            f"{args.name}: the control plane has not reported ClusterConfigApplied "
+            "for the submitted credentials"
         )
     raise TimeoutError(
         f"{args.name}: ClusterConfigApplied is {applied.status.value} ({applied.reason}): "

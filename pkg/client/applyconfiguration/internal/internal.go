@@ -345,6 +345,9 @@ var schemaYAML = typed.YAMLObject(`types:
           - name: domain
             type:
               scalar: string
+          - name: observedCredentialsResourceVersion
+            type:
+              scalar: string
           - name: observedGeneration
             type:
               scalar: numeric

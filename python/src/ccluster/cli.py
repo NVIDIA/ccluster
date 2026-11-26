@@ -139,10 +139,10 @@ def register(
     checks the CCLInfraPlane first, so a NAME it refuses creates nothing on the infra plane.
     Re-running reuses the same token.
 
-    register then waits until the CCLInfraPlane's ClusterConfigApplied condition is True,
-    which means the control plane reached the cluster, and prints the domain. If it is not
-    True within two minutes, register fails with the condition's reason and message. The
-    CCLInfraPlane stays: fix the cause and run register again to wait for it.
+    register waits for ClusterConfigApplied=True for the submitted credentials, then prints
+    the domain. After two minutes it reports the result for those credentials, or says the
+    control plane has yet to report on them. The CCLInfraPlane stays, so you can fix the cause
+    and run register again.
 
     Pass --server when the kubeconfig's address is not reachable from the control plane,
     for example a kind cluster, whose kubeconfig points at 127.0.0.1.
@@ -161,14 +161,19 @@ def register(
         token, ca_cert = _cluster_admin_token(infra_api)
         server = server or infra_api.configuration.host
 
-        plane = client.apply_infraplane(
+        plane, credentials_version = client.apply_infraplane_with_credentials_version(
             name=name, server=server, bearer_token=token, ca_cert=ca_cert
         )
+        if not credentials_version:
+            raise click.ClickException(
+                f"CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} is applied, "
+                "but the credentials Secret apply returned no resourceVersion"
+            )
         click.echo(
             f"Applied CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} "
             f"for {server}; waiting for the control plane to reach the cluster"
         )
-        plane = _wait_for_cluster_config(client, name, server)
+        plane = _wait_for_cluster_config(client, name, server, credentials_version)
     click.echo(
         f"Registered CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name}; "
         f"its domain is {plane.status.domain}"
@@ -334,30 +339,30 @@ def _cluster_admin_token(api_client: k8s.ApiClient) -> tuple[str, bytes]:
         time.sleep(_TOKEN_POLL_SECONDS)
 
 
-def _wait_for_cluster_config(client: CCLClient, name: str, server: str) -> CCLInfraPlane:
-    """Poll the CCLInfraPlane name until its ClusterConfigApplied condition is True.
-
-    Returns the plane; at the timeout, raises an error with the condition's last reason and
-    message. A False does not end the wait. Registering again with another server changes
-    only the credentials Secret, not the CCLInfraPlane's generation, so until the operator
-    has tried the new server the condition still describes the old one.
-    """
+def _wait_for_cluster_config(
+    client: CCLClient, name: str, server: str, credentials_version: str
+) -> CCLInfraPlane:
+    """Wait for ClusterConfigApplied=True for the submitted credentials version."""
     deadline = time.monotonic() + _CLUSTER_CONFIG_TIMEOUT_SECONDS
     while True:
         plane = client.get_infraplane(name=name)
         conditions = plane.status.conditions if plane.status else None
         condition = next((c for c in conditions or [] if c.type == _CLUSTER_CONFIG_APPLIED), None)
-        if condition is not None and condition.status == Status.true:
+        current = (
+            plane.status is not None
+            and plane.status.observed_credentials_resource_version == credentials_version
+        )
+        if current and condition is not None and condition.status == Status.true:
             return plane
         if time.monotonic() >= deadline:
-            raise click.ClickException(_cluster_config_error(plane, condition, server))
+            raise click.ClickException(_cluster_config_error(plane, condition, server, current))
         time.sleep(_CLUSTER_CONFIG_POLL_SECONDS)
 
 
 def _cluster_config_error(
-    plane: CCLInfraPlane, condition: Condition | None, server: str
+    plane: CCLInfraPlane, condition: Condition | None, server: str, current: bool
 ) -> str:
-    """Say why plane's ClusterConfigApplied condition, condition, is not True."""
+    """Report a condition only if it describes the submitted credentials."""
     prefix = (
         f"CCLInfraPlane {plane.metadata.namespace}/{plane.metadata.name} is applied, "
         f"but after {_CLUSTER_CONFIG_TIMEOUT_SECONDS:g}s"
@@ -366,6 +371,11 @@ def _cluster_config_error(
         return (
             f"{prefix} it has no {_CLUSTER_CONFIG_APPLIED} condition; "
             "is the ccluster-cp operator running?"
+        )
+    if not current:
+        return (
+            f"{prefix} the control plane has not reported {_CLUSTER_CONFIG_APPLIED} "
+            "for the submitted credentials"
         )
     return (
         f"{prefix} {_CLUSTER_CONFIG_APPLIED} is {condition.status.value} ({condition.reason}): "

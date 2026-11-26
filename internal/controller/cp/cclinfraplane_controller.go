@@ -13,6 +13,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -262,7 +263,7 @@ func (r *CCLInfraPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	// A DNS error is written into DNSReady with everything else before it is returned.
 	dnsReady, dnsErr := r.reconcileDNS(ctx, &infraPlane, lastClusterConfig)
-	err = r.patchStatus(ctx, &infraPlane, clusterConfigStatus,
+	err = r.patchStatus(ctx, &infraPlane, clusterConfigStatus, source.ResourceVersion,
 		available, clusterConfigApplied, dnsReady)
 	if dnsErr != nil {
 		return ctrl.Result{}, errors.Join(dnsErr, err)
@@ -408,23 +409,21 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 			Message: dnsMessage,
 		})
 	}
-	return r.patchStatus(ctx, infraPlane, nil, conditions...)
+	return r.patchStatus(ctx, infraPlane, nil, "", conditions...)
 }
 
-// patchStatus sets conditions, each stamped with the current generation, the observed
-// generation, the plane's domain and, unless it is nil, the copy of the infra-plane cluster's
-// CCLClusterConfig status, then writes the status subresource in one patch.
+// patchStatus records the controller's observations, including the source credentials
+// version that produced ClusterConfigApplied. An empty credentials version clears it.
 //
-// This is a merge patch, not an update, because r.Get reads through the informer cache:
-// on a CCLInfraPlane that was just written the cached copy can carry a stale resource
-// version, and an update would fail the optimistic-concurrency check even though the
-// status it computed is correct. A patch carries no such precondition. A NotFound is
-// ignored - the object was deleted while we were reconciling it, and there is no status
-// left to record.
+// The resourceVersion precondition keeps the condition and its credentials version
+// consistent. A diff against a stale cache entry can omit an unchanged condition
+// even though the server stores a different one. On conflict, reconcile again from
+// the latest observation instead of pairing a new credentials version with that condition.
 func (r *CCLInfraPlaneReconciler) patchStatus(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
+	credentialsVersion string,
 	conditions ...metav1.Condition,
 ) error {
 	base := infraPlane.DeepCopy()
@@ -437,9 +436,14 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 		apimeta.SetStatusCondition(&infraPlane.Status.Conditions, condition)
 	}
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
+	infraPlane.Status.ObservedCredentialsResourceVersion = credentialsVersion
 	infraPlane.Status.Domain = r.domainOf(infraPlane)
 
-	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))
+	if equality.Semantic.DeepEqual(base.Status, infraPlane.Status) {
+		return nil
+	}
+	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane,
+		client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})))
 }
 
 // infraPlanesForSecret maps a Secret to the CCLInfraPlanes that care about it: either a

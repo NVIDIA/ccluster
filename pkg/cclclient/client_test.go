@@ -112,14 +112,14 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
 
-	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
+	plane, credentialsVersion, err := client.ApplyInfraPlaneWithCredentialsVersion(ctx, cclclient.InfraPlaneOptions{
 		Name: "gpu-a", Server: server, BearerToken: token, CACert: caCert,
 	})
 	if err != nil {
-		t.Fatalf("ApplyInfraPlane() error = %v", err)
+		t.Fatalf("ApplyInfraPlaneWithCredentialsVersion() error = %v", err)
 	}
 	if plane.Namespace != client.Namespace() || plane.Name != "gpu-a" || plane.UID == "" {
-		t.Errorf("ApplyInfraPlane() returned %s/%s (uid %q), want the stored %s/gpu-a",
+		t.Errorf("ApplyInfraPlaneWithCredentialsVersion() returned %s/%s (uid %q), want the stored %s/gpu-a",
 			plane.Namespace, plane.Name, plane.UID, client.Namespace())
 	}
 	if plane.Spec.ClusterCredentialsRef.Name != "gpu-a-credentials" {
@@ -135,6 +135,9 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 	}
 
 	secret := credentialsSecret(t, client, "gpu-a")
+	if credentialsVersion == "" || credentialsVersion != secret.ResourceVersion {
+		t.Errorf("credentials version = %q, want %q", credentialsVersion, secret.ResourceVersion)
+	}
 	if secret.Type != corev1.SecretTypeOpaque {
 		t.Errorf("Secret type = %s, want Opaque", secret.Type)
 	}

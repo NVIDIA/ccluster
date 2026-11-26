@@ -85,13 +85,15 @@ func main() {
 	if err := client.EnsureNamespace(ctx); err != nil {
 		log.Fatal(err)
 	}
-	if _, err := client.ApplyInfraPlane(ctx, opts); err != nil {
+	_, credentialsVersion, err := client.ApplyInfraPlaneWithCredentialsVersion(ctx, opts)
+	if err != nil {
 		log.Fatal(err)
 	}
+	if credentialsVersion == "" {
+		log.Fatal("the credentials Secret apply returned no resourceVersion")
+	}
 
-	// ClusterConfigApplied turns True once the control plane has reached the cluster and
-	// written its domain there. Available only means the credentials were handed to Argo CD.
-	// A False is not final: after a change of server it can still describe the old one.
+	// Wait for the control plane to confirm the credentials this call applied.
 	fmt.Printf("registered %s/%s; waiting for the control plane to reach it\n", *namespace, *name)
 	var plane *cclusternvidiacomv1alpha1.CCLInfraPlane
 	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true,
@@ -100,14 +102,18 @@ func main() {
 			if err != nil {
 				return false, err
 			}
-			return apimeta.IsStatusConditionTrue(plane.Status.Conditions,
-				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
+			return plane.Status.ObservedCredentialsResourceVersion == credentialsVersion &&
+				apimeta.IsStatusConditionTrue(plane.Status.Conditions,
+					cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
 		})
 	if wait.Interrupted(err) {
 		applied := apimeta.FindStatusCondition(plane.Status.Conditions,
 			cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
 		if applied == nil {
 			log.Fatalf("%s has no ClusterConfigApplied condition; is the operator running?", *name)
+		}
+		if plane.Status.ObservedCredentialsResourceVersion != credentialsVersion {
+			log.Fatalf("%s: the control plane has not reported ClusterConfigApplied for the submitted credentials", *name)
 		}
 		log.Fatalf("%s: ClusterConfigApplied is %s (%s): %s; if the control plane cannot reach the "+
 			"server, register the cluster again with one it can reach",

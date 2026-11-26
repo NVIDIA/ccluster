@@ -85,8 +85,9 @@ class FakeDynamicClient:
                 SimpleNamespace(status=422, reason="Invalid", body=b"{}", headers={})
             )
         self.applied.append((resource.kind, namespace, body, kwargs))
+        metadata = {**body["metadata"], "uid": "1", "resourceVersion": f"apply-{len(self.applied)}"}
         return SimpleNamespace(
-            to_dict=lambda: {**body, "metadata": {**body["metadata"], "uid": "1"}}
+            to_dict=lambda: {**body, "metadata": metadata}
         )
 
     def delete(self, resource, name, namespace):
@@ -208,7 +209,7 @@ def test_each_api_client_runs_its_own_discovery(fake):
 def test_apply_infraplane_applies_infra_plane_then_secret(fake):
     c, dyn = make_client(fake)
 
-    plane = c.apply_infraplane(
+    plane, version = c.apply_infraplane_with_credentials_version(
         name="edge-1",
         server="https://10.0.0.1:6443",
         bearer_token="tok",
@@ -217,6 +218,8 @@ def test_apply_infraplane_applies_infra_plane_then_secret(fake):
 
     kinds = [kind for kind, *_ in dyn.applied]
     assert kinds == [Kind.CCL_INFRA_PLANE, "Secret"]
+    assert version == "apply-2"
+    assert dyn.reads == []
     for _, ns_arg, _, kwargs in dyn.applied:
         assert ns_arg == "tenant"
         assert kwargs == {"field_manager": "ccluster", "force_conflicts": True}

@@ -214,6 +214,13 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			})).To(Succeed())
 		}
 
+		getCredentials := func() *corev1.Secret {
+			GinkgoHelper()
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: secretName}, secret)).To(Succeed())
+			return secret
+		}
+
 		// getMirror returns the mirrored Secret in the Argo CD namespace.
 		getMirror := func() *corev1.Secret {
 			GinkgoHelper()
@@ -681,6 +688,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			infraPlane := settle()
 
 			expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
+			Expect(infraPlane.Status.ObservedCredentialsResourceVersion).To(Equal(getCredentials().ResourceVersion))
 			condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
@@ -694,6 +702,46 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			By("resyncing periodically, as a safety net behind the watch")
 			Expect(reconcileResult().RequeueAfter).To(Equal(resyncPeriod))
+		})
+
+		It("should record a new credentials version even when the condition remains True", func() {
+			createSecret(credentials)
+			initial := settle()
+			source := getCredentials()
+			source.Data["server"] = []byte("https://rotated.example.com:6443")
+			Expect(k8sClient.Update(ctx, source)).To(Succeed())
+			Expect(source.ResourceVersion).NotTo(Equal(initial.Status.ObservedCredentialsResourceVersion))
+
+			updated := reconcileAndGet()
+			const conditionType = cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied
+			Expect(apimeta.FindStatusCondition(updated.Status.Conditions, conditionType)).To(
+				Equal(apimeta.FindStatusCondition(initial.Status.Conditions, conditionType)))
+			Expect(updated.Status.ObservedCredentialsResourceVersion).To(Equal(source.ResourceVersion))
+		})
+
+		It("should reject a stale status patch that would pair old success with new credentials", func() {
+			createSecret(credentials)
+			createForeignClusterConfig(nil)
+			stale := settle()
+			expectClusterConfigApplied(stale, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonConflict)
+			Expect(stale.Status.ObservedCredentialsResourceVersion).To(Equal(getCredentials().ResourceVersion))
+			previousFailure := *apimeta.FindStatusCondition(stale.Status.Conditions,
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
+
+			Expect(k8sClient.Delete(ctx, getClusterConfig())).To(Succeed())
+			live := reconcileAndGet()
+			expectClusterConfigApplied(live, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
+
+			source := getCredentials()
+			source.Data["server"] = []byte("https://rotated.example.com:6443")
+			Expect(k8sClient.Update(ctx, source)).To(Succeed())
+			Expect(source.ResourceVersion).NotTo(Equal(live.Status.ObservedCredentialsResourceVersion))
+			err := reconciler.patchStatus(ctx, stale, nil, source.ResourceVersion, previousFailure)
+			Expect(apierrors.IsConflict(err)).To(BeTrue(), "got %v", err)
+
+			stored := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, stored)).To(Succeed())
+			Expect(stored.Status).To(Equal(live.Status))
 		})
 
 		It("should restore a CCLClusterConfig whose domain drifted, keeping its status", func() {
@@ -927,6 +975,7 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonSecretNotFound))
 			expectClusterConfigApplied(infraPlane, metav1.ConditionUnknown, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable)
+			Expect(infraPlane.Status.ObservedCredentialsResourceVersion).To(BeEmpty())
 		})
 
 		// These go through the real SecretClientFactory, the one the operator runs with.

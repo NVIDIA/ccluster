@@ -319,6 +319,12 @@ spec:
                   under. clusterConfig.domain is the domain the infra-plane operator last verified
                   the cluster against; the two differ until it has verified the current one.
                 type: string
+              observedCredentialsResourceVersion:
+                description: |-
+                  observedCredentialsResourceVersion is the resourceVersion of the source
+                  credentials Secret used to compute ClusterConfigApplied. It is unset when
+                  the control-plane operator did not evaluate the credentials.
+                type: string
               observedGeneration:
                 description: observedGeneration is the .metadata.generation the conditions
                   were computed from.

@@ -172,6 +172,16 @@ func (c *Client) ApplyInfraPlane(
 	ctx context.Context,
 	opts InfraPlaneOptions,
 ) (*cclusternvidiacomv1alpha1.CCLInfraPlane, error) {
+	plane, _, err := c.ApplyInfraPlaneWithCredentialsVersion(ctx, opts)
+	return plane, err
+}
+
+// ApplyInfraPlaneWithCredentialsVersion also returns the credentials Secret's
+// resourceVersion from the apply response, for callers waiting on reconciliation.
+func (c *Client) ApplyInfraPlaneWithCredentialsVersion(
+	ctx context.Context,
+	opts InfraPlaneOptions,
+) (*cclusternvidiacomv1alpha1.CCLInfraPlane, string, error) {
 	server := opts.Server
 	if server == "" {
 		server = argocdv1alpha1.InClusterServer
@@ -181,7 +191,7 @@ func (c *Client) ApplyInfraPlane(
 		TLSClientConfig: TLSClientConfig{CAData: opts.CACert, ServerName: opts.ServerName},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshalling cluster config: %w", err)
+		return nil, "", fmt.Errorf("marshalling cluster config: %w", err)
 	}
 	secretName := CredentialsSecretName(opts.Name)
 
@@ -191,19 +201,20 @@ func (c *Client) ApplyInfraPlane(
 				WithClusterCredentialsRef(cclusterac.LocalObjectReference().WithName(secretName))),
 		applyOptions())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if _, err := c.kube.CoreV1().Secrets(c.namespace).Apply(ctx,
+	secret, err := c.kube.CoreV1().Secrets(c.namespace).Apply(ctx,
 		corev1ac.Secret(secretName, c.namespace).
 			WithType(corev1.SecretTypeOpaque).
 			WithStringData(map[string]string{
 				argocdv1alpha1.ClusterSecretServerKey: server,
 				argocdv1alpha1.ClusterSecretConfigKey: string(config),
 			}),
-		applyOptions()); err != nil {
-		return nil, err
+		applyOptions())
+	if err != nil {
+		return nil, "", err
 	}
-	return plane, nil
+	return plane, secret.ResourceVersion, nil
 }
 
 // DeleteInfraPlane removes the CCLInfraPlane called name and its credentials Secret.
