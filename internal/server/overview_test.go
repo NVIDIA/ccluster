@@ -12,6 +12,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
+)
+
+const (
+	// teamA and teamB are the namespaces the tests put planes and component sets in.
+	teamA = "team-a"
+	teamB = "team-b"
+	// chartA and chartB are the charts of components a and b, and planeName the infra
+	// plane they run on.
+	chartA    = "catalogs/a"
+	chartB    = "catalogs/b"
+	planeName = "plane"
+
+	crashLoopBackOff = "CrashLoopBackOff"
+	backOffMessage   = "back-off"
 )
 
 func cond(conditionType string, status metav1.ConditionStatus, reason string, generation int64) metav1.Condition {
@@ -28,8 +43,8 @@ func componentSet(namespace, name string, generation int64, conditions ...metav1
 	return v1alpha1.CCLComponentSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Generation: generation},
 		Spec: v1alpha1.CCLComponentSetSpec{Components: []v1alpha1.ComponentSpec{
-			{Name: "a", InfraPlaneRef: v1alpha1.LocalObjectReference{Name: "plane"}, ComponentEntry: v1alpha1.ComponentEntry{Chart: "catalogs/a"}},
-			{Name: "b", InfraPlaneRef: v1alpha1.LocalObjectReference{Name: "plane"}, ComponentEntry: v1alpha1.ComponentEntry{Chart: "catalogs/b"}},
+			{Name: "a", InfraPlaneRef: v1alpha1.LocalObjectReference{Name: planeName}, ComponentEntry: v1alpha1.ComponentEntry{Chart: chartA}},
+			{Name: "b", InfraPlaneRef: v1alpha1.LocalObjectReference{Name: planeName}, ComponentEntry: v1alpha1.ComponentEntry{Chart: chartB}},
 		}},
 		Status: v1alpha1.CCLComponentSetStatus{Conditions: conditions},
 	}
@@ -124,13 +139,13 @@ func TestComponentSetStatus(t *testing.T) {
 func TestComponentRowsMarkUnreleasedComponents(t *testing.T) {
 	set := componentSet("ns", "s", 1)
 	set.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
-		{Name: "a", Health: v1alpha1.ComponentHealthDegraded, Reason: "CrashLoopBackOff", Message: "back-off"},
+		{Name: "a", Health: v1alpha1.ComponentHealthDegraded, Reason: crashLoopBackOff, Message: backOffMessage},
 	}
-	set.Status.ComponentSyncStatuses = []v1alpha1.ComponentSyncStatus{{Name: "a", Sync: "Synced"}}
+	set.Status.ComponentSyncStatuses = []v1alpha1.ComponentSyncStatus{{Name: "a", Sync: argocdv1alpha1.SyncStatusSynced}}
 
 	want := []ComponentRow{
-		{Name: "a", Chart: "catalogs/a", InfraPlane: "plane", Health: "Degraded", Reason: "CrashLoopBackOff", Message: "back-off", Sync: "Synced"},
-		{Name: "b", Chart: "catalogs/b", InfraPlane: "plane", Health: HealthNotReleased},
+		{Name: "a", Chart: chartA, InfraPlane: planeName, Health: "Degraded", Reason: crashLoopBackOff, Message: backOffMessage, Sync: argocdv1alpha1.SyncStatusSynced},
+		{Name: "b", Chart: chartB, InfraPlane: planeName, Health: HealthNotReleased},
 	}
 	if got := componentRows(&set); !reflect.DeepEqual(got, want) {
 		t.Errorf("componentRows =\n%+v\nwant\n%+v", got, want)
@@ -138,23 +153,25 @@ func TestComponentRowsMarkUnreleasedComponents(t *testing.T) {
 }
 
 func TestComponentRowsListRemovedComponentsLast(t *testing.T) {
+	// removed is the component the spec no longer has.
+	const removed = "old"
 	set := componentSet("ns", "s", 2)
 	set.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
 		{Name: "a", Health: v1alpha1.ComponentHealthHealthy},
 		{Name: "b", Health: v1alpha1.ComponentHealthHealthy},
-		{Name: "old", Health: v1alpha1.ComponentHealthProgressing},
+		{Name: removed, Health: v1alpha1.ComponentHealthProgressing},
 	}
 	set.Status.ComponentSyncStatuses = []v1alpha1.ComponentSyncStatus{
-		{Name: "a", Sync: "Synced"},
-		{Name: "b", Sync: "Synced", Removal: v1alpha1.ComponentRemovalDeletePending},
-		{Name: "old", Sync: "Synced", Message: "deleting", Removal: v1alpha1.ComponentRemovalDeleting},
+		{Name: "a", Sync: argocdv1alpha1.SyncStatusSynced},
+		{Name: "b", Sync: argocdv1alpha1.SyncStatusSynced, Removal: v1alpha1.ComponentRemovalDeletePending},
+		{Name: removed, Sync: argocdv1alpha1.SyncStatusSynced, Message: "deleting", Removal: v1alpha1.ComponentRemovalDeleting},
 	}
 
 	want := []ComponentRow{
-		{Name: "a", Chart: "catalogs/a", InfraPlane: "plane", Health: "Healthy", Sync: "Synced"},
+		{Name: "a", Chart: chartA, InfraPlane: planeName, Health: "Healthy", Sync: argocdv1alpha1.SyncStatusSynced},
 		// b is back in the spec, so a stale removal entry does not mark it removed.
-		{Name: "b", Chart: "catalogs/b", InfraPlane: "plane", Health: "Healthy", Sync: "Synced"},
-		{Name: "old", Health: "Progressing", Sync: "Synced", Message: "deleting", Removal: "Deleting"},
+		{Name: "b", Chart: chartB, InfraPlane: planeName, Health: "Healthy", Sync: argocdv1alpha1.SyncStatusSynced},
+		{Name: removed, Health: "Progressing", Sync: argocdv1alpha1.SyncStatusSynced, Message: "deleting", Removal: "Deleting"},
 	}
 	if got := componentRows(&set); !reflect.DeepEqual(got, want) {
 		t.Errorf("componentRows =\n%+v\nwant\n%+v", got, want)
@@ -169,25 +186,25 @@ func infraPlane(namespace, name string, generation int64, conditions ...metav1.C
 }
 
 func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
-	healthy := infraPlane("team-a", "gpu", 1,
+	healthy := infraPlane(teamA, "gpu", 1,
 		cond(v1alpha1.CCLInfraPlaneConditionAvailable, metav1.ConditionTrue, v1alpha1.CCLInfraPlaneReasonClusterSecretCreated, 1))
 	healthy.Status.ClusterConfig = &v1alpha1.CCLClusterConfigStatus{Conditions: []metav1.Condition{
 		cond(v1alpha1.CCLClusterConfigConditionVerified, metav1.ConditionTrue, v1alpha1.CCLClusterConfigReasonComponentsVerified, 7),
 	}}
-	broken := infraPlane("team-b", "cpu", 1,
+	broken := infraPlane(teamB, "cpu", 1,
 		cond(v1alpha1.CCLInfraPlaneConditionAvailable, metav1.ConditionFalse, v1alpha1.CCLInfraPlaneReasonSecretNotFound, 1))
 
-	finished := componentSet("team-a", "base", 1, finishedConditions(1)...)
+	finished := componentSet(teamA, "base", 1, finishedConditions(1)...)
 	finished.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
 		{Name: "a", Health: v1alpha1.ComponentHealthHealthy},
 		{Name: "b", Health: v1alpha1.ComponentHealthHealthy},
 	}
-	failed := componentSet("team-b", "apps", 1,
+	failed := componentSet(teamB, "apps", 1,
 		cond(v1alpha1.CCLComponentSetConditionValidated, metav1.ConditionTrue, v1alpha1.CCLComponentSetReasonComponentsAccepted, 1),
 		cond(v1alpha1.CCLComponentSetConditionComponentsApplied, metav1.ConditionFalse, v1alpha1.CCLComponentSetReasonApplicationConflict, 1))
-	degraded := componentSet("team-a", "jobs", 1)
+	degraded := componentSet(teamA, "jobs", 1)
 	degraded.Status.ComponentHealthStatuses = []v1alpha1.ComponentHealthStatus{
-		{Name: "a", Health: v1alpha1.ComponentHealthDegraded, Reason: "CrashLoopBackOff", Message: "back-off"},
+		{Name: "a", Health: v1alpha1.ComponentHealthDegraded, Reason: crashLoopBackOff, Message: backOffMessage},
 	}
 
 	planes := []v1alpha1.CCLInfraPlane{broken, healthy}
@@ -196,7 +213,7 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 	t.Run("all namespaces", func(t *testing.T) {
 		got := buildOverview(planes, sets, "", nil)
 
-		if want := []string{"team-a", "team-b"}; !reflect.DeepEqual(got.Namespaces, want) {
+		if want := []string{teamA, teamB}; !reflect.DeepEqual(got.Namespaces, want) {
 			t.Errorf("Namespaces = %v, want %v", got.Namespaces, want)
 		}
 		wantSummary := Summary{
@@ -218,9 +235,9 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 	})
 
 	t.Run("one namespace selected", func(t *testing.T) {
-		got := buildOverview(planes, sets, "team-a", nil)
+		got := buildOverview(planes, sets, teamA, nil)
 
-		if want := []string{"team-a", "team-b"}; !reflect.DeepEqual(got.Namespaces, want) {
+		if want := []string{teamA, teamB}; !reflect.DeepEqual(got.Namespaces, want) {
 			t.Errorf("Namespaces = %v, want every namespace still offered: %v", got.Namespaces, want)
 		}
 		if names := setNames(got.ComponentSets); !reflect.DeepEqual(names, []string{"team-a/base", "team-a/jobs"}) {
@@ -233,7 +250,7 @@ func TestBuildOverviewSummarisesAndListsBothKinds(t *testing.T) {
 
 	t.Run("selected namespace without objects is offered", func(t *testing.T) {
 		got := buildOverview(planes, sets, "team-c", nil)
-		if want := []string{"team-a", "team-b", "team-c"}; !reflect.DeepEqual(got.Namespaces, want) {
+		if want := []string{teamA, teamB, "team-c"}; !reflect.DeepEqual(got.Namespaces, want) {
 			t.Errorf("Namespaces = %v, want %v", got.Namespaces, want)
 		}
 		if len(got.InfraPlanes) != 0 || len(got.ComponentSets) != 0 {

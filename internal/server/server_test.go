@@ -69,19 +69,19 @@ func decode[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 }
 
 func objects() []runtime.Object {
-	planeA := infraPlane("team-a", "gpu", 1)
-	planeB := infraPlane("team-b", "cpu", 1)
-	setA := componentSet("team-a", "base", 1, finishedConditions(1)...)
+	planeA := infraPlane(teamA, "gpu", 1)
+	planeB := infraPlane(teamB, "cpu", 1)
+	setA := componentSet(teamA, "base", 1, finishedConditions(1)...)
 	return []runtime.Object{&planeA, &planeB, &setA}
 }
 
 func TestConfig(t *testing.T) {
-	handler, _ := newTestServer(t, Options{Namespace: "team-a", Context: "kind-cp", Version: "v1.2.3"})
+	handler, _ := newTestServer(t, Options{Namespace: teamA, Context: "kind-cp", Version: "v1.2.3"})
 	recorder := get(t, handler, "/api/v1/config")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body)
 	}
-	want := Config{Context: "kind-cp", Version: "v1.2.3", Namespace: "team-a", RefreshSeconds: 5}
+	want := Config{Context: "kind-cp", Version: "v1.2.3", Namespace: teamA, RefreshSeconds: 5}
 	if got := decode[Config](t, recorder); got != want {
 		t.Errorf("config = %+v, want %+v", got, want)
 	}
@@ -99,23 +99,23 @@ func TestOverviewAcrossTheCluster(t *testing.T) {
 	}
 
 	got = decode[Overview](t, get(t, handler, "/api/v1/overview?namespace=team-b"))
-	if got.Selected != "team-b" || len(got.InfraPlanes) != 1 || len(got.ComponentSets) != 0 {
+	if got.Selected != teamB || len(got.InfraPlanes) != 1 || len(got.ComponentSets) != 0 {
 		t.Errorf("team-b overview = %+v", got)
 	}
 }
 
 func TestOverviewOfTheServedNamespaceOnly(t *testing.T) {
-	handler, clientset := newTestServer(t, Options{Namespace: "team-a"}, objects()...)
+	handler, clientset := newTestServer(t, Options{Namespace: teamA}, objects()...)
 
 	got := decode[Overview](t, get(t, handler, "/api/v1/overview"))
-	if strings.Join(got.Namespaces, ",") != "team-a" || got.Selected != "team-a" {
+	if strings.Join(got.Namespaces, ",") != teamA || got.Selected != teamA {
 		t.Errorf("namespaces = %v, selected = %q, want only team-a", got.Namespaces, got.Selected)
 	}
 	if len(got.InfraPlanes) != 1 || got.InfraPlanes[0].Name != "gpu" {
 		t.Errorf("infra planes = %+v, want team-a/gpu", got.InfraPlanes)
 	}
 	for _, action := range clientset.Actions() {
-		if action.GetNamespace() != "team-a" {
+		if action.GetNamespace() != teamA {
 			t.Errorf("%s %s in namespace %q, want only team-a", action.GetVerb(), action.GetResource().Resource, action.GetNamespace())
 		}
 	}
@@ -153,7 +153,7 @@ func TestForbiddenReads(t *testing.T) {
 	})
 
 	t.Run("in the served namespace", func(t *testing.T) {
-		handler, clientset := newTestServer(t, Options{Namespace: "team-a"})
+		handler, clientset := newTestServer(t, Options{Namespace: teamA})
 		forbid(clientset)
 		recorder := get(t, handler, "/api/v1/overview")
 		if body := decode[Error](t, recorder); recorder.Code != http.StatusForbidden || body.Reason != string(metav1.StatusReasonForbidden) {

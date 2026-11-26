@@ -36,6 +36,21 @@ import (
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )
 
+const (
+	// planeName is the infra plane the tests register.
+	planeName = "edge-1"
+	// componentSetName is the component set the tests apply.
+	componentSetName = "base"
+	// tenantNamespace is a namespace the tests name without creating it.
+	tenantNamespace = "tenant-a"
+	// The kubeconfig's control planes: envtestCluster serves the ccluster API and
+	// bareContext does not.
+	envtestCluster = "envtest"
+	bareContext    = "bare"
+
+	noCCLusterAPI = "control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?"
+)
+
 // One API server serving the ccluster CRDs stands in for both clusters: the kubeconfig the
 // tests write names it as context cp and as context ip. A third context, bare, is a server
 // that serves no API at all.
@@ -100,6 +115,7 @@ func TestPrintsUsage(t *testing.T) {
 			!strings.Contains(out, "Usage:\n  ccluster") {
 			t.Errorf("ccluster %v printed %q, want the usage", args, out)
 		}
+		//nolint:goconst // the commands as the usage lists them
 		for _, command := range []string{"init", "register", "unregister", "list", "get", "server"} {
 			if !strings.Contains(out, command) {
 				t.Errorf("ccluster %v does not list %s", args, command)
@@ -159,8 +175,8 @@ func TestInitRejects(t *testing.T) {
 	}{
 		{"an unknown context", []string{"init", "--control-plane", "nope"}, "kubeconfig could not be loaded"},
 		{
-			"a cluster without the ccluster API", []string{"init", "--control-plane", "bare"},
-			"control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+			"a cluster without the ccluster API", []string{"init", "--control-plane", bareContext},
+			noCCLusterAPI,
 		},
 		{"no control plane", []string{"init"}, `required flag(s) "control-plane" not set`},
 	}
@@ -196,7 +212,7 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 	fillTokenSecret(t)
 	reportClusterConfig(t, namespace, applied)
 
-	out, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip")
+	out, err := run(t, "register", planeName, "--namespace", namespace, "--infra-plane", "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +236,7 @@ func TestRegisterCreatesAdminTokenAndInfraPlane(t *testing.T) {
 		t.Errorf("ServiceAccount: %v", err)
 	}
 
-	plane, err := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace).Get(ctx, "edge-1", metav1.GetOptions{})
+	plane, err := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace).Get(ctx, planeName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +258,7 @@ func TestRegisterKeepsTheTLSServerName(t *testing.T) {
 	fillTokenSecret(t)
 	reportClusterConfig(t, namespace, applied)
 
-	if _, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip-sni"); err != nil {
+	if _, err := run(t, "register", planeName, "--namespace", namespace, "--infra-plane", "ip-sni"); err != nil {
 		t.Fatal(err)
 	}
 	if got := credentialsConfig(t, namespace).config.TLSClientConfig.ServerName; got != "localhost" {
@@ -256,7 +272,7 @@ func TestRegisterWithoutTLSServerNameLeavesItUnset(t *testing.T) {
 	fillTokenSecret(t)
 	reportClusterConfig(t, namespace, applied)
 
-	if _, err := run(t, "register", "edge-1", "--namespace", namespace, "--infra-plane", "ip"); err != nil {
+	if _, err := run(t, "register", planeName, "--namespace", namespace, "--infra-plane", "ip"); err != nil {
 		t.Fatal(err)
 	}
 	if got := credentialsConfig(t, namespace).config.TLSClientConfig.ServerName; got != "" {
@@ -269,7 +285,8 @@ func TestRegisterAgainReusesTheTokenAndHonoursServer(t *testing.T) {
 	namespace := newNamespaceName()
 	fillTokenSecret(t)
 	reportClusterConfig(t, namespace, applied)
-	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip"}
+	//nolint:goconst // flags stay as a user types them
+	args := []string{"register", planeName, "-n", namespace, "--infra-plane", "ip"}
 
 	if _, err := run(t, args...); err != nil {
 		t.Fatal(err)
@@ -295,7 +312,7 @@ func TestRegisterFailsWithTheReasonTheClusterWasNotReached(t *testing.T) {
 	expectError(t, fmt.Sprintf("CCLInfraPlane %s/edge-1 is applied, but after 1s ClusterConfigApplied is False "+
 		"(ClusterUnreachable): %s; if the control plane cannot reach %s, run register again with --server",
 		namespace, unreachable(apiServer.Host).Message, apiServer.Host),
-		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+		"register", planeName, "-n", namespace, "--infra-plane", "ip")
 }
 
 func TestRegisterFailsWithoutTheOperator(t *testing.T) {
@@ -306,7 +323,7 @@ func TestRegisterFailsWithoutTheOperator(t *testing.T) {
 
 	expectError(t, fmt.Sprintf("CCLInfraPlane %s/edge-1 is applied, but after 100ms it has no "+
 		"ClusterConfigApplied condition; is the ccluster-cp operator running?", namespace),
-		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+		"register", planeName, "-n", namespace, "--infra-plane", "ip")
 }
 
 // Registering again with a server that works must not fail on the False the old server
@@ -323,7 +340,7 @@ func TestRegisterAgainWaitsPastTheOldServersCondition(t *testing.T) {
 		return unreachable(server)
 	})
 	clusterConfigTimeout = time.Second
-	args := []string{"register", "edge-1", "-n", namespace, "--infra-plane", "ip"}
+	args := []string{"register", planeName, "-n", namespace, "--infra-plane", "ip"}
 
 	expectError(t, "ClusterConfigApplied is False (ClusterUnreachable)", args...)
 	out, err := run(t, append(args, "--server", reachable)...)
@@ -342,7 +359,7 @@ func TestRegisterFailsWhenTokenNeverArrives(t *testing.T) {
 	tokenTimeout = 50 * time.Millisecond
 
 	expectError(t, "secret kube-system/ccluster-manager-token was not given a token within 50ms",
-		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+		"register", planeName, "-n", namespace, "--infra-plane", "ip")
 	if _, err := kubeClient.CoreV1().Namespaces().Get(t.Context(), namespace,
 		metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Errorf("namespace %s: error = %v, want the control plane left alone", namespace, err)
@@ -364,7 +381,7 @@ func TestRegisterRejects(t *testing.T) {
 		{
 			name: "a control plane without the ccluster API", config: "controlPlane:\n  context: bare\n",
 			args: []string{"--infra-plane", "ip"},
-			want: "control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+			want: noCCLusterAPI,
 		},
 		{
 			name: "a missing init",
@@ -390,7 +407,7 @@ func TestRegisterRejects(t *testing.T) {
 			if test.config != "" {
 				writeConfig(t, configFile, test.config)
 			}
-			expectError(t, test.want, append([]string{"register", "edge-1", "-n", newNamespaceName()},
+			expectError(t, test.want, append([]string{"register", planeName, "-n", newNamespaceName()},
 				test.args...)...)
 			if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(t.Context(),
 				serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -402,12 +419,12 @@ func TestRegisterRejects(t *testing.T) {
 	t.Run("no namespace flag", func(t *testing.T) {
 		setUpInitialized(t)
 		expectError(t, `required flag(s) "namespace" not set`,
-			"register", "edge-1", "--infra-plane", "ip")
+			"register", planeName, "--infra-plane", "ip")
 	})
 
 	t.Run("an empty namespace", func(t *testing.T) {
 		setUpInitialized(t)
-		expectError(t, "namespace must not be empty", "register", "edge-1", "-n", "", "--infra-plane", "ip")
+		expectError(t, "namespace must not be empty", "register", planeName, "-n", "", "--infra-plane", "ip")
 		// Refused before anything is written to the infra plane.
 		if _, err := kubeClient.CoreV1().ServiceAccounts(serviceAccountNamespace).Get(t.Context(),
 			serviceAccountName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -423,18 +440,18 @@ func TestUnregisterDeletesTheInfraPlane(t *testing.T) {
 	if err := client.EnsureNamespace(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: "edge-1"}); err != nil {
+	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: planeName}); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, "unregister", "edge-1", "--namespace", namespace)
+	out, err := run(t, "unregister", planeName, "--namespace", namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := fmt.Sprintf("Unregistered CCLInfraPlane %s/edge-1\n", namespace); out != want {
 		t.Errorf("unregister printed %q, want %q", out, want)
 	}
-	if _, err := client.GetInfraPlane(t.Context(), "edge-1"); !apierrors.IsNotFound(err) {
+	if _, err := client.GetInfraPlane(t.Context(), planeName); !apierrors.IsNotFound(err) {
 		t.Errorf("GetInfraPlane() error = %v, want NotFound", err)
 	}
 	if _, err := kubeClient.CoreV1().Secrets(namespace).Get(t.Context(), "edge-1-credentials",
@@ -443,7 +460,7 @@ func TestUnregisterDeletesTheInfraPlane(t *testing.T) {
 	}
 
 	// Already gone is not an error.
-	if _, err := run(t, "unregister", "edge-1", "--namespace", namespace); err != nil {
+	if _, err := run(t, "unregister", planeName, "--namespace", namespace); err != nil {
 		t.Errorf("unregister again: %v", err)
 	}
 }
@@ -455,13 +472,13 @@ func TestUnregisterRejects(t *testing.T) {
 		args         []string
 		want         string
 	}{
-		{"a missing init", "", []string{"-n", "tenant-a"}, "run ccluster init first"},
+		{"a missing init", "", []string{"-n", tenantNamespace}, "run ccluster init first"},
 		{
-			"a control plane without the ccluster API", "bare", []string{"-n", "tenant-a"},
-			"control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?",
+			"a control plane without the ccluster API", bareContext, []string{"-n", tenantNamespace},
+			noCCLusterAPI,
 		},
 		{"no namespace", "cp", nil, `required flag(s) "namespace" not set`},
-		{"an infra plane", "cp", []string{"-n", "tenant-a", "--infra-plane", "ip"}, "unknown flag: --infra-plane"},
+		{"an infra plane", "cp", []string{"-n", tenantNamespace, "--infra-plane", "ip"}, "unknown flag: --infra-plane"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -469,7 +486,7 @@ func TestUnregisterRejects(t *testing.T) {
 			if test.controlPlane != "" {
 				writeConfig(t, configFile, "controlPlane:\n  context: "+test.controlPlane+"\n")
 			}
-			expectError(t, test.want, append([]string{"unregister", "edge-1"}, test.args...)...)
+			expectError(t, test.want, append([]string{"unregister", planeName}, test.args...)...)
 		})
 	}
 }
@@ -484,7 +501,7 @@ func setUp(t *testing.T) string {
 
 	dir := t.TempDir()
 	kubeconfig := clientcmdapi.NewConfig()
-	kubeconfig.Clusters["envtest"] = &clientcmdapi.Cluster{
+	kubeconfig.Clusters[envtestCluster] = &clientcmdapi.Cluster{
 		Server:                   apiServer.Host,
 		CertificateAuthorityData: apiServer.CAData,
 	}
@@ -494,18 +511,18 @@ func setUp(t *testing.T) string {
 		CertificateAuthorityData: apiServer.CAData,
 		TLSServerName:            "localhost",
 	}
-	kubeconfig.Clusters["bare"] = &clientcmdapi.Cluster{Server: bare.URL}
-	kubeconfig.AuthInfos["envtest"] = &clientcmdapi.AuthInfo{
+	kubeconfig.Clusters[bareContext] = &clientcmdapi.Cluster{Server: bare.URL}
+	kubeconfig.AuthInfos[envtestCluster] = &clientcmdapi.AuthInfo{
 		ClientCertificateData: apiServer.CertData,
 		ClientKeyData:         apiServer.KeyData,
 		Token:                 apiServer.BearerToken,
 	}
-	kubeconfig.AuthInfos["bare"] = &clientcmdapi.AuthInfo{}
+	kubeconfig.AuthInfos[bareContext] = &clientcmdapi.AuthInfo{}
 	for _, name := range []string{"cp", "ip"} {
-		kubeconfig.Contexts[name] = &clientcmdapi.Context{Cluster: "envtest", AuthInfo: "envtest"}
+		kubeconfig.Contexts[name] = &clientcmdapi.Context{Cluster: envtestCluster, AuthInfo: envtestCluster}
 	}
-	kubeconfig.Contexts["ip-sni"] = &clientcmdapi.Context{Cluster: "envtest-sni", AuthInfo: "envtest"}
-	kubeconfig.Contexts["bare"] = &clientcmdapi.Context{Cluster: "bare", AuthInfo: "bare"}
+	kubeconfig.Contexts["ip-sni"] = &clientcmdapi.Context{Cluster: "envtest-sni", AuthInfo: envtestCluster}
+	kubeconfig.Contexts[bareContext] = &clientcmdapi.Context{Cluster: bareContext, AuthInfo: bareContext}
 	kubeconfigPath := filepath.Join(dir, "kubeconfig")
 	if err := clientcmd.WriteToFile(*kubeconfig, kubeconfigPath); err != nil {
 		t.Fatal(err)
@@ -610,11 +627,11 @@ func reportClusterConfig(t *testing.T, namespace string, condition func(server s
 		secrets := kubeClient.CoreV1().Secrets(namespace)
 		for ctx.Err() == nil {
 			time.Sleep(10 * time.Millisecond)
-			plane, err := planes.Get(ctx, "edge-1", metav1.GetOptions{})
+			plane, err := planes.Get(ctx, planeName, metav1.GetOptions{})
 			if err != nil {
 				continue
 			}
-			credentials, err := secrets.Get(ctx, cclclient.CredentialsSecretName("edge-1"), metav1.GetOptions{})
+			credentials, err := secrets.Get(ctx, cclclient.CredentialsSecretName(planeName), metav1.GetOptions{})
 			if err != nil {
 				continue
 			}
@@ -622,7 +639,7 @@ func reportClusterConfig(t *testing.T, namespace string, condition func(server s
 				continue
 			}
 			time.Sleep(100 * time.Millisecond)
-			plane.Status.Domain = "edge-1." + namespace + ".example.com"
+			plane.Status.Domain = planeName + "." + namespace + ".example.com"
 			_, _ = planes.UpdateStatus(ctx, plane, metav1.UpdateOptions{})
 		}
 	}()
@@ -682,7 +699,7 @@ func credentialsConfig(t *testing.T, namespace string) credentials {
 	t.Helper()
 
 	secret, err := kubeClient.CoreV1().Secrets(namespace).Get(t.Context(),
-		cclclient.CredentialsSecretName("edge-1"), metav1.GetOptions{})
+		cclclient.CredentialsSecretName(planeName), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

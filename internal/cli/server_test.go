@@ -89,7 +89,7 @@ func TestServerServesTheDashboard(t *testing.T) {
 	if err := client.EnsureNamespace(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: "edge-1"}); err != nil {
+	if _, err := client.ApplyInfraPlane(t.Context(), cclclient.InfraPlaneOptions{Name: planeName}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestServerServesTheDashboard(t *testing.T) {
 	if code := getJSON(t, url+"/api/v1/overview", &overview); code != http.StatusOK {
 		t.Fatalf("overview answered %d", code)
 	}
-	if len(overview.InfraPlanes) != 1 || overview.InfraPlanes[0].Name != "edge-1" {
+	if len(overview.InfraPlanes) != 1 || overview.InfraPlanes[0].Name != planeName {
 		t.Errorf("infra planes = %+v, want %s/edge-1", overview.InfraPlanes, namespace)
 	}
 

@@ -25,9 +25,9 @@ func TestListInfraPlanesPrintsThePrintColumns(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	client := newTestClient(t, namespace)
-	applyInfraPlane(t, client, "edge-1")
+	applyInfraPlane(t, client, planeName)
 	applyInfraPlane(t, client, "edge-2")
-	writeInfraPlaneStatus(t, client, "edge-1", 1)
+	writeInfraPlaneStatus(t, client, planeName, 1)
 	// Another namespace's plane is not listed.
 	applyInfraPlane(t, newTestClient(t, newNamespaceName()), "edge-3")
 
@@ -37,9 +37,10 @@ func TestListInfraPlanesPrintsThePrintColumns(t *testing.T) {
 			t.Fatalf("list %s: %v", spelling, err)
 		}
 		rows := tableRows(out)
+		//nolint:goconst // the rows as the command prints them
 		want := [][]string{
 			{"NAME", "DOMAIN", "AVAILABLE", "CLUSTERCONFIG", "VERIFIED", "DNS", "AGE"},
-			{"edge-1", "edge-1." + namespace + ".example.com", "True", "False", "True", "True"},
+			{planeName, planeName + "." + namespace + ".example.com", "True", "False", "True", "True"},
 			// No status: the domain and condition columns are empty.
 			{"edge-2"},
 		}
@@ -82,7 +83,7 @@ func TestListAllNamespacesAddsTheNamespaceColumn(t *testing.T) {
 	first, second := newNamespaceName(), newNamespaceName()
 	for _, namespace := range []string{first, second} {
 		client := newTestClient(t, namespace)
-		applyInfraPlane(t, client, "edge-1")
+		applyInfraPlane(t, client, planeName)
 		applyComponentSet(t, client)
 	}
 
@@ -91,8 +92,8 @@ func TestListAllNamespacesAddsTheNamespaceColumn(t *testing.T) {
 		header string
 		name   string
 	}{
-		{"ip", "NAMESPACE NAME DOMAIN AVAILABLE CLUSTERCONFIG VERIFIED DNS AGE", "edge-1"},
-		{"cs", "NAMESPACE NAME APPLIED PROGRESS AGE", "base"},
+		{"ip", "NAMESPACE NAME DOMAIN AVAILABLE CLUSTERCONFIG VERIFIED DNS AGE", planeName},
+		{"cs", "NAMESPACE NAME APPLIED PROGRESS AGE", componentSetName},
 	} {
 		for _, flag := range []string{"-A", "--all-namespaces"} {
 			out, err := run(t, "list", test.kind, flag)
@@ -114,7 +115,7 @@ func TestListAllNamespacesAddsTheNamespaceColumn(t *testing.T) {
 			}
 		}
 
-		out, err := run(t, "list", test.kind, "-A", "-o", "json")
+		out, err := run(t, "list", test.kind, "-A", "-o", outputJSON)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,8 +148,8 @@ func TestListOfNothingSaysSo(t *testing.T) {
 		}
 	}
 
-	for kind, want := range map[string]string{"ip": "CCLInfraPlaneList", "cs": "CCLComponentSetList"} {
-		out, err := run(t, "list", kind, "-n", namespace, "-o", "yaml")
+	for kind, want := range map[string]string{"ip": kindInfraPlaneList, "cs": kindComponentSetList} {
+		out, err := run(t, "list", kind, "-n", namespace, "-o", outputYAML)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,14 +167,14 @@ func TestListPrintsTheList(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	client := newTestClient(t, namespace)
-	applyInfraPlane(t, client, "edge-1")
+	applyInfraPlane(t, client, planeName)
 	applyComponentSet(t, client)
 
 	tests := []struct{ kind, listKind, itemKind, output string }{
-		{"ip", "CCLInfraPlaneList", "CCLInfraPlane", "json"},
-		{"ip", "CCLInfraPlaneList", "CCLInfraPlane", "yaml"},
-		{"cs", "CCLComponentSetList", "CCLComponentSet", "json"},
-		{"cs", "CCLComponentSetList", "CCLComponentSet", "yaml"},
+		{"ip", kindInfraPlaneList, kindInfraPlane, outputJSON},
+		{"ip", kindInfraPlaneList, kindInfraPlane, outputYAML},
+		{"cs", kindComponentSetList, kindComponentSet, outputJSON},
+		{"cs", kindComponentSetList, kindComponentSet, outputYAML},
 	}
 	for _, test := range tests {
 		out, err := run(t, "list", test.kind, "-n", namespace, "-o", test.output)
@@ -193,12 +194,12 @@ func TestGetInfraPlaneDescribesIt(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	client := newTestClient(t, namespace)
-	applyInfraPlane(t, client, "edge-1")
+	applyInfraPlane(t, client, planeName)
 	applyInfraPlane(t, client, "edge-2")
 	// Computed from generation 0, so stale.
-	writeInfraPlaneStatus(t, client, "edge-1", 0)
+	writeInfraPlaneStatus(t, client, planeName, 0)
 
-	out, err := run(t, "get", "infraplane", "edge-1", "-n", namespace)
+	out, err := run(t, "get", "infraplane", planeName, "-n", namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func TestGetComponentSetDescribesIt(t *testing.T) {
 	writeComponentSetStatus(t, client)
 
 	for _, spelling := range []string{"componentset", "componentsets", "cs"} {
-		out, err := run(t, "get", spelling, "base", "-n", namespace)
+		out, err := run(t, "get", spelling, componentSetName, "-n", namespace)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,17 +270,17 @@ func TestGetComponentSetMarksSyncsOfAnOlderSpecStale(t *testing.T) {
 	applyComponentSet(t, client)
 	writeComponentSetStatus(t, client)
 	// A new chart for keda makes generation 2, which the status does not describe yet.
-	set, err := client.GetComponentSet(t.Context(), "base")
+	set, err := client.GetComponentSet(t.Context(), componentSetName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	components := set.Spec.Components
 	components[0].Chart = "catalogs/cluster_base/keda_v2"
-	if _, err := client.ApplyComponentSet(t.Context(), "base", components); err != nil {
+	if _, err := client.ApplyComponentSet(t.Context(), componentSetName, components); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, "get", "cs", "base", "-n", namespace)
+	out, err := run(t, "get", "cs", componentSetName, "-n", namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,14 +294,14 @@ func TestGetPrintsTheObject(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 	client := newTestClient(t, namespace)
-	applyInfraPlane(t, client, "edge-1")
+	applyInfraPlane(t, client, planeName)
 	applyComponentSet(t, client)
 
 	tests := []struct{ kind, name, wantKind, output string }{
-		{"ip", "edge-1", "CCLInfraPlane", "json"},
-		{"ip", "edge-1", "CCLInfraPlane", "yaml"},
-		{"cs", "base", "CCLComponentSet", "json"},
-		{"cs", "base", "CCLComponentSet", "yaml"},
+		{"ip", planeName, kindInfraPlane, outputJSON},
+		{"ip", planeName, kindInfraPlane, outputYAML},
+		{"cs", componentSetName, kindComponentSet, outputJSON},
+		{"cs", componentSetName, kindComponentSet, outputYAML},
 	}
 	for _, test := range tests {
 		out, err := run(t, "get", test.kind, test.name, "-n", namespace, "--output", test.output)
@@ -319,6 +320,7 @@ func TestListAndGetReject(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
 
+	//nolint:goconst // the arguments and errors as a user sees them
 	tests := []struct {
 		name string
 		args []string
@@ -337,13 +339,13 @@ func TestListAndGetReject(t *testing.T) {
 			"none of the others can be"},
 		// Not read as every namespace, as the clientsets would.
 		{"list with an empty namespace", []string{"list", "ip", "-n", ""}, "namespace must not be empty"},
-		{"get with an empty namespace", []string{"get", "cs", "base", "-n", ""}, "namespace must not be empty"},
-		{"unregister with an empty namespace", []string{"unregister", "edge-1", "-n", ""},
+		{"get with an empty namespace", []string{"get", "cs", componentSetName, "-n", ""}, "namespace must not be empty"},
+		{"unregister with an empty namespace", []string{"unregister", planeName, "-n", ""},
 			"namespace must not be empty"},
-		{"get without a namespace", []string{"get", "ip", "edge-1"}, `required flag(s) "namespace" not set`},
-		{"a missing infra plane", []string{"get", "ip", "edge-1", "-n", namespace},
+		{"get without a namespace", []string{"get", "ip", planeName}, `required flag(s) "namespace" not set`},
+		{"a missing infra plane", []string{"get", "ip", planeName, "-n", namespace},
 			`API request failed (404): cclinfraplanes.ccluster.nvidia.com "edge-1" not found`},
-		{"a missing component set", []string{"get", "cs", "base", "-n", namespace},
+		{"a missing component set", []string{"get", "cs", componentSetName, "-n", namespace},
 			`API request failed (404): cclcomponentsets.ccluster.nvidia.com "base" not found`},
 	}
 	for _, test := range tests {
@@ -360,10 +362,9 @@ func TestListAndGetReject(t *testing.T) {
 
 	t.Run("a control plane without the ccluster API", func(t *testing.T) {
 		writeConfig(t, setUp(t), "controlPlane:\n  context: bare\n")
-		const want = "control plane bare does not serve the ccluster API; is the ccluster-cp operator installed?"
-		expectError(t, want, "list", "ip", "-n", namespace)
-		expectError(t, want, "list", "ip", "-A")
-		expectError(t, want, "get", "ip", "edge-1", "-n", namespace)
+		expectError(t, noCCLusterAPI, "list", "ip", "-n", namespace)
+		expectError(t, noCCLusterAPI, "list", "ip", "-A")
+		expectError(t, noCCLusterAPI, "get", "ip", planeName, "-n", namespace)
 	})
 }
 
@@ -425,11 +426,11 @@ func applyComponentSet(t *testing.T, client *cclclient.Client) {
 	} {
 		components = append(components, cclusternvidiacomv1alpha1.ComponentSpec{
 			Name:           c.name,
-			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "edge-1"},
+			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeName},
 			ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{Chart: c.chart, Namespace: c.name},
 		})
 	}
-	if _, err := client.ApplyComponentSet(t.Context(), "base", components); err != nil {
+	if _, err := client.ApplyComponentSet(t.Context(), componentSetName, components); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -464,7 +465,7 @@ func writeComponentSetStatus(t *testing.T, client *cclclient.Client) {
 				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthProgressing).WithLastTransitionTime(metav1.Now()),
 		)
 	if _, err := clientset.CclusterV1alpha1().CCLComponentSets(client.Namespace()).ApplyStatus(t.Context(),
-		cclusterac.CCLComponentSet("base", client.Namespace()).WithStatus(status),
+		cclusterac.CCLComponentSet(componentSetName, client.Namespace()).WithStatus(status),
 		metav1.ApplyOptions{FieldManager: "operator-test", Force: true}); err != nil {
 		t.Fatal(err)
 	}
