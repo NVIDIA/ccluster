@@ -740,12 +740,19 @@ var _ = Describe("Manager", Ordered, func() {
   provider:
     name: inmemory
   extraArgs:
-    - --inmemory-zone=`+e2eBaseDomain+`
+    inmemory-zone: `+e2eBaseDomain+`
   interval: 10s
 `), 0o600)).To(Succeed())
 			_, err = utils.Run(exec.Command("make", "deploy-cp", "BASE_DOMAIN="+e2eBaseDomain, fmt.Sprintf("IMG_CP=%s", managerImage),
 				"ARGOCD=false", "DNS=true", "HELM_ARGS=-f "+values))
 			Expect(err).NotTo(HaveOccurred(), "Failed to enable external-dns")
+
+			By("running external-dns with the chart's flags as well as the in-memory zone")
+			args, err := utils.Run(exec.Command("kubectl", "get", "deployment", "-n", namespace,
+				"-l", "app.kubernetes.io/name=external-dns", "-o", "jsonpath={.items[*].spec.template.spec.containers[*].args}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(args).To(ContainSubstring(`"--txt-wildcard-replacement=wildcard"`))
+			Expect(args).To(ContainSubstring(`"--inmemory-zone=` + e2eBaseDomain + `"`))
 
 			By("restarting the controller-manager so it picks up the DNSEndpoint watch")
 			controllerPodName = restartControllerManager()

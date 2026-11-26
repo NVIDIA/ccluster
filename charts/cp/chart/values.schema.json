@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Hand-written; make helm-generate preserves it. Constrains only what the generated templates and Helm's value merge cannot express, and leaves every other value unchecked.",
+  "type": "object",
+  "properties": {
+    "external-dns": {
+      "type": "object",
+      "properties": {
+        "extraArgs": {
+          "$comment": "Helm cannot merge a list into the chart's map of flags: the list replaces it and drops --txt-wildcard-replacement=wildcard, with only a warning. Overrides must be a map, which merges by key.",
+          "type": "object"
+        }
+      }
+    }
+  }
+}

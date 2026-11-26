@@ -67,3 +67,21 @@ jobs:
           grep -q 'appprojects.argoproj.io' /tmp/cp.yaml
           # The ip chart has no dependencies; Argo CD is control-plane only.
           ! grep -q 'argoproj.io' /tmp/ip.yaml
+
+      # A user's external-dns.extraArgs merge into the chart's by key, so external-dns
+      # keeps --txt-wildcard-replacement. A list would replace them with only a warning,
+      # so values.schema.json rejects one.
+      - name: Verify external-dns keeps the chart's flags
+        run: |
+          helm template ccluster-cp charts/cp/chart -n ccluster-cp-system \
+            --set external-dns.enabled=true \
+            --set external-dns.extraArgs.inmemory-zone=planes.example.com > /tmp/cp-dns.yaml
+          grep -q -- '- --txt-wildcard-replacement=wildcard$' /tmp/cp-dns.yaml
+          grep -q -- '- --inmemory-zone=planes.example.com$' /tmp/cp-dns.yaml
+          printf 'external-dns:\n  extraArgs:\n    - --inmemory-zone=planes.example.com\n' > /tmp/dns-list.yaml
+          if helm template ccluster-cp charts/cp/chart -n ccluster-cp-system \
+            -f /tmp/dns-list.yaml > /dev/null 2> /tmp/dns-list.err; then
+            echo "values.schema.json accepted a list for external-dns.extraArgs" >&2
+            exit 1
+          fi
+          grep -E '^- .*external-dns[./]extraArgs' /tmp/dns-list.err

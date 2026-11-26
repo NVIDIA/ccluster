@@ -387,6 +387,12 @@ external-dns:
   txtOwnerId: ccluster-cp
   interval: 1m
 
+  ## Flags as a map of name to value. Give overrides as a map too, which Helm merges into
+  ## this one by key, for instance:
+  ##   extraArgs:
+  ##     aws-zone-type: public
+  ## Helm cannot merge a list into a map: a list would replace these flags rather than add
+  ## to them, so values.schema.json rejects one.
   extraArgs:
     ## A TXT ownership record is named after the record it owns plus its type, which for
     ## a wildcard is "a-*.nginx.<domain>": a "*" that is not a whole label is not a
