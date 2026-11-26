@@ -398,6 +398,13 @@ Helm refuses existing CRDs without its ownership labels and annotations. To adop
 without deleting CRs, run `make helm-adopt-crds-cp`, then deploy. `make install` is for
 the host-manager loop with `make run-cp`, where no chart is installed.
 
+`make install` applies every CRD in `config/crd`, which includes `CCLClusterConfig` even
+though only the ip chart ships it. Each adoption target therefore hands over only the CRDs
+its own chart ships: `make helm-adopt-crds-cp` adopts the cp chart's `CCLComponentSet` and
+`CCLInfraPlane`, and `make helm-adopt-crds-ip` adopts the ip chart's `CCLClusterConfig`.
+Run the cp target against the control-plane cluster's context and the ip target against the
+infra-plane cluster's context.
+
 `make deploy-cp ARGOCD=false` skips the dependency when Argo CD already exists or is
 intentionally absent. The operator looks for Argo CD in its own namespace unless
 `--argocd-namespace` is set: pass an existing Argo CD's namespace as `ARGOCD_NAMESPACE`.
