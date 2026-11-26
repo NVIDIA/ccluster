@@ -9,8 +9,18 @@ SPDX-License-Identifier: Apache-2.0
 package kaischeduler
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
+	kaiv1 "github.com/NVIDIA/ccluster/internal/api/kai/v1"
 )
 
 const (
@@ -137,4 +147,73 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// SchedulerName is the scheduler the catalog's workloads name in spec.schedulerName: the
+// deployments charts default their schedulerName value to it.
+const SchedulerName = "kai-scheduler"
+
+// Verify checks that KAI can schedule the pods the catalog's workloads create.
+//
+// First, the KAI Config, kaiv1.ConfigName, must exist and its scheduler name, unset
+// meaning KAI's default, must be SchedulerName. The KAI operator starts every scheduler
+// with that name as --scheduler-name, so a pod naming any other scheduler would stay
+// Pending. The chart applies the Config from a hook Job rather than as a release
+// resource, so a hook that never ran shows here as a missing Config.
+//
+// Then KAI's components must run, as the KAI operator reports them: the Config and every
+// SchedulingShard must be Available for their current generation. The Config's
+// condition covers the binder, admission webhook, pod-grouper and the other cluster-wide
+// components; each shard's covers its scheduler Deployment. Every shard counts, not just
+// the chart's "default": a pod is scheduled by whichever shard its node-pool label
+// selects. At least one shard must exist, since without one KAI runs no scheduler at all
+// while its Config still reports Available.
+//
+// These conditions are stored status: if the KAI operator itself stops, they keep
+// reporting what it last saw. A cluster without KAI has no Config kind, and that is
+// reported as such rather than as a failed read. Nothing here depends on the cluster's
+// domain, so the CCLClusterConfig spec is not consulted.
+//
+// r must be able to read kai.scheduler/v1 Configs and SchedulingShards: the operator's
+// scheme registers internal/api/kai/v1 and its ClusterRole grants get, list and watch.
+func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	var config kaiv1.Config
+	if err := r.Get(ctx, client.ObjectKey{Name: kaiv1.ConfigName}, &config); err != nil {
+		switch {
+		case meta.IsNoMatchError(err):
+			return errors.New("KAI Config kind not served, is KAI installed?")
+		case apierrors.IsNotFound(err):
+			return fmt.Errorf("KAI Config %s not found", kaiv1.ConfigName)
+		}
+		return fmt.Errorf("reading KAI Config %s: %w", kaiv1.ConfigName, err)
+	}
+	name := kaiv1.DefaultSchedulerName
+	if g := config.Spec.Global; g != nil && g.SchedulerName != nil {
+		name = *g.SchedulerName
+	}
+	if name != SchedulerName {
+		return fmt.Errorf("KAI Config %s sets schedulerName %q, want %q", kaiv1.ConfigName, name, SchedulerName)
+	}
+	if err := catalogs.VerifyConditionCurrent("KAI Config "+kaiv1.ConfigName, config.Generation,
+		config.Status.Conditions, kaiv1.ConditionAvailable); err != nil {
+		return err
+	}
+
+	var shards kaiv1.SchedulingShardList
+	if err := r.List(ctx, &shards); err != nil {
+		return fmt.Errorf("listing KAI SchedulingShards: %w", err)
+	}
+	if len(shards.Items) == 0 {
+		return errors.New("no KAI SchedulingShard found, so no KAI scheduler runs")
+	}
+	// Name order, so that the first failing shard, and with it the status message, is
+	// the same on every pass.
+	sort.Slice(shards.Items, func(i, j int) bool { return shards.Items[i].Name < shards.Items[j].Name })
+	for _, shard := range shards.Items {
+		if err := catalogs.VerifyConditionCurrent("KAI SchedulingShard "+shard.Name, shard.Generation,
+			shard.Status.Conditions, kaiv1.ConditionAvailable); err != nil {
+			return err
+		}
+	}
+	return nil
 }

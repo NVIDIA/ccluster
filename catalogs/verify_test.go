@@ -506,3 +506,61 @@ func TestVerifyLeaseRenewedReturnsReadErrors(t *testing.T) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }
+
+// TestVerifyConditionCurrent: the condition counts only when it is True and was set for
+// the object's current generation.
+func TestVerifyConditionCurrent(t *testing.T) {
+	cond := func(status metav1.ConditionStatus, observed int64) metav1.Condition {
+		return metav1.Condition{
+			Type: "Available", Status: status, ObservedGeneration: observed,
+			Reason: "Available", Message: "System not available",
+		}
+	}
+	tests := []struct {
+		name       string
+		conditions []metav1.Condition
+		want       string // "" means "expect nil"
+	}{
+		{name: "true for the current generation", conditions: []metav1.Condition{cond(metav1.ConditionTrue, 3)}},
+		{
+			// observedGeneration is optional in metav1.Condition.
+			name:       "true without an observed generation",
+			conditions: []metav1.Condition{cond(metav1.ConditionTrue, 0)},
+		},
+		{
+			name:       "false",
+			conditions: []metav1.Condition{cond(metav1.ConditionFalse, 3)},
+			want:       "KAI Config kai-config is not Available: Available: System not available",
+		},
+		{
+			name:       "unknown",
+			conditions: []metav1.Condition{cond(metav1.ConditionUnknown, 3)},
+			want:       "KAI Config kai-config is not Available: Available: System not available",
+		},
+		{
+			// Written before the spec changed; the operator has not caught up.
+			name:       "true for an older generation",
+			conditions: []metav1.Condition{cond(metav1.ConditionTrue, 2)},
+			want:       "KAI Config kai-config reports Available for generation 2, not the current 3",
+		},
+		{
+			name: "only other conditions",
+			conditions: []metav1.Condition{{
+				Type: "Deployed", Status: metav1.ConditionTrue, ObservedGeneration: 3, Reason: "Deployed",
+			}},
+			want: "KAI Config kai-config does not report Available",
+		},
+		{name: "no conditions", want: "KAI Config kai-config does not report Available"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := VerifyConditionCurrent("KAI Config kai-config", 3, tt.conditions, "Available")
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("want nil, got %v", err)
+			case tt.want != "" && (err == nil || err.Error() != tt.want):
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
