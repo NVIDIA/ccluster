@@ -36,6 +36,12 @@ import (
 	"github.com/NVIDIA/ccluster/pkg/client/informers/externalversions"
 )
 
+// The infra plane the tests write, and its domain.
+const (
+	planeName   = "gpu-a"
+	planeDomain = "gpu-a.example.com"
+)
+
 var (
 	clientset  versioned.Interface
 	kubeClient kubernetes.Interface
@@ -90,11 +96,11 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 	t.Cleanup(func() { deleteClusterConfig(t) })
 
 	if _, err := configs.Apply(ctx, cclusterac.CCLClusterConfig(name).
-		WithSpec(cclusterac.CCLClusterConfigSpec().WithDomain("gpu-a.example.com")), apply); err != nil {
+		WithSpec(cclusterac.CCLClusterConfigSpec().WithDomain(planeDomain)), apply); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := configs.ApplyStatus(ctx, cclusterac.CCLClusterConfig(name).
-		WithStatus(cclusterac.CCLClusterConfigStatus().WithDomain("gpu-a.example.com").WithConditions(metav1ac.Condition().
+		WithStatus(cclusterac.CCLClusterConfigStatus().WithDomain(planeDomain).WithConditions(metav1ac.Condition().
 			WithType("Verified").WithStatus(metav1.ConditionTrue).WithReason("ComponentsVerified").
 			WithMessage("").WithLastTransitionTime(metav1.Now()))), apply); err != nil {
 		t.Fatal(err)
@@ -104,10 +110,10 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Spec.Domain != "gpu-a.example.com" {
+	if got.Spec.Domain != planeDomain {
 		t.Errorf("spec.domain = %q, want gpu-a.example.com", got.Spec.Domain)
 	}
-	if got.Status.Domain != "gpu-a.example.com" {
+	if got.Status.Domain != planeDomain {
 		t.Errorf("status.domain = %q, want gpu-a.example.com", got.Status.Domain)
 	}
 	if !apimeta.IsStatusConditionTrue(got.Status.Conditions, "Verified") {
@@ -120,7 +126,7 @@ func TestClusterScopedKindAppliesSpecAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owned.Spec == nil || owned.Spec.Domain == nil || *owned.Spec.Domain != "gpu-a.example.com" {
+	if owned.Spec == nil || owned.Spec.Domain == nil || *owned.Spec.Domain != planeDomain {
 		t.Errorf("extracted spec = %+v, want domain gpu-a.example.com", owned.Spec)
 	}
 }
@@ -133,7 +139,7 @@ func TestNamespacedKindsStayInTheirNamespace(t *testing.T) {
 	team, other := createNamespace(t, "team-a"), createNamespace(t, "team-b")
 
 	if _, err := client.CCLInfraPlanes(team).Create(ctx, &cclusternvidiacomv1alpha1.CCLInfraPlane{
-		ObjectMeta: metav1.ObjectMeta{Name: "gpu-a"},
+		ObjectMeta: metav1.ObjectMeta{Name: planeName},
 		Spec: cclusternvidiacomv1alpha1.CCLInfraPlaneSpec{
 			ClusterCredentialsRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a-credentials"},
 		},
@@ -145,7 +151,7 @@ func TestNamespacedKindsStayInTheirNamespace(t *testing.T) {
 		Spec: cclusternvidiacomv1alpha1.CCLComponentSetSpec{
 			Components: []cclusternvidiacomv1alpha1.ComponentSpec{{
 				Name:          "cert-manager",
-				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a"},
+				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeName},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
 					Chart: "catalogs/cluster_base/cert_manager", Namespace: "cert-manager",
 				},
@@ -213,7 +219,7 @@ func TestInformerFactoryWatchesAndListsASingleton(t *testing.T) {
 	configs := clientset.CclusterV1alpha1().CCLClusterConfigs()
 	if _, err := configs.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: planeDomain},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +228,7 @@ func TestInformerFactoryWatchesAndListsASingleton(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cached.Spec.Domain != "gpu-a.example.com" {
+	if cached.Spec.Domain != planeDomain {
 		t.Errorf("cached spec.domain = %q, want gpu-a.example.com", cached.Spec.Domain)
 	}
 
@@ -237,10 +243,10 @@ func TestInformerFactoryWatchesAndListsASingleton(t *testing.T) {
 func TestFakeClientsetWritesTheAPITypes(t *testing.T) {
 	ctx := t.Context()
 	client := fake.NewClientset(&cclusternvidiacomv1alpha1.CCLInfraPlane{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "gpu-a"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: planeName},
 	}).CclusterV1alpha1()
 
-	plane, err := client.CCLInfraPlanes("team-a").Get(ctx, "gpu-a", metav1.GetOptions{})
+	plane, err := client.CCLInfraPlanes("team-a").Get(ctx, planeName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +257,7 @@ func TestFakeClientsetWritesTheAPITypes(t *testing.T) {
 
 	if _, err := client.CCLClusterConfigs().Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
-		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: planeDomain},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +266,7 @@ func TestFakeClientsetWritesTheAPITypes(t *testing.T) {
 	set, err := client.CCLComponentSets("team-a").Apply(ctx, cclusterac.CCLComponentSet("base", "team-a").
 		WithSpec(cclusterac.CCLComponentSetSpec().WithComponents(cclusterac.ComponentSpec().
 			WithName("cert-manager").
-			WithInfraPlaneRef(cclusterac.LocalObjectReference().WithName("gpu-a")).
+			WithInfraPlaneRef(cclusterac.LocalObjectReference().WithName(planeName)).
 			WithChart("catalogs/cluster_base/cert_manager").WithNamespace("cert-manager").
 			WithValues(apiextensionsv1.JSON{Raw: []byte(`{"replicaCount":2}`)}))),
 		metav1.ApplyOptions{FieldManager: "client-test"})

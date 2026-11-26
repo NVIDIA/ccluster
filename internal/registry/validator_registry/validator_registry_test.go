@@ -19,6 +19,9 @@ import (
 	kaigpuqueues "github.com/NVIDIA/ccluster/catalogs/resources/kai_gpu_queues"
 )
 
+// decodeError is the error for values that do not decode into the chart's type.
+const decodeError = "decoding values"
+
 // TestGet: checks are looked up by the chart a component names, so a catalog chart
 // missing from the registry would be rejected as unknown, and a registered chart outside
 // components.All would accept components no chart can deploy. The registry keeps
@@ -95,11 +98,11 @@ func TestValues(t *testing.T) {
 		},
 		{
 			name: "a modelled key of the wrong type fails to decode", validate: Values[stubValues](),
-			values: raw(`{"name":3}`), wantErr: "decoding values",
+			values: raw(`{"name":3}`), wantErr: decodeError,
 		},
 		{
 			name: "values that are not an object fail to decode", validate: Values[stubValues](),
-			values: raw(`["name"]`), wantErr: "decoding values",
+			values: raw(`["name"]`), wantErr: decodeError,
 		},
 		{
 			name: "a pointer-receiver Validate is called", validate: Values[pointerValues](),
@@ -108,7 +111,7 @@ func TestValues(t *testing.T) {
 		{name: "a type without Validate only decodes", validate: Values[plainValues](), values: nil},
 		{
 			name: "a type without Validate still rejects a wrong type", validate: Values[plainValues](),
-			values: raw(`{"replicas":"two"}`), wantErr: "decoding values",
+			values: raw(`{"replicas":"two"}`), wantErr: decodeError,
 		},
 		{
 			// Helm reads .Values.name, so Name does not set the required key.

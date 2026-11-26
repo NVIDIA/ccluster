@@ -15,6 +15,8 @@ import (
 )
 
 func TestResolveNamespaces(t *testing.T) {
+	// flagNamespace is the namespace the flag names.
+	const flagNamespace = "other"
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		path := filepath.Join(dir, name)
@@ -41,8 +43,8 @@ func TestResolveNamespaces(t *testing.T) {
 			want      string
 			wantErr   bool
 		}{
-			{name: "flag wins over the file", flagValue: "other", file: ownNamespace, want: "other"},
-			{name: "flag outside a Pod", flagValue: "other", file: missing, want: "other"},
+			{name: "flag wins over the file", flagValue: flagNamespace, file: ownNamespace, want: flagNamespace},
+			{name: "flag outside a Pod", flagValue: flagNamespace, file: missing, want: flagNamespace},
 			{name: "own namespace", file: ownNamespace, want: "ccluster-cp-system"},
 			{name: "outside a Pod", file: missing, wantErr: true},
 			{name: "empty file", file: empty, wantErr: true},
@@ -98,6 +100,10 @@ func TestValidateBaseDomain(t *testing.T) {
 }
 
 func TestDefaultFlagsFromEnv(t *testing.T) {
+	const (
+		revisionEnv   = "CCLUSTER_CATALOG_REVISION"
+		revisionValue = "v1.2.3"
+	)
 	newFlags := func() (*flag.FlagSet, *string, *int, *time.Duration, *string) {
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)
 		inheritedFlag := fs.String("kubeconfig", "", "")
@@ -114,14 +120,14 @@ func TestDefaultFlagsFromEnv(t *testing.T) {
 	t.Run("environment sets each type", func(t *testing.T) {
 		fs, revision, workers, resync, _ := newFlags()
 		err := defaultFlagsFromEnv(fs, inherited, env(map[string]string{
-			"CCLUSTER_CATALOG_REVISION":                       "v1.2.3",
+			revisionEnv: revisionValue,
 			"CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES": "8",
 			"CCLUSTER_INFRAPLANE_RESYNC_PERIOD":               "1m",
 		}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if *revision != "v1.2.3" || *workers != 8 || *resync != time.Minute {
+		if *revision != revisionValue || *workers != 8 || *resync != time.Minute {
 			t.Errorf("got %q, %d, %s", *revision, *workers, *resync)
 		}
 	})
@@ -129,7 +135,7 @@ func TestDefaultFlagsFromEnv(t *testing.T) {
 	t.Run("command line wins", func(t *testing.T) {
 		fs, revision, _, _, _ := newFlags()
 		if err := defaultFlagsFromEnv(fs, inherited,
-			env(map[string]string{"CCLUSTER_CATALOG_REVISION": "v1.2.3"})); err != nil {
+			env(map[string]string{revisionEnv: revisionValue})); err != nil {
 			t.Fatal(err)
 		}
 		if err := fs.Parse([]string{"--catalog-revision=feature"}); err != nil {
@@ -143,7 +149,7 @@ func TestDefaultFlagsFromEnv(t *testing.T) {
 	t.Run("unset and empty keep the default", func(t *testing.T) {
 		fs, revision, _, _, _ := newFlags()
 		if err := defaultFlagsFromEnv(fs, inherited,
-			env(map[string]string{"CCLUSTER_CATALOG_REVISION": ""})); err != nil {
+			env(map[string]string{revisionEnv: ""})); err != nil {
 			t.Fatal(err)
 		}
 		if *revision != "main" {

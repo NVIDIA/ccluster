@@ -28,6 +28,13 @@ import (
 	verifierregistry "github.com/NVIDIA/ccluster/internal/registry/verifier_registry"
 )
 
+// The labelled LoadBalancers the tests create, and their addresses.
+const (
+	ingressLoadBalancer = "ingress"
+	ingressIP           = "192.0.2.10"
+	sshIP               = "192.0.2.30"
+)
+
 // errNotReady is what a switchVerifier reports while it is off.
 var errNotReady = errors.New("not ready")
 
@@ -272,7 +279,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	labelled := func(name string) map[string]string {
 		return map[string]string{cclusternvidiacomv1alpha1.LabelLoadBalancer: name}
 	}
-	ingressLabels := labelled("ingress")
+	ingressLabels := labelled(ingressLoadBalancer)
 	upstreamLabels := map[string]string{
 		"app.kubernetes.io/name":      "ingress-nginx",
 		"app.kubernetes.io/component": "controller",
@@ -345,57 +352,57 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	})
 
 	It("reports a LoadBalancer without an address, then its IP once assigned", func() {
-		svc := service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels)
+		svc := service(ingressLoadBalancer, corev1.ServiceTypeLoadBalancer, ingressLabels)
 		reconcileOnce()
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ingress"},
+			{Name: ingressLoadBalancer},
 		}))
 
-		svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "192.0.2.10"}}
+		svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: ingressIP}}
 		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
 		reconcileOnce()
 
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ingress", IP: "192.0.2.10"},
+			{Name: ingressLoadBalancer, IP: ingressIP},
 		}))
 	})
 
 	It("reports the first IP and the first hostname the Service lists", func() {
-		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
+		service(ingressLoadBalancer, corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{Hostname: "lb-1.elb.example.com"},
 			corev1.LoadBalancerIngress{IP: "192.0.2.11"},
 			corev1.LoadBalancerIngress{IP: "192.0.2.12", Hostname: "lb-2.elb.example.com"})
 		reconcileOnce()
 
 		cfg := status()
-		Expect(cfg.LoadBalancer("ingress")).To(Equal(
+		Expect(cfg.LoadBalancer(ingressLoadBalancer)).To(Equal(
 			&cclusternvidiacomv1alpha1.LoadBalancerStatus{
-				Name:     "ingress",
+				Name:     ingressLoadBalancer,
 				IP:       "192.0.2.11",
 				Hostname: "lb-1.elb.example.com",
 			}))
 	})
 
 	It("reports an address as the Service lists it, leaving the checks to the cp operator", func() {
-		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
+		service(ingressLoadBalancer, corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{IP: "2001:DB8:0:0::10"})
 		reconcileOnce()
 
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ingress", IP: "2001:DB8:0:0::10"},
+			{Name: ingressLoadBalancer, IP: "2001:DB8:0:0::10"},
 		}))
 	})
 
 	It("reports every labelled LoadBalancer under its label value, sorted by it", func() {
 		service("ssh", corev1.ServiceTypeLoadBalancer, labelled("ssh"),
-			corev1.LoadBalancerIngress{IP: "192.0.2.30"})
-		service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
-			corev1.LoadBalancerIngress{IP: "192.0.2.10"})
+			corev1.LoadBalancerIngress{IP: sshIP})
+		service(ingressLoadBalancer, corev1.ServiceTypeLoadBalancer, ingressLabels,
+			corev1.LoadBalancerIngress{IP: ingressIP})
 		reconcileOnce()
 
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ingress", IP: "192.0.2.10"},
-			{Name: "ssh", IP: "192.0.2.30"},
+			{Name: ingressLoadBalancer, IP: ingressIP},
+			{Name: "ssh", IP: sshIP},
 		}))
 	})
 
@@ -403,8 +410,8 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 	// would keep its address published from the control plane.
 	DescribeTable("reports nothing again once the last labelled LoadBalancer stops counting",
 		func(stop func(*corev1.Service)) {
-			svc := service("ingress", corev1.ServiceTypeLoadBalancer, ingressLabels,
-				corev1.LoadBalancerIngress{IP: "192.0.2.10"})
+			svc := service(ingressLoadBalancer, corev1.ServiceTypeLoadBalancer, ingressLabels,
+				corev1.LoadBalancerIngress{IP: ingressIP})
 			reconcileOnce()
 			Expect(status().LoadBalancers).To(HaveLen(1))
 
@@ -433,7 +440,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		service("ingress-a", corev1.ServiceTypeLoadBalancer, ingressLabels,
 			corev1.LoadBalancerIngress{IP: "192.0.2.20"})
 		service("ssh", corev1.ServiceTypeLoadBalancer, labelled("ssh"),
-			corev1.LoadBalancerIngress{IP: "192.0.2.30"})
+			corev1.LoadBalancerIngress{IP: sshIP})
 		reconcileOnce()
 		Expect(status().LoadBalancers).To(HaveLen(2))
 		Expect(verified().Status).To(Equal(metav1.ConditionTrue))
@@ -445,7 +452,7 @@ var _ = Describe("CCLClusterConfig Controller's LoadBalancers", func() {
 		Expect(result.RequeueAfter).To(Equal(recheckWhileFailing))
 
 		Expect(status().LoadBalancers).To(Equal([]cclusternvidiacomv1alpha1.LoadBalancerStatus{
-			{Name: "ssh", IP: "192.0.2.30"},
+			{Name: "ssh", IP: sshIP},
 		}))
 		condition := verified()
 		Expect(condition.Status).To(Equal(metav1.ConditionFalse))

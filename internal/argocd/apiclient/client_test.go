@@ -23,16 +23,24 @@ import (
 )
 
 const (
+	// team is the namespace of the Application the tests read, and its project.
+	team = "team-a"
+	// webPod is a Pod of that Application.
+	webPod  = "web-0"
+	podKind = "Pod"
+)
+
+const (
 	testNamespace = "argocd"
 	testToken     = "token-1"
 )
 
 var (
-	testApp = ApplicationRef{Namespace: "team-a", Name: "web", Project: "team-a"}
+	testApp = ApplicationRef{Namespace: team, Name: "web", Project: team}
 
 	tokenKey = SecretKey{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: "token"}, Key: "token"}
 
-	pod = ResourceRef{Version: "v1", Kind: "Pod", Namespace: "team-a", Name: "web-0", UID: "uid-1"}
+	pod = ResourceRef{Version: "v1", Kind: podKind, Namespace: team, Name: webPod, UID: "uid-1"}
 )
 
 // request is what the fake argocd-server received.
@@ -96,7 +104,7 @@ func TestResourceTree(t *testing.T) {
 	if got.path != "/api/v1/applications/web/resource-tree" {
 		t.Errorf("path = %q", got.path)
 	}
-	if got.query.Get("appNamespace") != "team-a" || got.query.Get("project") != "team-a" {
+	if got.query.Get("appNamespace") != team || got.query.Get("project") != team {
 		t.Errorf("query = %v, want the Application's namespace and project", got.query)
 	}
 	if got.auth != "Bearer "+testToken {
@@ -123,8 +131,8 @@ func TestResourceTree(t *testing.T) {
 
 func TestResource(t *testing.T) {
 	manifest, err := json.Marshal(map[string]any{
-		"apiVersion": "v1", "kind": "Pod",
-		"metadata": map[string]any{"name": "web-0", "namespace": "team-a"},
+		"apiVersion": "v1", "kind": podKind,
+		"metadata": map[string]any{"name": webPod, "namespace": team},
 		"status":   map[string]any{"phase": "Pending"},
 	})
 	if err != nil {
@@ -148,14 +156,14 @@ func TestResource(t *testing.T) {
 		t.Errorf("path = %q", got.path)
 	}
 	for key, want := range map[string]string{
-		"namespace": "team-a", "resourceName": "web-0", "group": "", "version": "v1", "kind": "Pod",
-		"appNamespace": "team-a", "project": "team-a",
+		"namespace": team, "resourceName": webPod, "group": "", "version": "v1", "kind": podKind,
+		"appNamespace": team, "project": team,
 	} {
 		if values, ok := got.query[key]; !ok || values[0] != want {
 			t.Errorf("query %s = %v, want %q", key, values, want)
 		}
 	}
-	if obj.GetName() != "web-0" || obj.GetKind() != "Pod" {
+	if obj.GetName() != webPod || obj.GetKind() != podKind {
 		t.Errorf("decoded %s %s", obj.GetKind(), obj.GetName())
 	}
 	if phase := obj.Object["status"].(map[string]any)["phase"]; phase != "Pending" {
@@ -194,8 +202,8 @@ func TestResourceEvents(t *testing.T) {
 		t.Errorf("path = %q", got.path)
 	}
 	for key, want := range map[string]string{
-		"resourceNamespace": "team-a", "resourceName": "web-0", "resourceUID": "uid-1",
-		"appNamespace": "team-a", "project": "team-a",
+		"resourceNamespace": team, "resourceName": webPod, "resourceUID": "uid-1",
+		"appNamespace": team, "project": team,
 	} {
 		if got.query.Get(key) != want {
 			t.Errorf("query %s = %q, want %q", key, got.query.Get(key), want)

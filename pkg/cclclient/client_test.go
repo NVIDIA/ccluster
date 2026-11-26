@@ -35,6 +35,9 @@ import (
 	"github.com/NVIDIA/ccluster/pkg/client/clientset/versioned"
 )
 
+// planeName is the infra plane the tests register.
+const planeName = "gpu-a"
+
 var (
 	clientset  versioned.Interface
 	kubeClient kubernetes.Interface
@@ -113,12 +116,12 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 	client := newClient(t)
 
 	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
-		Name: "gpu-a", Server: server, BearerToken: token, CACert: caCert,
+		Name: planeName, Server: server, BearerToken: token, CACert: caCert,
 	})
 	if err != nil {
 		t.Fatalf("ApplyInfraPlane() error = %v", err)
 	}
-	if plane.Namespace != client.Namespace() || plane.Name != "gpu-a" || plane.UID == "" {
+	if plane.Namespace != client.Namespace() || plane.Name != planeName || plane.UID == "" {
 		t.Errorf("ApplyInfraPlane() returned %s/%s (uid %q), want the stored %s/gpu-a",
 			plane.Namespace, plane.Name, plane.UID, client.Namespace())
 	}
@@ -126,7 +129,7 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 		t.Errorf("spec = %+v, want clusterCredentialsRef gpu-a-credentials", plane.Spec)
 	}
 
-	got, err := client.GetInfraPlane(ctx, "gpu-a")
+	got, err := client.GetInfraPlane(ctx, planeName)
 	if err != nil {
 		t.Fatalf("GetInfraPlane() error = %v", err)
 	}
@@ -134,13 +137,14 @@ func TestApplyInfraPlaneWritesPlaneAndArgoCDSecret(t *testing.T) {
 		t.Errorf("GetInfraPlane() uid = %s, want %s", got.UID, plane.UID)
 	}
 
-	secret := credentialsSecret(t, client, "gpu-a")
+	secret := credentialsSecret(t, client, planeName)
 	if secret.Type != corev1.SecretTypeOpaque {
 		t.Errorf("Secret type = %s, want Opaque", secret.Type)
 	}
 	if got := string(secret.Data["server"]); got != server {
 		t.Errorf("server = %q, want %q", got, server)
 	}
+	//nolint:goconst // the cluster config as Argo CD reads it
 	wantConfig := map[string]any{
 		"bearerToken": token,
 		"tlsClientConfig": map[string]any{
@@ -161,7 +165,7 @@ func TestApplyInfraPlaneWritesServerName(t *testing.T) {
 	client := newClient(t)
 
 	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
-		Name: "gpu-a", Server: server, BearerToken: token, CACert: caCert, ServerName: "kubernetes.default.svc",
+		Name: planeName, Server: server, BearerToken: token, CACert: caCert, ServerName: "kubernetes.default.svc",
 	}); err != nil {
 		t.Fatalf("ApplyInfraPlane() error = %v", err)
 	}
@@ -174,7 +178,7 @@ func TestApplyInfraPlaneWritesServerName(t *testing.T) {
 			"serverName": "kubernetes.default.svc",
 		},
 	}
-	if got := clusterConfig(t, credentialsSecret(t, client, "gpu-a")); !reflect.DeepEqual(got, wantConfig) {
+	if got := clusterConfig(t, credentialsSecret(t, client, planeName)); !reflect.DeepEqual(got, wantConfig) {
 		t.Errorf("config = %v, want %v", got, wantConfig)
 	}
 }
@@ -184,7 +188,7 @@ func TestApplyInfraPlaneWritesServerName(t *testing.T) {
 func TestApplyInfraPlaneAgainUpdatesTheCredentials(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
-	opts := cclclient.InfraPlaneOptions{Name: "gpu-a", Server: server, BearerToken: token}
+	opts := cclclient.InfraPlaneOptions{Name: planeName, Server: server, BearerToken: token}
 
 	if _, err := client.ApplyInfraPlane(ctx, opts); err != nil {
 		t.Fatal(err)
@@ -194,7 +198,7 @@ func TestApplyInfraPlaneAgainUpdatesTheCredentials(t *testing.T) {
 		t.Fatalf("second ApplyInfraPlane() error = %v", err)
 	}
 
-	if got := clusterConfig(t, credentialsSecret(t, client, "gpu-a"))["bearerToken"]; got != "rotated" {
+	if got := clusterConfig(t, credentialsSecret(t, client, planeName))["bearerToken"]; got != "rotated" {
 		t.Errorf("bearerToken = %v, want rotated", got)
 	}
 }
@@ -237,18 +241,18 @@ func TestApplyInfraPlaneWithRejectedNameWritesNoCredentials(t *testing.T) {
 func TestDeleteInfraPlaneRemovesPlaneAndSecret(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)
-	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu-a"}); err != nil {
+	if _, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: planeName}); err != nil {
 		t.Fatal(err)
 	}
 
 	// The second call finds both gone, which is not an error.
 	for range 2 {
-		if err := client.DeleteInfraPlane(ctx, "gpu-a"); err != nil {
+		if err := client.DeleteInfraPlane(ctx, planeName); err != nil {
 			t.Fatalf("DeleteInfraPlane() error = %v", err)
 		}
 	}
 
-	if _, err := client.GetInfraPlane(ctx, "gpu-a"); !apierrors.IsNotFound(err) {
+	if _, err := client.GetInfraPlane(ctx, planeName); !apierrors.IsNotFound(err) {
 		t.Errorf("GetInfraPlane() error = %v, want NotFound", err)
 	}
 	if _, err := kubeClient.CoreV1().Secrets(client.Namespace()).Get(ctx,
@@ -263,7 +267,7 @@ func TestDeletesInAMissingNamespaceSucceed(t *testing.T) {
 	ctx := t.Context()
 	client := cclclient.New(uniqueName(t, "missing"), kubeClient, clientset)
 
-	if err := client.DeleteInfraPlane(ctx, "gpu-a"); err != nil {
+	if err := client.DeleteInfraPlane(ctx, planeName); err != nil {
 		t.Errorf("DeleteInfraPlane() error = %v", err)
 	}
 	if err := client.DeleteComponentSet(ctx, "base"); err != nil {
@@ -425,7 +429,7 @@ func TestListsReturnOnlyTheClientsNamespace(t *testing.T) {
 	ctx := t.Context()
 	client, other := newClient(t), newClient(t)
 	for _, c := range []*cclclient.Client{client, other} {
-		if _, err := c.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: "gpu-a"}); err != nil {
+		if _, err := c.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{Name: planeName}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := c.ApplyComponentSet(ctx, "base", []cclusternvidiacomv1alpha1.ComponentSpec{
@@ -484,7 +488,7 @@ func component(
 ) cclusternvidiacomv1alpha1.ComponentSpec {
 	return cclusternvidiacomv1alpha1.ComponentSpec{
 		Name:          name,
-		InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "gpu-a"},
+		InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeName},
 		ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
 			Chart: chart, Namespace: name, Values: values,
 		},

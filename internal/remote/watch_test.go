@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
+	argocdv1alpha1 "github.com/NVIDIA/ccluster/internal/api/argocd/v1alpha1"
 )
 
 // The registry is tested against a real API server: envtest plays the infra-plane
@@ -46,7 +47,7 @@ func TestMain(m *testing.M) {
 	utilruntime.Must(cclusternvidiacomv1alpha1.AddToScheme(testScheme))
 
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", argocdv1alpha1.ClusterSecretConfigKey, "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 	}
 	// As in the controller suites: outside make, use the binaries make setup-envtest put
@@ -103,7 +104,7 @@ func newRegistry(t *testing.T) (*Registry, testQueue) {
 // localSecret is a credentials Secret for the operator's own cluster: envtest.
 func localSecret(resourceVersion string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-		Namespace: "team-a", Name: "gpu-a-credentials", UID: "uid-1", ResourceVersion: resourceVersion,
+		Namespace: team, Name: "gpu-a-credentials", UID: "uid-1", ResourceVersion: resourceVersion,
 	}}
 }
 
@@ -163,14 +164,14 @@ func deleteClusterConfig(t *testing.T) {
 func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 	ctx := context.Background()
 	registry, queue := newRegistry(t)
-	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
+	plane := types.NamespacedName{Namespace: team, Name: planeName}
 	t.Cleanup(func() { deleteClusterConfig(t) })
 
 	registry.Ensure(plane, localSecret("1"))
 
 	config := &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
-		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: planeDomain},
 	}
 	if err := testClient.Create(ctx, config); err != nil {
 		t.Fatal(err)
@@ -200,7 +201,7 @@ func TestRegistryEnqueuesThePlaneOnEveryChange(t *testing.T) {
 func TestRegistryEnsureIsIdempotentAndFollowsTheSecret(t *testing.T) {
 	ctx := context.Background()
 	registry, queue := newRegistry(t)
-	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
+	plane := types.NamespacedName{Namespace: team, Name: planeName}
 	t.Cleanup(func() { deleteClusterConfig(t) })
 	before := testutil.ToFloat64(activeWatches)
 
@@ -208,7 +209,7 @@ func TestRegistryEnsureIsIdempotentAndFollowsTheSecret(t *testing.T) {
 	// enqueue after Ensure shows that it started a watch.
 	if err := testClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
-		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: planeDomain},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,14 +244,14 @@ func TestRegistryDropsAWatchThatCannotStart(t *testing.T) {
 	registry, _ := newRegistry(t)
 	// A cluster that never answers is dropped only once the sync times out.
 	registry.syncTimeout = time.Second
-	healthy := types.NamespacedName{Namespace: "team-a", Name: "healthy"}
-	unreachable := types.NamespacedName{Namespace: "team-a", Name: "unreachable"}
+	healthy := types.NamespacedName{Namespace: team, Name: "healthy"}
+	unreachable := types.NamespacedName{Namespace: team, Name: "unreachable"}
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "unreachable-credentials", UID: "uid-2", ResourceVersion: "1"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: team, Name: "unreachable-credentials", UID: "uid-2", ResourceVersion: "1"},
 		Data: map[string][]byte{
-			"server": []byte("https://127.0.0.1:1"),
-			"config": []byte(`{"bearerToken":"t"}`),
+			argocdv1alpha1.ClusterSecretServerKey: []byte("https://127.0.0.1:1"),
+			argocdv1alpha1.ClusterSecretConfigKey: []byte(`{"bearerToken":"t"}`),
 		},
 	}
 	registry.Ensure(unreachable, secret)
@@ -277,7 +278,7 @@ func TestRegistryStartStopsEveryWatchWhenTheManagerStops(t *testing.T) {
 	go func() { stopped <- registry.Start(ctx) }()
 
 	for _, name := range []string{"a", "b"} {
-		registry.Ensure(types.NamespacedName{Namespace: "team-a", Name: name}, localSecret("1"))
+		registry.Ensure(types.NamespacedName{Namespace: team, Name: name}, localSecret("1"))
 	}
 	cancel()
 	if err := <-stopped; err != nil {
@@ -294,12 +295,12 @@ func TestRegistryLeaksNoGoroutines(t *testing.T) {
 	ctx := context.Background()
 	ignore := goleak.IgnoreCurrent()
 	registry, queue := newRegistry(t)
-	plane := types.NamespacedName{Namespace: "team-a", Name: "gpu-a"}
+	plane := types.NamespacedName{Namespace: team, Name: planeName}
 	t.Cleanup(func() { deleteClusterConfig(t) })
 
 	if err := testClient.Create(ctx, &cclusternvidiacomv1alpha1.CCLClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: cclusternvidiacomv1alpha1.CCLClusterConfigName},
-		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: "gpu-a.example.com"},
+		Spec:       cclusternvidiacomv1alpha1.CCLClusterConfigSpec{Domain: planeDomain},
 	}); err != nil {
 		t.Fatal(err)
 	}
