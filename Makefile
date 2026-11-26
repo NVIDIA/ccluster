@@ -656,16 +656,38 @@ helm-generate: kubebuilder build-installer-cp build-installer-ip ## Regenerate b
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-ip.yaml --output-dir=charts/ip
 	"$(KUBEBUILDER)" edit --plugins=helm/v2-alpha --manifests=dist/install-cp.yaml --output-dir=charts/cp
 
+# The CRDs each operator chart ships, read from the checked-in CRD templates.
+# The kubebuilder Helm plugin names each file after the CRD's metadata.name, so
+# the basename (minus .yaml) is the CRD name. Subchart CRDs (Argo CD,
+# external-dns) are never ccluster.nvidia.com and are not adoption targets.
+CP_CRDS := $(patsubst %.yaml,%,$(notdir $(wildcard $(CHART_CP)/templates/crd/*.ccluster.nvidia.com.yaml)))
+IP_CRDS := $(patsubst %.yaml,%,$(notdir $(wildcard $(CHART_IP)/templates/crd/*.ccluster.nvidia.com.yaml)))
+
 .PHONY: helm-adopt-crds-cp
-helm-adopt-crds-cp: ## Hand CRDs installed by `make install` (or the old kustomize deploy-cp) over to the Helm release. Non-destructive; existing CRs are preserved.
-	@names="$$("$(KUBECTL)" get crd -o name -l 'app.kubernetes.io/managed-by!=Helm' 2>/dev/null \
-		| grep -E 'ccluster\.nvidia\.com$$' || true)"; \
-	if [ -z "$$names" ]; then echo "No unowned ccluster CRDs found; nothing to adopt."; exit 0; fi; \
+helm-adopt-crds-cp: ## Hand CRDs installed by `make install` (or the old kustomize deploy-cp) over to the cp Helm release. Only the cp chart's CRDs are adopted; non-destructive, existing CRs are preserved.
+	@ship="$(CP_CRDS)"; \
+	unowned="$$("$(KUBECTL)" get crd -o name -l 'app.kubernetes.io/managed-by!=Helm' 2>/dev/null | sed 's#^customresourcedefinition\.apiextensions\.k8s\.io/##' | grep -E 'ccluster\.nvidia\.com$$' || true)"; \
+	names=""; \
+	for crd in $$unowned; do case " $$ship " in *" $$crd "*) names="$$names $$crd";; esac; done; \
+	if [ -z "$$names" ]; then echo "No unowned cp CRDs found; nothing to adopt."; exit 0; fi; \
 	echo "Adopting into release $(HELM_RELEASE_CP)/$(HELM_NAMESPACE_CP):"; echo "$$names"; \
 	"$(KUBECTL)" label $$names app.kubernetes.io/managed-by=Helm --overwrite; \
 	"$(KUBECTL)" annotate $$names \
 		meta.helm.sh/release-name=$(HELM_RELEASE_CP) \
 		meta.helm.sh/release-namespace=$(HELM_NAMESPACE_CP) --overwrite
+
+.PHONY: helm-adopt-crds-ip
+helm-adopt-crds-ip: ## Hand CRDs installed by `make install` over to the ip Helm release. Only the ip chart's CRDs are adopted; non-destructive, existing CRs are preserved.
+	@ship="$(IP_CRDS)"; \
+	unowned="$$("$(KUBECTL)" get crd -o name -l 'app.kubernetes.io/managed-by!=Helm' 2>/dev/null | sed 's#^customresourcedefinition\.apiextensions\.k8s\.io/##' | grep -E 'ccluster\.nvidia\.com$$' || true)"; \
+	names=""; \
+	for crd in $$unowned; do case " $$ship " in *" $$crd "*) names="$$names $$crd";; esac; done; \
+	if [ -z "$$names" ]; then echo "No unowned ip CRDs found; nothing to adopt."; exit 0; fi; \
+	echo "Adopting into release $(HELM_RELEASE_IP)/$(HELM_NAMESPACE_IP):"; echo "$$names"; \
+	"$(KUBECTL)" label $$names app.kubernetes.io/managed-by=Helm --overwrite; \
+	"$(KUBECTL)" annotate $$names \
+		meta.helm.sh/release-name=$(HELM_RELEASE_IP) \
+		meta.helm.sh/release-namespace=$(HELM_NAMESPACE_IP) --overwrite
 
 # `helm dependency build` resolves a dependency's repository through the local repo
 # list, so the repo must be registered first or it fails with "no repository
