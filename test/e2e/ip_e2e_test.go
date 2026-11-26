@@ -85,7 +85,8 @@ var _ = Describe("IP operator", Ordered, func() {
 	// Prometheus, so the condition starts False naming them, and stops naming them once
 	// they are installed - which proves the chart's CRD and RBAC let a real manager
 	// reconcile the singleton, read CustomResourceDefinitions,
-	// ValidatingWebhookConfigurations, ClusterIssuers, KAI Configs, APIServices, Services
+	// ValidatingWebhookConfigurations, ClusterIssuers, KAI Configs and SchedulingShards,
+	// APIServices, Services
 	// and EndpointSlices, list Leases by name and write its status.
 	It("should report the checked cluster_base components verified once installed", func() {
 		By("applying the CCLClusterConfig")

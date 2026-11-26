@@ -32,7 +32,8 @@ type Config struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec ConfigSpec `json:"spec,omitempty"`
+	Spec   ConfigSpec   `json:"spec,omitempty"`
+	Status ConfigStatus `json:"status,omitempty"`
 }
 
 // ConfigSpec is the part of a Config's spec the infra-plane operator reads.
@@ -46,6 +47,19 @@ type GlobalConfig struct {
 	// schedulerName is the name pods set in spec.schedulerName to be scheduled by KAI.
 	// Unset means DefaultSchedulerName.
 	SchedulerName *string `json:"schedulerName,omitempty"`
+}
+
+// ConditionAvailable is the condition the KAI operator sets on a Config and on each
+// SchedulingShard: True once every Deployment and DaemonSet it deployed from that object
+// has all replicas updated and reports Available. It always sets observedGeneration.
+const ConditionAvailable = "Available"
+
+// ConfigStatus is what the KAI operator reports back on a Config.
+type ConfigStatus struct {
+	// conditions describe the state of the components deployed from the Config: the
+	// binder, admission webhook, pod-grouper, queue and podgroup controllers and the rest,
+	// but not the schedulers, which belong to SchedulingShards.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // ConfigList contains a list of Config.

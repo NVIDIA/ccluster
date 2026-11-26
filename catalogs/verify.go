@@ -19,6 +19,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -194,4 +195,32 @@ func verifyWebhookClient(ctx context.Context, r client.Reader, cc admissionregis
 		return nil
 	}
 	return VerifyServiceReady(ctx, r, cc.Service.Namespace, cc.Service.Name)
+}
+
+// VerifyConditionCurrent is a building block for a chart's Verify function: it returns
+// nil when conditions hold conditionType with status True, set for generation, the
+// object's current metadata.generation, and otherwise an error naming what, such as
+// "KAI Config kai-config", and why the condition does not count. Use it for a
+// component whose operator reports its own health in a standard metav1.Condition on a
+// custom resource, such as KAI's Available.
+//
+// A condition whose observedGeneration is set and lower than generation was written for
+// an earlier spec, such as before an upgrade its operator has not yet reconciled, and
+// fails whatever its status. An unset observedGeneration is not held against it.
+//
+// The condition is stored status: it says what the component's operator last saw, and
+// stays as it was if that operator stops. Check the operator's source for what the
+// condition covers before relying on it.
+func VerifyConditionCurrent(what string, generation int64, conditions []metav1.Condition, conditionType string) error {
+	c := meta.FindStatusCondition(conditions, conditionType)
+	switch {
+	case c == nil:
+		return fmt.Errorf("%s does not report %s", what, conditionType)
+	case c.ObservedGeneration != 0 && c.ObservedGeneration < generation:
+		return fmt.Errorf("%s reports %s for generation %d, not the current %d",
+			what, conditionType, c.ObservedGeneration, generation)
+	case c.Status != metav1.ConditionTrue:
+		return fmt.Errorf("%s is not %s: %s: %s", what, conditionType, c.Reason, c.Message)
+	}
+	return nil
 }

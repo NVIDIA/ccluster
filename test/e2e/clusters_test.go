@@ -210,7 +210,8 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 // controller's Lease, cert_manager, for its admission webhook, CRDs and controller's
 // Lease, metrics_server, for the resource metrics API, kube_prometheus_stack, for the
 // Prometheus Service the catalog's consumers address, and kai_scheduler, for the KAI
-// Config its hook Job applies. For final_stack it applies a self-signed stand-in for
+// Config its hook Job applies and the components the KAI operator deploys from it and
+// from the chart's default SchedulingShard. For final_stack it applies a self-signed stand-in for
 // the acme-ca ClusterIssuer, which final_stack's own would register with Let's
 // Encrypt.
 func installClusterBase(c utils.Cluster) {
@@ -310,8 +311,8 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 // components, but an empty message, such as a copy that lost its conditions, fails.
 //
 // This, not expectBaseComponentsFailing, proves the ip chart's ClusterRole lets the
-// manager read EndpointSlices, ClusterIssuers and KAI Configs: the Prometheus Verifier
-// lists the first only once the Service exists, and the final_stack and kai_scheduler
+// manager read EndpointSlices, ClusterIssuers, KAI Configs and SchedulingShards: the
+// Prometheus Verifier lists the first only once the Service exists, and the final_stack and kai_scheduler
 // Verifiers read the others only once their charts serve the kinds. Without a permission the cached read times
 // out and the component stays in the message.
 func expectBaseComponentsVerified(g Gomega, message string) {

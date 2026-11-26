@@ -4,9 +4,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // Package v1 contains a partial mirror of the KAI scheduler's kai.scheduler/v1 API,
-// covering only the Config fields the infra-plane operator reads.
+// covering only the Config and SchedulingShard fields the infra-plane operator reads.
 //
-// KAI owns the type and its CRD, which catalogs/cluster_base/kai_scheduler installs. As
+// KAI owns the types and their CRDs, which catalogs/cluster_base/kai_scheduler installs. As
 // with internal/api/certmanager/v1, importing github.com/NVIDIA/KAI-Scheduler would pull
 // in the scheduler's dependencies, and unstructured.Unstructured would cost compile-time
 // checking of the field names. It lives under internal/api/ rather than api/ so that no
@@ -35,7 +35,7 @@ var (
 )
 
 func addKnownTypes(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &Config{}, &ConfigList{})
+	scheme.AddKnownTypes(GroupVersion, &Config{}, &ConfigList{}, &SchedulingShard{}, &SchedulingShardList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }

@@ -39,7 +39,7 @@ func init() {
 	utilruntime.Must(apiregistrationv1.AddToScheme(scheme))
 	// ClusterIssuers, which final_stack's Verifier reads.
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
-	// KAI Configs, which kai_scheduler's Verifier reads.
+	// KAI Configs and SchedulingShards, which kai_scheduler's Verifier reads.
 	utilruntime.Must(kaiv1.AddToScheme(scheme))
 }
 

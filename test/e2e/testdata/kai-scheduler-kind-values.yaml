@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# The kai_scheduler Verifier reads only the kai-config Config, which the chart's hook Job
-# applies. The chart's resource requests are sized for large production clusters; these
-# keep the KAI components it deploys from crowding a kind node.
+# The kai_scheduler Verifier needs the kai-config Config, which the chart's hook Job
+# applies, and every component the KAI operator deploys from it and from the default
+# SchedulingShard to be available. The chart's resource requests are sized for large
+# production clusters; these keep the KAI components it deploys from crowding a kind
+# node.
 kai-scheduler:
   scheduler:
     resources:

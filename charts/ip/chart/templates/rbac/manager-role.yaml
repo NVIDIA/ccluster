@@ -93,6 +93,7 @@ rules:
   - kai.scheduler
   resources:
   - configs
+  - schedulingshards
   verbs:
   - get
   - list

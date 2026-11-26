@@ -35,12 +35,49 @@ func scheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// config returns a KAI Config named name with global as its spec.global.
+// config returns a KAI Config named name with global as its spec.global, at generation 1
+// and Available for it, as the KAI operator leaves a healthy one.
 func config(name string, global *kaiv1.GlobalConfig) *kaiv1.Config {
 	return &kaiv1.Config{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
 		Spec:       kaiv1.ConfigSpec{Global: global},
+		Status:     kaiv1.ConfigStatus{Conditions: []metav1.Condition{available(metav1.ConditionTrue, 1)}},
 	}
+}
+
+// configWith returns the kai-config Config, unset scheduler name, at generation 2 with
+// conditions.
+func configWith(conditions ...metav1.Condition) *kaiv1.Config {
+	c := config("kai-config", nil)
+	c.Generation = 2
+	c.Status.Conditions = conditions
+	return c
+}
+
+// shard returns a SchedulingShard named name at generation 2 with conditions.
+func shard(name string, conditions ...metav1.Condition) *kaiv1.SchedulingShard {
+	return &kaiv1.SchedulingShard{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 2},
+		Status:     kaiv1.SchedulingShardStatus{Conditions: conditions},
+	}
+}
+
+// available returns KAI's Available condition with status, set for generation.
+func available(status metav1.ConditionStatus, generation int64) metav1.Condition {
+	c := metav1.Condition{
+		Type: kaiv1.ConditionAvailable, Status: status, ObservedGeneration: generation,
+		Reason: "Available", Message: "System available",
+	}
+	if status != metav1.ConditionTrue {
+		c.Message = "SchedulerForShard: not available"
+	}
+	return c
+}
+
+// healthyShard is the chart's default shard as the KAI operator leaves it once the
+// scheduler runs.
+func healthyShard() *kaiv1.SchedulingShard {
+	return shard("default", available(metav1.ConditionTrue, 2))
 }
 
 func named(scheduler string) *kaiv1.GlobalConfig {
@@ -48,7 +85,8 @@ func named(scheduler string) *kaiv1.GlobalConfig {
 }
 
 // TestVerify pins the scheduler name to the one the catalog's workloads request, with
-// KAI's default standing in for an unset name.
+// KAI's default standing in for an unset name, and requires the Config and every
+// SchedulingShard to be Available for their current generation.
 func TestVerify(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -58,19 +96,19 @@ func TestVerify(t *testing.T) {
 		{
 			// As the chart renders it: no global.schedulerName, so KAI's default.
 			name:    "scheduler name unset",
-			objects: []client.Object{config("kai-config", nil)},
+			objects: []client.Object{config("kai-config", nil), healthyShard()},
 		},
 		{
 			name:    "global without a scheduler name",
-			objects: []client.Object{config("kai-config", &kaiv1.GlobalConfig{})},
+			objects: []client.Object{config("kai-config", &kaiv1.GlobalConfig{}), healthyShard()},
 		},
 		{
 			name:    "kai-scheduler set explicitly",
-			objects: []client.Object{config("kai-config", named("kai-scheduler"))},
+			objects: []client.Object{config("kai-config", named("kai-scheduler")), healthyShard()},
 		},
 		{
 			name:    "another scheduler name",
-			objects: []client.Object{config("kai-config", named("gpu-scheduler"))},
+			objects: []client.Object{config("kai-config", named("gpu-scheduler")), healthyShard()},
 			want:    `KAI Config kai-config sets schedulerName "gpu-scheduler", want "kai-scheduler"`,
 		},
 		{
@@ -83,6 +121,61 @@ func TestVerify(t *testing.T) {
 			name:    "Config under another name",
 			objects: []client.Object{config("my-config", nil)},
 			want:    "KAI Config kai-config not found",
+		},
+		{
+			// A KAI component such as the binder cannot start.
+			name: "Config not available",
+			objects: []client.Object{configWith(metav1.Condition{
+				Type: kaiv1.ConditionAvailable, Status: metav1.ConditionFalse, ObservedGeneration: 2,
+				Reason: "Available", Message: "binder: not available",
+			}), healthyShard()},
+			want: "KAI Config kai-config is not Available: Available: binder: not available",
+		},
+		{
+			// The spec changed and the KAI operator has not reconciled it, say because it
+			// is down after an upgrade: the True is for the old spec.
+			name:    "Config available for an older generation",
+			objects: []client.Object{configWith(available(metav1.ConditionTrue, 1)), healthyShard()},
+			want:    "KAI Config kai-config reports Available for generation 1, not the current 2",
+		},
+		{
+			// The KAI operator has not reconciled it yet, or is not running.
+			name:    "Config without conditions",
+			objects: []client.Object{configWith(), healthyShard()},
+			want:    "KAI Config kai-config does not report Available",
+		},
+		{
+			// The Config reports Available, but KAI runs no scheduler.
+			name:    "no shards",
+			objects: []client.Object{config("kai-config", nil)},
+			want:    "no KAI SchedulingShard found, so no KAI scheduler runs",
+		},
+		{
+			// The scheduler image cannot be pulled, for one.
+			name:    "default shard not available",
+			objects: []client.Object{config("kai-config", nil), shard("default", available(metav1.ConditionFalse, 2))},
+			want: "KAI SchedulingShard default is not Available: Available: " +
+				"SchedulerForShard: not available",
+		},
+		{
+			name:    "shard available for an older generation",
+			objects: []client.Object{config("kai-config", nil), shard("default", available(metav1.ConditionTrue, 1))},
+			want:    "KAI SchedulingShard default reports Available for generation 1, not the current 2",
+		},
+		{
+			// Pods labelled for the gpu-nodes pool would stay Pending.
+			name: "another shard not available",
+			objects: []client.Object{config("kai-config", nil), healthyShard(),
+				shard("gpu-nodes", available(metav1.ConditionFalse, 2))},
+			want: "KAI SchedulingShard gpu-nodes is not Available: Available: " +
+				"SchedulerForShard: not available",
+		},
+		{
+			// The chart's default shard is not required by name.
+			name: "shards available without the default",
+			objects: []client.Object{config("kai-config", nil),
+				shard("cpu-nodes", available(metav1.ConditionTrue, 2)),
+				shard("gpu-nodes", available(metav1.ConditionTrue, 2))},
 		},
 	}
 	for _, tt := range tests {
@@ -133,6 +226,22 @@ func TestVerifyReadErrors(t *testing.T) {
 				t.Fatalf("unexpected error %v", err)
 			}
 		})
+	}
+}
+
+// TestVerifyShardListError: a failed SchedulingShard read is returned, not reported as
+// a cluster without shards.
+func TestVerifyShardListError(t *testing.T) {
+	r := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(config("kai-config", nil)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return apierrors.NewForbidden(schema.GroupResource{Group: "kai.scheduler", Resource: "schedulingshards"},
+					"", errors.New("no RBAC"))
+			},
+		}).Build()
+	err := Verify(context.Background(), r, cclusternvidiacomv1alpha1.CCLClusterConfigSpec{})
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("want a Forbidden error, got %v", err)
 	}
 }
 
