@@ -7,11 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 // namespace gets before any workload chart is installed into it. It sits directly under
 // catalogs/ rather than in deployments/ because it is not a workload; it is what the
 // workload charts assume is already there. It labels the
-// namespace for Istio injection and the baseline Pod Security Standard, enforces mTLS,
-// scopes sidecar egress to the namespace and istio-system, restricts ingress to the
-// namespace itself, istiod, ingress-nginx and Prometheus, restricts egress to the same
-// plus DNS and the public internet, creates the shared custom-metrics scraper, and the
-// hostPath model cache volumes the inference chart can mount.
+// namespace for Istio injection, the baseline Pod Security Standard and the shared
+// Gateway's tenant selector, enforces mTLS, scopes sidecar egress to the namespace and
+// istio-system, restricts ingress to the namespace itself, istiod, ingress-nginx, the
+// shared Gateway and Prometheus, restricts egress to the same plus DNS and the public
+// internet, creates the shared custom-metrics scraper, and the hostPath model cache
+// volumes the inference chart can mount.
 package namespacebase
 
 import (

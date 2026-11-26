@@ -20,6 +20,7 @@ import (
 	finalstack "github.com/NVIDIA/ccluster/catalogs/cluster_base/final_stack"
 	fluentbit "github.com/NVIDIA/ccluster/catalogs/cluster_base/fluent_bit"
 	gatewayapi "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_api"
+	gatewayistio "github.com/NVIDIA/ccluster/catalogs/cluster_base/gateway_istio"
 	gpuoperator "github.com/NVIDIA/ccluster/catalogs/cluster_base/gpu_operator"
 	ingressnginx "github.com/NVIDIA/ccluster/catalogs/cluster_base/ingress_nginx"
 	"github.com/NVIDIA/ccluster/catalogs/cluster_base/istio"
@@ -90,6 +91,7 @@ func Get() *Registry {
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(fluentbit.Chart, alwaysVerified)
 	r.Register(gatewayapi.Chart, alwaysVerified)
+	r.Register(gatewayistio.Chart, alwaysVerified)
 	r.Register(gpuoperator.Chart, alwaysVerified)
 	r.Register(ingressnginx.Chart, alwaysVerified)
 	r.Register(istio.Chart, alwaysVerified)

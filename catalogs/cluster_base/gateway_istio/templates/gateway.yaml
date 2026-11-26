@@ -1,0 +1,47 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+# The cluster's shared Gateway. istiod generates its Deployment, Service, HPA and PDB
+# and reverts direct edits to them. Other charts attach to it as
+# gateway-system/ccl-gateway, so its name and namespace are fixed.
+#
+# istiod copies infrastructure.labels and the Gateway's annotations onto the generated
+# pod template, so changing either rolls the gateway pods.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ccl-gateway
+  namespace: gateway-system
+spec:
+  # The GatewayClass istiod creates itself.
+  gatewayClassName: istio
+  infrastructure:
+    # istiod copies these onto the generated Service. The label has the control plane
+    # publish its address as *.gateway.<domain>; see DESIGN.md §3.
+    labels:
+      ccluster.nvidia.com/loadbalancer: gateway
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: ccl-gateway-params
+  # For each deployment's own HTTPS listener and certificate, in a ListenerSet in its
+  # namespace. Only tenant namespaces may attach one.
+  allowedListeners:
+    namespaces:
+      from: Selector
+      selector:
+        matchLabels:
+          ccluster.nvidia.com/tenant: "true"
+  listeners:
+    # For ACME HTTP-01 challenges. cert-manager creates their routes in each
+    # Certificate's namespace, so the listener admits routes from tenant namespaces.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              ccluster.nvidia.com/tenant: "true"

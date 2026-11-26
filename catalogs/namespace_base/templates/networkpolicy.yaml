@@ -20,9 +20,6 @@ spec:
         - podSelector: {}
 
     # Allow traffic from istiod in the istio namespace pushing down configuration.
-    # 
-    # Note: Allowing traffic from the Istio ingress-gateway isn't necesssary or
-    # desirable since the nginx-ingress controller is handling ingress traffic.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -36,6 +33,13 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
+
+    # Allow traffic from the shared Gateway (cluster_base/gateway_istio), which routes
+    # requests and ACME HTTP-01 challenges to this namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gateway-system
 
     # Allow prometheus to scrape metrics.
     - from:
@@ -87,6 +91,16 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: ingress-nginx
+
+    # Allow traffic to the shared Gateway's pods (cluster_base/gateway_istio), for the same
+    # reason: kube-proxy sends a call to the Gateway's LoadBalancer IP straight to them.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gateway-system
+          podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: ccl-gateway
 
     # Allow traffic to the public internet but not private networks (ie other pods outside the namespace).
     - to:

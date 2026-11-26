@@ -34,7 +34,7 @@ performs manifest generation, formatting and vetting before running tests.
 
 The ip suite drives `CCLClusterConfigReconciler` with an injected `Registry` of test
 Verifiers, so the controller's contract (run every Verifier against the spec, report the
-outcome) is proven without the seventeen real charts.
+outcome) is proven without the eighteen real charts.
 
 A test seam is an interface declared in the package that uses it, such as
 `remote.ClientFactory` and cp's `ArgoCDServer`. A small seam like these gets a
