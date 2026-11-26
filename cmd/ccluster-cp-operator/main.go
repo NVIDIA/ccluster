@@ -66,6 +66,11 @@ var (
 // with the operator's own namespace.
 var dnsEndpointNamespace string
 
+// dnsEnabled has the operator write the DNSEndpoint of each CCLInfraPlane. Off by default,
+// since an external-dns that reads DNSEndpoints in every namespace would publish them on
+// a control plane that never turned DNS on.
+var dnsEnabled bool
+
 // baseDomain is the DNS domain every CCLInfraPlane's domain is derived under:
 // "<name>.<namespace>.<baseDomain>". Set by a required flag, for the same reason as
 // argoCDNamespace; validateBaseDomain rejects an invalid value before the manager starts.
@@ -142,6 +147,10 @@ func main() {
 		"The namespace the external-dns DNSEndpoint of each CCLInfraPlane, pointing "+
 			"*.<lb>.<domain> at each of the plane's labelled LoadBalancers, is written to, which external-dns must read. "+
 			"Empty means the operator's own namespace, where the cp chart installs external-dns.")
+	flag.BoolVar(&dnsEnabled, "dns-enabled", false,
+		"Write the external-dns DNSEndpoint of each CCLInfraPlane into --dns-endpoint-namespace. "+
+			"Without it the operator writes none, deletes any it wrote earlier, and reports "+
+			"DNSReady False with reason DNSDisabled.")
 	flag.StringVar(&baseDomain, "base-domain", "",
 		"Required. The DNS domain every CCLInfraPlane's domain is derived under: "+
 			"<name>.<namespace>.<base-domain>. The operator writes that domain to the plane's "+
@@ -207,6 +216,8 @@ func setupControllers(mgr ctrl.Manager) error {
 		RemoteWatches:        remoteWatches,
 		ResyncPeriod:         infraPlaneResyncPeriod,
 		DNSEndpointNamespace: dnsEndpointNamespace,
+		DNSEnabled:           dnsEnabled,
+		APIReader:            mgr.GetAPIReader(),
 		BaseDomain:           baseDomain,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create controller CCLInfraPlane: %w", err)

@@ -429,8 +429,9 @@ the cp operator's required `--base-domain`. `make deploy-cp` and `make run-cp` p
 `BASE_DOMAIN`, `example.com` by default; set it once per control plane, since changing it
 moves every plane's domain (DESIGN.md §3).
 
-The operator always writes a DNSEndpoint per CCLInfraPlane; without
-external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To publish
+The operator writes a DNSEndpoint per CCLInfraPlane only with `--dns-enabled`
+(`CCLUSTER_DNS_ENABLED`); without it, it writes none, deletes those it wrote, and reports
+`DNSReady=False/DNSDisabled`. To publish
 `*.<lb>.<domain>` for each CCLInfraPlane, pointing at its LoadBalancers labelled
 `ccluster.nvidia.com/loadbalancer: <lb>` (`*.nginx.<domain>` at its ingress; DESIGN.md §3):
 
@@ -453,7 +454,8 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
          eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<external-dns role>
    ```
 
-3. Deploy with external-dns, which `DNS=true` turns on (`external-dns.enabled=true`):
+3. Deploy with external-dns and the operator's DNSEndpoints, which `DNS=true` turns on
+   together (`external-dns.enabled=true` and `manager.envOverrides.CCLUSTER_DNS_ENABLED=true`):
 
    ```bash
    make deploy-cp KUBE_CONTEXT_CP=<context> BASE_DOMAIN=planes.example.com DNS=true \
@@ -475,8 +477,9 @@ external-dns nothing publishes it (`DNSReady=False/DNSEndpointCRDMissing`). To p
 
 The operator writes the DNSEndpoints into its own namespace, which the chart's external-dns
 reads. `--dns-endpoint-namespace` moves them for an external-dns installed elsewhere, which
-should then read only that namespace; `make run-cp`, which has no namespace of its own,
-passes the cp chart's (`HELM_NAMESPACE_CP`).
+should then read only that namespace, with `CCLUSTER_DNS_ENABLED=true` set on its own;
+`make run-cp`, which has no namespace of its own, passes the cp chart's
+(`HELM_NAMESPACE_CP`), and `--dns-enabled` with `DNS=true`.
 
 external-dns's Route53 policy, scoped by name with `planes.example.com` standing for your
 base domain:

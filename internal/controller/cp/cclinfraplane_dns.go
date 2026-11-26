@@ -53,11 +53,16 @@ func dnsEndpointName(namespace, name string) string {
 // Which DNS zone the record lands in is external-dns's choice: the most specific zone it
 // manages that the domain falls under. Creating that zone, and delegating it, is the
 // user's.
+//
+// Without DNSEnabled it writes nothing; see disableDNS.
 func (r *CCLInfraPlaneReconciler) reconcileDNS(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
 	clusterConfig *cclusternvidiacomv1alpha1.CCLClusterConfigStatus,
 ) (metav1.Condition, error) {
+	if !r.DNSEnabled {
+		return r.disableDNS(ctx, infraPlane)
+	}
 	log := logf.FromContext(ctx)
 
 	condition := func(status metav1.ConditionStatus, reason, message string) metav1.Condition {
@@ -236,6 +241,39 @@ func (r *CCLInfraPlaneReconciler) applyDNSEndpoint(
 	return dnsEndpoint, op, err
 }
 
+// disableDNS deletes infraPlane's DNSEndpoint, one left from when DNSEnabled was on, and
+// returns the DNSReady condition saying DNS is off. If the delete fails it returns, as
+// reconcileDNS does, an Unknown condition carrying the error alongside it.
+func (r *CCLInfraPlaneReconciler) disableDNS(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+) (metav1.Condition, error) {
+	dnsReady := metav1.Condition{
+		Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady,
+		Status:             metav1.ConditionFalse,
+		Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSDisabled,
+		Message:            "DNS publishing is off: the operator writes no DNSEndpoint without --dns-enabled",
+		ObservedGeneration: infraPlane.Generation,
+	}
+	if err := r.deleteDNSEndpoint(ctx, infraPlane); err != nil {
+		dnsReady.Status = metav1.ConditionUnknown
+		dnsReady.Reason = cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSEndpointError
+		dnsReady.Message = err.Error()
+		return dnsReady, err
+	}
+	return dnsReady, nil
+}
+
+// dnsEndpointReader is what DNSEndpoints are read through: the cache, which the
+// DNSEndpoint watch fills, while DNSEnabled is on, and otherwise APIReader, so that
+// deleting one left from then does not start an informer on a kind nothing watches.
+func (r *CCLInfraPlaneReconciler) dnsEndpointReader() client.Reader {
+	if r.DNSEnabled || r.APIReader == nil {
+		return r.Client
+	}
+	return r.APIReader
+}
+
 // deleteDNSEndpoint deletes infraPlane's DNSEndpoint if there is one and it is still ours,
 // which has external-dns withdraw the record. A missing CRD means there is none.
 func (r *CCLInfraPlaneReconciler) deleteDNSEndpoint(
@@ -249,7 +287,7 @@ func (r *CCLInfraPlaneReconciler) deleteDNSEndpoint(
 		Namespace: r.DNSEndpointNamespace,
 		Name:      dnsEndpointName(infraPlane.Namespace, infraPlane.Name),
 	}
-	switch err := r.Get(ctx, key, &dnsEndpoint); {
+	switch err := r.dnsEndpointReader().Get(ctx, key, &dnsEndpoint); {
 	case apierrors.IsNotFound(err), apimeta.IsNoMatchError(err):
 		return nil
 	case err != nil:

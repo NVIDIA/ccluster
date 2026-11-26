@@ -238,7 +238,9 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				ResyncPeriod:  resyncPeriod,
 				// The operator's own namespace in production. Specs about DNS move it.
 				DNSEndpointNamespace: argoCDNamespace,
-				BaseDomain:           baseDomain,
+				// Off by default in production; the specs about DNS being off clear it.
+				DNSEnabled: true,
+				BaseDomain: baseDomain,
 			}
 
 			By("creating the Argo CD namespace")
@@ -1557,6 +1559,58 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				Expect(reconciler.infraPlanesForDNSEndpoint(ctx, &externaldnsv1alpha1.DNSEndpoint{
 					ObjectMeta: metav1.ObjectMeta{Name: "unowned", Namespace: dnsNamespace},
 				})).To(BeEmpty())
+			})
+
+			It("should write no DNSEndpoint and report DNSDisabled with DNS publishing off", func() {
+				reconciler.DNSEnabled = false
+				settle()
+
+				infraPlane := reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSDisabled)
+				Expect(dnsEndpointExists()).To(BeFalse())
+				Expect(apimeta.IsStatusConditionTrue(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)).To(BeTrue())
+			})
+
+			It("should delete the DNSEndpoint written earlier, without reading it from the cache, once DNS publishing is off", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
+
+				By("restarting the operator without --dns-enabled")
+				watchClient, err := client.NewWithWatch(cfg, client.Options{Scheme: k8sClient.Scheme()})
+				Expect(err).NotTo(HaveOccurred())
+				reconciler.DNSEnabled = false
+				reconciler.APIReader = k8sClient
+				reconciler.Client = interceptor.NewClient(watchClient, interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*externaldnsv1alpha1.DNSEndpoint); ok {
+							return errors.New("read a DNSEndpoint through the cache")
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+				})
+				infraPlane := reconcileAndGet()
+
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSDisabled)
+				Expect(dnsEndpointExists()).To(BeFalse())
+			})
+
+			It("should delete the DNSEndpoint with DNS publishing off while the plane is unavailable", func() {
+				settle()
+				reportIngress(&cclusternvidiacomv1alpha1.LoadBalancerStatus{IP: "192.0.2.10"})
+				Expect(dnsEndpointExists()).To(BeTrue())
+
+				By("deleting the credentials Secret and turning DNS publishing off")
+				Expect(k8sClient.Delete(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+				})).To(Succeed())
+				reconciler.DNSEnabled = false
+				infraPlane := reconcileAndGet()
+
+				Expect(apimeta.IsStatusConditionFalse(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)).To(BeTrue())
+				expectDNSReady(infraPlane, metav1.ConditionFalse, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonDNSDisabled)
+				Expect(dnsEndpointExists()).To(BeFalse())
 			})
 		})
 	})

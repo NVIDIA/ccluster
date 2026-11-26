@@ -675,12 +675,12 @@ var _ = Describe("Manager", Ordered, func() {
 						To(Equal(ingressLoadBalancerIP))
 				}, watchTimeout).Should(Succeed())
 
-				// The suite deploys the cp chart as the quickstart does, without
-				// external-dns, so there is no DNSEndpoint CRD to write the record to.
-				By("reporting the missing DNSEndpoint CRD once there is an ingress address to publish")
+				// The suite deploys the cp chart as the quickstart does, with DNS off, so
+				// the operator writes no DNSEndpoint even with an ingress address to publish.
+				By("reporting DNS publishing off once there is an ingress address")
 				Eventually(func(g Gomega) {
 					g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "status")).To(Equal("False"))
-					g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("DNSEndpointCRDMissing"))
+					g.Expect(infraPlaneCondition(planeName, conditionDNSReady, "reason")).To(Equal("DNSDisabled"))
 				}, crossClusterTimeout).Should(Succeed())
 
 				By("deleting the CCLClusterConfig from the plane's cluster with the CCLInfraPlane")

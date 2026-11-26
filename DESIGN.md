@@ -364,9 +364,17 @@ stays while the plane cannot be reached.
   another plane's A record wins over. external-dns only logs these
   ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
 
-The operator writes the `DNSEndpoint` whether or not external-dns is installed. Without its
-CRD the write fails, which is reported and retried on the resync rather than every minute,
-since it is the steady state of a control plane that publishes no DNS.
+The operator writes `DNSEndpoint`s only with `--dns-enabled` (`CCLUSTER_DNS_ENABLED`, which
+`make deploy-cp DNS=true` sets along with the chart's external-dns). A `DNSEndpoint` is
+published by whichever external-dns reads it, and one started with `--source=crd` and no
+`--namespace` reads every namespace: a control plane already running one for its own
+purposes would have it publish every plane's records, with its credentials and into its
+zones, though nobody turned DNS on. So it is off by default. Off, the operator writes no
+`DNSEndpoint`, deletes any it wrote, whether or not the plane is `Available`, reads them
+only through the API server rather than a cache, and reports `DNSReady=False/DNSDisabled`.
+On, it writes the `DNSEndpoint` whether or not external-dns is installed. Without its CRD the
+write fails, which is reported and retried on the resync rather than every minute, since
+only installing external-dns, and restarting the operator, fixes it.
 
 ### Status
 
@@ -391,18 +399,20 @@ does not mean it wrote the records; see the gap above), or `False` with
 `LoadBalancerPending` (the plane reports no LoadBalancer with an address), `Pending`
 (external-dns has not read the current `DNSEndpoint` yet), `InvalidLoadBalancer` (a
 LoadBalancer's name cannot make a record name, or its address is not valid; the others'
-records are still written), `DNSEndpointCRDMissing` (external-dns is not installed) or
-`DNSEndpointConflict` (the name is another plane's), or `Unknown/DNSEndpointError` (writing
-or deleting the `DNSEndpoint` failed, with the error as the message). It is written in the
-same status patch, a `DNSEndpointError` too, so that it does not hold back the other
-conditions or the copy; the error is then returned and retried with backoff. While
-`Available` is `False` the `DNSEndpoint` is neither updated nor withdrawn, so its records
-stay published, and `DNSReady` turns `Unknown` with the reason it had, its message noting
-that the records are kept but not updated.
+records are still written), `DNSEndpointCRDMissing` (external-dns is not installed),
+`DNSEndpointConflict` (the name is another plane's) or `DNSDisabled` (`--dns-enabled` is
+off), or `Unknown/DNSEndpointError` (writing or deleting the `DNSEndpoint` failed, with the
+error as the message). It is written in the same status patch, a `DNSEndpointError` too, so
+that it does not hold back the other conditions or the copy; the error is then returned and
+retried with backoff. While `Available` is `False` the `DNSEndpoint` is neither updated nor
+withdrawn, so its records stay published, and `DNSReady` turns `Unknown` with the reason it
+had, its message noting that the records are kept but not updated. `DNSDisabled` is the
+exception: with DNS off there is nothing to keep, so it holds whatever `Available` says.
 `DNSEndpointCRDMissing` waits for the resync; the rest wait for a watch. The `DNSEndpoint`
-watch exists only if external-dns's CRD did when the operator started (§7), so after
-installing external-dns the operator is restarted; otherwise `Pending` turns `Published`
-only on a later resync, and never with `--infraplane-resync-period=0`.
+watch exists only with `--dns-enabled` and if external-dns's CRD did when the operator
+started (§7), so after installing external-dns the operator is restarted; otherwise
+`Pending` turns `Published` only on a later resync, and never with
+`--infraplane-resync-period=0`.
 
 An error that is retried with backoff, such as a failed read of the credentials Secret or
 write of the mirror or the AppProject, writes no status, so the conditions keep what they
@@ -1015,7 +1025,7 @@ forever despite syncing perfectly well, and since release requires `Healthy` **a
 | --- | --- | --- |
 | `CCLInfraPlane` | `Available` | The namespace's AppProject exists and the cluster Secret has been mirrored into it. Reasons: `ClusterSecretCreated`, `SecretNotFound`, `ClusterSecretConflict`, `ProjectConflict`. |
 | `CCLInfraPlane` | `ClusterConfigApplied` | The infra-plane cluster's `CCLClusterConfig` carries the plane's domain (§3). Reasons: `Applied`, `NotAvailable` (status `Unknown`), `CRDMissing`, `Conflict`, `AccessDenied`, `ClusterUnreachable`, `UnsupportedCredentials`, `InvalidCredentials`. |
-| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`. |
+| `CCLInfraPlane` | `DNSReady` | external-dns has read the current `DNSEndpoint` pointing `*.<lb>.<domain>` at each of the plane's labelled LoadBalancers, and every name and address makes a valid record (§3). It does not mean the records were written. Reasons: `Published`, `Pending`, `LoadBalancerPending`, `InvalidLoadBalancer`, `DNSEndpointCRDMissing`, `DNSEndpointConflict`, `DNSEndpointError`, `DNSDisabled`. |
 | `CCLComponentSet` | `Validated` | Every `infraPlaneRef` resolves to a CCLInfraPlane that is `Available` for its current generation. Reasons: `ComponentsAccepted`, `InfraPlaneNotFound`, `InfraPlaneNotReady`. |
 | `CCLComponentSet` | `ComponentsApplied` | The current spec has been written for the components the rollout has reached; the message counts them (§5). Reasons: `ApplicationsCreated`, `ApplicationCRDMissing`, `ApplicationConflict`, `ApplicationFailed`. |
 | `CCLComponentSet` | `Progressing` | `True/WaveSyncing` while the rollout is advancing, with a message naming the component being waited on and whether it waits for Argo CD to sync the spec the operator wrote or for what it deployed to become healthy; `True/WaveSyncFailed` when the last sync of the current spec failed, with Argo CD's message, until a later sync of it succeeds; `True/ComponentRemoving` once every component has finished and the Applications of removed components are being deleted, naming the one being waited on; `True` with the `Validated` reason, such as `InfraPlaneNotFound`, when validation failed and the component being waited on needs the operator to write or delete its Application; `False/RolloutComplete` when every component has synced the current spec and is healthy, and no removed component's Application is left. |
@@ -1053,9 +1063,9 @@ same-namespace Applications garbage collection would defeat the ordered teardown
   the namespace it is named after, so a project deleted or loosened by hand is repaired.
   Through a raw source fed by `internal/remote`, it also watches each infra-plane cluster's
   `CCLClusterConfig` (§3), which is also how a new LoadBalancer address reaches the
-  plane's wildcard records. With external-dns's CRD installed at startup, it watches
-  `DNSEndpoint`s too, mapped back by their annotations, so external-dns reading
-  one, or drift on it, reconciles the plane.
+  plane's wildcard records. With `--dns-enabled` and external-dns's CRD installed at
+  startup, it watches `DNSEndpoint`s too, mapped back by their annotations, so
+  external-dns reading one, or drift on it, reconciles the plane.
 - `CCLComponentSet` watches `CCLInfraPlane`s (so a cluster becoming `Available` releases the
   CCLComponentSets waiting on it) and `Application`s (so a component becoming healthy releases the
   next one). Its own CCLComponentSet events include status updates; see
@@ -1239,7 +1249,7 @@ runs one worker (§3).
   `CCLInfraPlane` (§3), but per-component results are not broken out of the `Verified`
   condition's message yet.
 - **No cache scoping.** The manager caches all Secrets cluster-wide, and DNSEndpoints too
-  once external-dns is installed.
+  once external-dns is installed and `--dns-enabled` is on.
 - **Unconfirmed records.** `Published` means only that external-dns read the
   `DNSEndpoint`; a record it then skips or fails to write is reported `Published` all the
   same ([#174](https://github.com/NVIDIA/ccluster/issues/174)).
@@ -1249,7 +1259,9 @@ runs one worker (§3).
 - **More DNS.** Only labelled LoadBalancers get a record, and only the wildcard under their
   name; a Service not labelled, such as a compute deployment's SSH Service, gets none, and
   nothing answers for `<domain>` itself or for names directly under it. Turning DNS off
-  leaves the `DNSEndpoint`s, and so the records, behind.
+  in one upgrade leaves the records behind: the operator deletes its `DNSEndpoint`s, but
+  external-dns may be gone before it withdraws them. Turning `--dns-enabled` off first,
+  and the chart's external-dns once the records are withdrawn, removes them.
 - **More health functions.** Every chart but `job_deployment`, `dynamo_deployment` and
   `compute_deployment` is judged by `catalogs.DefaultHealth` (§7). Not judged yet: an Argo
   Rollouts canary's phase, image pulls in progress, scale to zero, and a PVC of a

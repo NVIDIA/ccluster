@@ -113,16 +113,18 @@ func TestDefaultFlagsFromEnv(t *testing.T) {
 
 	t.Run("environment sets each type", func(t *testing.T) {
 		fs, revision, workers, resync, _ := newFlags()
+		dnsEnabled := fs.Bool("dns-enabled", false, "")
 		err := defaultFlagsFromEnv(fs, inherited, env(map[string]string{
 			"CCLUSTER_CATALOG_REVISION":                       "v1.2.3",
 			"CCLUSTER_COMPONENTSET_MAX_CONCURRENT_RECONCILES": "8",
 			"CCLUSTER_INFRAPLANE_RESYNC_PERIOD":               "1m",
+			"CCLUSTER_DNS_ENABLED":                            "true",
 		}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if *revision != "v1.2.3" || *workers != 8 || *resync != time.Minute {
-			t.Errorf("got %q, %d, %s", *revision, *workers, *resync)
+		if *revision != "v1.2.3" || *workers != 8 || *resync != time.Minute || !*dnsEnabled {
+			t.Errorf("got %q, %d, %s, %t", *revision, *workers, *resync, *dnsEnabled)
 		}
 	})
 

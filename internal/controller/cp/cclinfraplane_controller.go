@@ -77,6 +77,17 @@ type CCLInfraPlaneReconciler struct {
 	// DNSEndpoints away from tenants.
 	DNSEndpointNamespace string
 
+	// DNSEnabled has the operator write the DNSEndpoint of each CCLInfraPlane. Off, it
+	// writes none, deletes any it wrote earlier, and reports DNSReady False with reason
+	// DNSDisabled: an external-dns that reads DNSEndpoints in every namespace would
+	// otherwise publish the planes' records on a control plane that never turned DNS on.
+	DNSEnabled bool
+
+	// APIReader reads from the API server rather than the cache. With DNS off the
+	// operator reads DNSEndpoints through it, only to delete ones left from when it was
+	// on, so that it never lists or watches them. Nil means Client.
+	APIReader client.Reader
+
 	// BaseDomain is the DNS domain every CCLInfraPlane's domain is derived under:
 	// "<name>.<namespace>.<BaseDomain>". The name and namespace are unique together and
 	// both DNS labels, so no plane's domain equals, or falls under, another's. Changing it
@@ -140,13 +151,14 @@ func (r *CCLInfraPlaneReconciler) domainOf(infraPlane *cclusternvidiacomv1alpha1
 // into status.clusterConfig. Every status write also records the domain in status.domain,
 // so it shows even while the cluster cannot be reached.
 //
-// The operator then writes a DNSEndpoint pointing "*.<lb>.<domain>" at each labelled
-// LoadBalancer in that copy, for external-dns to publish. That is reported as the
-// DNSReady condition. A pass that gets this far writes every condition, and the copy
-// when it took one, in one status patch. A plane that is not Available stops before
+// With DNSEnabled, the operator then writes a DNSEndpoint pointing "*.<lb>.<domain>" at
+// each labelled LoadBalancer in that copy, for external-dns to publish. That is reported
+// as the DNSReady condition. A pass that gets this far writes every condition, and the
+// copy when it took one, in one status patch. A plane that is not Available stops before
 // the CCLClusterConfig and the DNSEndpoint: ClusterConfigApplied and DNSReady turn
-// Unknown and the copy and the records stay as they were. An error that is retried
-// writes no status.
+// Unknown and the copy and the records stay as they were. Without DNSEnabled there is no
+// record to keep, so whether or not the plane is Available its DNSEndpoint is deleted and
+// DNSReady is False/DNSDisabled. An error that is retried writes no status.
 //
 // Deciding what runs on the registered cluster is CCLComponentSet's job. A CCLInfraPlane
 // makes a cluster addressable by name; it does not put anything on it.
@@ -379,7 +391,8 @@ const dnsNotUpdatedMessage = "the DNSEndpoint is kept but not updated while Avai
 // written while the plane is unavailable, so whatever the condition last said is no
 // longer being kept true. DNSReady, once set, becomes Unknown for the same reason: the
 // DNSEndpoint is neither updated nor withdrawn, so its records stay published as they
-// were. It keeps its reason and message, after a note that says so.
+// were. It keeps its reason and message, after a note that says so. Without DNSEnabled
+// there are no records to keep, so the DNSEndpoint goes as on any other pass.
 func (r *CCLInfraPlaneReconciler) setUnavailable(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -396,6 +409,11 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonNotAvailable,
 		Message: "the CCLClusterConfig is not checked while Available is False; see Available",
 	}}
+	if !r.DNSEnabled {
+		dnsReady, dnsErr := r.disableDNS(ctx, infraPlane)
+		conditions = append(conditions, dnsReady)
+		return errors.Join(dnsErr, r.patchStatus(ctx, infraPlane, nil, conditions...))
+	}
 	if dnsReady := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDNSReady); dnsReady != nil {
 		dnsMessage := dnsReady.Message
 		if !strings.HasPrefix(dnsMessage, dnsNotUpdatedMessage) {
@@ -489,7 +507,8 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start. The DNSEndpoint
-// watch likewise needs external-dns's CRD.
+// watch likewise needs external-dns's CRD, and DNSEnabled: without it no DNSEndpoint is
+// written, so none is worth an event.
 //
 // The controller runs one worker, set here so that a manager-wide default cannot raise
 // it. The CCLInfraPlanes in a namespace share its AppProject: in parallel, the last
@@ -506,7 +525,7 @@ func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		builder = builder.Watches(&argocdv1alpha1.AppProject{},
 			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForProject))
 	}
-	if kindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"),
+	if r.DNSEnabled && kindInstalled(mgr.GetRESTMapper(), mgr.GetLogger().WithName("cclinfraplane"),
 		externaldnsv1alpha1.GroupVersion.WithKind("DNSEndpoint")) {
 		builder = builder.Watches(&externaldnsv1alpha1.DNSEndpoint{},
 			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForDNSEndpoint))

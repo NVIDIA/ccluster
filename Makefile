@@ -273,7 +273,7 @@ build-cli: generate fmt vet ## Build the ccluster CLI as bin/ccluster.
 .PHONY: run-cp
 run-cp: manifests generate fmt vet ## Run ccluster-cp-operator from your host.
 	go run ./cmd/ccluster-cp-operator --argocd-namespace=$(or $(ARGOCD_NAMESPACE),argocd) \
-		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP) --base-domain=$(BASE_DOMAIN)
+		--dns-endpoint-namespace=$(HELM_NAMESPACE_CP) --dns-enabled=$(DNS) --base-domain=$(BASE_DOMAIN)
 
 .PHONY: run-ip
 run-ip: manifests generate fmt vet ## Run ccluster-ip-operator from your host.
@@ -519,6 +519,7 @@ deploy-cp: helm helm-deps-cp ## Deploy ccluster-cp-operator (and Argo CD) to the
 		--set manager.image.tag=$(word 2,$(subst :, ,$(IMG_CP))) \
 		--set argo-cd.enabled=$(ARGOCD) \
 		--set external-dns.enabled=$(DNS) \
+		--set-string manager.envOverrides.CCLUSTER_DNS_ENABLED=$(DNS) \
 		--set-string manager.envOverrides.CCLUSTER_CATALOG_REPO_URL=$(CATALOG_REPO_URL) \
 		--set-string manager.envOverrides.CCLUSTER_CATALOG_REVISION=$(CATALOG_REVISION) \
 		--set-string manager.envOverrides.CCLUSTER_BASE_DOMAIN=$(BASE_DOMAIN) \
@@ -586,8 +587,9 @@ ARGOCD_NAMESPACE ?=
 # the bundled argocd-server's Service, so the operator uses its default, argocd-server.
 ARGOCD_SERVER_OVERRIDE = $(if $(filter true,$(ARGOCD)),,--set manager.envOverrides.CCLUSTER_ARGOCD_SERVER_SERVICE=null)
 # Set DNS=true to install the chart's external-dns, which publishes each CCLInfraPlane's
-# wildcard record. Its provider, zones and credentials come through HELM_ARGS, such as
-# `-f dns-values.yaml` (docs/development.md).
+# wildcard record, and to have the operator write the DNSEndpoints for it
+# (--dns-enabled, which run-cp passes too). Its provider, zones and credentials come
+# through HELM_ARGS, such as `-f dns-values.yaml` (docs/development.md).
 DNS ?= false
 # The cp operator's required base domain, which every CCLInfraPlane's domain is derived
 # under: <name>.<namespace>.<BASE_DOMAIN>. deploy-cp sets it as the chart's

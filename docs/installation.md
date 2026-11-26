@@ -83,17 +83,21 @@ The operator then needs a read-only Argo CD account and an API token; see
 
 ### DNS
 
-The operator writes a DNSEndpoint for each registered cluster. It asks for
-`*.<lb>.<cluster domain>` to point at each of the cluster's LoadBalancer Services labelled
-`ccluster.nvidia.com/loadbalancer: <lb>`, such as `*.nginx.<cluster domain>` at its ingress.
-The chart's bundled [external-dns](https://github.com/kubernetes-sigs/external-dns)
-publishes these records. It is disabled by default, and without it nothing is published.
+With `CCLUSTER_DNS_ENABLED=true`, the operator writes a DNSEndpoint for each registered
+cluster. It asks for `*.<lb>.<cluster domain>` to point at each of the cluster's
+LoadBalancer Services labelled `ccluster.nvidia.com/loadbalancer: <lb>`, such as
+`*.nginx.<cluster domain>` at its ingress. The chart's bundled
+[external-dns](https://github.com/kubernetes-sigs/external-dns) publishes these records.
+Both are off by default, and the values file below turns them on together.
 
 Create a DNS zone for the base domain at your DNS provider and delegate it from its parent
 zone. Then put the provider, the zone and the credentials in a values file:
 
 ```yaml
 # dns-values.yaml
+manager:
+  envOverrides:
+    CCLUSTER_DNS_ENABLED: "true"   # the operator writes the DNSEndpoints
 external-dns:
   enabled: true
   provider:
@@ -151,9 +155,9 @@ misses external-dns reading the DNSEndpoint, and `DNSReady` stays `Pending` unti
 resync, after `CCLUSTER_INFRAPLANE_RESYNC_PERIOD` (default 5m), or for good if that is 0.
 
 **Later upgrades.** Pass `-f dns-values.yaml` to every later `helm upgrade`. Without it the
-upgrade sets `external-dns.enabled` back to `false` and removes external-dns. The records
-already published stay in the zone with nothing updating them, and the `DNS` column can
-still show `True`.
+upgrade turns DNS off: it removes external-dns, and the operator deletes the DNSEndpoints
+and reports `DNSDisabled`. The records already published stay in the zone with nothing
+updating them, since external-dns is gone before it can withdraw them.
 
 **Check.** The `DNS` column turns `True` once external-dns has read a cluster's DNSEndpoint,
 unless a LoadBalancer is invalid:
@@ -165,6 +169,8 @@ kubectl get cclinfraplane -A
 Until then, `kubectl describe cclinfraplane <name> -n <namespace>` gives the `DNSReady`
 reason:
 
+- `DNSDisabled`: `CCLUSTER_DNS_ENABLED` is not `true`, so the operator writes no
+  DNSEndpoint.
 - `LoadBalancerPending`: the cluster has no labelled LoadBalancer with an address yet.
 - `DNSEndpointCRDMissing`: the DNSEndpoint CRD is not installed.
 - `Pending`: external-dns has not read the current DNSEndpoint yet.

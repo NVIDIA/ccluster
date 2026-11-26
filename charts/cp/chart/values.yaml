@@ -80,10 +80,14 @@ manager:
   ## a safety net behind the watch: how often a written one is reconciled anyway; 0
   ## disables it.
   ##
-  ## The operator also writes a DNSEndpoint per CCLInfraPlane, pointing "*.<lb>.<domain>"
-  ## at each of the plane's LoadBalancers labelled ccluster.nvidia.com/loadbalancer: <lb>,
-  ## such as "*.nginx.<domain>" at its ingress, <domain> being the plane's derived one.
-  ## Nothing is published unless the `external-dns` dependency below is enabled.
+  ## With CCLUSTER_DNS_ENABLED=true the operator also writes a DNSEndpoint per
+  ## CCLInfraPlane, pointing "*.<lb>.<domain>" at each of the plane's LoadBalancers labelled
+  ## ccluster.nvidia.com/loadbalancer: <lb>, such as "*.nginx.<domain>" at its ingress,
+  ## <domain> being the plane's derived one. Set it together with the `external-dns`
+  ## dependency below, which publishes them, or alone for an external-dns installed
+  ## elsewhere. Unset, the operator writes no DNSEndpoint, deletes those it wrote, and
+  ## reports DNSReady False/DNSDisabled, so that an external-dns reading DNSEndpoints in
+  ## every namespace publishes nothing on a control plane that never turned DNS on.
   ## CCLUSTER_DNS_ENDPOINT_NAMESPACE (default: the operator's own namespace, where that
   ## external-dns runs) is where the DNSEndpoints go; set it only for an external-dns
   ## installed elsewhere. The operator watches DNSEndpoints only if their CRD exists when
@@ -346,7 +350,9 @@ argo-cd:
         p, ccluster-cp, applications, get, */*, allow
 
 ## external-dns — a dependency of this chart, off by default. See the rationale in
-## Chart.yaml. Values here are passed to the upstream external-dns chart.
+## Chart.yaml. Values here are passed to the upstream external-dns chart. Enabling it
+## takes manager.envOverrides.CCLUSTER_DNS_ENABLED=true as well, without which the
+## operator writes nothing for it to publish; `make deploy-cp DNS=true` sets both.
 ##
 ## It publishes the DNSEndpoint the operator writes for each CCLInfraPlane - "*.<lb>.<domain>"
 ## pointing at each of the plane's labelled LoadBalancers - into the most specific DNS zone
