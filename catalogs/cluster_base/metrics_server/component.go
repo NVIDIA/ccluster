@@ -8,10 +8,7 @@ package metricsserver
 
 import (
 	"context"
-	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
@@ -67,21 +64,5 @@ const APIService = "v1beta1.metrics.k8s.io"
 // r must be able to read apiregistration.k8s.io/v1 APIServices: the operator's scheme
 // registers the kind and its ClusterRole grants get, list and watch.
 func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
-	var svc apiregistrationv1.APIService
-	if err := r.Get(ctx, client.ObjectKey{Name: APIService}, &svc); err != nil {
-		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("APIService %s not found", APIService)
-		}
-		return fmt.Errorf("reading APIService %s: %w", APIService, err)
-	}
-	for _, c := range svc.Status.Conditions {
-		if c.Type != apiregistrationv1.Available {
-			continue
-		}
-		if c.Status == apiregistrationv1.ConditionTrue {
-			return nil
-		}
-		return fmt.Errorf("APIService %s not available: %s: %s", APIService, c.Reason, c.Message)
-	}
-	return fmt.Errorf("APIService %s not available", APIService)
+	return catalogs.VerifyAPIServiceAvailable(ctx, r, APIService)
 }
