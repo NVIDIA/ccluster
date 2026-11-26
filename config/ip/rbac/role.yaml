@@ -72,6 +72,10 @@ rules:
   resources:
   - externalsecrets
   verbs:
-  - get
   - list
-  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - list

@@ -17,10 +17,12 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
@@ -226,6 +228,76 @@ func TestVerifyCRDExistsReturnsReadErrors(t *testing.T) {
 	}).Build()
 
 	if err := VerifyCRDExists(context.Background(), r, "widgets.example.com"); !apierrors.IsForbidden(err) {
+		t.Fatalf("want the Forbidden error wrapped, got %v", err)
+	}
+}
+
+var widget = schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+// kindClient returns a fake client whose List fails with listErr, and fails the test
+// unless the List asks for the metadata of WidgetList. The fake client serves any kind,
+// so listErr is how a test sees what the API server would answer.
+func kindClient(t *testing.T, listErr error) client.WithWatch {
+	t.Helper()
+	return fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			gvk := list.GetObjectKind().GroupVersionKind()
+			if _, ok := list.(*metav1.PartialObjectMetadataList); !ok || gvk != widget.GroupVersion().WithKind("WidgetList") {
+				t.Errorf("want a *metav1.PartialObjectMetadataList of WidgetList, got %T of %v", list, gvk)
+			}
+			if listErr != nil {
+				return listErr
+			}
+			return c.List(ctx, list, opts...)
+		},
+	}).Build()
+}
+
+func TestVerifyKindServed(t *testing.T) {
+	notServed := "example.com/v1 Widget not served; Widgets before v2 do not serve v1"
+	tests := []struct {
+		name    string
+		listErr error
+		want    string // "" means "expect nil"
+	}{
+		{name: "served"},
+		{
+			name:    "not served",
+			listErr: &meta.NoKindMatchError{GroupKind: widget.GroupKind(), SearchedVersions: []string{"v1"}},
+			want:    notServed,
+		},
+		{
+			// What the RESTMapper returns when it learns of the group from aggregated
+			// discovery but the group does not serve the version.
+			name: "not served, from aggregated discovery",
+			listErr: &apiutil.ErrResourceDiscoveryFailed{
+				widget.GroupVersion(): &meta.NoResourceMatchError{PartialResource: widget.GroupVersion().WithResource("")},
+			},
+			want: notServed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := VerifyKindServed(context.Background(), kindClient(t, tt.listErr), widget,
+				"Widgets before v2 do not serve v1")
+			switch {
+			case tt.want == "" && err != nil:
+				t.Fatalf("want nil, got %v", err)
+			case tt.want != "" && (err == nil || err.Error() != tt.want):
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+// TestVerifyKindServedReturnsReadErrors: a List the operator cannot make is not reported
+// as the kind not served, which would send a user looking for an old release when the
+// cause is RBAC or the API server.
+func TestVerifyKindServedReturnsReadErrors(t *testing.T) {
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Group: "example.com", Resource: "widgets"}, "",
+		errors.New("no RBAC"))
+	err := VerifyKindServed(context.Background(), kindClient(t, forbidden), widget, "unused")
+	if !apierrors.IsForbidden(err) {
 		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }

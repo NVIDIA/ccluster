@@ -13,6 +13,11 @@ SPDX-License-Identifier: Apache-2.0
 package gatewayapi
 
 import (
+	"context"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	cclusternvidiacomv1alpha1 "github.com/NVIDIA/ccluster/api/ccluster/v1alpha1"
 	"github.com/NVIDIA/ccluster/catalogs"
 )
@@ -38,4 +43,28 @@ func New(
 	values Values,
 ) (cclusternvidiacomv1alpha1.ComponentEntry, error) {
 	return catalogs.Entry(Chart, namespace, values)
+}
+
+// crds are the kinds cert-manager uses with its Gateway API support on: it watches
+// Gateways and creates an HTTPRoute for each ACME HTTP-01 challenge.
+var crds = []string{
+	"gateways.gateway.networking.k8s.io",
+	"httproutes.gateway.networking.k8s.io",
+}
+
+// HTTPRouteKind is the kind Verify checks is served. The ip operator reads it from the
+// API server, not its cache (see catalogs.VerifyKindServed).
+var HTTPRouteKind = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
+
+// Verify checks that the cluster has what cert_manager's GatewayAPI switch needs: the
+// crds exist and gateway.networking.k8s.io/v1 is served. Without that API, cert-manager's
+// controller exits at startup (pkg/controller/context.go in v1.21.3), so no certificate
+// is issued.
+func Verify(ctx context.Context, r client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	for _, crd := range crds {
+		if err := catalogs.VerifyCRDExists(ctx, r, crd); err != nil {
+			return err
+		}
+	}
+	return catalogs.VerifyKindServed(ctx, r, HTTPRouteKind, "Gateway API before v1.0 does not serve v1")
 }

@@ -179,10 +179,12 @@ func undeployIPOperator(c utils.Cluster) {
 }
 
 // installClusterBaseChart installs the catalogs/cluster_base chart dir on c as a Helm
-// release, with the values file from test/e2e/testdata. kind ships none of the platform,
+// release, with the valuesFiles from test/e2e/testdata. kind ships none of the platform,
 // and a chart's Verifier looks at live objects, so installing it is what stops the
 // infra-plane operator's Verified condition naming that component.
-func installClusterBaseChart(c utils.Cluster, dir, release, namespace, valuesFile string, timeout time.Duration) {
+func installClusterBaseChart(
+	c utils.Cluster, dir, release, namespace string, timeout time.Duration, valuesFiles ...string,
+) {
 	GinkgoHelper()
 
 	By(fmt.Sprintf("installing the %s chart on %s", dir, c.Name))
@@ -191,10 +193,13 @@ func installClusterBaseChart(c utils.Cluster, dir, release, namespace, valuesFil
 	chartDir := filepath.Join(GinkgoT().TempDir(), dir)
 	_, err := utils.Run(exec.Command("cp", "-R", filepath.Join("catalogs", "cluster_base", dir), chartDir))
 	Expect(err).NotTo(HaveOccurred())
-	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, chartDir,
+	args := []string{"upgrade", "--install", release, chartDir,
 		"--kube-context", c.Context(), "--dependency-update",
-		"--values", filepath.Join("test", "e2e", "testdata", valuesFile),
-		"--namespace", namespace, "--create-namespace", "--wait", "--timeout", timeout.String()))
+		"--namespace", namespace, "--create-namespace", "--wait", "--timeout", timeout.String()}
+	for _, f := range valuesFiles {
+		args = append(args, "--values", filepath.Join("test", "e2e", "testdata", f))
+	}
+	_, err = utils.Run(exec.Command("helm", args...))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the %s chart on %s", dir, c.Name)
 }
 
@@ -206,21 +211,22 @@ func uninstallClusterBaseChart(c utils.Cluster, release, namespace string) {
 }
 
 // installClusterBase installs the cluster_base charts that have a Verifier of their own,
-// which fail on a bare kind cluster: argo_rollouts, for the Rollout CRD and its
-// controller's Lease, cert_manager, for its admission webhook, CRDs and controller's
-// Lease, metrics_server, for the resource metrics API, and kube_prometheus_stack, for
-// the Prometheus Service the catalog's consumers address.
+// which fail on a bare kind cluster: gateway_api, for the Gateway API CRDs, argo_rollouts,
+// for the Rollout CRD and its controller's Lease, cert_manager, for its admission webhook,
+// CRDs and controller's Lease, metrics_server, for the resource metrics API, and
+// kube_prometheus_stack, for the Prometheus Service the catalog's consumers address.
 func installClusterBase(c utils.Cluster) {
 	GinkgoHelper()
 
-	installClusterBaseChart(c, "argo_rollouts", "argo-rollouts", "argo-rollouts",
-		"argo-rollouts-kind-values.yaml", 3*time.Minute)
-	installClusterBaseChart(c, "cert_manager", "cert-manager", "cert-manager",
-		"cert-manager-kind-values.yaml", 5*time.Minute)
-	installClusterBaseChart(c, "metrics_server", "metrics-server", "kube-system",
-		"metrics-server-kind-values.yaml", 3*time.Minute)
-	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus",
-		"kube-prometheus-stack-kind-values.yaml", 5*time.Minute)
+	installClusterBaseChart(c, "gateway_api", "gateway-api", "gateway-system", 2*time.Minute)
+	installClusterBaseChart(c, "argo_rollouts", "argo-rollouts", "argo-rollouts", 3*time.Minute,
+		"argo-rollouts-kind-values.yaml")
+	installClusterBaseChart(c, "cert_manager", "cert-manager", "cert-manager", 5*time.Minute,
+		"cert-manager-kind-values.yaml")
+	installClusterBaseChart(c, "metrics_server", "metrics-server", "kube-system", 3*time.Minute,
+		"metrics-server-kind-values.yaml")
+	installClusterBaseChart(c, "kube_prometheus_stack", "kube-prometheus-stack", "prometheus", 5*time.Minute,
+		"kube-prometheus-stack-kind-values.yaml")
 
 	// helm --wait covers only the operator: it creates the Prometheus StatefulSet after
 	// helm returns. Waiting here keeps a slow image pull out of the callers' verdict
@@ -252,6 +258,7 @@ var argoRolloutsCRDs = []string{
 // Verifier's skew allowance pass; until then the CRDs left behind would verify
 // argo_rollouts for the next spec on the cluster, which expects it to fail at once. By
 // name, not by group, so the control-plane cluster keeps Argo CD's argoproj.io CRDs.
+// The gateway_api chart renders its CRDs as templates, so its release takes them along.
 func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "kube-prometheus-stack", "prometheus")
 	uninstallClusterBaseChart(c, "metrics-server", "kube-system")
@@ -259,18 +266,18 @@ func uninstallClusterBase(c utils.Cluster) {
 	uninstallClusterBaseChart(c, "argo-rollouts", "argo-rollouts")
 	_, _ = utils.Run(c.Kubectl(append([]string{"delete", "crd", "--ignore-not-found", "--wait"},
 		argoRolloutsCRDs...)...))
+	uninstallClusterBaseChart(c, "gateway-api", "gateway-system")
 }
 
-// expectBaseComponentsFailing asserts that a Verified message names argo_rollouts,
-// cert_manager, metrics_server, kube_prometheus_stack and external_secrets among the
-// failing cluster_base components, for want of what they provide on a bare kind cluster:
-// the Rollout CRD, cert-manager's webhook, the APIService, the Prometheus Service and
-// ESO's webhook configuration. "Not found" rather than a read error proves the ip chart's
-// ClusterRole lets the manager read CustomResourceDefinitions,
-// ValidatingWebhookConfigurations, APIServices and Services. Other failing components are
-// not asserted on, so a cluster_base chart gaining a check of its own does not break the
-// suite.
+// expectBaseComponentsFailing asserts that a Verified message names the cluster_base
+// components below among the failing ones, each for want of what it provides on a bare
+// kind cluster. "Not found" rather than a read error proves the ip chart's ClusterRole
+// lets the manager read CustomResourceDefinitions, ValidatingWebhookConfigurations,
+// APIServices and Services. Other failing components are not asserted on, so a
+// cluster_base chart gaining a check of its own does not break the suite.
 func expectBaseComponentsFailing(g Gomega, message string) {
+	g.Expect(message).To(ContainSubstring(
+		"catalogs/cluster_base/gateway_api (CustomResourceDefinition gateways.gateway.networking.k8s.io not found"))
 	g.Expect(message).To(ContainSubstring(
 		"catalogs/cluster_base/argo_rollouts (CustomResourceDefinition rollouts.argoproj.io not found"))
 	g.Expect(message).To(ContainSubstring(
@@ -283,17 +290,20 @@ func expectBaseComponentsFailing(g Gomega, message string) {
 		"catalogs/cluster_base/external_secrets (ValidatingWebhookConfiguration externalsecret-validate not found"))
 }
 
-// expectBaseComponentsVerified asserts that a Verified message no longer names
-// argo_rollouts, cert_manager, metrics_server or kube_prometheus_stack as failing, once installClusterBase has
-// installed them. It says nothing about the other components, but an empty message,
-// such as a copy that lost its conditions, fails.
+// expectBaseComponentsVerified asserts that a Verified message no longer names the
+// components installClusterBase installs. It says nothing about the other components, but
+// an empty message, such as a copy that lost its conditions, fails.
 //
 // This, not expectBaseComponentsFailing, proves the ip chart's ClusterRole lets the
-// manager read EndpointSlices: the Prometheus Verifier lists them only once the Service
-// exists. Without the permission the cached List times out and kube_prometheus_stack
-// stays in the message.
+// manager list EndpointSlices and HTTPRoutes: the Prometheus Verifier lists EndpointSlices
+// only once the Service exists, and the gateway_api Verifier lists HTTPRoutes only once
+// their CRD exists. Without the permission the cached EndpointSlice List times out and
+// the uncached HTTPRoute List is Forbidden; either way the component stays in the
+// message. The ClusterRole grants HTTPRoutes list but not watch, so the HTTPRoute List
+// also proves the manager reads them uncached: a cached one could not sync.
 func expectBaseComponentsVerified(g Gomega, message string) {
 	g.Expect(message).NotTo(BeEmpty())
+	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/gateway_api"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/argo_rollouts"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/cert_manager"))
 	g.Expect(message).NotTo(ContainSubstring("catalogs/cluster_base/metrics_server"))

@@ -163,40 +163,20 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-// TestVerifyReturnsReadErrors: a read the operator cannot make is not reported as ESO
-// missing or old, which would send a user looking for an install problem that is really
-// RBAC or the API server.
+// TestVerifyReturnsReadErrors: a webhook configuration the operator cannot read is not
+// reported as ESO missing, which would send a user looking for an install problem that
+// is really RBAC or the API server. catalogs.VerifyKindServed's tests cover the
+// ExternalSecret List.
 func TestVerifyReturnsReadErrors(t *testing.T) {
-	forbidden := func(resource string) error {
-		return apierrors.NewForbidden(schema.GroupResource{Resource: resource}, "", errors.New("no RBAC"))
-	}
-	tests := []struct {
-		name    string
-		objects []client.Object
-		funcs   interceptor.Funcs
-	}{
-		{
-			name: "webhook configuration",
-			funcs: interceptor.Funcs{
-				Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
-					return forbidden("validatingwebhookconfigurations")
-				},
-			},
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "validatingwebhookconfigurations"}, "",
+		errors.New("no RBAC"))
+	r := fake.NewClientBuilder().WithScheme(testScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return forbidden
 		},
-		{
-			name:    "ExternalSecrets",
-			objects: []client.Object{webhookConfiguration(webhook, webhookService)},
-			funcs:   listErr(forbidden("externalsecrets")),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(tt.objects...).
-				WithInterceptorFuncs(tt.funcs).Build()
-			err := Verify(context.Background(), r, cclusternvidiacomv1alpha1.CCLClusterConfigSpec{})
-			if !apierrors.IsForbidden(err) {
-				t.Fatalf("want the Forbidden error wrapped, got %v", err)
-			}
-		})
+	}).Build()
+	err := Verify(context.Background(), r, cclusternvidiacomv1alpha1.CCLClusterConfigSpec{})
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("want the Forbidden error wrapped, got %v", err)
 	}
 }

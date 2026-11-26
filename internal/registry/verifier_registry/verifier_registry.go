@@ -46,10 +46,11 @@ import (
 // domain.
 //
 // r reads from the manager's cache, except for the kinds the ip operator lists in
-// manager.Options.UncachedObjects, which it reads from the API server. Leases are the
-// only such kind: caching them would watch every node's heartbeat Lease, and
-// catalogs.VerifyLeaseRenewed lists them by name, which the cache cannot serve. A check
-// that needs a kind read uncached adds it there; a cached kind is watched cluster-wide.
+// manager.Options.UncachedObjects, which it reads from the API server. Leases are one:
+// caching them would watch every node's heartbeat Lease, and catalogs.VerifyLeaseRenewed
+// lists them by name, which the cache cannot serve. The kinds a check passes to
+// catalogs.VerifyKindServed are the others. A check that needs a kind read uncached adds
+// it there; a cached kind is watched cluster-wide.
 //
 // A check returns nil when the component is installed and configured, and otherwise an
 // error saying why not. The error text is shown to users in the CCLClusterConfig's
@@ -89,7 +90,7 @@ func Get() *Registry {
 	r.Register(externalsecrets.Chart, externalsecrets.Verify)
 	r.Register(finalstack.Chart, alwaysVerified)
 	r.Register(fluentbit.Chart, alwaysVerified)
-	r.Register(gatewayapi.Chart, alwaysVerified)
+	r.Register(gatewayapi.Chart, gatewayapi.Verify)
 	r.Register(gpuoperator.Chart, alwaysVerified)
 	r.Register(ingressnginx.Chart, alwaysVerified)
 	r.Register(istio.Chart, alwaysVerified)
