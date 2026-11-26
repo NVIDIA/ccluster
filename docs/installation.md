@@ -279,12 +279,21 @@ kind, whose kubeconfig points at `127.0.0.1`: use `https://kubernetes.default.sv
 infra plane is the control-plane cluster itself, and
 `https://<kind cluster name>-control-plane:6443` for another kind cluster.
 
-`register` then waits until the control plane has connected to the cluster and written its
-domain there, which `kubectl get cclinfraplane -n team-a` shows as `CLUSTERCONFIG True`, and
-prints the domain. `AVAILABLE` alone does not mean it can connect. If `CLUSTERCONFIG` is not
-`True` within two minutes, `register` fails with the reason, such as `ClusterUnreachable`
-for a `--server` the control plane cannot reach, or `CRDMissing` when the infra-plane chart
-is not installed. The registration stays in place: fix the cause and run `register` again.
+`register` waits for the control plane to connect and write the domain using the
+credentials submitted by this command, then prints the domain. `kubectl get
+cclinfraplane -n team-a` shows the last result as `CLUSTERCONFIG`. An `AVAILABLE` plane
+can still be unreachable. If the control plane
+reports a failure for the submitted credentials, such as `ClusterUnreachable` or
+`CRDMissing`, `register` keeps waiting and reports that reason at the two-minute timeout.
+The registration stays in place. Fix the cause and run `register` again.
+
+A concurrent registration or a metadata-only update to the credentials Secret can
+supersede the submitted version before the control plane evaluates it, causing
+`register` to time out.
+
+Upgrade the control-plane operator and the CCLInfraPlane CRD when upgrading the CLI.
+If either is older, `register` can time out waiting for a result tied to the submitted
+credentials version.
 
 ### Unregister a cluster
 

@@ -212,6 +212,20 @@ class CCLClient:
         The namespace must already exist; call ensure_namespace first for the first plane
         of a namespace.
         """
+        plane, _ = self.apply_infraplane_with_credentials_version(
+            name=name, server=server, bearer_token=bearer_token, ca_cert=ca_cert
+        )
+        return plane
+
+    def apply_infraplane_with_credentials_version(
+        self,
+        *,
+        name: str,
+        server: str | None = None,
+        bearer_token: str | None = None,
+        ca_cert: str | bytes | None = None,
+    ) -> tuple[CCLInfraPlane, str]:
+        """Apply the plane and return the credentials Secret's applied resourceVersion too."""
         server = server or _IN_CLUSTER_SERVER
         if isinstance(ca_cert, str):
             ca_cert = ca_cert.encode()
@@ -239,8 +253,8 @@ class CCLClient:
         applied = CCLInfraPlane.model_validate(
             self._apply_object(self._discovery.infra_plane_gvr, plane)
         )
-        self._apply(self._discovery.secret_gvr, secret)
-        return applied
+        applied_secret = self._apply_object(self._discovery.secret_gvr, secret)
+        return applied, applied_secret.get("metadata", {}).get("resourceVersion", "")
 
     def check_infraplane(self, *, name: str) -> None:
         """Raise if the API server would refuse the CCLInfraPlane apply_infraplane(name=name) writes.

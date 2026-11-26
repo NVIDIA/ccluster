@@ -112,9 +112,9 @@ from kubernetes.config import new_client_from_config
 client = CCLClient("tenant-a", api_client=new_client_from_config())
 ```
 
-[`examples/register.py`](examples/register.py) is the same as a command. The call returns once the
-objects are applied; `kubectl get cclinfraplane -n <namespace>` shows when the operator
-has marked the plane `Available`.
+`apply_infraplane` returns once the objects are applied. The command in
+[`examples/register.py`](examples/register.py) also waits for the operator to confirm
+the credentials it submitted.
 
 ## Deploying a component set
 
@@ -238,10 +238,11 @@ read `<name>-credentials` there is cluster-admin on the infra plane, so keep rea
 that namespace's Secrets tight. Running it again reuses the
 same token.
 
-`register` then waits until the CCLInfraPlane's `ClusterConfigApplied` condition is `True`,
-which means the control plane reached the cluster, and prints the domain. If it is not
-`True` within two minutes, `register` fails with the condition's reason and message; the
-CCLInfraPlane stays, so fix the cause and run `register` again.
+`register` waits for `ClusterConfigApplied=True` for the credentials it submitted and
+prints the domain. After two minutes it fails with the matching condition's reason, or
+says the control plane has yet to report on those credentials. The CCLInfraPlane stays.
+Upgrade the control-plane operator and its CCLInfraPlane CRD when upgrading the CLI so
+registration can match its credentials to the reported condition.
 
 `--server` is the address Argo CD dials, and defaults to the infra-plane context's server in
 the kubeconfig. Set it when that address is only reachable from your workstation, as with

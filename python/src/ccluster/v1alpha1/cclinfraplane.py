@@ -269,6 +269,14 @@ class CCLInfraPlaneStatus(BaseModel):
     under. clusterConfig.domain is the domain the infra-plane operator last verified
     the cluster against; the two differ until it has verified the current one.
     """
+    observed_credentials_resource_version: Annotated[
+        str | None, Field(alias="observedCredentialsResourceVersion")
+    ] = None
+    """
+    observedCredentialsResourceVersion is the resourceVersion of the source
+    credentials Secret used to compute ClusterConfigApplied. It is unset when
+    the control-plane operator did not evaluate the credentials.
+    """
     observed_generation: Annotated[int | None, Field(alias="observedGeneration")] = None
     """
     observedGeneration is the .metadata.generation the conditions were computed from.

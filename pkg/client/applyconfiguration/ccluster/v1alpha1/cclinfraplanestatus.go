@@ -33,6 +33,10 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// observedGeneration is the .metadata.generation the conditions were computed from.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// observedCredentialsResourceVersion is the resourceVersion of the source
+	// credentials Secret used to compute ClusterConfigApplied. It is unset when
+	// the control-plane operator did not evaluate the credentials.
+	ObservedCredentialsResourceVersion *string `json:"observedCredentialsResourceVersion,omitempty"`
 	// domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
 	// the control-plane operator from its --base-domain and written on every status
 	// update, whether or not the cluster is reachable. It is the domain the operator
@@ -74,6 +78,14 @@ func (b *CCLInfraPlaneStatusApplyConfiguration) WithConditions(values ...*v1.Con
 // If called multiple times, the ObservedGeneration field is set to the value of the last call.
 func (b *CCLInfraPlaneStatusApplyConfiguration) WithObservedGeneration(value int64) *CCLInfraPlaneStatusApplyConfiguration {
 	b.ObservedGeneration = &value
+	return b
+}
+
+// WithObservedCredentialsResourceVersion sets the ObservedCredentialsResourceVersion field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedCredentialsResourceVersion field is set to the value of the last call.
+func (b *CCLInfraPlaneStatusApplyConfiguration) WithObservedCredentialsResourceVersion(value string) *CCLInfraPlaneStatusApplyConfiguration {
+	b.ObservedCredentialsResourceVersion = &value
 	return b
 }
 

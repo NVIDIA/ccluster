@@ -58,6 +58,12 @@ type CCLInfraPlaneStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// observedCredentialsResourceVersion is the resourceVersion of the source
+	// credentials Secret used to compute ClusterConfigApplied. It is unset when
+	// the control-plane operator did not evaluate the credentials.
+	// +optional
+	ObservedCredentialsResourceVersion string `json:"observedCredentialsResourceVersion,omitempty"`
+
 	// domain is the cluster's DNS domain, "<name>.<namespace>.<base domain>", derived by
 	// the control-plane operator from its --base-domain and written on every status
 	// update, whether or not the cluster is reachable. It is the domain the operator

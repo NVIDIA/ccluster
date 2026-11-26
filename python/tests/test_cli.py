@@ -120,12 +120,13 @@ class InfraPlane:
 class FakeCCLClient:
     """Records what register asks of the control plane, and plays its operator.
 
-    reports holds the ClusterConfigApplied conditions get_infraplane returns, one per call,
-    the last one from then on; None is a plane with no such condition yet.
+    reports holds (observed credentials version, condition) pairs, one per poll,
+    with the last report repeated after the sequence is exhausted.
     """
 
     instances = []
-    reports = [APPLIED]
+    reports = []
+    credentials_version = "submitted-version"
 
     def __init__(self, namespace, *, api_client):
         self.namespace = namespace
@@ -145,21 +146,25 @@ class FakeCCLClient:
     def delete_infraplane(self, *, name):
         self.deleted = name
 
-    def apply_infraplane(self, **kwargs):
+    def apply_infraplane_with_credentials_version(self, **kwargs):
         self.applied = kwargs
-        return SimpleNamespace(
-            metadata=SimpleNamespace(name=kwargs["name"], namespace=self.namespace)
+        return (
+            SimpleNamespace(
+                metadata=SimpleNamespace(name=kwargs["name"], namespace=self.namespace)
+            ),
+            self.credentials_version,
         )
 
     def get_infraplane(self, *, name):
         reports = FakeCCLClient.reports
-        condition = reports.pop(0) if len(reports) > 1 else reports[0]
+        observed_version, condition = reports.pop(0) if len(reports) > 1 else reports[0]
         return CCLInfraPlane.model_validate({
             "metadata": {"name": name, "namespace": self.namespace},
             "spec": {"clusterCredentialsRef": {"name": f"{name}-credentials"}},
             "status": {
                 "domain": f"{name}.{self.namespace}.example.com",
                 "conditions": [condition] if condition else None,
+                "observedCredentialsResourceVersion": observed_version,
             },
         })
 
@@ -266,7 +271,7 @@ def infra(kubeconfig, monkeypatch, config_file):
     """An infra plane to register, with init already run against the control plane cp."""
     plane = InfraPlane()
     FakeCCLClient.instances = []
-    FakeCCLClient.reports = [APPLIED]
+    FakeCCLClient.reports = [(FakeCCLClient.credentials_version, APPLIED)]
     config_file.parent.mkdir(parents=True)
     config_file.write_text("controlPlane:\n  context: cp\n")
     monkeypatch.setattr(cli.k8s, "CoreV1Api", plane.core)
@@ -329,20 +334,32 @@ def test_register_again_reuses_existing_objects(infra):
     assert FakeCCLClient.instances[0].applied["bearer_token"] == TOKEN
 
 
-def test_register_fails_with_the_reason_the_cluster_was_not_reached(infra, monkeypatch):
-    FakeCCLClient.reports = [UNREACHABLE]
-    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 0)
+def test_register_again_reports_current_failure_at_timeout_after_stale_success(infra, monkeypatch):
+    FakeCCLClient.reports = [
+        ("old-version", APPLIED),
+        (FakeCCLClient.credentials_version, UNREACHABLE),
+    ]
+    now = 0
+
+    def advance_time(seconds):
+        nonlocal now
+        now += seconds
+
+    monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=lambda: now, sleep=advance_time))
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_POLL_SECONDS", 2)
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 4)
     result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
-    assert result.exit_code == 1
+    assert result.exit_code == 1, result.output
+    assert now == 4
     assert (
-        "CCLInfraPlane tenant-a/edge-1 is applied, but after 0s ClusterConfigApplied is False "
+        "CCLInfraPlane tenant-a/edge-1 is applied, but after 4s ClusterConfigApplied is False "
         f"(ClusterUnreachable): {UNREACHABLE['message']}; if the control plane cannot reach "
         f"{KUBECONFIG_SERVER}, run register again with --server"
     ) in result.output
 
 
 def test_register_fails_without_the_operator(infra, monkeypatch):
-    FakeCCLClient.reports = [None]
+    FakeCCLClient.reports = [(None, None)]
     monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 0)
     result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
     assert result.exit_code == 1
@@ -355,12 +372,42 @@ def test_register_fails_without_the_operator(infra, monkeypatch):
 def test_register_again_waits_past_the_old_servers_condition(infra):
     # Registering again with a server that works must not fail on the False the old server
     # left: the operator tries the new one only after register has applied it.
-    FakeCCLClient.reports = [UNREACHABLE, UNREACHABLE, APPLIED]
+    FakeCCLClient.reports = [
+        ("old-version", UNREACHABLE),
+        (FakeCCLClient.credentials_version, UNREACHABLE),
+        (FakeCCLClient.credentials_version, APPLIED),
+    ]
     result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip", "--server", "https://edge-1:6443")
     assert result.exit_code == 0, result.output
     assert result.output.endswith(
         "Registered CCLInfraPlane tenant-a/edge-1; its domain is edge-1.tenant-a.example.com\n"
     )
+
+
+@pytest.mark.parametrize("observed_version", ["old-version", None])
+def test_register_again_rejects_stale_success(infra, monkeypatch, observed_version):
+    FakeCCLClient.reports = [(observed_version, APPLIED)]
+    monkeypatch.setattr(cli, "_CLUSTER_CONFIG_TIMEOUT_SECONDS", 0)
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1, result.output
+    assert "has not reported ClusterConfigApplied for the submitted credentials" in result.output
+
+
+def test_register_again_waits_for_success_for_the_submitted_version(infra):
+    FakeCCLClient.reports = [
+        ("old-version", APPLIED),
+        (FakeCCLClient.credentials_version, APPLIED),
+    ]
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 0, result.output
+    assert FakeCCLClient.reports == [(FakeCCLClient.credentials_version, APPLIED)]
+
+
+def test_register_fails_when_the_apply_returns_no_credentials_version(infra, monkeypatch):
+    monkeypatch.setattr(FakeCCLClient, "credentials_version", "")
+    result = invoke("register", "edge-1", "-n", "tenant-a", "-ip", "ip")
+    assert result.exit_code == 1, result.output
+    assert "the credentials Secret apply returned no resourceVersion" in result.output
 
 
 def test_register_fails_when_token_never_arrives(infra):

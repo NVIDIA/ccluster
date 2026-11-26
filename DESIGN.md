@@ -386,6 +386,12 @@ is computed only once `Available` is true, and both are written in one status pa
 `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
 `ClusterUnreachable` retry every minute; the credentials reasons wait for the Secret watch.
 
+`status.observedCredentialsResourceVersion` identifies the source Secret revision used
+to compute `ClusterConfigApplied`. The controller clears it when there was no evaluation.
+The status patch has a CCLInfraPlane resource-version precondition so a stale cached base
+cannot pair a new credentials version with a condition from a different reconciliation.
+`register` checks the reported version against the credentials apply response.
+
 `DNSReady` — `True/Published` (external-dns has read the current `DNSEndpoint`, which
 does not mean it wrote the records; see the gap above), or `False` with
 `LoadBalancerPending` (the plane reports no LoadBalancer with an address), `Pending`

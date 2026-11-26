@@ -73,10 +73,10 @@ pointing at it. The control-plane operator derives the cluster's domain,
 NAME.NAMESPACE.<base domain>, and writes it to the infra plane's CCLClusterConfig.
 Re-running reuses the same token.
 
-register then waits until the CCLInfraPlane's ClusterConfigApplied condition is True,
-which means the control plane reached the cluster, and prints the domain. If it is not
-True within two minutes, register fails with the condition's reason and message. The
-CCLInfraPlane stays: fix the cause and run register again to wait for it.
+register waits for ClusterConfigApplied=True for the submitted credentials, then prints
+the domain. After two minutes it reports the result for those credentials, or says the
+control plane has yet to report on them. The CCLInfraPlane stays, so you can fix the cause
+and run register again.
 
 Pass --server when the kubeconfig's address is not reachable from the control plane, for
 example a kind cluster, whose kubeconfig points at 127.0.0.1.`,
@@ -129,7 +129,7 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 	if err := client.EnsureNamespace(ctx); err != nil {
 		return apiError(err)
 	}
-	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
+	plane, credentialsVersion, err := client.ApplyInfraPlaneWithCredentialsVersion(ctx, cclclient.InfraPlaneOptions{
 		Name:        name,
 		Server:      server,
 		BearerToken: token,
@@ -139,10 +139,14 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 	if err != nil {
 		return apiError(err)
 	}
+	if credentialsVersion == "" {
+		return fmt.Errorf("CCLInfraPlane %s/%s is applied, but the credentials Secret apply returned no resourceVersion",
+			plane.Namespace, plane.Name)
+	}
 	_, _ = fmt.Fprintf(out, "Applied CCLInfraPlane %s/%s for %s; waiting for the control plane to reach the cluster\n",
 		plane.Namespace, plane.Name, server)
 
-	plane, err = waitForClusterConfig(ctx, client, name, server)
+	plane, err = waitForClusterConfig(ctx, client, name, server, credentialsVersion)
 	if err != nil {
 		return err
 	}
@@ -151,17 +155,12 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 	return nil
 }
 
-// waitForClusterConfig polls the CCLInfraPlane name until its ClusterConfigApplied
-// condition is True, and returns it. At the timeout it returns an error with the
-// condition's last reason and message.
-//
-// A False does not end the wait. Registering again with another server changes only the
-// credentials Secret, not the CCLInfraPlane's generation, so until the operator has tried
-// the new server the condition still describes the old one.
+// waitForClusterConfig waits for ClusterConfigApplied=True for the submitted
+// credentials version. Even a current False can recover before the timeout.
 func waitForClusterConfig(
 	ctx context.Context,
 	client *cclclient.Client,
-	name, server string,
+	name, server, credentialsVersion string,
 ) (*cclusternvidiacomv1alpha1.CCLInfraPlane, error) {
 	var plane *cclusternvidiacomv1alpha1.CCLInfraPlane
 	// Each Get runs under ctx, not the poll's deadline, as in clusterAdminToken.
@@ -171,11 +170,12 @@ func waitForClusterConfig(
 			if plane, err = client.GetInfraPlane(ctx, name); err != nil {
 				return false, err
 			}
-			return apimeta.IsStatusConditionTrue(plane.Status.Conditions,
-				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
+			return plane.Status.ObservedCredentialsResourceVersion == credentialsVersion &&
+				apimeta.IsStatusConditionTrue(plane.Status.Conditions,
+					cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied), nil
 		})
 	if wait.Interrupted(err) && ctx.Err() == nil {
-		return nil, clusterConfigError(plane, server)
+		return nil, clusterConfigError(plane, server, credentialsVersion)
 	}
 	if err != nil {
 		return nil, apiError(err)
@@ -183,13 +183,17 @@ func waitForClusterConfig(
 	return plane, nil
 }
 
-// clusterConfigError says why plane's ClusterConfigApplied condition is not True.
-func clusterConfigError(plane *cclusternvidiacomv1alpha1.CCLInfraPlane, server string) error {
+// clusterConfigError reports the condition only if it describes the submitted credentials.
+func clusterConfigError(plane *cclusternvidiacomv1alpha1.CCLInfraPlane, server, credentialsVersion string) error {
 	conditionType := cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied
 	condition := apimeta.FindStatusCondition(plane.Status.Conditions, conditionType)
 	if condition == nil {
 		return fmt.Errorf("CCLInfraPlane %s/%s is applied, but after %s it has no %s condition; "+
 			"is the ccluster-cp operator running?",
+			plane.Namespace, plane.Name, clusterConfigTimeout, conditionType)
+	}
+	if plane.Status.ObservedCredentialsResourceVersion != credentialsVersion {
+		return fmt.Errorf("CCLInfraPlane %s/%s is applied, but after %s the control plane has not reported %s for the submitted credentials",
 			plane.Namespace, plane.Name, clusterConfigTimeout, conditionType)
 	}
 	return fmt.Errorf("CCLInfraPlane %s/%s is applied, but after %s %s is %s (%s): %s; "+

@@ -336,6 +336,38 @@ func TestRegisterAgainWaitsPastTheOldServersCondition(t *testing.T) {
 	}
 }
 
+func TestRegisterAgainRejectsStaleSuccess(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	fillTokenSecret(t)
+	ctx := t.Context()
+	client := cclclient.New(namespace, kubeClient, clientset)
+	if err := client.EnsureNamespace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
+		Name: "edge-1", Server: "https://old-edge:6443",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := kubeClient.CoreV1().Secrets(namespace).
+		Get(ctx, cclclient.CredentialsSecretName("edge-1"), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plane.Status.ObservedCredentialsResourceVersion = secret.ResourceVersion
+	apimeta.SetStatusCondition(&plane.Status.Conditions, applied("https://old-edge:6443"))
+	if _, err := clientset.CclusterV1alpha1().CCLInfraPlanes(namespace).
+		UpdateStatus(ctx, plane, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Hold the old success in status for every poll of the new registration.
+	clusterConfigTimeout = 100 * time.Millisecond
+	expectError(t, "has not reported ClusterConfigApplied for the submitted credentials",
+		"register", "edge-1", "-n", namespace, "--infra-plane", "ip")
+}
+
 func TestRegisterFailsWhenTokenNeverArrives(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()
@@ -618,9 +650,11 @@ func reportClusterConfig(t *testing.T, namespace string, condition func(server s
 			if err != nil {
 				continue
 			}
-			if !apimeta.SetStatusCondition(&plane.Status.Conditions, condition(string(credentials.Data["server"]))) {
+			changed := apimeta.SetStatusCondition(&plane.Status.Conditions, condition(string(credentials.Data["server"])))
+			if !changed && plane.Status.ObservedCredentialsResourceVersion == credentials.ResourceVersion {
 				continue
 			}
+			plane.Status.ObservedCredentialsResourceVersion = credentials.ResourceVersion
 			time.Sleep(100 * time.Millisecond)
 			plane.Status.Domain = "edge-1." + namespace + ".example.com"
 			_, _ = planes.UpdateStatus(ctx, plane, metav1.UpdateOptions{})
