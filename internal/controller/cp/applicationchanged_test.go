@@ -21,7 +21,7 @@ import (
 
 var _ = Describe("applicationChanged", func() {
 	It("should drop a refresh as the API server stores it", func() {
-		key := client.ObjectKey{Namespace: "default", Name: "refresh-only"}
+		key := client.ObjectKey{Namespace: defaultNamespace, Name: "refresh-only"}
 		application := &argocdv1alpha1.Application{
 			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
 			Spec:       argocdv1alpha1.ApplicationSpec{Project: "default"},
@@ -54,10 +54,10 @@ var _ = Describe("applicationChanged", func() {
 func TestApplicationChanged(t *testing.T) {
 	old := &argocdv1alpha1.Application{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "web", Namespace: "team-a", ResourceVersion: "1", Generation: 1,
+			Name: web, Namespace: team, ResourceVersion: "1", Generation: 1,
 			Labels: map[string]string{labelComponentSetName: "set"},
 		},
-		Spec: argocdv1alpha1.ApplicationSpec{Project: "team-a"},
+		Spec: argocdv1alpha1.ApplicationSpec{Project: team},
 		Status: &argocdv1alpha1.ApplicationStatus{
 			Health: argocdv1alpha1.ApplicationHealthStatus{Status: argocdv1alpha1.HealthStatusProgressing},
 			Sync:   argocdv1alpha1.ApplicationSyncStatus{Status: argocdv1alpha1.SyncStatusSynced},
@@ -79,14 +79,14 @@ func TestApplicationChanged(t *testing.T) {
 			want: false,
 		},
 		{
-			name:   "health",
+			name:   "health status",
 			change: func(a *argocdv1alpha1.Application) { a.Status.Health.Status = argocdv1alpha1.HealthStatusHealthy },
 			want:   true,
 		},
 		{
-			name: "operation",
+			name: "operation state",
 			change: func(a *argocdv1alpha1.Application) {
-				a.Status.OperationState = &argocdv1alpha1.OperationState{Phase: "Running"}
+				a.Status.OperationState = &argocdv1alpha1.OperationState{Phase: operationRunning}
 			},
 			want: true,
 		},

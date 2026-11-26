@@ -28,6 +28,44 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+// Values more than one test file uses.
+const (
+	// defaultNamespace is the namespace most tests work in. The operator names a
+	// namespace's Argo CD project after it, so it names a project too.
+	defaultNamespace = "default"
+	// otherNamespace is a second namespace, such as one a foreign back-reference points at.
+	otherNamespace = "other-namespace"
+	// team is a tenant namespace, and the Argo CD project named after it.
+	team = "team-a"
+
+	planeA = "plane-a"
+	planeB = "plane-b"
+
+	// foreign marks a value another owner put in place.
+	foreign = "someone-elses"
+
+	// lbIP and otherLBIP are LoadBalancer addresses, and ingressLoadBalancer and
+	// apiLoadBalancer the names of labelled LoadBalancers.
+	lbIP                = "192.0.2.10"
+	otherLBIP           = "192.0.2.20"
+	ingressLoadBalancer = "ingress"
+	apiLoadBalancer     = "api"
+
+	// web is the Application, and the Deployment it runs, that the health tests read;
+	// webPod is that Deployment's Pod, which the reader addresses as webPodKey.
+	web       = "web"
+	webPod    = "web-0"
+	podKind   = "Pod"
+	webPodKey = podKind + "/" + webPod
+
+	// reasonRunning is the reason a health function gives a component that runs.
+	reasonRunning = "Running"
+	// The non-terminal phases of a sync operation, which the Argo CD API package leaves
+	// unnamed.
+	operationRunning     = "Running"
+	operationTerminating = "Terminating"
+)
+
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 

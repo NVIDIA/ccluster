@@ -39,13 +39,13 @@ const testComponentSetName = "test-componentset"
 // componentSetWith builds a CCLComponentSet whose components are named, in order, by names.
 func componentSetWith(names ...string) *cclusternvidiacomv1alpha1.CCLComponentSet {
 	componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{
-		ObjectMeta: metav1.ObjectMeta{Name: testComponentSetName, Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: testComponentSetName, Namespace: defaultNamespace},
 	}
 	for _, name := range names {
 		componentSet.Spec.Components = append(componentSet.Spec.Components,
 			cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          name,
-				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
+				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
 					Chart:     testChart(name),
 					Namespace: name,
@@ -138,7 +138,7 @@ func retrying(application *argocdv1alpha1.Application) *argocdv1alpha1.Applicati
 		application.Status = &argocdv1alpha1.ApplicationStatus{}
 	}
 	application.Status.OperationState = &argocdv1alpha1.OperationState{
-		Phase:   "Running",
+		Phase:   operationRunning,
 		Message: retryMessage,
 	}
 	return pending(application)
@@ -477,7 +477,7 @@ func TestRolloutStatus(t *testing.T) {
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  cclusternvidiacomv1alpha1.CCLComponentSetReasonWaveSyncing,
 			wantMessage: `Wave 1 (component "a") is waiting for Argo CD to compare`,
-			notMessage:  "health",
+			notMessage:  "health", //nolint:goconst // the word the message must not contain
 		},
 		{
 			// Argo CD syncs only after it compares, so an operation that finished before
@@ -845,6 +845,7 @@ func TestHelmValuesIgnoresValueFormatting(t *testing.T) {
 		return (&CCLComponentSetReconciler{}).applicationSpec(set, set.Spec.Components[0])
 	}
 
+	//nolint:goconst // the JSON documents compared, as written
 	tests := []struct {
 		name  string
 		a, b  string
@@ -890,7 +891,7 @@ func TestApplicationSpecOmitsHelmWhenValuesAbsent(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec := reconciler.applicationSpec(componentSetWith("a"), cclusternvidiacomv1alpha1.ComponentSpec{
 				Name:          "a",
-				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: "plane-a"},
+				InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: planeA},
 				ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
 					Chart:     "catalogs/cluster_base/a",
 					Namespace: "a",

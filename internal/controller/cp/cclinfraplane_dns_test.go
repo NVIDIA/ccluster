@@ -18,9 +18,9 @@ import (
 
 func TestWildcardEndpointsRejectInvalidAddresses(t *testing.T) {
 	const domain = "gpu-a.infra.example.com"
-	valid := cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "ingress", IP: "192.0.2.10"}
+	valid := cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: ingressLoadBalancer, IP: lbIP}
 	validRecord := externaldnsv1alpha1.Endpoint{
-		DNSName: "*.ingress." + domain, RecordType: "A", Targets: []string{"192.0.2.10"}, RecordTTL: wildcardTTLSeconds,
+		DNSName: "*.ingress." + domain, RecordType: "A", Targets: []string{lbIP}, RecordTTL: wildcardTTLSeconds,
 	}
 
 	for _, tc := range []struct {
@@ -37,13 +37,13 @@ func TestWildcardEndpointsRejectInvalidAddresses(t *testing.T) {
 			invalid: `hostname "LB.example.com" is not a DNS name`},
 		{name: "hostname with a trailing dot", lb: lbStatus("", "lb.example.com."),
 			invalid: `hostname "lb.example.com." is not a DNS name`},
-		{name: "hostname that is an IP address", lb: lbStatus("", "192.0.2.20"),
+		{name: "hostname that is an IP address", lb: lbStatus("", otherLBIP),
 			invalid: `hostname "192.0.2.20" is an IP address`},
-		{name: "invalid hostname beside a valid ip", lb: lbStatus("192.0.2.20", "lb.example.com."),
+		{name: "invalid hostname beside a valid ip", lb: lbStatus(otherLBIP, "lb.example.com."),
 			invalid: `hostname "lb.example.com." is not a DNS name`},
 		{name: "IPv4-mapped IPv6 ip is published as IPv4", lb: lbStatus("::ffff:192.0.2.20", ""),
 			record: &externaldnsv1alpha1.Endpoint{DNSName: "*.api." + domain, RecordType: "A",
-				Targets: []string{"192.0.2.20"}, RecordTTL: wildcardTTLSeconds}},
+				Targets: []string{otherLBIP}, RecordTTL: wildcardTTLSeconds}},
 		{name: "non-canonical IPv6 ip is published canonical", lb: lbStatus("2001:DB8:0::20", ""),
 			record: &externaldnsv1alpha1.Endpoint{DNSName: "*.api." + domain, RecordType: "AAAA",
 				Targets: []string{"2001:db8::20"}, RecordTTL: wildcardTTLSeconds}},
@@ -71,5 +71,5 @@ func TestWildcardEndpointsRejectInvalidAddresses(t *testing.T) {
 }
 
 func lbStatus(ip, hostname string) cclusternvidiacomv1alpha1.LoadBalancerStatus {
-	return cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: "api", IP: ip, Hostname: hostname}
+	return cclusternvidiacomv1alpha1.LoadBalancerStatus{Name: apiLoadBalancer, IP: ip, Hostname: hostname}
 }

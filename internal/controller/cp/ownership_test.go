@@ -23,7 +23,7 @@ func ownerInfraPlane(name, namespace string) *cclusternvidiacomv1alpha1.CCLInfra
 func secretWith(annotations map[string]string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        "plane-a",
+			Name:        planeA,
 			Namespace:   "argocd",
 			Annotations: annotations,
 		},
@@ -31,7 +31,7 @@ func secretWith(annotations map[string]string) *corev1.Secret {
 }
 
 func TestOwnedBy(t *testing.T) {
-	owner := ownerInfraPlane("plane-a", "default")
+	owner := ownerInfraPlane(planeA, defaultNamespace)
 
 	tests := []struct {
 		name        string
@@ -53,16 +53,16 @@ func TestOwnedBy(t *testing.T) {
 		{
 			name: "accepts an object back-referencing this owner",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-a",
-				annotationInfraPlaneNamespace: "default",
+				annotationInfraPlaneName:      planeA,
+				annotationInfraPlaneNamespace: defaultNamespace,
 			},
 			want: true,
 		},
 		{
 			name: "rejects an object back-referencing another name",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-b",
-				annotationInfraPlaneNamespace: "default",
+				annotationInfraPlaneName:      planeB,
+				annotationInfraPlaneNamespace: defaultNamespace,
 			},
 			want: false,
 		},
@@ -71,8 +71,8 @@ func TestOwnedBy(t *testing.T) {
 			// different namespaces map onto one Secret in the Argo CD namespace.
 			name: "rejects an object claimed by a same-named resource in another namespace",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-a",
-				annotationInfraPlaneNamespace: "other",
+				annotationInfraPlaneName:      planeA,
+				annotationInfraPlaneNamespace: otherNamespace,
 			},
 			want: false,
 		},
@@ -86,14 +86,14 @@ func TestOwnedBy(t *testing.T) {
 			// object is treated as someone else's, not as ours.
 			name: "rejects an object carrying only the name annotation",
 			annotations: map[string]string{
-				annotationInfraPlaneName: "plane-a",
+				annotationInfraPlaneName: planeA,
 			},
 			want: false,
 		},
 		{
 			name: "rejects an object carrying only the namespace annotation",
 			annotations: map[string]string{
-				annotationInfraPlaneNamespace: "default",
+				annotationInfraPlaneNamespace: defaultNamespace,
 			},
 			want: false,
 		},
@@ -104,7 +104,7 @@ func TestOwnedBy(t *testing.T) {
 			name: "treats an object stamped by the other key pair as unclaimed",
 			annotations: map[string]string{
 				annotationComponentSetName:      "some-componentset",
-				annotationComponentSetNamespace: "default",
+				annotationComponentSetNamespace: defaultNamespace,
 			},
 			want: true,
 		},
@@ -122,7 +122,7 @@ func TestOwnedBy(t *testing.T) {
 // TestClaimedBy covers the exact-match check the infra-plane cluster's CCLClusterConfig is
 // written and deleted under: unlike ownedBy, an unclaimed object is not the owner's.
 func TestClaimedBy(t *testing.T) {
-	owner := ownerInfraPlane("plane-a", "default")
+	owner := ownerInfraPlane(planeA, defaultNamespace)
 
 	tests := []struct {
 		name        string
@@ -134,30 +134,30 @@ func TestClaimedBy(t *testing.T) {
 		{
 			name: "accepts an object back-referencing this owner",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-a",
-				annotationInfraPlaneNamespace: "default",
+				annotationInfraPlaneName:      planeA,
+				annotationInfraPlaneNamespace: defaultNamespace,
 			},
 			want: true,
 		},
 		{
 			name: "rejects an object back-referencing another name",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-b",
-				annotationInfraPlaneNamespace: "default",
+				annotationInfraPlaneName:      planeB,
+				annotationInfraPlaneNamespace: defaultNamespace,
 			},
 			want: false,
 		},
 		{
 			name: "rejects an object claimed by a same-named resource in another namespace",
 			annotations: map[string]string{
-				annotationInfraPlaneName:      "plane-a",
-				annotationInfraPlaneNamespace: "other",
+				annotationInfraPlaneName:      planeA,
+				annotationInfraPlaneNamespace: otherNamespace,
 			},
 			want: false,
 		},
 		{
 			name:        "rejects an object carrying only the name annotation",
-			annotations: map[string]string{annotationInfraPlaneName: "plane-a"},
+			annotations: map[string]string{annotationInfraPlaneName: planeA},
 			want:        false,
 		},
 	}
@@ -176,7 +176,7 @@ func TestClaimedBy(t *testing.T) {
 		if !infraPlaneOwner.claimedBy(secret, owner) {
 			t.Error("claimedBy() = false after stamp(), want true")
 		}
-		if infraPlaneOwner.claimedBy(secret, ownerInfraPlane("plane-b", "default")) {
+		if infraPlaneOwner.claimedBy(secret, ownerInfraPlane(planeB, defaultNamespace)) {
 			t.Error("claimedBy() = true for another CCLInfraPlane, want false")
 		}
 	})
@@ -193,31 +193,31 @@ func TestNamespaceOwner(t *testing.T) {
 		{name: "adopts an unclaimed object", annotations: nil, want: true},
 		{
 			name:        "accepts an object claimed by this namespace",
-			annotations: map[string]string{annotationInfraPlaneNamespace: "default"},
+			annotations: map[string]string{annotationInfraPlaneNamespace: defaultNamespace},
 			want:        true,
 		},
 		{
 			name:        "rejects an object claimed by another namespace",
-			annotations: map[string]string{annotationInfraPlaneNamespace: "other"},
+			annotations: map[string]string{annotationInfraPlaneNamespace: otherNamespace},
 			want:        false,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := projectOwner.ownedBy(secretWith(test.annotations), "default"); got != test.want {
+			if got := projectOwner.ownedBy(secretWith(test.annotations), defaultNamespace); got != test.want {
 				t.Errorf("ownedBy() = %v, want %v", got, test.want)
 			}
 		})
 	}
 
 	t.Run("makes a stamped object pass its own ownedBy check", func(t *testing.T) {
-		obj := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
-		projectOwner.stamp(obj, "default")
-		if !projectOwner.ownedBy(obj, "default") {
+		obj := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: defaultNamespace}}
+		projectOwner.stamp(obj, defaultNamespace)
+		if !projectOwner.ownedBy(obj, defaultNamespace) {
 			t.Error("ownedBy() = false after stamp(), want true")
 		}
-		if projectOwner.ownedBy(obj, "other") {
+		if projectOwner.ownedBy(obj, otherNamespace) {
 			t.Error("ownedBy() = true for another namespace, want false")
 		}
 		if obj.Labels[labelManagedBy] != labelManagedByValue {
@@ -227,21 +227,21 @@ func TestNamespaceOwner(t *testing.T) {
 }
 
 func TestStamp(t *testing.T) {
-	owner := ownerInfraPlane("plane-a", "default")
+	owner := ownerInfraPlane(planeA, defaultNamespace)
 
 	t.Run("initialises nil label and annotation maps", func(t *testing.T) {
 		// createOrPatchApplication writes into obj.Labels just after it calls stamp, so
 		// a stamp that stopped allocating would nil-map panic there.
-		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "plane-a"}}
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: planeA}}
 		infraPlaneOwner.stamp(secret, owner)
 
-		if secret.Annotations[annotationInfraPlaneName] != "plane-a" {
+		if secret.Annotations[annotationInfraPlaneName] != planeA {
 			t.Errorf("name annotation = %q, want %q",
-				secret.Annotations[annotationInfraPlaneName], "plane-a")
+				secret.Annotations[annotationInfraPlaneName], planeA)
 		}
-		if secret.Annotations[annotationInfraPlaneNamespace] != "default" {
+		if secret.Annotations[annotationInfraPlaneNamespace] != defaultNamespace {
 			t.Errorf("namespace annotation = %q, want %q",
-				secret.Annotations[annotationInfraPlaneNamespace], "default")
+				secret.Annotations[annotationInfraPlaneNamespace], defaultNamespace)
 		}
 		if secret.Labels[labelName] != labelNameValue {
 			t.Errorf("%s = %q, want %q", labelName, secret.Labels[labelName], labelNameValue)
@@ -255,7 +255,7 @@ func TestStamp(t *testing.T) {
 	t.Run("preserves labels and annotations it does not own", func(t *testing.T) {
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:        "plane-a",
+				Name:        planeA,
 				Labels:      map[string]string{"keep": "me"},
 				Annotations: map[string]string{"keep": "me"},
 			},
@@ -276,7 +276,7 @@ func TestStamp(t *testing.T) {
 		if !infraPlaneOwner.ownedBy(secret, owner) {
 			t.Error("ownedBy() = false after stamp(), want true")
 		}
-		if infraPlaneOwner.ownedBy(secret, ownerInfraPlane("plane-a", "other")) {
+		if infraPlaneOwner.ownedBy(secret, ownerInfraPlane(planeA, otherNamespace)) {
 			t.Error("ownedBy() = true for a same-named owner in another namespace, want false")
 		}
 	})

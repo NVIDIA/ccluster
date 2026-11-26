@@ -38,15 +38,15 @@ func registryWith(f healthregistry.HealthFunc) *healthregistry.Registry {
 
 func applicationWithHealth(health string) *argocdv1alpha1.Application {
 	application := &argocdv1alpha1.Application{}
-	application.Namespace, application.Name = "team-a", "web"
-	application.Spec.Project = "team-a"
+	application.Namespace, application.Name = team, web
+	application.Spec.Project = team
 	application.Status = &argocdv1alpha1.ApplicationStatus{}
 	application.Status.Health.Status = health
 	return application
 }
 
 func TestJudge(t *testing.T) {
-	healthy := catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy, Reason: "Running"}
+	healthy := catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy, Reason: reasonRunning}
 	reports := func(health catalogs.Health) healthregistry.HealthFunc {
 		return func(context.Context, cclusternvidiacomv1alpha1.ComponentEntry, catalogs.Observation) catalogs.Health {
 			return health
@@ -70,7 +70,7 @@ func TestJudge(t *testing.T) {
 			chart:      healthTestChart,
 			aggregate:  argocdv1alpha1.HealthStatusProgressing,
 			wantHealth: cclusternvidiacomv1alpha1.ComponentHealthHealthy,
-			wantReason: "Running",
+			wantReason: healthy.Reason,
 		},
 		{
 			name:       "a chart without a function gets the default",
@@ -137,12 +137,12 @@ func TestJudge(t *testing.T) {
 // a deadline, and its reader reads through the same Application.
 func TestJudgeObservation(t *testing.T) {
 	pod := &unstructured.Unstructured{}
-	pod.SetName("web-0")
+	pod.SetName(webPod)
 	argoCD := &fakeArgoCD{
 		tree: apiclient.ResourceTree{Nodes: []apiclient.ResourceNode{{
-			ResourceRef: apiclient.ResourceRef{Version: "v1", Kind: "Pod", Namespace: "team-a", Name: "web-0"},
+			ResourceRef: apiclient.ResourceRef{Version: "v1", Kind: podKind, Namespace: team, Name: webPod},
 		}}},
-		objects: map[string]*unstructured.Unstructured{"Pod/web-0": pod},
+		objects: map[string]*unstructured.Unstructured{webPodKey: pod},
 	}
 	var (
 		read        *unstructured.Unstructured
@@ -160,13 +160,13 @@ func TestJudgeObservation(t *testing.T) {
 	judge(t.Context(), argoCD, healthFuncs, applicationWithHealth(argocdv1alpha1.HealthStatusHealthy),
 		cclusternvidiacomv1alpha1.ComponentEntry{Chart: healthTestChart})
 
-	if read == nil || read.GetName() != "web-0" {
+	if read == nil || read.GetName() != webPod {
 		t.Errorf("the chart's function read %v, want Pod web-0 of the tree", read)
 	}
 	if !hasDeadline {
 		t.Error("the chart's function got a ctx without a deadline")
 	}
-	want := []apiclient.ApplicationRef{{Namespace: "team-a", Name: "web", Project: "team-a"}}
+	want := []apiclient.ApplicationRef{{Namespace: team, Name: web, Project: team}}
 	if got := argoCD.treesRead(); !slices.Equal(got, want) {
 		t.Errorf("trees read of %+v, want %+v", got, want)
 	}
@@ -190,15 +190,15 @@ func TestJudgeTruncatesMessage(t *testing.T) {
 
 func TestComponentHealthsOf(t *testing.T) {
 	application := applicationWithHealth(argocdv1alpha1.HealthStatusProgressing)
-	judged := componentHealths{"web": {Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}}
+	judged := componentHealths{web: {Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy}}
 
-	if got := judged.of("web", application).Status; got != cclusternvidiacomv1alpha1.ComponentHealthHealthy {
+	if got := judged.of(web, application).Status; got != cclusternvidiacomv1alpha1.ComponentHealthHealthy {
 		t.Errorf("judged component: %q, want Healthy", got)
 	}
 	if got := judged.of("api", application).Status; got != cclusternvidiacomv1alpha1.ComponentHealthProgressing {
 		t.Errorf("unjudged component: %q, want the aggregate Progressing", got)
 	}
-	if got := componentHealths(nil).of("web", application).Status; got != cclusternvidiacomv1alpha1.ComponentHealthProgressing {
+	if got := componentHealths(nil).of(web, application).Status; got != cclusternvidiacomv1alpha1.ComponentHealthProgressing {
 		t.Errorf("nothing judged: %q, want the aggregate Progressing", got)
 	}
 }
@@ -235,7 +235,7 @@ func TestPollInterval(t *testing.T) {
 func TestSameHealthStatuses(t *testing.T) {
 	at := metav1.NewTime(time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC))
 	status := cclusternvidiacomv1alpha1.ComponentHealthStatus{
-		Name: "web", Health: cclusternvidiacomv1alpha1.ComponentHealthHealthy, LastTransitionTime: at,
+		Name: web, Health: cclusternvidiacomv1alpha1.ComponentHealthHealthy, LastTransitionTime: at,
 	}
 	changed := status
 	changed.Message = "now with a message"

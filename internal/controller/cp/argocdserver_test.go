@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -97,21 +98,21 @@ func (f *fakeArgoCD) objectsRead() []apiclient.ApplicationRef {
 	return append([]apiclient.ApplicationRef(nil), f.reads...)
 }
 
-var readerApp = apiclient.ApplicationRef{Namespace: "team-a", Name: "web", Project: "team-a"}
+var readerApp = apiclient.ApplicationRef{Namespace: team, Name: web, Project: team}
 
 // TestObservedResources: every tree node converts with its owners, health and info.
 func TestObservedResources(t *testing.T) {
 	tree := &apiclient.ResourceTree{Nodes: []apiclient.ResourceNode{
 		{
 			ResourceRef: apiclient.ResourceRef{
-				Group: "apps", Version: "v1", Kind: "Deployment", Namespace: "team-a", Name: "web", UID: "d1",
+				Group: appsv1.GroupName, Version: "v1", Kind: "Deployment", Namespace: team, Name: web, UID: "d1",
 			},
 			Health: &apiclient.HealthStatus{Status: "Progressing", Message: "1 of 2 updated"},
 		},
 		{
-			ResourceRef: apiclient.ResourceRef{Version: "v1", Kind: "Pod", Namespace: "team-a", Name: "web-0", UID: "p1"},
+			ResourceRef: apiclient.ResourceRef{Version: "v1", Kind: podKind, Namespace: team, Name: webPod, UID: "p1"},
 			ParentRefs: []apiclient.ResourceRef{
-				{Group: "apps", Kind: "ReplicaSet", Namespace: "team-a", Name: "web-1", UID: "r1"},
+				{Group: appsv1.GroupName, Kind: "ReplicaSet", Namespace: team, Name: "web-1", UID: "r1"},
 			},
 			Info: []apiclient.InfoItem{{Name: "Status Reason", Value: "CrashLoopBackOff"}, {Name: "Restart Count", Value: "6"}},
 		},
@@ -122,7 +123,7 @@ func TestObservedResources(t *testing.T) {
 		t.Fatalf("observed %d resources, want the tree's 2", len(observed))
 	}
 	deployment, pod := observed[0], observed[1]
-	if deployment.Kind != "Deployment" || deployment.Group != "apps" || deployment.UID != "d1" ||
+	if deployment.Kind != "Deployment" || deployment.Group != appsv1.GroupName || deployment.UID != "d1" ||
 		deployment.Health != "Progressing" || deployment.HealthMessage != "1 of 2 updated" || !deployment.Rendered() {
 		t.Errorf("deployment = %+v", deployment)
 	}
@@ -138,9 +139,9 @@ func TestObservedResources(t *testing.T) {
 // since the tree was cached reads as nothing, not as an error; any other failure is
 // the reader's error.
 func TestApplicationReader(t *testing.T) {
-	pod := catalogs.ResourceRef{Version: "v1", Kind: "Pod", Namespace: "team-a", Name: "web-0"}
+	pod := catalogs.ResourceRef{Version: "v1", Kind: podKind, Namespace: team, Name: webPod}
 	live := &unstructured.Unstructured{}
-	live.SetName("web-0")
+	live.SetName(webPod)
 
 	for _, tc := range []struct {
 		name       string
@@ -152,8 +153,8 @@ func TestApplicationReader(t *testing.T) {
 		{
 			name: "found",
 			argoCD: &fakeArgoCD{
-				objects: map[string]*unstructured.Unstructured{"Pod/web-0": live},
-				events:  map[string][]corev1.Event{"Pod/web-0": {{Reason: "FailedMount"}}},
+				objects: map[string]*unstructured.Unstructured{webPodKey: live},
+				events:  map[string][]corev1.Event{webPodKey: {{Reason: "FailedMount"}}},
 			},
 			wantObject: true,
 			wantEvents: 1,

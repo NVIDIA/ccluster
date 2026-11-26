@@ -44,19 +44,16 @@ var _ = Describe("CCLComponentSet Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
 			componentSetName = "test-componentset"
-			namespace        = "default"
+			namespace        = defaultNamespace
 			repoURL          = "https://github.com/NVIDIA/ccluster"
 			revision         = "test-revision"
 			resolvedRevision = "test-commit"
 
-			planeA = "plane-a"
-			planeB = "plane-b"
-
 			firstComponent  = "argo-rollouts"
 			secondComponent = "keda"
 
-			// otherNamespace is where a foreign CCLComponentSet's back-reference points.
-			otherNamespace = "other-namespace"
+			// setByTest is the message of a condition a spec writes itself.
+			setByTest = "set by the test"
 		)
 
 		ctx := context.Background()
@@ -121,7 +118,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             status,
 				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
-				Message:            "set by the test",
+				Message:            setByTest,
 				ObservedGeneration: infraPlane.Generation,
 			})
 			infraPlane.Status.ObservedGeneration = infraPlane.Generation
@@ -234,6 +231,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 		// reportComparison simulates Argo CD by reporting health, sync and comparedTo,
 		// and completing a pending sync request. A raw patch preserves unmodelled spec
 		// fields, which a whole-object update through the partial type would discard.
+		//nolint:goconst // the Application's status as Argo CD writes it
 		reportComparison := func(component, health, sync string, mutate func(source map[string]any)) {
 			GinkgoHelper()
 
@@ -1183,7 +1181,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             metav1.ConditionTrue,
 				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
-				Message:            "set by the test",
+				Message:            setByTest,
 				ObservedGeneration: infraPlane.Generation,
 			})
 			infraPlane.Status.ObservedGeneration = infraPlane.Generation
@@ -1231,7 +1229,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Type:               cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable,
 				Status:             metav1.ConditionTrue,
 				Reason:             cclusternvidiacomv1alpha1.CCLInfraPlaneReasonClusterSecretCreated,
-				Message:            "set by the test",
+				Message:            setByTest,
 				ObservedGeneration: infraPlane.Generation,
 			})
 			infraPlane.Status.ObservedGeneration = infraPlane.Generation
@@ -1401,7 +1399,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 			By("waiting while a PostSync hook runs or terminates")
 			// Argo CD keeps spec.operation set until the operation reaches a terminal
 			// phase, so the request staged above stays while the hook runs.
-			for _, phase := range []string{"Running", "Terminating"} {
+			for _, phase := range []string{operationRunning, operationTerminating} {
 				application = getApplication(firstComponent)
 				Expect(application.Operation).NotTo(BeNil())
 				application.Status.OperationState.Phase = phase
@@ -1843,7 +1841,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 
 			By("ignoring an Application the operator did not create")
 			Expect(componentSetForApplication(ctx, &argocdv1alpha1.Application{
-				ObjectMeta: metav1.ObjectMeta{Name: "someone-elses", Namespace: namespace},
+				ObjectMeta: metav1.ObjectMeta{Name: foreign, Namespace: namespace},
 			})).To(BeEmpty())
 		})
 
@@ -2030,7 +2028,7 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				Expect(progressing.Message).To(ContainSubstring("0/3 nodes are available"))
 
 				By("releasing it once the chart judges a component healthy that Argo CD calls Progressing")
-				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy, Reason: "Running"}
+				firstHealth = catalogs.Health{Status: cclusternvidiacomv1alpha1.ComponentHealthHealthy, Reason: reasonRunning}
 				reportCurrentComparison(firstComponent, argocdv1alpha1.HealthStatusProgressing,
 					argocdv1alpha1.SyncStatusSynced)
 				reconcileAndGet()
