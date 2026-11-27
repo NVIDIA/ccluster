@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Publish every merge to main, keyed by commit hash: both operator images and the
-# compute-ssh launcher image as :<sha>, and both charts as <next>-dev.<sha> (pointing at
-# the :<sha> operator images), all to GHCR. ccluster-py goes to PyPI as <next>.dev<N>, N
-# being the commit count, since a PEP 440 version cannot carry the hash.
+# Publish every merge to main as <next>-dev.<N>, N being the commit count: both operator
+# images and the compute-ssh launcher image as :<sha> and :<next>-dev.<N>, and both charts
+# as <next>-dev.<N> (pointing at the :<sha> operator images), all to GHCR. ccluster-py goes
+# to PyPI as the same version, which uv writes <next>.dev<N>. After a release candidate
+# X.Y.Z-rc.K the version is X.Y.Z-rc.K.post.<N>.
 #
 # This is the build half of the release flow. release.yml never builds an image; it
 # retags what this workflow pushed. It also lets an unreleased main commit be deployed
 # and driven with the matching client:
 #   make deploy-cp IMG_TAG=<sha>
-#   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version <next>-dev.<sha>
+#   helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version <next>-dev.<N>
 #   pip install ccluster-py==<next>.dev<N>
 name: Main
 
@@ -23,10 +24,13 @@ permissions:
 
 jobs:
   publish:
-    name: Publish :<sha> images and charts
+    name: Publish <next>-dev.<N> images and charts
     runs-on: ubuntu-latest
     steps:
+      # The full history, so N counts every commit; the dev targets refuse a shallow clone.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -65,6 +69,8 @@ jobs:
           BUILDX_ARGS="--cache-from type=gha,scope=images --cache-to type=gha,scope=images,mode=max"
       - name: Package and push both charts
         run: make helm-package helm-push REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+      - name: Tag the images <next>-dev.<N>
+        run: make docker-tag-dev REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
 
   python:
     name: Build ccluster-py <next>.dev<N>

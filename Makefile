@@ -4,7 +4,8 @@
 # compute-ssh launcher ship as separate images, built from the same Dockerfile via
 # --build-arg PKG, the Go package path.
 #
-# Every image is tagged with the commit it was built from - there is no :dev or :latest.
+# Every image is tagged with the commit it was built from, and on main also with
+# DEV_VERSION - there is no :dev or :latest.
 # A release never rebuilds: `make docker-retag VERSION=X.Y.Z` adds the version tag to the
 # :<sha> manifest that CI already pushed for that commit, so the released image is
 # bit-for-bit the one that was built and tested. A dirty working tree gets a -dirty
@@ -26,9 +27,12 @@ RELEASE_VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 # sorts after the release it follows and before the one it precedes.
 NEXT_VERSION := $(shell printf '%s' '$(or $(RELEASE_VERSION),0.0.0)' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}')
 # DEV_NUMBER is the number of commits up to HEAD. main is squash-merged and linear, so it
-# grows with every merge and names one commit: the Python package, whose PEP 440 version
-# cannot carry a hash, uses it as <next>.dev<N> where the charts use <next>-dev.<sha>.
+# grows with every merge and names one commit.
 DEV_NUMBER := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
+# DEV_VERSION is the version of every artifact of a main-branch build, <next>-dev.<N>,
+# which Helm and pip both order by N. After a release candidate X.Y.Z-rc.K it is
+# X.Y.Z-rc.K.post.<N> instead, which both order between rc.K and rc.K+1.
+DEV_VERSION = $(if $(findstring -,$(RELEASE_VERSION)),$(RELEASE_VERSION).post,$(NEXT_VERSION)-dev).$(DEV_NUMBER)
 # REGISTRY is the OCI prefix for both the images and the charts (oci://$(REGISTRY)/charts).
 REGISTRY  ?= ghcr.io/nvidia
 IMG_CP    ?= $(REGISTRY)/ccluster-cp-operator:$(IMG_TAG)
@@ -371,9 +375,22 @@ docker-retag-ip: require-version ## Retag the pushed ccluster-ip-operator:<sha> 
 docker-retag-compute-ssh: require-version ## Retag the pushed ccluster-compute-ssh:<sha> image as :$(VERSION).
 	$(CONTAINER_TOOL) buildx imagetools create -t $(REGISTRY)/ccluster-compute-ssh:$(VERSION) ${IMG_COMPUTE_SSH}
 
+# A main-branch build also tags its images with the version of its charts and ccluster-py.
+.PHONY: docker-tag-dev
+docker-tag-dev: require-history ## Retag all :<sha> images in the registry as :$(DEV_VERSION).
+	$(MAKE) docker-retag VERSION=$(DEV_VERSION)
+
 .PHONY: require-version
 require-version:
 	@[ -n "$(VERSION)" ] || { echo "VERSION is required, e.g. make $(MAKECMDGOALS) VERSION=0.1.0" >&2; exit 1; }
+
+# A shallow clone counts only the commits it has, so a dev build refuses one rather than
+# reuse a number.
+.PHONY: require-history
+require-history:
+	@if [ -z "$(VERSION)" ] && [ "$$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then \
+		echo "make $(MAKECMDGOALS): a dev build needs the full history to number it; fetch it or set VERSION" >&2; exit 1; \
+	fi
 
 .PHONY: check-version
 check-version: require-version ## Fail unless VERSION matches the VERSION file (the release tag must be cut on the release commit).
@@ -704,15 +721,14 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 
 # Two kinds of build, one set of targets.
 #
-# A main-branch build is keyed by the commit: images are :<sha>, and the charts - which
-# need a semver version - are published as <next>-dev.<sha>, where <next> is the VERSION
-# file with the patch bumped (0.0.2-dev.28ecd0dbadf6 after v0.0.1), with the image tag
-# and CCLUSTER_CATALOG_REVISION inside them set to the same sha. The Python package is published
-# as <next>.dev<N>, N being the commit count (0.0.2.dev57): PEP 440 has no place for a
-# hash and PyPI refuses local versions. That is what .github/workflows/main.yml pushes for
-# every merge. The pre-release form keeps dev builds ordered between the release they
-# follow and the one they precede; `helm search --devel` and `pip install --pre` (or an
-# exact pin) are needed to see them.
+# A main-branch build is keyed by the commit: images are :<sha>, and the charts and the
+# Python package are published as DEV_VERSION, <next>-dev.<N> with N the commit count
+# (0.1.1-dev.201 after v0.1.0; uv writes 0.1.1.dev201), the images also tagged with it by
+# docker-tag-dev, so one string pins a chart, its images and its client. The image tag and
+# CCLUSTER_CATALOG_REVISION inside the charts stay the sha. That is what
+# .github/workflows/main.yml pushes for every merge. The pre-release form keeps dev builds
+# ordered between the release they follow and the one they precede; `helm search --devel`
+# and `pip install --pre` (or an exact pin) are needed to see them.
 #
 # A release (VERSION=X.Y.Z, set by .github/workflows/release.yml from the GitHub Release's
 # tag) never rebuilds an image: docker-retag-* adds the version tag to the :<sha> manifest
@@ -722,16 +738,16 @@ helm-lint-catalogs: helm yq ## Lint and render every catalog chart, with its ci/
 #
 # Nothing committed in the charts or python/ is bumped: they carry `version: 0.0.0-dev` and
 # 0.0.0.dev0 forever, and everything below stamps a copy under dist/ from VERSION, or
-# <next>-dev.<sha> / <next>.dev<N> when it is unset. The only committed version is the
-# VERSION file, which check-version compares against the tag.
-CHART_VERSION   = $(or $(VERSION),$(NEXT_VERSION)-dev.$(IMG_TAG))
+# DEV_VERSION when it is unset. The only committed version is the VERSION file, which
+# check-version compares against the tag.
+CHART_VERSION   = $(or $(VERSION),$(DEV_VERSION))
 CHART_IMAGE_TAG = $(or $(VERSION),$(IMG_TAG))
 CATALOG_REV     = $(if $(VERSION),v$(VERSION),$(IMG_TAG))
 # The CLI is versioned as the charts are; its tarballs are named with this bare version,
 # and the binary reports it with a leading v (CLI_LDFLAGS).
 CLI_VERSION     = $(CHART_VERSION)
-# PEP 440 spelling; uv normalises pre-releases (0.1.0-rc.1 -> 0.1.0rc1).
-PY_VERSION      = $(or $(VERSION),$(NEXT_VERSION).dev$(DEV_NUMBER))
+# uv writes it in PEP 440 spelling (0.1.1-dev.201 -> 0.1.1.dev201, 0.1.0-rc.1 -> 0.1.0rc1).
+PY_VERSION      = $(CHART_VERSION)
 DIST_CHARTS ?= dist/charts
 DIST_PYTHON ?= dist/python
 DIST_CLI ?= dist/cli
@@ -743,15 +759,15 @@ helm-package: helm-package-cp helm-package-ip ## Package both charts into $(DIST
 
 # Packaging works on a copy so charts/{cp,ip}/chart stay byte-identical to what
 # `make helm-generate` emits; CI fails on any diff there. The stamped values are the
-# image tag (the template is `repository:tag`, with no appVersion fallback) and, for cp,
-# CCLUSTER_CATALOG_REVISION, so a chart always pins the catalog to the commit or tag it
-# came from.
+# image tag (the template falls back to appVersion only for an empty tag; appVersion is
+# the chart version) and, for cp, CCLUSTER_CATALOG_REVISION, so a chart always pins its
+# image and the catalog to the commit or tag it came from.
 # The copy also gets the project LICENSE and THIRD_PARTY_NOTICES.md, so every packaged
 # chart carries its license payload; the cp chart's notices cover its bundled argo-cd.
 CHART_LICENSE_FILES ?= LICENSE THIRD_PARTY_NOTICES.md
 
 .PHONY: helm-package-cp
-helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(CHART_VERSION).tgz.
+helm-package-cp: require-history helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/ccluster-cp-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-cp && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_CP) $(DIST_CHARTS)/ccluster-cp
 	cp $(CHART_LICENSE_FILES) $(DIST_CHARTS)/ccluster-cp/
@@ -759,16 +775,16 @@ helm-package-cp: helm helm-deps-cp yq ## Package the cp chart as $(DIST_CHARTS)/
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
 	"$(YQ)" -i '.manager.envOverrides.CCLUSTER_CATALOG_REVISION = "$(CATALOG_REV)"' \
 		$(DIST_CHARTS)/ccluster-cp/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-cp --version $(CHART_VERSION) --app-version $(CHART_VERSION) -d $(DIST_CHARTS)
 
 .PHONY: helm-package-ip
-helm-package-ip: helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz.
+helm-package-ip: require-history helm yq ## Package the ip chart as $(DIST_CHARTS)/ccluster-ip-$(CHART_VERSION).tgz.
 	rm -rf $(DIST_CHARTS)/ccluster-ip && mkdir -p $(DIST_CHARTS)
 	cp -R $(CHART_IP) $(DIST_CHARTS)/ccluster-ip
 	cp $(CHART_LICENSE_FILES) $(DIST_CHARTS)/ccluster-ip/
 	"$(YQ)" -i '.manager.image.repository = "$(REGISTRY)/ccluster-ip-operator" | .manager.image.tag = "$(CHART_IMAGE_TAG)"' \
 		$(DIST_CHARTS)/ccluster-ip/values.yaml
-	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(CHART_VERSION) --app-version $(CHART_IMAGE_TAG) -d $(DIST_CHARTS)
+	"$(HELM)" package $(DIST_CHARTS)/ccluster-ip --version $(CHART_VERSION) --app-version $(CHART_VERSION) -d $(DIST_CHARTS)
 
 .PHONY: helm-push
 helm-push: helm-push-cp helm-push-ip ## Push both packaged charts to oci://$(REGISTRY)/charts.
@@ -805,13 +821,9 @@ cli-package: go-licenses ## Cross-compile the ccluster CLI into $(DIST_CLI), one
 
 # `uv version` edits python/pyproject.toml in place; that is intended in CI and is undone
 # locally with `git checkout python/pyproject.toml`. Publishing is left to the workflows
-# (PyPI trusted publishing), which need no credentials in the Makefile. A shallow clone
-# counts only the commits it has, so a dev build refuses one rather than reuse a number.
+# (PyPI trusted publishing), which need no credentials in the Makefile.
 .PHONY: python-build
-python-build: uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as $(PY_VERSION).
-	@if [ -z "$(VERSION)" ] && [ "$$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then \
-		echo "python-build: a dev build needs the full history to number it; fetch it or set VERSION" >&2; exit 1; \
-	fi
+python-build: require-history uv ## Build the ccluster-py wheel and sdist into $(DIST_PYTHON) as $(PY_VERSION).
 	rm -rf $(DIST_PYTHON)
 	cd python && "$(UV)" version --no-sync $(PY_VERSION) && "$(UV)" build --out-dir ../$(DIST_PYTHON)
 

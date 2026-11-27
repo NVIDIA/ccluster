@@ -85,14 +85,17 @@ The exception is `compute_deployment`'s default `sshInjectorImage`: catalogs are
 from git, so the release PR writes the launcher tag into its `values.yaml` next to
 `VERSION`, and a test fails when the two differ.
 
-- Every merge to `main` runs `main.yml`, publishing all three images as `:<sha>` and charts as
-  `<next>-dev.<sha>`, where `next` is the committed version with its patch incremented.
-  The packaged chart points at that image hash and catalog commit. The same run publishes
-  `ccluster-py==<next>.dev<N>` to PyPI, where `N` is `git rev-list --count <sha>`: PEP 440
-  has no room for a hash and PyPI rejects local versions. `main` is squash-merged and
-  linear, so `N` grows with every merge and names one commit. The job checks out the full
-  history, and `make python-build` refuses a shallow clone for a dev build. The PyPI file's
-  provenance and the run summary record the commit.
+- Every merge to `main` runs `main.yml`, publishing all three images as `:<sha>` and
+  `:<next>-dev.<N>`, the charts as `<next>-dev.<N>` and `ccluster-py==<next>.dev<N>`, the
+  same version in PEP 440 spelling. `next` is the committed version with its patch
+  incremented and `N` is `git rev-list --count <sha>`: a hash would sort as text, PEP 440
+  has no room for one and PyPI rejects local versions. The packaged chart points at the
+  image hash and catalog commit. `main` is squash-merged and linear, so `N` grows with
+  every merge and names one commit. After a release candidate `X.Y.Z-rc.K` the version is
+  `X.Y.Z-rc.K.post.<N>`, which SemVer and PEP 440 both order between `rc.K` and `rc.K+1`.
+  The `publish` and `python` jobs check out the full history, and `helm-package-*`,
+  `python-build` and `docker-tag-dev` refuse a shallow clone for a dev build. The PyPI
+  file's provenance and the run summary record the commit.
 - Publishing a GitHub Release `vX.Y.Z` runs `release.yml`. It retags the images already
   built for the release's merge commit, packages charts as `X.Y.Z` pointing at those
   images and catalog tag `vX.Y.Z`, publishes Python through the `pypi` trusted-publishing

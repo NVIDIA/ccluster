@@ -364,17 +364,21 @@ field of the underlying resources.
 
 ## Development builds
 
-Every merge to `main` publishes both operator images tagged `<sha12>`, the first 12
-characters of the commit hash, both charts as a pre-release of the next version,
-`X.Y.Z-dev.<sha12>`, and the Python package as `ccluster-py==X.Y.Z.dev<N>`, where `N` is
-the commit's position on `main` (`git rev-list --count <sha>` in a full clone):
+Every merge to `main` publishes its charts, images and Python package as one pre-release
+of the next version, `X.Y.Z-dev.<N>`, where `N` is the commit's position on `main`
+(`git rev-list --count <sha>` in a full clone). The images are also tagged `<sha12>`, the
+first 12 characters of the commit hash, and pip spells the version `X.Y.Z.dev<N>`:
 
 ```bash
-helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version X.Y.Z-dev.<sha12> ...
-pip install "ccluster-py==X.Y.Z.dev$(git rev-list --count <sha>)"
+N=$(git rev-list --count <sha>)
+helm install ccluster-cp oci://ghcr.io/nvidia/charts/ccluster-cp --version "X.Y.Z-dev.$N" ...
+pip install "ccluster-py==X.Y.Z.dev$N"
 ```
 
-The chart sets `CCLUSTER_CATALOG_REVISION` to the same `<sha12>`.
+The chart runs the `<sha12>` images and sets `CCLUSTER_CATALOG_REVISION` to the same
+`<sha12>`. `git rev-list --reverse --first-parent origin/main | sed -n '<N>p'` finds the
+commit of a version. After a release candidate `X.Y.Z-rc.K`, development builds are
+`X.Y.Z-rc.K.post.<N>` (pip: `X.Y.ZrcK.post<N>`).
 
 `pip` ignores these pre-releases unless pinned exactly or given `--pre`. The CLI binaries
 are built only for releases. [Build and release contracts](build-and-release.md#artifact-versions-and-publishing)
