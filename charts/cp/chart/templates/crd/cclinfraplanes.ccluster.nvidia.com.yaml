@@ -33,6 +33,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="DNSReady")].status
       name: DNS
       type: string
+    - jsonPath: .status.conditions[?(@.type=="Deleting")].reason
+      name: Deleting
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -253,6 +256,9 @@ spec:
                       external-dns marks the records read before it writes them, so True does not
                       mean they were published: the provider may reject them, or external-dns may
                       skip them.
+                    - "Deleting": set only on a CCLInfraPlane being deleted, True while
+                      CCLComponentSets still reference it. The plane keeps its registration until
+                      they are gone, so that their teardown can still reach the cluster.
 
                   The status of each condition is one of True, False, or Unknown.
                 items:

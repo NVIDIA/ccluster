@@ -293,8 +293,10 @@ ccluster unregister edge-1 -n team-a
 ```
 
 This removes the registration and its credentials Secret from the control plane, and leaves
-the namespace. The infra plane is not touched; its ServiceAccount and token stay, so
-registering the cluster again reuses them.
+the namespace. While a component set still references the cluster, the operator keeps the
+registration until the set is gone, so the set's charts can still be uninstalled; the
+command does not wait for that. The infra plane is not touched; its ServiceAccount and
+token stay, so registering the cluster again reuses them.
 
 ### List and inspect
 

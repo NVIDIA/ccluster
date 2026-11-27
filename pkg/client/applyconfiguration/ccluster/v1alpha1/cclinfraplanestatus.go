@@ -28,6 +28,9 @@ type CCLInfraPlaneStatusApplyConfiguration struct {
 	// external-dns marks the records read before it writes them, so True does not
 	// mean they were published: the provider may reject them, or external-dns may
 	// skip them.
+	// - "Deleting": set only on a CCLInfraPlane being deleted, True while
+	// CCLComponentSets still reference it. The plane keeps its registration until
+	// they are gone, so that their teardown can still reach the cluster.
 	//
 	// The status of each condition is one of True, False, or Unknown.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`

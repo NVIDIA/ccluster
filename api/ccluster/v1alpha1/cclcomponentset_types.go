@@ -96,7 +96,7 @@ type CCLComponentSetStatus struct {
 	//
 	// Condition types reported by the control-plane operator:
 	//   - "Validated": every component's infraPlaneRef resolves to an Available
-	//     CCLInfraPlane.
+	//     CCLInfraPlane that is not being deleted.
 	//   - "ComponentsApplied": the Argo CD Applications for the components released so
 	//     far have been written.
 	//   - "Progressing": whether the rollout has finished, and which component it is
@@ -202,7 +202,8 @@ const (
 // The condition types the control-plane operator reports in CCLComponentSet.status.
 const (
 	// CCLComponentSetConditionValidated reports whether every component's infraPlaneRef
-	// resolves to a CCLInfraPlane that Argo CD can already reach.
+	// resolves to a CCLInfraPlane that Argo CD can already reach and that is not being
+	// deleted.
 	CCLComponentSetConditionValidated = "Validated"
 	// CCLComponentSetConditionComponentsApplied reports on the Argo CD Applications that
 	// deploy the components onto their infra-plane clusters.
@@ -219,6 +220,7 @@ const (
 	CCLComponentSetReasonComponentsAccepted = "ComponentsAccepted"
 	CCLComponentSetReasonInfraPlaneNotFound = "InfraPlaneNotFound"
 	CCLComponentSetReasonInfraPlaneNotReady = "InfraPlaneNotReady"
+	CCLComponentSetReasonInfraPlaneDeleting = "InfraPlaneDeleting"
 
 	// Progressing. When validation failed and the component being waited on needs an
 	// Application written or deleted, Progressing carries the Validated reason instead.

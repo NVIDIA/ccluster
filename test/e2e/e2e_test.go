@@ -568,6 +568,54 @@ var _ = Describe("Manager", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		// Issue #299: a deleted CCLInfraPlane waits in its finalizer while a
+		// CCLComponentSet references it, and the CCLComponentSet watch
+		// (infraPlanesForComponentSet) finishes it once the set is gone. envtest calls the
+		// map function directly; only a running manager proves the event arrives, and
+		// nothing else brings the plane back, since its finalizer asks for no requeue. The
+		// set's second component names a plane that does not exist, so it applies nothing
+		// in either tier and its deletion needs no Argo CD teardown; the full tier's
+		// "deleted together" spec covers that.
+		It("should keep a deleted CCLInfraPlane until the CCLComponentSet referencing it is gone", func() {
+			const componentSetName = "e2e-plane-waits"
+			const planeName = "e2e-plane-waits-plane"
+			const credentialsName = "e2e-plane-waits-plane-credentials"
+
+			By("registering the plane and a CCLComponentSet that references it")
+			createInClusterCredentials(crNamespace, credentialsName)
+			applyCCLInfraPlane(planeName, credentialsName)
+			waitInfraPlaneAvailable(planeName)
+			applyTwoPlaneCCLComponentSet(componentSetName, planeName, "no-such-plane")
+			Eventually(func(g Gomega) {
+				g.Expect(componentSetCondition(componentSetName, conditionValidated, "reason")).
+					To(Equal("InfraPlaneNotFound"))
+			}, 2*time.Minute).Should(Succeed())
+
+			By("deleting the plane, which waits for the CCLComponentSet")
+			_, err := utils.Run(exec.Command("kubectl", "delete", "cclinfraplane", planeName,
+				"-n", crNamespace, "--wait=false"))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				g.Expect(infraPlaneCondition(planeName, conditionDeleting, "reason")).
+					To(Equal("ComponentSetsRemaining"))
+				g.Expect(infraPlaneCondition(planeName, conditionDeleting, "message")).
+					To(ContainSubstring(componentSetName))
+			}, 2*time.Minute).Should(Succeed())
+			Expect(infraPlaneCondition(planeName, conditionAvailable, "status")).To(Equal("True"))
+
+			By("rejecting the plane in the CCLComponentSet as being deleted")
+			Eventually(func(g Gomega) {
+				g.Expect(componentSetCondition(componentSetName, conditionValidated, "reason")).
+					To(Equal("InfraPlaneDeleting"))
+			}, 2*time.Minute).Should(Succeed())
+
+			// Inline, not DeferCleanup: a finalized CR outliving the operator wedges the
+			// CRD and hangs `make uninstall`.
+			By("finishing the plane's deletion once the CCLComponentSet is gone")
+			deleteCCLComponentSet(componentSetName)
+			deleteInfraPlane(planeName)
+		})
+
 		// The operator writes the CCLClusterConfig singleton into each infra plane and
 		// watches it; the infra-plane operator there verifies the cluster against it, and
 		// its verdict and the cluster's ingress LoadBalancer come back onto the
@@ -1502,6 +1550,59 @@ type: kubernetes.io/service-account-token
 				})
 			}
 
+			// Issue #299: a CCLInfraPlane deleted together with a CCLComponentSet that
+			// references it waits, in its finalizer, for the set's teardown, so Argo CD can
+			// still reach the cluster to uninstall every component. Run on the ex-cluster
+			// target only: there the mirrored Secret is the one thing that lets Argo CD
+			// reach the cluster, which is what deleting the plane first used to remove.
+			It("should uninstall every component when a CCLInfraPlane and its CCLComponentSet are deleted together", func() {
+				t := exCluster()
+				componentSetName := "e2e-delete-together"
+				planeName := "e2e-delete-together-plane"
+
+				By("registering the " + t.name + " plane")
+				t.register(planeName)
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "cclinfraplane",
+						planeName, "-n", crNamespace, "-o",
+						"jsonpath={.status.conditions[?(@.type=='Available')].status}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(strings.TrimSpace(out)).To(Equal("True"))
+				}, 2*time.Minute).Should(Succeed())
+
+				By("rolling out a two-component CCLComponentSet")
+				applyOrderedCCLComponentSet(componentSetName, planeName)
+				Eventually(func(g Gomega) {
+					g.Expect(componentSetCondition(componentSetName, conditionProgressing, "reason")).
+						To(Equal("RolloutComplete"))
+				}, 10*time.Minute, 2*time.Second).Should(Succeed())
+
+				By("deleting the plane, its credentials Secret and the set in one call, plane first")
+				_, err := utils.Run(exec.Command("kubectl", "delete", "-n", crNamespace, "--wait=false",
+					"cclinfraplane/"+planeName, "secret/"+credentialsSecretName(planeName),
+					"cclcomponentset/"+componentSetName))
+				Expect(err).NotTo(HaveOccurred())
+
+				// State-based: the plane is read first, so if it is already gone, the set,
+				// read afterwards, must be gone too.
+				By("confirming the plane outlives the set")
+				Eventually(func(g Gomega) {
+					_, planeErr := utils.Run(exec.Command("kubectl", "get", "cclinfraplane", planeName, "-n", crNamespace))
+					_, setErr := utils.Run(exec.Command("kubectl", "get", "cclcomponentset", componentSetName, "-n", crNamespace))
+					if planeErr != nil {
+						Expect(setErr).To(HaveOccurred(), "CCLInfraPlane deleted while its CCLComponentSet remained")
+					}
+					g.Expect(planeErr).To(HaveOccurred(), "CCLInfraPlane should be gone")
+				}, 8*time.Minute, 2*time.Second).Should(Succeed())
+
+				By("verifying every component was uninstalled from the infra-plane cluster")
+				for _, ns := range []string{"argo-rollouts", "keda"} {
+					out, err := utils.Run(t.cluster.Kubectl("get", "deployments", "-n", ns, "-o", "name"))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(strings.TrimSpace(out)).To(BeEmpty(), "Deployments left behind in "+ns)
+				}
+			})
+
 			// The generated Application's SyncPolicy always sets Automated{SelfHeal:true}
 			// (cclcomponentset_builder.go), but nothing exercises that Argo CD actually
 			// acts on it. This mutates a live resource Argo CD manages and confirms it
@@ -2257,6 +2358,7 @@ const (
 	conditionAvailable            = "Available"
 	conditionClusterConfigApplied = "ClusterConfigApplied"
 	conditionDNSReady             = "DNSReady"
+	conditionDeleting             = "Deleting"
 )
 
 // applyManifest renders one of the Go-templated manifests under test/e2e/testdata with data
@@ -2309,6 +2411,16 @@ func applyCCLComponentSet(name, planeName string) {
 	GinkgoHelper()
 	applyManifest("cclcomponentset.yaml", map[string]string{
 		"Name": name, "Namespace": crNamespace, "PlaneName": planeName,
+	})
+}
+
+// applyTwoPlaneCCLComponentSet creates a CCLComponentSet with argo-rollouts on planeName
+// and keda on otherPlaneName.
+func applyTwoPlaneCCLComponentSet(name, planeName, otherPlaneName string) {
+	GinkgoHelper()
+	applyManifest("cclcomponentset_two_planes.yaml", map[string]string{
+		"Name": name, "Namespace": crNamespace,
+		"PlaneName": planeName, "OtherPlaneName": otherPlaneName,
 	})
 }
 

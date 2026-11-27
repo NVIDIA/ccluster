@@ -108,14 +108,19 @@ func (r *CCLInfraPlaneReconciler) createOrPatchProject(
 }
 
 // deleteProjectIfUnused deletes the namespace's AppProject when infraPlane is the last
-// CCLInfraPlane in its namespace that is not itself being deleted.
+// CCLInfraPlane in its namespace that is not itself being deleted, nor waiting in its
+// finalizer for the CCLComponentSets that reference it. referrers maps plane names to
+// those sets, as componentSetsByInfraPlane returns them.
 //
 // Terminating planes are not counted. If they were, two planes deleted together would
 // each see the other and neither would delete the project; counting only live ones means
-// both try, and the second delete finds nothing, which is fine.
+// both try, and the second delete finds nothing, which is fine. A Terminating plane a set
+// still references is counted: its sets' Applications live in the project while they
+// tear down, and that plane deletes the project itself once they are gone.
 func (r *CCLInfraPlaneReconciler) deleteProjectIfUnused(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	referrers map[string][]string,
 ) error {
 	log := logf.FromContext(ctx)
 	name := projectName(infraPlane.Namespace)
@@ -126,7 +131,10 @@ func (r *CCLInfraPlaneReconciler) deleteProjectIfUnused(
 	}
 	for i := range list.Items {
 		other := &list.Items[i]
-		if other.Name != infraPlane.Name && other.DeletionTimestamp.IsZero() {
+		if other.Name == infraPlane.Name {
+			continue
+		}
+		if other.DeletionTimestamp.IsZero() || len(referrers[other.Name]) > 0 {
 			log.V(1).Info("Kept Argo CD AppProject, other CCLInfraPlanes remain",
 				"project", name, "projectNamespace", r.ArgoCDNamespace)
 			return nil

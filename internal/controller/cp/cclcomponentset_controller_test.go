@@ -1241,6 +1241,46 @@ var _ = Describe("CCLComponentSet Controller", func() {
 				To(Equal(metav1.ConditionTrue))
 		})
 
+		// A plane being deleted stays Available, and current, while the sets that
+		// reference it tear down through it. Its deletion timestamp is what keeps a set
+		// that is not itself being deleted from releasing anything more onto it.
+		It("should report InfraPlaneDeleting and release nothing more onto a plane being deleted", func() {
+			createInfraPlane(planeA, true)
+			createInfraPlane(planeB, true)
+			createComponentSet(components())
+			Expect(conditionOf(settle(), cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated).Status).
+				To(Equal(metav1.ConditionTrue))
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+
+			By("deleting the second component's plane, which a finalizer keeps Available")
+			planeKey := types.NamespacedName{Name: planeB, Namespace: namespace}
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, planeKey, infraPlane)).To(Succeed())
+			controllerutil.AddFinalizer(infraPlane, finalizerName)
+			Expect(k8sClient.Update(ctx, infraPlane)).To(Succeed())
+			DeferCleanup(func() {
+				plane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+				if err := k8sClient.Get(ctx, planeKey, plane); err != nil {
+					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
+					return
+				}
+				if controllerutil.RemoveFinalizer(plane, finalizerName) {
+					Expect(client.IgnoreNotFound(k8sClient.Update(ctx, plane))).To(Succeed())
+				}
+			})
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+
+			validated := conditionOf(reconcileAndGet(), cclusternvidiacomv1alpha1.CCLComponentSetConditionValidated)
+			Expect(validated.Status).To(Equal(metav1.ConditionFalse))
+			Expect(validated.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneDeleting))
+			Expect(validated.Message).To(ContainSubstring(planeB))
+
+			By("withholding the second component once the first is healthy, keeping the first")
+			release(firstComponent)
+			Expect(applicationExists(firstComponent)).To(BeTrue())
+			Expect(applicationExists(secondComponent)).To(BeFalse())
+		})
+
 		It("should report which component the rollout is waiting on", func() {
 			createInfraPlane(planeA, true)
 			createInfraPlane(planeB, true)

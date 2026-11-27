@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A two-component CCLComponentSet with one component on each of two planes, argo-rollouts
+# on PlaneName first. Validation checks the planes in that order.
+apiVersion: ccluster.nvidia.com/v1alpha1
+kind: CCLComponentSet
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  components:
+    - name: argo-rollouts
+      infraPlaneRef:
+        name: {{ .PlaneName }}
+      chart: catalogs/cluster_base/argo_rollouts
+      namespace: argo-rollouts
+    - name: keda
+      infraPlaneRef:
+        name: {{ .OtherPlaneName }}
+      chart: catalogs/cluster_base/keda
+      namespace: keda

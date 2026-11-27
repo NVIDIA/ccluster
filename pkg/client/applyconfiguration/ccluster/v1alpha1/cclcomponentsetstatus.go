@@ -19,7 +19,7 @@ type CCLComponentSetStatusApplyConfiguration struct {
 	//
 	// Condition types reported by the control-plane operator:
 	// - "Validated": every component's infraPlaneRef resolves to an Available
-	// CCLInfraPlane.
+	// CCLInfraPlane that is not being deleted.
 	// - "ComponentsApplied": the Argo CD Applications for the components released so
 	// far have been written.
 	// - "Progressing": whether the rollout has finished, and which component it is

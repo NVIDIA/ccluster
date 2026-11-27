@@ -123,7 +123,8 @@ type CCLComponentSetReconciler struct {
 //     Available, because the generated Applications address their destination cluster by
 //     name, and that name only exists once its cluster Secret has been mirrored. An
 //     Available CCLInfraPlane also guarantees its namespace's AppProject exists, so the
-//     project is never checked here. Reported as the Validated condition.
+//     project is never checked here. It must not be being deleted either: nothing new is
+//     released onto a cluster that is going away. Reported as the Validated condition.
 //  2. One Argo CD Application is written per component the rollout has reached, into the
 //     CCLComponentSet's own namespace under that project. Once every component has
 //     finished, the Application of one component no longer in the spec is deleted.
@@ -319,7 +320,8 @@ func (r *CCLComponentSetReconciler) judgeUntilUnfinished(
 }
 
 // resolveInfraPlanes checks that every component names a CCLInfraPlane that exists in the
-// CCLComponentSet's namespace and is Available for its current generation.
+// CCLComponentSet's namespace, is not being deleted, and is Available for its current
+// generation.
 //
 // An empty reason means every component resolved. A non-empty reason is a condition to
 // report, not an error to retry; a returned error is a genuine API failure.
@@ -347,6 +349,15 @@ func (r *CCLComponentSetReconciler) resolveInfraPlanes(
 				component.Name, name), nil
 		case err != nil:
 			return "", "", err
+		}
+
+		// A plane being deleted stays Available while the sets that reference it tear
+		// down through it, but nothing new may be released onto a cluster that is going
+		// away. Teardown does not validate, so it is unaffected.
+		if !infraPlane.DeletionTimestamp.IsZero() {
+			return cclusternvidiacomv1alpha1.CCLComponentSetReasonInfraPlaneDeleting, fmt.Sprintf(
+				"Component %q references CCLInfraPlane %q, which is being deleted",
+				component.Name, name), nil
 		}
 
 		// Neither case is an error: the CCLInfraPlane may simply not have been

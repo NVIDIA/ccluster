@@ -8,6 +8,7 @@ package cp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -223,6 +224,69 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 			return mirror
 		}
 
+		// testFinalizer keeps a CCLComponentSet Terminating, standing in for the set
+		// controller's teardown, which nothing runs here.
+		const testFinalizer = "ccluster.nvidia.com/test-teardown"
+
+		// createComponentSet creates a CCLComponentSet with one component on each named
+		// CCLInfraPlane, and the given finalizers. Cleaned up by AfterEach.
+		createComponentSet := func(key types.NamespacedName, finalizers []string, planes ...string) {
+			GinkgoHelper()
+
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: key.Name, Namespace: key.Namespace, Finalizers: finalizers,
+				},
+			}
+			for i, plane := range planes {
+				componentSet.Spec.Components = append(componentSet.Spec.Components,
+					cclusternvidiacomv1alpha1.ComponentSpec{
+						Name:          fmt.Sprintf("component-%d", i),
+						InfraPlaneRef: cclusternvidiacomv1alpha1.LocalObjectReference{Name: plane},
+						ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{
+							Chart:     "catalogs/cluster_base/keda",
+							Namespace: "keda",
+						},
+					})
+			}
+			Expect(k8sClient.Create(ctx, componentSet)).To(Succeed())
+		}
+
+		// deleteComponentSet deletes a CCLComponentSet, stripping its finalizers first
+		// unless keepFinalizers, which leaves it Terminating.
+		deleteComponentSet := func(key types.NamespacedName, keepFinalizers bool) {
+			GinkgoHelper()
+
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, key, componentSet)).To(Succeed())
+			if !keepFinalizers && len(componentSet.Finalizers) > 0 {
+				componentSet.Finalizers = nil
+				Expect(k8sClient.Update(ctx, componentSet)).To(Succeed())
+			}
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, componentSet))).To(Succeed())
+		}
+
+		// deleting returns the plane's Deleting condition, or nil.
+		deleting := func(key types.NamespacedName) *metav1.Condition {
+			GinkgoHelper()
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, key, infraPlane)).To(Succeed())
+			return apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting)
+		}
+
+		infraPlaneGone := func(key types.NamespacedName) bool {
+			GinkgoHelper()
+
+			err := k8sClient.Get(ctx, key, &cclusternvidiacomv1alpha1.CCLInfraPlane{})
+			if apierrors.IsNotFound(err) {
+				return true
+			}
+			Expect(err).NotTo(HaveOccurred())
+			return false
+		}
+
 		BeforeEach(func() {
 			remoteClient = k8sClient
 			watches = &recordingWatcher{}
@@ -264,6 +328,19 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 		})
 
 		AfterEach(func() {
+			By("Cleanup every CCLComponentSet, which would keep its CCLInfraPlanes")
+			for _, ns := range []string{namespace, argoCDNamespace} {
+				var list cclusternvidiacomv1alpha1.CCLComponentSetList
+				Expect(k8sClient.List(ctx, &list, client.InNamespace(ns))).To(Succeed())
+				for i := range list.Items {
+					deleteComponentSet(client.ObjectKeyFromObject(&list.Items[i]), false)
+				}
+				Eventually(func() []cclusternvidiacomv1alpha1.CCLComponentSet {
+					Expect(k8sClient.List(ctx, &list, client.InNamespace(ns))).To(Succeed())
+					return list.Items
+				}).Should(BeEmpty())
+			}
+
 			By("Cleanup every CCLInfraPlane, running the finalizer of each")
 			// envtest runs no garbage collector, so an object survives until the
 			// controller drops its finalizer. Without this the next spec's Create
@@ -553,6 +630,220 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 
 			deleteAndFinalize(typeNamespacedName)
 			Expect(projectExists(projectNamespacedName)).To(BeTrue())
+		})
+
+		// A set's teardown reaches the cluster through the mirrored Secret, so the plane
+		// keeps it, and everything else, until no set references the plane.
+		It("should wait for a CCLComponentSet that references it before deleting anything", func() {
+			createSecret(credentials)
+			settle()
+			Expect(clusterConfigExists()).To(BeTrue())
+
+			setKey := types.NamespacedName{Name: "workloads", Namespace: namespace}
+			createComponentSet(setKey, nil, resourceName)
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			By("keeping the finalizer, the registration and the CCLClusterConfig")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(infraPlane, finalizerName)).To(BeTrue())
+			getMirror()
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
+			Expect(clusterConfigExists()).To(BeTrue())
+			Expect(watches.calls()).NotTo(ContainElement(HavePrefix("stop")))
+
+			By("staying Available for the set's teardown, at the generation the deletion raised")
+			available := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+				cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable)
+			Expect(available).NotTo(BeNil())
+			Expect(available.Status).To(Equal(metav1.ConditionTrue))
+			Expect(available.ObservedGeneration).To(Equal(infraPlane.Generation))
+			Expect(infraPlane.Status.ObservedGeneration).To(Equal(infraPlane.Generation))
+
+			By("writing nothing when a later pass changes nothing")
+			resourceVersion := infraPlane.ResourceVersion
+			reconcileKey(typeNamespacedName)
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(infraPlane.ResourceVersion).To(Equal(resourceVersion))
+
+			By("reporting the set it waits for")
+			condition := deleting(typeNamespacedName)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(cclusternvidiacomv1alpha1.CCLInfraPlaneReasonComponentSetsRemaining))
+			Expect(condition.Message).To(ContainSubstring(`workloads`))
+			Expect(condition.ObservedGeneration).To(Equal(infraPlane.Generation))
+
+			By("finishing once the set is gone")
+			deleteComponentSet(setKey, false)
+			Eventually(func() bool {
+				reconcileKey(typeNamespacedName)
+				return infraPlaneGone(typeNamespacedName)
+			}).Should(BeTrue())
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+			Expect(projectExists(projectNamespacedName)).To(BeFalse())
+			Expect(clusterConfigExists()).To(BeFalse())
+		})
+
+		// The set is still uninstalling its components through the plane.
+		It("should keep waiting while a referencing CCLComponentSet is Terminating", func() {
+			createSecret(credentials)
+			settle()
+
+			setKey := types.NamespacedName{Name: "tearing-down", Namespace: namespace}
+			createComponentSet(setKey, []string{testFinalizer}, resourceName)
+			deleteComponentSet(setKey, true)
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			Expect(infraPlaneGone(typeNamespacedName)).To(BeFalse())
+			getMirror()
+			Expect(deleting(typeNamespacedName).Message).To(ContainSubstring("tearing-down"))
+
+			By("finishing once the set's teardown completes")
+			deleteComponentSet(setKey, false)
+			Eventually(func() bool {
+				reconcileKey(typeNamespacedName)
+				return infraPlaneGone(typeNamespacedName)
+			}).Should(BeTrue())
+		})
+
+		It("should not wait for CCLComponentSets referencing another plane or in another namespace", func() {
+			createSecret(credentials)
+			settle()
+
+			By("a set referencing another plane in the namespace")
+			createComponentSet(types.NamespacedName{Name: "elsewhere", Namespace: namespace},
+				nil, "another-plane")
+			By("a set in another namespace referencing a plane of the same name")
+			createComponentSet(types.NamespacedName{Name: "same-name", Namespace: argoCDNamespace},
+				nil, resourceName)
+
+			deleteAndFinalize(typeNamespacedName)
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, mirrorNamespacedName, &corev1.Secret{}))).To(BeTrue())
+		})
+
+		It("should name every CCLComponentSet it waits for, sorted", func() {
+			settle()
+			createComponentSet(types.NamespacedName{Name: "set-b", Namespace: namespace},
+				nil, "another-plane", resourceName)
+			createComponentSet(types.NamespacedName{Name: "set-a", Namespace: namespace},
+				nil, resourceName, resourceName)
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			Expect(deleting(typeNamespacedName).Message).To(HaveSuffix("2 CCLComponentSet(s) " +
+				"referencing this CCLInfraPlane to be deleted: set-a, set-b"))
+		})
+
+		It("should name at most maxListedComponentSets of them, and count the rest", func() {
+			settle()
+			names := make([]string, 0, maxListedComponentSets+2)
+			for i := range maxListedComponentSets + 2 {
+				names = append(names, fmt.Sprintf("set-%02d", i))
+			}
+			// Created out of order, so the names are listed sorted, not as created.
+			for _, name := range slices.Backward(names) {
+				createComponentSet(types.NamespacedName{Name: name, Namespace: namespace},
+					nil, resourceName)
+			}
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			Expect(deleting(typeNamespacedName).Message).To(HaveSuffix(fmt.Sprintf(
+				"%d CCLComponentSet(s) referencing this CCLInfraPlane to be deleted: %s and 2 more",
+				len(names), strings.Join(names[:maxListedComponentSets], ", "))))
+		})
+
+		// The waiting plane stays Available, which promises the project exists, and its
+		// sets' Applications live in the project while they tear down.
+		It("should put back an AppProject deleted while it waits for its CCLComponentSets", func() {
+			settle()
+			createComponentSet(types.NamespacedName{Name: "workloads", Namespace: namespace},
+				nil, resourceName)
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			Expect(k8sClient.Delete(ctx, getProject(projectNamespacedName))).To(Succeed())
+			Eventually(func() bool {
+				return projectExists(projectNamespacedName)
+			}).Should(BeFalse())
+
+			reconcileKey(typeNamespacedName)
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
+			Expect(infraPlaneGone(typeNamespacedName)).To(BeFalse())
+		})
+
+		// The waiting plane's sets still have Applications in the project while they tear
+		// down, so another plane going away must not take the project with it.
+		It("should keep the AppProject while a deleted plane still waits for its CCLComponentSets", func() {
+			other := types.NamespacedName{Name: "other-plane", Namespace: namespace}
+			createInfraPlane(other)
+			settle()
+			reconcileKey(other)
+			reconcileKey(other)
+
+			setKey := types.NamespacedName{Name: "workloads", Namespace: namespace}
+			createComponentSet(setKey, nil, resourceName)
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+			reconcileKey(typeNamespacedName)
+
+			By("deleting the other plane, which no set references")
+			deleteAndFinalize(other)
+			Expect(projectExists(projectNamespacedName)).To(BeTrue())
+
+			By("deleting the project with the waiting plane once its set is gone")
+			deleteComponentSet(setKey, false)
+			Eventually(func() bool {
+				reconcileKey(typeNamespacedName)
+				return infraPlaneGone(typeNamespacedName)
+			}).Should(BeTrue())
+			Expect(projectExists(projectNamespacedName)).To(BeFalse())
+		})
+
+		// The CCLComponentSet watch is what finishes a waiting plane's deletion; nothing
+		// else brings it back once the last set goes.
+		It("should enqueue only the deleted CCLInfraPlanes a CCLComponentSet references", func() {
+			other := types.NamespacedName{Name: "other-plane", Namespace: namespace}
+			createInfraPlane(other)
+			settle()
+			reconcileKey(other)
+
+			setKey := types.NamespacedName{Name: "workloads", Namespace: namespace}
+			createComponentSet(setKey, nil, resourceName, other.Name, "missing-plane")
+			componentSet := &cclusternvidiacomv1alpha1.CCLComponentSet{}
+			Expect(k8sClient.Get(ctx, setKey, componentSet)).To(Succeed())
+
+			By("ignoring planes that are not being deleted")
+			Expect(reconciler.infraPlanesForComponentSet(ctx, componentSet)).To(BeEmpty())
+
+			infraPlane := &cclusternvidiacomv1alpha1.CCLInfraPlane{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, infraPlane)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, infraPlane)).To(Succeed())
+
+			Eventually(func() []reconcile.Request {
+				return reconciler.infraPlanesForComponentSet(ctx, componentSet)
+			}).Should(ConsistOf(reconcile.Request{NamespacedName: typeNamespacedName}))
 		})
 
 		// The Secret watch is what makes the controller react to credentials changing

@@ -19,8 +19,11 @@ func newUnregisterCommand() *cobra.Command {
 		Long: `Unregister a cluster from the control plane.
 
 Deletes the CCLInfraPlane NAME and then its Secret NAME-credentials from the control plane
-saved by ccluster init; the operator's finalizer removes the copy it made for Argo CD. The
-namespace is left in place, and objects already gone are not an error.
+saved by ccluster init; the operator's finalizer removes the copy it made for Argo CD. While
+a CCLComponentSet still references the CCLInfraPlane, the operator keeps it, and that copy,
+until the set is gone, so the set's components can still be uninstalled. The command does
+not wait for that. The namespace is left in place, and objects already gone are not an
+error.
 
 The infra plane is not touched: its ccluster-manager ServiceAccount and token stay, so
 other registrations of the same cluster keep working and registering it again reuses the

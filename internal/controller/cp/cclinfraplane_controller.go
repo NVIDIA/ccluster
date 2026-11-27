@@ -9,10 +9,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -115,6 +117,9 @@ func (r *CCLInfraPlaneReconciler) domainOf(infraPlane *cclusternvidiacomv1alpha1
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;watch;create;update;patch;delete
+
+// The finalizer waits for the CCLComponentSets that reference the plane.
+// +kubebuilder:rbac:groups=ccluster.nvidia.com,resources=cclcomponentsets,verbs=get;list;watch
 
 // The operator writes CCLClusterConfig with its own ServiceAccount only for a CCLInfraPlane
 // that registers the operator's own cluster; a remote cluster is written to with the
@@ -313,10 +318,16 @@ func (r *CCLInfraPlaneReconciler) mirrorClusterSecret(
 	})
 }
 
-// finalize deletes the plane's DNSEndpoint, the infra-plane
-// cluster's CCLClusterConfig if this CCLInfraPlane created it, the mirrored Secret if it is
-// still ours, and the namespace's AppProject if this was the last CCLInfraPlane using it,
-// then drops the finalizer so the CCLInfraPlane can go away.
+// finalize waits until no CCLComponentSet references the plane, then deletes the plane's
+// DNSEndpoint, the infra-plane cluster's CCLClusterConfig if this CCLInfraPlane created it,
+// the mirrored Secret if it is still ours, and the namespace's AppProject if this was the
+// last CCLInfraPlane using it, then drops the finalizer so the CCLInfraPlane can go away.
+//
+// While a CCLComponentSet references the plane, Terminating ones included, nothing is
+// touched: the mirrored Secret is what lets Argo CD reach the cluster to uninstall the
+// set's components, and the set's teardown runs through it. The plane reports
+// Deleting=True and waits; the CCLComponentSet watch brings it back when a set goes. It
+// never deletes the sets itself.
 //
 // The watch on the cluster stops first, so deleting the CCLClusterConfig does not
 // reconcile a CCLInfraPlane that is going away. The DNSEndpoint goes next, then the
@@ -331,6 +342,14 @@ func (r *CCLInfraPlaneReconciler) finalize(
 
 	if !controllerutil.ContainsFinalizer(infraPlane, finalizerName) {
 		return nil
+	}
+
+	referrers, err := r.componentSetsByInfraPlane(ctx, infraPlane.Namespace)
+	if err != nil {
+		return err
+	}
+	if componentSets := referrers[infraPlane.Name]; len(componentSets) > 0 {
+		return r.waitForComponentSets(ctx, infraPlane, componentSets)
 	}
 
 	r.RemoteWatches.Stop(client.ObjectKeyFromObject(infraPlane))
@@ -358,7 +377,7 @@ func (r *CCLInfraPlaneReconciler) finalize(
 			"secretNamespace", r.ArgoCDNamespace)
 	}
 
-	if err := r.deleteProjectIfUnused(ctx, infraPlane); err != nil {
+	if err := r.deleteProjectIfUnused(ctx, infraPlane, referrers); err != nil {
 		return err
 	}
 
@@ -367,6 +386,146 @@ func (r *CCLInfraPlaneReconciler) finalize(
 	base := infraPlane.DeepCopy()
 	controllerutil.RemoveFinalizer(infraPlane, finalizerName)
 	return client.IgnoreNotFound(r.Patch(ctx, infraPlane, client.MergeFrom(base)))
+}
+
+// maxListedComponentSets caps how many CCLComponentSets the Deleting condition names.
+const maxListedComponentSets = 10
+
+// waitForComponentSets reports Deleting=True on a CCLInfraPlane being deleted, naming the
+// CCLComponentSets, sorted, that still reference it.
+//
+// It deletes nothing, but it puts back the namespace's AppProject if it has gone: the
+// sets' Applications live in it while they tear down, and the plane stays Available,
+// which promises that it exists.
+//
+// Deleting the plane raised its generation. Available is carried forward to it, since the
+// plane keeps it true on purpose and the CCLComponentSet controller, which reads
+// status.observedGeneration, treats it as current. ClusterConfigApplied and DNSReady are
+// no longer kept up to date, so they stay at the generation they were computed for.
+func (r *CCLInfraPlaneReconciler) waitForComponentSets(
+	ctx context.Context,
+	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
+	componentSets []string,
+) error {
+	log := logf.FromContext(ctx)
+
+	op, err := r.createOrPatchProject(ctx, infraPlane)
+	switch {
+	case apimeta.IsNoMatchError(err):
+		// Argo CD is not installed, so there is no project to keep.
+	case errors.Is(err, errProjectConflict):
+		// Left as it is, as on a plane that is not being deleted; only an edit
+		// elsewhere can resolve it.
+		log.Info("Refused to overwrite AppProject claimed by another namespace",
+			"project", projectName(infraPlane.Namespace), "projectNamespace", r.ArgoCDNamespace)
+	case err != nil:
+		return err
+	case op != controllerutil.OperationResultNone:
+		log.Info("Applied Argo CD AppProject", "project", projectName(infraPlane.Namespace),
+			"projectNamespace", r.ArgoCDNamespace, "operation", op)
+	}
+
+	listed := componentSets
+	if len(listed) > maxListedComponentSets {
+		listed = listed[:maxListedComponentSets]
+	}
+	message := fmt.Sprintf("Waiting for %d CCLComponentSet(s) referencing this CCLInfraPlane "+
+		"to be deleted: %s", len(componentSets), strings.Join(listed, ", "))
+	if more := len(componentSets) - len(listed); more > 0 {
+		message += fmt.Sprintf(" and %d more", more)
+	}
+
+	// Logged only when the condition changes: every update of a referencing
+	// CCLComponentSet brings the plane back here.
+	deleting := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+		cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting)
+	if deleting == nil || deleting.Message != message {
+		log.Info("Kept CCLInfraPlane while CCLComponentSets reference it",
+			"componentSets", componentSets)
+	}
+
+	conditions := []metav1.Condition{{
+		Type:    cclusternvidiacomv1alpha1.CCLInfraPlaneConditionDeleting,
+		Status:  metav1.ConditionTrue,
+		Reason:  cclusternvidiacomv1alpha1.CCLInfraPlaneReasonComponentSetsRemaining,
+		Message: message,
+	}}
+	if available := apimeta.FindStatusCondition(infraPlane.Status.Conditions,
+		cclusternvidiacomv1alpha1.CCLInfraPlaneConditionAvailable); available != nil {
+		conditions = append(conditions, *available)
+	}
+	return r.patchStatus(ctx, infraPlane, nil, conditions...)
+}
+
+// componentSetsByInfraPlane maps the name of each CCLInfraPlane in namespace that a
+// CCLComponentSet references to the sorted names of the CCLComponentSets that do,
+// Terminating ones included. infraPlaneRef is same-namespace, so no other namespace's
+// sets can reference these planes.
+//
+// Only specs are read. An Application still on a plane after its component was removed
+// from the spec, or moved to another plane, is not seen; DESIGN.md §3 describes the
+// window that leaves.
+func (r *CCLInfraPlaneReconciler) componentSetsByInfraPlane(
+	ctx context.Context,
+	namespace string,
+) (map[string][]string, error) {
+	var list cclusternvidiacomv1alpha1.CCLComponentSetList
+	if err := r.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+
+	referrers := map[string][]string{}
+	for i := range list.Items {
+		componentSet := &list.Items[i]
+		for _, plane := range referencedInfraPlanes(componentSet) {
+			referrers[plane] = append(referrers[plane], componentSet.Name)
+		}
+	}
+	for _, names := range referrers {
+		slices.Sort(names)
+	}
+	return referrers, nil
+}
+
+// referencedInfraPlanes returns the distinct CCLInfraPlane names componentSet's components
+// reference, in spec order.
+func referencedInfraPlanes(componentSet *cclusternvidiacomv1alpha1.CCLComponentSet) []string {
+	var names []string
+	for _, component := range componentSet.Spec.Components {
+		if !slices.Contains(names, component.InfraPlaneRef.Name) {
+			names = append(names, component.InfraPlaneRef.Name)
+		}
+	}
+	return names
+}
+
+// infraPlanesForComponentSet maps a CCLComponentSet to the CCLInfraPlanes it references
+// that are being deleted, so a plane waiting on its sets finishes as soon as the last one
+// is gone or stops referencing it. Planes not being deleted are left out: their reconcile
+// does not depend on the sets, and it writes to the infra-plane cluster.
+func (r *CCLInfraPlaneReconciler) infraPlanesForComponentSet(ctx context.Context, obj client.Object) []reconcile.Request {
+	componentSet, ok := obj.(*cclusternvidiacomv1alpha1.CCLComponentSet)
+	if !ok {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, name := range referencedInfraPlanes(componentSet) {
+		key := client.ObjectKey{Namespace: componentSet.Namespace, Name: name}
+		var infraPlane cclusternvidiacomv1alpha1.CCLInfraPlane
+		if err := r.Get(ctx, key, &infraPlane); err != nil {
+			if !apierrors.IsNotFound(err) {
+				logf.FromContext(ctx).Error(err, "Failed to get CCLInfraPlane for CCLComponentSet",
+					"name", componentSet.Name, "namespace", componentSet.Namespace, "infraPlane", name)
+			}
+			continue
+		}
+		if infraPlane.DeletionTimestamp.IsZero() {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: key})
+	}
+	return requests
 }
 
 // dnsNotUpdatedMessage starts the DNSReady message while Available is False, ahead of
@@ -420,7 +579,9 @@ func (r *CCLInfraPlaneReconciler) setUnavailable(
 // version, and an update would fail the optimistic-concurrency check even though the
 // status it computed is correct. A patch carries no such precondition. A NotFound is
 // ignored - the object was deleted while we were reconciling it, and there is no status
-// left to record.
+// left to record. A status that comes out unchanged is not written at all: a merge patch
+// with nothing in it is still a request, and a plane waiting in its finalizer comes back
+// here on every update of the CCLComponentSets that reference it.
 func (r *CCLInfraPlaneReconciler) patchStatus(
 	ctx context.Context,
 	infraPlane *cclusternvidiacomv1alpha1.CCLInfraPlane,
@@ -439,6 +600,9 @@ func (r *CCLInfraPlaneReconciler) patchStatus(
 	infraPlane.Status.ObservedGeneration = infraPlane.Generation
 	infraPlane.Status.Domain = r.domainOf(infraPlane)
 
+	if equality.Semantic.DeepEqual(infraPlane.Status, base.Status) {
+		return nil
+	}
 	return client.IgnoreNotFound(r.Status().Patch(ctx, infraPlane, client.MergeFrom(base)))
 }
 
@@ -486,6 +650,9 @@ func (r *CCLInfraPlaneReconciler) infraPlanesForSecret(ctx context.Context, obj 
 // cluster: watches on them come and go with the CCLInfraPlanes, which a controller's own
 // watches cannot.
 //
+// The CCLComponentSet watch wakes a CCLInfraPlane that is waiting, in its finalizer, for
+// the sets that reference it to go.
+//
 // The AppProject watch is registered only when Argo CD's CRD is already installed, for
 // the reason given on CCLComponentSetReconciler.SetupWithManager: a watch on a kind the API
 // server does not serve never syncs, and the controller would never start. The DNSEndpoint
@@ -499,6 +666,8 @@ func (r *CCLInfraPlaneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&cclusternvidiacomv1alpha1.CCLInfraPlane{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.infraPlanesForSecret)).
+		Watches(&cclusternvidiacomv1alpha1.CCLComponentSet{},
+			handler.EnqueueRequestsFromMapFunc(r.infraPlanesForComponentSet)).
 		WatchesRawSource(r.RemoteWatches.Source()).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1})
 

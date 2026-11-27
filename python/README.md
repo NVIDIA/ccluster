@@ -68,7 +68,9 @@ operator has verified the cluster;
 name included, without writing anything; call it before creating credentials the plane
 needs;
 `delete_infraplane` deletes the Secret and the CCLInfraPlane, the CCLInfraPlane first so
-the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace.
+the operator's finalizer removes the mirrored Argo CD Secret, and leaves the namespace;
+the operator keeps the CCLInfraPlane until no CCLComponentSet references it, and the call
+does not wait for that.
 `ensure_namespace` creates the namespace, and is the only method that does: keeping it
 separate means a mistyped namespace fails against the API server rather than quietly
 gaining a working plane. Everything is server-side applied under the `ccluster` field
@@ -248,9 +250,11 @@ the kubeconfig. Set it when that address is only reachable from your workstation
 kind, whose kubeconfig points at `127.0.0.1`.
 
 `ccluster unregister` reverses `register` on the control plane: it deletes the
-CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. The infra
-plane is not touched; its ServiceAccount and token stay, so registering the cluster again
-reuses them.
+CCLInfraPlane, then its `<name>-credentials` Secret, and leaves the namespace. While a
+CCLComponentSet still references the CCLInfraPlane, the operator keeps it until the set is
+gone, so the set's charts can still be uninstalled; the command does not wait for that.
+The infra plane is not touched; its ServiceAccount and token stay, so registering the
+cluster again reuses them.
 
 ```bash
 ccluster unregister edge-1 -n tenant-a
