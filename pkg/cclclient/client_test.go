@@ -234,6 +234,22 @@ func TestApplyInfraPlaneWithRejectedNameWritesNoCredentials(t *testing.T) {
 	}
 }
 
+func TestCheckInfraPlaneValidatesWithoutWriting(t *testing.T) {
+	ctx := t.Context()
+	client := newClient(t)
+
+	if err := client.CheckInfraPlane(ctx, "gpu-a"); err != nil {
+		t.Fatalf("CheckInfraPlane() error = %v", err)
+	}
+	if _, err := client.GetInfraPlane(ctx, "gpu-a"); !apierrors.IsNotFound(err) {
+		t.Errorf("GetInfraPlane() after CheckInfraPlane: error = %v, want NotFound", err)
+	}
+
+	if err := client.CheckInfraPlane(ctx, "gpu.a"); !apierrors.IsInvalid(err) {
+		t.Errorf("CheckInfraPlane(gpu.a) error = %v, want Invalid", err)
+	}
+}
+
 func TestDeleteInfraPlaneRemovesPlaneAndSecret(t *testing.T) {
 	ctx := t.Context()
 	client := newClient(t)

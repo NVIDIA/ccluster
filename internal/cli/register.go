@@ -70,8 +70,9 @@ The control plane is the one saved by ccluster init. On the infra plane, named b
 cluster-admin, and reads its long-lived token. On the control plane, applies the Secret
 NAME-credentials carrying that token and the cluster CA, and the CCLInfraPlane NAME
 pointing at it. The control-plane operator derives the cluster's domain,
-NAME.NAMESPACE.<base domain>, and writes it to the infra plane's CCLClusterConfig.
-Re-running reuses the same token.
+NAME.NAMESPACE.<base domain>, and writes it to the infra plane's CCLClusterConfig, so
+NAME must be a DNS label. The control plane checks the CCLInfraPlane first, so a NAME it
+refuses creates nothing on the infra plane. Re-running reuses the same token.
 
 register then waits until the CCLInfraPlane's ClusterConfigApplied condition is True,
 which means the control plane reached the cluster, and prints the domain. If it is not
@@ -113,6 +114,15 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 		return err
 	}
 
+	// The API server checks the plane, NAME included, before anything is created on the
+	// infra plane, so a plane it would refuse leaves no cluster-admin token behind.
+	if err := client.EnsureNamespace(ctx); err != nil {
+		return apiError(err)
+	}
+	if err := client.CheckInfraPlane(ctx, name); err != nil {
+		return apiError(err)
+	}
+
 	infra, err := kubernetes.NewForConfig(infraConfig)
 	if err != nil {
 		return err
@@ -126,9 +136,6 @@ func runRegister(ctx context.Context, out io.Writer, name string, opts registerO
 		server = infraConfig.Host
 	}
 
-	if err := client.EnsureNamespace(ctx); err != nil {
-		return apiError(err)
-	}
 	plane, err := client.ApplyInfraPlane(ctx, cclclient.InfraPlaneOptions{
 		Name:        name,
 		Server:      server,
