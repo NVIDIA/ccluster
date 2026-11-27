@@ -212,8 +212,6 @@ func (r *CCLClusterConfigReconciler) verify(
 		}()
 	}
 
-	// gaveUp is set once verify stops waiting, at timeout plus grace or when ctx ends; from
-	// then on each chart gets the result it already has, or gaveUp.
 	var gaveUp error
 	for i, chart := range charts {
 		err := calls[i].err

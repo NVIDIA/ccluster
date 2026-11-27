@@ -5,9 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 package ip
 
-// Plain tests of verify with a short deadline. They deliberately do not use Ginkgo or
-// envtest: BeforeSuite only runs under RunSpecs, so `go test -run TestVerify` needs no
-// KUBEBUILDER_ASSETS, and the Verifiers here read nothing.
+// Plain tests of verify with a short deadline, so `go test -run TestVerify` runs
+// without the envtest suite.
 
 import (
 	"context"
@@ -22,13 +21,120 @@ import (
 )
 
 const (
-	chartStuck  = "catalogs/cluster_base/stuck"
-	chartPasses = "catalogs/cluster_base/passes"
+	chartStuck           = "catalogs/cluster_base/stuck"
+	chartPasses          = "catalogs/cluster_base/passes"
+	chartHonoursDeadline = "catalogs/cluster_base/honours-deadline"
 	// testTimeout and testGrace stand in for verifyTimeout and verifyGrace. Together they
 	// leave a Verifier that returns at once ample time to be collected under -race.
 	testTimeout = 250 * time.Millisecond
 	testGrace   = time.Second
 )
+
+func TestVerifyReportsVerifierIgnoringDeadlineAsTimedOut(t *testing.T) {
+	stuck := newStuckVerifier(t)
+	// A passing Verifier on either side of the stuck one: the one before is collected
+	// while the stuck call is running, the one after once its deadline has passed.
+	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(
+		registration{chartPasses, passes},
+		registration{chartStuck, stuck.Verify},
+		registration{chartPasses + "-too", passes},
+	)}
+
+	total, failing := verifyWithin(t, context.Background(), r)
+
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	if len(failing) != 1 || failing[0].chart != chartStuck {
+		t.Fatalf("failing = %v, want only %s", failing, chartStuck)
+	}
+	if got, want := failing[0].err.Error(), "timed out after 250ms"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
+func TestVerifyGivesUpOnAllStuckVerifiersAtOnce(t *testing.T) {
+	first, second := newStuckVerifier(t), newStuckVerifier(t)
+	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(
+		registration{chartStuck, first.Verify},
+		registration{chartStuck + "-too", second.Verify},
+	)}
+
+	start := time.Now()
+	_, failing := verifyWithin(t, context.Background(), r)
+
+	// One deadline plus grace for the pass, not one each.
+	if elapsed := time.Since(start); elapsed >= 2*(testTimeout+testGrace) {
+		t.Errorf("verify took %s, want less than %s", elapsed, 2*(testTimeout+testGrace))
+	}
+	if len(failing) != 2 {
+		t.Fatalf("failing = %v, want both charts", failing)
+	}
+	for _, f := range failing {
+		if got, want := f.err.Error(), "timed out after 250ms"; got != want {
+			t.Errorf("%s error = %q, want %q", f.chart, got, want)
+		}
+	}
+}
+
+func TestVerifyStopsWaitingWhenContextEnds(t *testing.T) {
+	stuck := newStuckVerifier(t)
+	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartStuck, stuck.Verify})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_, failing := verifyWithin(t, ctx, r)
+
+	if elapsed := time.Since(start); elapsed >= testTimeout {
+		t.Errorf("verify took %s after ctx ended, want less than %s", elapsed, testTimeout)
+	}
+	if len(failing) != 1 || failing[0].err.Error() != context.Canceled.Error() {
+		t.Fatalf("failing = %v, want %s with %v", failing, chartStuck, context.Canceled)
+	}
+}
+
+func TestVerifyKeepsErrorOfVerifierHonouringDeadline(t *testing.T) {
+	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartHonoursDeadline, honoursDeadline})}
+
+	_, failing := verifyWithin(t, context.Background(), r)
+
+	want := "timed out after 250ms: listing Leases: context deadline exceeded"
+	if len(failing) != 1 || failing[0].err.Error() != want {
+		t.Fatalf("failing = %v, want %s with %q", failing, chartHonoursDeadline, want)
+	}
+}
+
+func TestVerifyDoesNotCallVerifierAgainWhileEarlierCallRuns(t *testing.T) {
+	stuck := newStuckVerifier(t)
+	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartStuck, stuck.Verify})}
+
+	verifyWithin(t, context.Background(), r)
+	_, failing := verifyWithin(t, context.Background(), r)
+
+	if calls := stuck.calls.Load(); calls != 1 {
+		t.Errorf("Verifier called %d times while its first call was still running, want 1", calls)
+	}
+	if len(failing) != 1 || failing[0].err.Error() != "still running since an earlier pass" {
+		t.Fatalf("failing = %v, want %s still running", failing, chartStuck)
+	}
+
+	// Once the abandoned call returns, the next pass calls the Verifier again.
+	stuck.unblock()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, failing = verifyWithin(t, context.Background(), r); len(failing) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failing = %v after the abandoned call returned, want none", failing)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if calls := stuck.calls.Load(); calls != 2 {
+		t.Errorf("Verifier called %d times, want 2", calls)
+	}
+}
 
 // stuckVerifier blocks until release is closed, whatever its ctx says, as a check
 // blocked in a call that takes no context would.
@@ -83,115 +189,9 @@ func verifyWithin(t *testing.T, ctx context.Context, r *CCLClusterConfigReconcil
 	}
 }
 
-func TestVerifyReportsVerifierIgnoringDeadlineAsTimedOut(t *testing.T) {
-	stuck := newStuckVerifier(t)
-	// A passing Verifier on either side of the stuck one: the one before is collected
-	// while the stuck call is running, the one after once its deadline has passed.
-	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(
-		registration{chartPasses, passes},
-		registration{chartStuck, stuck.Verify},
-		registration{chartPasses + "-too", passes},
-	)}
-
-	total, failing := verifyWithin(t, context.Background(), r)
-
-	if total != 3 {
-		t.Errorf("total = %d, want 3", total)
-	}
-	if len(failing) != 1 || failing[0].chart != chartStuck {
-		t.Fatalf("failing = %v, want only %s", failing, chartStuck)
-	}
-	if got, want := failing[0].err.Error(), "timed out after 250ms"; got != want {
-		t.Errorf("error = %q, want %q", got, want)
-	}
-}
-
 // honoursDeadline returns ctx's error, wrapped as a read through the client would, once
 // ctx is done.
 func honoursDeadline(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
 	<-ctx.Done()
 	return fmt.Errorf("listing Leases: %w", ctx.Err())
-}
-
-func TestVerifyGivesUpOnAllStuckVerifiersAtOnce(t *testing.T) {
-	first, second := newStuckVerifier(t), newStuckVerifier(t)
-	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(
-		registration{chartStuck, first.Verify},
-		registration{chartStuck + "-too", second.Verify},
-	)}
-
-	start := time.Now()
-	_, failing := verifyWithin(t, context.Background(), r)
-
-	// One deadline plus grace for the pass, not one each.
-	if elapsed := time.Since(start); elapsed >= 2*(testTimeout+testGrace) {
-		t.Errorf("verify took %s, want less than %s", elapsed, 2*(testTimeout+testGrace))
-	}
-	if len(failing) != 2 {
-		t.Fatalf("failing = %v, want both charts", failing)
-	}
-	for _, f := range failing {
-		if got, want := f.err.Error(), "timed out after 250ms"; got != want {
-			t.Errorf("%s error = %q, want %q", f.chart, got, want)
-		}
-	}
-}
-
-func TestVerifyStopsWaitingWhenContextEnds(t *testing.T) {
-	stuck := newStuckVerifier(t)
-	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartStuck, stuck.Verify})}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	start := time.Now()
-	_, failing := verifyWithin(t, ctx, r)
-
-	if elapsed := time.Since(start); elapsed >= testTimeout {
-		t.Errorf("verify took %s after ctx ended, want less than %s", elapsed, testTimeout)
-	}
-	if len(failing) != 1 || failing[0].err.Error() != context.Canceled.Error() {
-		t.Fatalf("failing = %v, want %s with %v", failing, chartStuck, context.Canceled)
-	}
-}
-
-func TestVerifyKeepsErrorOfVerifierHonouringDeadline(t *testing.T) {
-	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartStuck, honoursDeadline})}
-
-	_, failing := verifyWithin(t, context.Background(), r)
-
-	want := "timed out after 250ms: listing Leases: context deadline exceeded"
-	if len(failing) != 1 || failing[0].err.Error() != want {
-		t.Fatalf("failing = %v, want %s with %q", failing, chartStuck, want)
-	}
-}
-
-func TestVerifyDoesNotCallVerifierAgainWhileEarlierCallRuns(t *testing.T) {
-	stuck := newStuckVerifier(t)
-	r := &CCLClusterConfigReconciler{Verifiers: verifierRegistry(registration{chartStuck, stuck.Verify})}
-
-	verifyWithin(t, context.Background(), r)
-	_, failing := verifyWithin(t, context.Background(), r)
-
-	if calls := stuck.calls.Load(); calls != 1 {
-		t.Errorf("Verifier called %d times while its first call was still running, want 1", calls)
-	}
-	if len(failing) != 1 || failing[0].err.Error() != "still running since an earlier pass" {
-		t.Fatalf("failing = %v, want %s still running", failing, chartStuck)
-	}
-
-	// Once the abandoned call returns, the next pass calls the Verifier again.
-	stuck.unblock()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, failing = verifyWithin(t, context.Background(), r); len(failing) == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("failing = %v after the abandoned call returned, want none", failing)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if calls := stuck.calls.Load(); calls != 2 {
-		t.Errorf("Verifier called %d times, want 2", calls)
-	}
 }
