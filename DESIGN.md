@@ -477,6 +477,12 @@ chart out of its `cluster_base` set verifies the same.
 runs every registered Verifier against the spec, concurrently. Each Verifier runs under its own
 30-second deadline, and a panic in one is recovered; both count as that component
 failing, so one faulty check can neither crash the operator nor hold up the others. The
+controller enforces the deadline itself. A check that honours its context returns its own
+error, naming the read that did not finish, and the controller waits up to a second past
+the deadline for it; a check still running then is given up on and reported as `timed out
+after 30s`. Go cannot stop that call, so until it returns later passes report the chart
+as still running rather than calling it again: a check stuck for good holds one
+goroutine, not one per pass, and keeps its chart reported until the operator restarts. The
 outcome is one condition, written in the same status patch as the cluster's labelled
 LoadBalancers (below):
 
