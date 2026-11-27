@@ -289,6 +289,96 @@ func TestGetComponentSetMarksSyncsOfAnOlderSpecStale(t *testing.T) {
 	)
 }
 
+func TestGetComponentSetPrefersHealthMessageAndListsRemovedComponents(t *testing.T) {
+	setUpInitialized(t)
+	namespace := newNamespaceName()
+	client := newTestClient(t, namespace)
+
+	// Start at generation 1 without db, while status still records db, old-pending and
+	// old-deleting as being removed.
+	if _, err := client.ApplyComponentSet(t.Context(), "base", []cclusternvidiacomv1alpha1.ComponentSpec{
+		{
+			Name:           "keda",
+			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "edge-1"},
+			ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{Chart: "catalogs/cluster_base/keda", Namespace: "keda"},
+		},
+		{
+			Name:           "queue",
+			InfraPlaneRef:  cclusternvidiacomv1alpha1.LocalObjectReference{Name: "edge-1"},
+			ComponentEntry: cclusternvidiacomv1alpha1.ComponentEntry{Chart: "catalogs/resources/queue", Namespace: "queue"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const generation = 1
+	status := cclusterac.CCLComponentSetStatus().WithObservedGeneration(generation).
+		WithComponentSyncStatuses(
+			cclusterac.ComponentSyncStatus().WithName("keda").WithComparedToMatchesSpec(true).
+				WithSync("Synced").WithMessage("sync finished"),
+			// db is being removed at generation 1 and added back at generation 2 below,
+			// so its stale removal entry must not list it a second time as removed.
+			cclusterac.ComponentSyncStatus().WithName("db").WithComparedToMatchesSpec(false).
+				WithSync("Synced").WithMessage("sync message").
+				WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
+			cclusterac.ComponentSyncStatus().WithName("old-pending").WithComparedToMatchesSpec(false).
+				WithSync("Synced").WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeletePending),
+			cclusterac.ComponentSyncStatus().WithName("old-deleting").WithComparedToMatchesSpec(false).
+				WithSync("Synced").WithMessage("deleting\nresources").
+				WithRemoval(cclusternvidiacomv1alpha1.ComponentRemovalDeleting),
+		).
+		WithComponentHealthStatuses(
+			cclusterac.ComponentHealthStatus().WithName("keda").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthDegraded).
+				WithReason("CrashLoopBackOff").
+				WithMessage("Pod keda-0:\nback-off").
+				WithLastTransitionTime(metav1.Now()),
+			cclusterac.ComponentHealthStatus().WithName("db").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthHealthy).
+				WithLastTransitionTime(metav1.Now()),
+			cclusterac.ComponentHealthStatus().WithName("old-pending").
+				WithHealth(cclusternvidiacomv1alpha1.ComponentHealthProgressing).
+				WithMessage("waiting to delete").
+				WithLastTransitionTime(metav1.Now()),
+		)
+	if _, err := clientset.CclusterV1alpha1().CCLComponentSets(namespace).ApplyStatus(t.Context(),
+		cclusterac.CCLComponentSet("base", namespace).WithStatus(status),
+		metav1.ApplyOptions{FieldManager: "operator-test", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-add db in generation 2 before the operator reconciles the new spec.
+	applyComponentSet(t, client)
+
+	out, err := run(t, "get", "cs", "base", "-n", namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectLines(t, out, "Generation: 2 (observed 1)")
+
+	_, componentsTable, found := strings.Cut(out, "Components:\n")
+	if !found {
+		t.Fatalf("printed\n%s\nwant a Components: section", out)
+	}
+	got := tableRows(componentsTable)
+	want := []string{
+		"# NAME CHART INFRAPLANE NAMESPACE SYNC HEALTH MESSAGE",
+		"1 keda catalogs/cluster_base/keda edge-1 keda Synced (stale) Degraded Pod keda-0: back-off",
+		"2 db catalogs/deployments/db edge-1 db Synced (stale) Healthy sync message",
+		"3 queue catalogs/resources/queue edge-1 queue - -",
+		"- old-pending - - - DeletePending Progressing waiting to delete",
+		"- old-deleting - - - Deleting - deleting resources",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Components table printed\n%s\ngot %d rows, want %d", componentsTable, len(got), len(want))
+	}
+	for i, wantRow := range want {
+		if gotRow := strings.Join(got[i], " "); gotRow != wantRow {
+			t.Errorf("Components row %d = %q, want %q", i, gotRow, wantRow)
+		}
+	}
+}
+
 func TestGetPrintsTheObject(t *testing.T) {
 	setUpInitialized(t)
 	namespace := newNamespaceName()

@@ -300,8 +300,8 @@ registering the cluster again reuses them.
 
 `ccluster list` and `ccluster get` read what is registered and deployed in one control-plane
 namespace. `list` prints the same columns as `kubectl get`; `get` shows one object's
-conditions, and for a component set each component in rollout order with Argo CD's sync
-and message and the health its chart reports. `infraplanes` can be written `infraplane` or
+conditions, and for a component set each component in rollout order with its sync, health
+and message, plus any removed components still being deleted. `infraplanes` can be written `infraplane` or
 `ip`, and `componentsets` `componentset` or `cs`. Add `-o yaml` or `-o json` for the objects
 themselves.
 

@@ -22,9 +22,11 @@ componentset componentsets or cs.
 
 For an infra plane: its domain and credentials Secret, its conditions, and the status of
 the infra-plane cluster's CCLClusterConfig with its load balancers. For a component set:
-its conditions, and each component in rollout order with Argo CD's sync and message
-for it and its health as its chart judges it; a component not yet released shows -. A condition computed from an
-earlier generation of the object is marked stale.
+its conditions, and each component in rollout order with Argo CD's sync, its health as
+its chart judges it, and any health or sync message; a component not yet released shows
+-. Components removed from the spec whose Applications are still being deleted follow
+with DeletePending or Deleting for sync. A condition computed from an earlier
+generation of the object is marked stale.
 
 With --output yaml or json, prints the object instead.`,
 		Example: `  ccluster get infraplane edge-1 -n tenant-a
