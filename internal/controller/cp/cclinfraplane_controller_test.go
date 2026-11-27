@@ -7,10 +7,16 @@ package cp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -969,6 +975,42 @@ var _ = Describe("CCLInfraPlane Controller", func() {
 				condition := apimeta.FindStatusCondition(infraPlane.Status.Conditions, cclusternvidiacomv1alpha1.CCLInfraPlaneConditionClusterConfigApplied)
 				Expect(condition.Message).NotTo(ContainSubstring("not json"))
 			})
+
+			It("should write the CCLClusterConfig through proxyUrl when set", func() {
+				proxyURL, connects, closeProxy := startConnectProxy()
+				DeferCleanup(closeProxy)
+
+				envCfg := rest.CopyConfig(cfg)
+				Expect(rest.LoadTLSFiles(envCfg)).To(Succeed())
+				configJSON, err := json.Marshal(map[string]any{
+					"bearerToken": envCfg.BearerToken,
+					"username":    envCfg.Username,
+					"password":    envCfg.Password,
+					"proxyUrl":    proxyURL,
+					"tlsClientConfig": map[string]any{
+						"insecure":   envCfg.Insecure,
+						"serverName": envCfg.ServerName,
+						"caData":     envCfg.CAData,
+						"certData":   envCfg.CertData,
+						"keyData":    envCfg.KeyData,
+					},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				createSecret(map[string]string{
+					"server": envCfg.Host,
+					"config": string(configJSON),
+				})
+
+				infraPlane := settle()
+
+				expectClusterConfigApplied(infraPlane, metav1.ConditionTrue, cclusternvidiacomv1alpha1.CCLInfraPlaneReasonApplied)
+				Expect(getClusterConfig().Spec.Domain).To(Equal(domain))
+				Expect(connects.Load()).To(BeNumerically(">", 0))
+
+				By("deleting it with the CCLInfraPlane")
+				deleteAndFinalize(typeNamespacedName)
+				Expect(clusterConfigExists()).To(BeFalse())
+			})
 		})
 
 		It("should delete the CCLClusterConfig before the mirrored Secret when the CCLInfraPlane is deleted", func() {
@@ -1592,4 +1634,64 @@ func (w *recordingWatcher) calls() []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return slices.Clone(w.log)
+}
+
+// startConnectProxy runs a minimal HTTP CONNECT proxy that tunnels connections to their
+// requested host, counting how many tunnels were opened. Call the returned close function
+// to tear down both the listener and any hijacked tunnel connections.
+func startConnectProxy() (proxyURL string, connects *atomic.Int32, closeProxy func()) {
+	var (
+		count atomic.Int32
+		mu    sync.Mutex
+		conns []net.Conn
+	)
+	track := func(c net.Conn) {
+		mu.Lock()
+		conns = append(conns, c)
+		mu.Unlock()
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
+			return
+		}
+		upstream, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			_ = upstream.Close()
+			http.Error(w, "hijacking unsupported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, _, err := hj.Hijack()
+		if err != nil {
+			_ = upstream.Close()
+			return
+		}
+		count.Add(1)
+		track(upstream)
+		track(clientConn)
+		_, _ = io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		tunnel := func(dst, src net.Conn) {
+			defer func() {
+				_ = dst.Close()
+				_ = src.Close()
+			}()
+			_, _ = io.Copy(dst, src)
+		}
+		go tunnel(upstream, clientConn)
+		go tunnel(clientConn, upstream)
+	}))
+	return server.URL, &count, func() {
+		mu.Lock()
+		active := slices.Clone(conns)
+		mu.Unlock()
+		for _, c := range active {
+			_ = c.Close()
+		}
+		server.Close()
+	}
 }

@@ -7,6 +7,9 @@ package remote
 
 import (
 	"errors"
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +73,45 @@ func TestRESTConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "remote cluster with http proxyUrl",
+			data: map[string]string{
+				"server": "https://gpu-a.example.com:6443",
+				"config": `{"bearerToken":"remote-token","proxyUrl":"http://proxy.example.com:8080"}`,
+			},
+			want: &rest.Config{
+				Host:        "https://gpu-a.example.com:6443",
+				BearerToken: "remote-token",
+				Proxy:       http.ProxyURL(&url.URL{Scheme: "http", Host: "proxy.example.com:8080"}),
+				Timeout:     RequestTimeout,
+			},
+		},
+		{
+			name: "remote cluster with https proxyUrl",
+			data: map[string]string{
+				"server": "https://gpu-a.example.com:6443",
+				"config": `{"bearerToken":"remote-token","proxyUrl":"https://proxy.example.com:8443"}`,
+			},
+			want: &rest.Config{
+				Host:        "https://gpu-a.example.com:6443",
+				BearerToken: "remote-token",
+				Proxy:       http.ProxyURL(&url.URL{Scheme: "https", Host: "proxy.example.com:8443"}),
+				Timeout:     RequestTimeout,
+			},
+		},
+		{
+			name: "remote cluster with socks5 proxyUrl",
+			data: map[string]string{
+				"server": "https://gpu-a.example.com:6443",
+				"config": `{"bearerToken":"remote-token","proxyUrl":"socks5://proxy.example.com:1080"}`,
+			},
+			want: &rest.Config{
+				Host:        "https://gpu-a.example.com:6443",
+				BearerToken: "remote-token",
+				Proxy:       http.ProxyURL(&url.URL{Scheme: "socks5", Host: "proxy.example.com:1080"}),
+				Timeout:     RequestTimeout,
+			},
+		},
+		{
 			name: "no server is the local cluster",
 			data: map[string]string{},
 			want: &rest.Config{Host: local.Host, BearerToken: local.BearerToken, Timeout: RequestTimeout},
@@ -121,8 +163,28 @@ func TestRESTConfig(t *testing.T) {
 				string(got.KeyData) != string(tt.want.KeyData) {
 				t.Errorf("RESTConfig() = %+v, want %+v", got, tt.want)
 			}
+			if !sameProxy(t, got.Proxy, tt.want.Proxy) {
+				t.Errorf("RESTConfig().Proxy did not match want")
+			}
 		})
 	}
+}
+
+func sameProxy(t *testing.T, got, want func(*http.Request) (*url.URL, error)) bool {
+	t.Helper()
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://gpu-a.example.com:6443/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotURL, gotErr := got(req)
+	wantURL, wantErr := want(req)
+	if gotErr != nil || wantErr != nil {
+		t.Fatalf("Proxy() errors: got=%v want=%v", gotErr, wantErr)
+	}
+	return gotURL.String() == wantURL.String()
 }
 
 func TestRESTConfigDoesNotModifyLocal(t *testing.T) {
@@ -139,5 +201,53 @@ func TestRESTConfigRejectsMalformedConfig(t *testing.T) {
 	_, err := RESTConfig(secretWith(map[string]string{"server": "https://x", "config": "{"}), &rest.Config{})
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("RESTConfig() error = %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func TestRESTConfigRejectsInvalidProxyURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		proxyURL  string
+		forbidden []string
+	}{
+		{
+			name:      "malformed URL with credentials",
+			proxyURL:  "http://user:secret-pass@proxy\u007f.example.com:8080",
+			forbidden: []string{"secret-pass", "proxy\u007f.example.com"},
+		},
+		{
+			name:      "missing scheme",
+			proxyURL:  "proxy.corp:3128",
+			forbidden: []string{"proxy.corp"},
+		},
+		{
+			name:      "unsupported scheme",
+			proxyURL:  "ftp://user:secret-pass@proxy.example.com:21",
+			forbidden: []string{"secret-pass", "proxy.example.com"},
+		},
+		{
+			name:     "missing host",
+			proxyURL: "http://",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := RESTConfig(secretWith(map[string]string{
+				"server": "https://gpu-a.example.com",
+				"config": `{"proxyUrl":"` + tt.proxyURL + `"}`,
+			}), &rest.Config{})
+			if !errors.Is(err, ErrInvalidCredentials) {
+				t.Fatalf("RESTConfig() error = %v, want %v", err, ErrInvalidCredentials)
+			}
+			if !strings.Contains(err.Error(), "proxyUrl") {
+				t.Errorf("RESTConfig() error = %q, want it to name proxyUrl", err)
+			}
+			for _, secret := range tt.forbidden {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("RESTConfig() error = %q, must not quote %q", err, secret)
+				}
+			}
+		})
 	}
 }

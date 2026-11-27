@@ -231,8 +231,8 @@ status can be read back into the `CCLInfraPlane` straight from the cluster rathe
 through argocd-server and polling. The cost is in the credentials it can use, below.
 
 It connects with the **same credentials Secret Argo CD uses**, read the way Argo CD reads it
-(`internal/remote`): `server`, and `config`'s `bearerToken`, basic auth or
-`tlsClientConfig`. A Secret with no `server`, or `https://kubernetes.default.svc` with no
+(`internal/remote`): `server`, and `config`'s `bearerToken`, basic auth, `tlsClientConfig` or
+`proxyUrl`. A Secret with no `server`, or `https://kubernetes.default.svc` with no
 credentials, registers the operator's own cluster, so the operator uses its own
 ServiceAccount — which is why the cp role grants `cclclusterconfigs`. Exec plugins and AWS
 IAM (`execProviderConfig`, `awsAuthConfig`) need binaries or a cloud identity only Argo CD's
@@ -380,7 +380,7 @@ message names the CCLInfraPlane it was created for, if any),
 `AccessDenied` (the cluster answered Unauthorized or Forbidden: the credentials are
 rejected or lack the rights), `ClusterUnreachable` (any other failure to read or write it,
 with the error as the message), `UnsupportedCredentials` or `InvalidCredentials` (`config`
-is not JSON); on any of these the copy in `status.clusterConfig` is the last one taken. It
+is not JSON or carries an invalid `proxyUrl`); on any of these the copy in `status.clusterConfig` is the last one taken. It
 is computed only once `Available` is true, and both are written in one status patch; while
 `Available` is `False` it is `Unknown/NotAvailable`, since nothing keeps the
 `CCLClusterConfig` in line then. `CRDMissing`, `Conflict`, `AccessDenied` and
