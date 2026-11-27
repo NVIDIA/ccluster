@@ -1,5 +1,6 @@
 ### Changed
-- A `cluster_base` Verifier that ignores its 30-second deadline no longer keeps the ip
-  operator from writing `Verified`: a check still running a second past its deadline is
-  reported as `timed out after 30s`. Until that call returns, later passes report the
-  chart as `still running since an earlier pass` rather than calling its check again.
+- The ip operator stops waiting for a `cluster_base` component's `Verifier` one second past
+  its 30-second deadline and reports its chart as timed out, so a check that ignores the
+  deadline cannot keep `Verified` from being written. Until that call returns, later passes
+  report the chart as `still running since an earlier pass` rather than calling its check
+  again.

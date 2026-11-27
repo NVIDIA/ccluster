@@ -5,8 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 package ip
 
-// Plain tests of verify with a short deadline, so `go test -run TestVerify` runs
-// without the envtest suite.
+// Plain tests of verify with a short deadline. They deliberately do not use Ginkgo or
+// envtest: BeforeSuite only runs under RunSpecs, so `go test -run TestVerify` needs no
+// KUBEBUILDER_ASSETS, and the Verifiers here read nothing.
 
 import (
 	"context"
@@ -30,6 +31,59 @@ const (
 	testGrace   = time.Second
 )
 
+// stuckVerifier blocks until release is closed, whatever its ctx says, as a check
+// blocked in a call that takes no context would.
+type stuckVerifier struct {
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func newStuckVerifier(t *testing.T) *stuckVerifier {
+	v := &stuckVerifier{release: make(chan struct{})}
+	t.Cleanup(v.unblock)
+	return v
+}
+
+func (v *stuckVerifier) Verify(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	v.calls.Add(1)
+	<-v.release
+	return nil
+}
+
+func (v *stuckVerifier) unblock() {
+	select {
+	case <-v.release:
+	default:
+		close(v.release)
+	}
+}
+
+func passes(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	return nil
+}
+
+// verifyWithin runs one pass and fails the test if it has not returned within a few
+// seconds, rather than hanging the test binary.
+func verifyWithin(t *testing.T, ctx context.Context, r *CCLClusterConfigReconciler) (int, []failure) {
+	t.Helper()
+	type outcome struct {
+		total   int
+		failing []failure
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		total, failing := r.verify(ctx, cclusternvidiacomv1alpha1.CCLClusterConfigSpec{}, testTimeout, testGrace)
+		done <- outcome{total, failing}
+	}()
+	select {
+	case o := <-done:
+		return o.total, o.failing
+	case <-time.After(5 * time.Second):
+		t.Fatal("verify did not return after its Verifier's deadline")
+		return 0, nil
+	}
+}
+
 func TestVerifyReportsVerifierIgnoringDeadlineAsTimedOut(t *testing.T) {
 	stuck := newStuckVerifier(t)
 	// A passing Verifier on either side of the stuck one: the one before is collected
@@ -51,6 +105,13 @@ func TestVerifyReportsVerifierIgnoringDeadlineAsTimedOut(t *testing.T) {
 	if got, want := failing[0].err.Error(), "timed out after 250ms"; got != want {
 		t.Errorf("error = %q, want %q", got, want)
 	}
+}
+
+// honoursDeadline returns ctx's error, wrapped as a read through the client would, once
+// ctx is done.
+func honoursDeadline(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
+	<-ctx.Done()
+	return fmt.Errorf("listing Leases: %w", ctx.Err())
 }
 
 func TestVerifyGivesUpOnAllStuckVerifiersAtOnce(t *testing.T) {
@@ -134,64 +195,4 @@ func TestVerifyDoesNotCallVerifierAgainWhileEarlierCallRuns(t *testing.T) {
 	if calls := stuck.calls.Load(); calls != 2 {
 		t.Errorf("Verifier called %d times, want 2", calls)
 	}
-}
-
-// stuckVerifier blocks until release is closed, whatever its ctx says, as a check
-// blocked in a call that takes no context would.
-type stuckVerifier struct {
-	release chan struct{}
-	calls   atomic.Int32
-}
-
-func newStuckVerifier(t *testing.T) *stuckVerifier {
-	v := &stuckVerifier{release: make(chan struct{})}
-	t.Cleanup(v.unblock)
-	return v
-}
-
-func (v *stuckVerifier) Verify(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
-	v.calls.Add(1)
-	<-v.release
-	return nil
-}
-
-func (v *stuckVerifier) unblock() {
-	select {
-	case <-v.release:
-	default:
-		close(v.release)
-	}
-}
-
-func passes(context.Context, client.Reader, cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
-	return nil
-}
-
-// verifyWithin runs one pass and fails the test if it has not returned within a few
-// seconds, rather than hanging the test binary.
-func verifyWithin(t *testing.T, ctx context.Context, r *CCLClusterConfigReconciler) (int, []failure) {
-	t.Helper()
-	type outcome struct {
-		total   int
-		failing []failure
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		total, failing := r.verify(ctx, cclusternvidiacomv1alpha1.CCLClusterConfigSpec{}, testTimeout, testGrace)
-		done <- outcome{total, failing}
-	}()
-	select {
-	case o := <-done:
-		return o.total, o.failing
-	case <-time.After(5 * time.Second):
-		t.Fatal("verify did not return after its Verifier's deadline")
-		return 0, nil
-	}
-}
-
-// honoursDeadline returns ctx's error, wrapped as a read through the client would, once
-// ctx is done.
-func honoursDeadline(ctx context.Context, _ client.Reader, _ cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error {
-	<-ctx.Done()
-	return fmt.Errorf("listing Leases: %w", ctx.Err())
 }
