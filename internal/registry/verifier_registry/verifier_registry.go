@@ -59,8 +59,10 @@ import (
 //
 // The controller runs all checks concurrently, so one must not rely on another having
 // run, and must be safe to call from its own goroutine; r is safe for concurrent reads.
-// Each call's ctx carries a deadline: a check must return an error once ctx is done. A
-// panic is recovered and reported as an error, but is a bug in the check.
+// Each call's ctx carries a deadline: a check must return an error once ctx is done.
+// The controller stops waiting shortly after the deadline either way and does not call a
+// check again while an earlier call is still running; DESIGN.md §3a "The controller" has
+// the details. A panic is recovered and reported as an error, but is a bug in the check.
 type VerifyFunc func(ctx context.Context, r client.Reader, cfg cclusternvidiacomv1alpha1.CCLClusterConfigSpec) error
 
 // alwaysVerified is registered for a chart without a check of its own yet: it reports

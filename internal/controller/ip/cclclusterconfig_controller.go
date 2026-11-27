@@ -52,6 +52,12 @@ const (
 // recheckWhileFailing, so a pass always finishes before the next is due.
 const verifyTimeout = 30 * time.Second
 
+// verifyGrace is how long past its deadline the controller still waits for a Verifier
+// before giving up on it. A check that honours ctx returns its own error, naming the read
+// that did not finish, a moment after the deadline; the grace lets that reason reach the
+// condition instead of a bare timeout.
+const verifyGrace = time.Second
+
 // CCLClusterConfigReconciler reconciles a CCLClusterConfig object
 type CCLClusterConfigReconciler struct {
 	client.Client
@@ -61,6 +67,11 @@ type CCLClusterConfigReconciler struct {
 	// verifierregistry.Get(). Injectable so tests can drive the controller with a
 	// registry of their own.
 	Verifiers *verifierregistry.Registry
+
+	// running holds the charts whose Verifier is being called, including one verify
+	// abandoned at its deadline, so a later pass does not call it again meanwhile.
+	runningMu sync.Mutex
+	running   map[string]bool
 }
 
 // RBAC is what the controller itself needs. A Verifier that reads a kind adds a marker
@@ -109,7 +120,7 @@ func (r *CCLClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		log.Info("Observed labelled LoadBalancer Services", "loadBalancers", loadBalancers)
 	}
 
-	total, failing := r.verify(ctx, config.Spec)
+	total, failing := r.verify(ctx, config.Spec, verifyTimeout, verifyGrace)
 
 	verified := verifiedCondition(total, failing, conflicts)
 	previous := apimeta.FindStatusCondition(config.Status.Conditions, cclusternvidiacomv1alpha1.CCLClusterConfigConditionVerified)
@@ -135,7 +146,8 @@ type failure struct {
 }
 
 // verify runs every registered Verifier against spec and returns how many there were
-// and the charts whose Verifier returned an error, in registration order.
+// and the charts that did not pass, in registration order: those whose Verifier returned
+// an error or was given up on, and those not called because an earlier call still runs.
 //
 // The Verifiers run concurrently. Each is an independent set of reads through the
 // manager's client, which is safe for concurrent use and cached except for Leases, so
@@ -143,46 +155,119 @@ type failure struct {
 // position in registration order so the failing list, and with it the condition message,
 // is deterministic whatever order the goroutines finish in.
 //
-// Each Verifier gets its own deadline, and a panic in one is recovered: controller-runtime
-// recovers panics in Reconcile, but not in goroutines Reconcile starts, so without it one
-// faulty Verifier would crash the operator. Either way the chart is reported as failing,
-// with the panic or the timeout as its reason.
+// Each Verifier gets its own deadline of timeout, and a panic in one is recovered:
+// controller-runtime recovers panics in Reconcile, but not in goroutines Reconcile starts,
+// so without it one faulty Verifier would crash the operator. Either way the chart is
+// reported as failing, with the panic or the timeout as its reason.
+//
+// verify stops waiting grace after the deadline whether or not a Verifier honours ctx, so
+// one stuck check cannot keep the Verified condition from being written; DESIGN.md §3a
+// "The controller" describes what happens to the abandoned call. Results come back over a
+// channel per Verifier, so a late one cannot race a later pass.
 func (r *CCLClusterConfigReconciler) verify(
 	ctx context.Context,
 	spec cclusternvidiacomv1alpha1.CCLClusterConfigSpec,
+	timeout, grace time.Duration,
 ) (total int, failing []failure) {
 	log := logf.FromContext(ctx)
 
+	type call struct {
+		result chan error
+		err    error // set instead when the Verifier was not called
+	}
 	charts := r.Verifiers.Charts()
-	errs := make([]error, len(charts))
-	var wg sync.WaitGroup
+	calls := make([]call, len(charts))
+	// One point in time for every call, so waiting for each in turn takes as long as the
+	// slowest one, at most timeout plus grace, rather than adding up graces.
+	abandon := time.NewTimer(timeout + grace)
+	defer abandon.Stop()
 	for i, chart := range charts {
+		if !r.startVerifier(chart) {
+			calls[i].err = errStillRunning
+			continue
+		}
 		verify, _ := r.Verifiers.Lookup(chart)
-		wg.Go(func() {
+		verifyCtx, cancel := context.WithTimeout(ctx, timeout)
+		result := make(chan error, 1)
+		calls[i] = call{result: result}
+		go func() {
+			var err error
 			defer func() {
 				if p := recover(); p != nil {
 					log.Error(fmt.Errorf("%v", p), "Recovered panic in cluster_base Verifier",
 						"chart", chart, "stack", string(debug.Stack()))
-					errs[i] = fmt.Errorf("verifier panicked: %v", p)
+					err = fmt.Errorf("verifier panicked: %v", p)
 				}
+				// Cleared before the send, so a pass that has the result never finds the
+				// call still running.
+				r.finishVerifier(chart)
+				result <- err
+				cancel()
 			}()
 
-			verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
-			defer cancel()
-			errs[i] = verify(verifyCtx, r, spec)
-			if errs[i] != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				errs[i] = fmt.Errorf("timed out after %s: %w", verifyTimeout, errs[i])
+			err = verify(verifyCtx, r, spec)
+			if err != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				err = fmt.Errorf("timed out after %s: %w", timeout, err)
 			}
-		})
+		}()
 	}
-	wg.Wait()
 
+	// gaveUp is set once verify stops waiting, at timeout plus grace or when ctx ends; from
+	// then on each chart gets the result it already has, or gaveUp.
+	var gaveUp error
 	for i, chart := range charts {
-		if errs[i] != nil {
-			failing = append(failing, failure{chart: chart, err: errs[i]})
+		err := calls[i].err
+		if calls[i].result != nil {
+			if gaveUp == nil {
+				select {
+				case err = <-calls[i].result:
+				case <-abandon.C:
+					gaveUp = fmt.Errorf("timed out after %s", timeout)
+				case <-ctx.Done():
+					gaveUp = ctx.Err()
+				}
+			}
+			if gaveUp != nil {
+				// A result that is ready wins over the reason for giving up: select picks
+				// at random between ready cases.
+				select {
+				case err = <-calls[i].result:
+				default:
+					err = gaveUp
+				}
+			}
+		}
+		if err != nil {
+			failing = append(failing, failure{chart: chart, err: err})
 		}
 	}
 	return len(charts), failing
+}
+
+// errStillRunning is reported for a chart whose Verifier was abandoned in an earlier pass
+// and has not returned since.
+var errStillRunning = errors.New("still running since an earlier pass")
+
+// startVerifier records that chart's Verifier is being called, and reports false, leaving
+// it alone, if an earlier call has not returned yet.
+func (r *CCLClusterConfigReconciler) startVerifier(chart string) bool {
+	r.runningMu.Lock()
+	defer r.runningMu.Unlock()
+	if r.running[chart] {
+		return false
+	}
+	if r.running == nil {
+		r.running = map[string]bool{}
+	}
+	r.running[chart] = true
+	return true
+}
+
+// finishVerifier records that chart's Verifier call has returned.
+func (r *CCLClusterConfigReconciler) finishVerifier(chart string) {
+	r.runningMu.Lock()
+	defer r.runningMu.Unlock()
+	delete(r.running, chart)
 }
 
 // verifiedCondition turns the verification outcome, and any LoadBalancer label values
