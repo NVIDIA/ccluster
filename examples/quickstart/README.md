@@ -27,7 +27,8 @@ It is deployed as two component sets, each rolled out in order:
 - For the Python quickstart, Python 3.10 or newer and `pip install ccluster-py==X.Y.Z`;
   for the Go one, Go 1.21 or newer.
 - The control plane publishes DNS for its clusters; see
-  [Installation: DNS](../../docs/installation.md#dns).
+  [Installation: DNS](../../docs/installation.md#dns). For a local trial, you can skip
+  public DNS and use the [private ingress IP example](#4-ask-it-something).
 - The infra-plane cluster supports LoadBalancer Services, as managed Kubernetes on any
   cloud does, and its ingress load balancer is reachable from the internet on ports 80 and
   443, so that Let's Encrypt can issue the model server's certificate. A kind or

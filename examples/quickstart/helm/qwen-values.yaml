@@ -28,6 +28,6 @@ components:
       domain: '{{ required "set domain" .Values.domain }}'
       resources:
         limits: {cpu: "2", memory: 2Gi}
-        requests: {cpu: "2", memory: 2Gi}
+        requests: {cpu: "200m", memory: 2Gi}
       # The default scheduler: this example installs no kai-scheduler.
       schedulerName: ""
