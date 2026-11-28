@@ -15,9 +15,14 @@ kube-prometheus-stack:
     rules:
       kubeHpaMaxedOut: false
   alertmanager:
+    # Configure route and receivers (e.g. AWS SNS) for production. Pin the
+    # upstream no-op 'null' receiver by default so a fresh install reconciles
+    # without reaching an unconfigured endpoint.
     config:
-      route: {}
-      receivers: []
+      route:
+        receiver: 'null'
+      receivers:
+        - name: 'null'
   grafana:
     enabled: false
   prometheus:
